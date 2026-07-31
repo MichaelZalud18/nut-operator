@@ -7,8 +7,8 @@ ARG SOURCE=https://github.com/MichaelZalud18/nut-operator
 ARG DOCUMENTATION=https://github.com/MichaelZalud18/nut-operator/blob/main/README.md
 ARG LICENSES=Apache-2.0
 
-# Build the manager binary
-FROM golang:1.26 AS builder
+# Build the manager binary on the native builder platform and cross-compile the target binary.
+FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
