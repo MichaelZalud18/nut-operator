@@ -236,11 +236,25 @@ func renderNUTServerConfig(server *powerv1alpha1.NUTServer, devices []powerv1alp
 		return nil, err
 	}
 
-	return map[string]string{
+	config := map[string]string{
 		"nut.conf":  "MODE=netserver\n",
 		"ups.conf":  upsConf,
 		"upsd.conf": fmt.Sprintf("LISTEN %s %d\n", listenAddress(server), servicePort(server)),
-	}, nil
+	}
+	for _, device := range devices {
+		filename, ok, err := dummyUPSDefinitionFileName(device)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			definition, err := renderDummyUPSDefinition(device)
+			if err != nil {
+				return nil, err
+			}
+			config[filename] = definition
+		}
+	}
+	return config, nil
 }
 
 func renderUPSConf(devices []powerv1alpha1.UPSDevice) (string, error) {
@@ -256,6 +270,11 @@ func renderUPSConf(devices []powerv1alpha1.UPSDevice) (string, error) {
 
 		fmt.Fprintf(&out, "[%s]\n", name)
 		fmt.Fprintf(&out, "  driver = %s\n", device.Spec.Driver)
+		if filename, ok, err := dummyUPSDefinitionFileName(device); err != nil {
+			return "", err
+		} else if ok {
+			fmt.Fprintf(&out, "  port = %s\n", filename)
+		}
 		if device.Spec.Endpoint != nil {
 			endpoint := device.Spec.Endpoint.Host
 			if device.Spec.Endpoint.Port != nil {
@@ -287,6 +306,41 @@ func renderUPSConf(devices []powerv1alpha1.UPSDevice) (string, error) {
 		out.WriteString("\n")
 	}
 	return out.String(), nil
+}
+
+func dummyUPSDefinitionFileName(device powerv1alpha1.UPSDevice) (string, bool, error) {
+	if device.Spec.Driver != "dummy-ups" {
+		return "", false, nil
+	}
+	if explicitPort := device.Spec.DriverOptions["port"]; explicitPort != "" {
+		return "", false, nil
+	}
+	filename := nutDeviceName(device) + ".dev"
+	if err := validateNUTConfigToken(filename); err != nil {
+		return "", false, fmt.Errorf("invalid dummy UPS definition filename for UPSDevice %q: %w", device.Name, err)
+	}
+	return filename, true, nil
+}
+
+func renderDummyUPSDefinition(device powerv1alpha1.UPSDevice) (string, error) {
+	name := nutDeviceName(device)
+	displayName := device.Spec.DisplayName
+	if displayName == "" {
+		displayName = name
+	}
+	if err := validateNUTConfigValue(displayName); err != nil {
+		return "", fmt.Errorf("invalid dummy UPS display name for UPSDevice %q: %w", device.Name, err)
+	}
+	return fmt.Sprintf(`device.mfr: nut-operator
+device.model: %s
+device.serial: %s
+ups.mfr: nut-operator
+ups.model: %s
+ups.status: OL
+battery.charge: 100
+battery.runtime: 3600
+ups.load: 10
+`, displayName, name, displayName), nil
 }
 
 func nutDeviceName(device powerv1alpha1.UPSDevice) string {

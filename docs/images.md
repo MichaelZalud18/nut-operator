@@ -34,13 +34,15 @@ Release images should include:
 
 ## Published Images
 
-The first project-owned image is the operator manager:
+The `Images` GitHub Actions workflow builds the manager and operand images for
+`linux/amd64` and `linux/arm64`, publishes GHCR manifest lists, emits
+BuildKit SBOM/provenance attestations, and scans each pushed image for
+high/critical vulnerabilities.
+
+Project-owned images are:
 
 - `ghcr.io/michaelzalud18/nut-operator:main`
 - `ghcr.io/michaelzalud18/nut-operator:sha-<git-sha>`
-
-Project-owned operand development images are:
-
 - `ghcr.io/michaelzalud18/nut-server:main`
 - `ghcr.io/michaelzalud18/nut-server:sha-<git-sha>`
 - `ghcr.io/michaelzalud18/upsmon-agent:main`
@@ -52,7 +54,13 @@ Images include OCI source, documentation, license, revision, version, creation t
 
 ## Interim Development
 
-The current operand images are development images built from Alpine packages. Local testing may use community NUT images only as development scaffolding; they are not the recommended production baseline for this project.
+The operand images are still development images built from Alpine packages. Local
+testing may use community NUT images only as development scaffolding; they are
+not the recommended production baseline for this project.
+
+Before production use, replace mutable tags in deployment examples with the
+immutable digest returned by the image workflow and add keyless Sigstore signing
+as a release gate.
 
 ## References
 

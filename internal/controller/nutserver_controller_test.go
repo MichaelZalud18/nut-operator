@@ -59,10 +59,10 @@ var _ = Describe("NUTServer Controller", func() {
 						Name: deviceName,
 					},
 					Spec: powerv1alpha1.UPSDeviceSpec{
-						Driver: "dummy-ups",
+						DisplayName: "Rack A Dummy UPS",
+						Driver:      "dummy-ups",
 						DriverOptions: map[string]string{
 							"desc": "rack-a-ups",
-							"port": "dummy.dev",
 						},
 					},
 				}
@@ -145,6 +145,8 @@ var _ = Describe("NUTServer Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-config"}, configMap)).To(Succeed())
 			Expect(configMap.Data["upsd.conf"]).To(Equal("LISTEN 0.0.0.0 3493\n"))
 			Expect(configMap.Data["ups.conf"]).To(ContainSubstring("[rack-a-ups]"))
+			Expect(configMap.Data["ups.conf"]).To(ContainSubstring("port = rack-a-ups.dev"))
+			Expect(configMap.Data["rack-a-ups.dev"]).To(ContainSubstring("ups.status: OL"))
 
 			secret := &corev1.Secret{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-users"}, secret)).To(Succeed())
