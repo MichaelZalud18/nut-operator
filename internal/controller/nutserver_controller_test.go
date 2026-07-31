@@ -166,7 +166,21 @@ var _ = Describe("NUTServer Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-server"}, deployment)).To(Succeed())
 			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/michaelzalud18/nut-server:main"))
 			Expect(*deployment.Spec.Replicas).To(Equal(int32(2)))
-			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts).NotTo(BeEmpty())
+			Expect(deployment.Spec.Template.Spec.Volumes).To(ContainElement(
+				WithTransform(func(volume corev1.Volume) string { return volume.Name }, Equal("nut-config")),
+			))
+			configVolume := deployment.Spec.Template.Spec.Volumes[0]
+			Expect(configVolume.Name).To(Equal("nut-config"))
+			Expect(configVolume.Projected).NotTo(BeNil())
+			Expect(configVolume.Projected.Sources).To(HaveLen(2))
+			Expect(configVolume.Projected.Sources[0].ConfigMap.Name).To(Equal("test-resource-nut-config"))
+			Expect(configVolume.Projected.Sources[1].Secret.Name).To(Equal("test-resource-nut-users"))
+			Expect(configVolume.Projected.Sources[1].Secret.Items).To(ContainElement(corev1.KeyToPath{Key: "upsd.users", Path: "upsd.users"}))
+			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name:      "nut-config",
+				MountPath: "/etc/nut",
+				ReadOnly:  true,
+			}))
 		})
 	})
 })

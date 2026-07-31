@@ -593,18 +593,23 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 			{
 				Name: "nut-config",
 				VolumeSource: corev1.VolumeSource{
-					ConfigMap: &corev1.ConfigMapVolumeSource{
-						LocalObjectReference: corev1.LocalObjectReference{Name: configName},
-						DefaultMode:          ptrInt32(0440),
-					},
-				},
-			},
-			{
-				Name: "nut-users",
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName:  secretRef.Name,
+					Projected: &corev1.ProjectedVolumeSource{
 						DefaultMode: ptrInt32(0440),
+						Sources: []corev1.VolumeProjection{
+							{
+								ConfigMap: &corev1.ConfigMapProjection{
+									LocalObjectReference: corev1.LocalObjectReference{Name: configName},
+								},
+							},
+							{
+								Secret: &corev1.SecretProjection{
+									LocalObjectReference: corev1.LocalObjectReference{Name: secretRef.Name},
+									Items: []corev1.KeyToPath{
+										{Key: "upsd.users", Path: "upsd.users"},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -637,7 +642,6 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				},
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "nut-config", MountPath: "/etc/nut", ReadOnly: true},
-					{Name: "nut-users", MountPath: "/etc/nut/upsd.users", SubPath: "upsd.users", ReadOnly: true},
 					{Name: "nut-run", MountPath: "/run/nut"},
 				},
 			},
