@@ -1,3 +1,12 @@
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED=unknown
+ARG SOURCE=https://github.com/MichaelZalud18/nut-operator
+ARG DOCUMENTATION=https://github.com/MichaelZalud18/nut-operator#readme
+ARG LICENSES=Apache-2.0
+
 # Build the manager binary
 FROM golang:1.26 AS builder
 ARG TARGETOS
@@ -24,6 +33,24 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ma
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
+ARG VERSION
+ARG REVISION
+ARG CREATED
+ARG SOURCE
+ARG DOCUMENTATION
+ARG LICENSES
+
+LABEL org.opencontainers.image.title="NUT Operator" \
+      org.opencontainers.image.description="Kubernetes-native power management controller for Network UPS Tools" \
+      org.opencontainers.image.url="https://github.com/MichaelZalud18/nut-operator" \
+      org.opencontainers.image.source="${SOURCE}" \
+      org.opencontainers.image.documentation="${DOCUMENTATION}" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}" \
+      org.opencontainers.image.licenses="${LICENSES}" \
+      org.opencontainers.image.vendor="Michael Zalud"
+
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532

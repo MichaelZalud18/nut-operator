@@ -32,9 +32,18 @@ Release images should include:
 - Sigstore/cosign signatures
 - immutable digest references in deployment examples
 
+## Published Images
+
+The first project-owned image is the operator manager:
+
+- `ghcr.io/michaelzalud18/nut-operator:main`
+- `ghcr.io/michaelzalud18/nut-operator:sha-<git-sha>`
+
+Images include OCI source, documentation, license, revision, version, creation time, and vendor labels so GHCR can associate the package with this repository.
+
 ## Interim Development
 
-Examples use `registry.example.com/power/*` placeholders until release images exist. Local testing may use community NUT images only as development scaffolding; they are not the recommended production baseline for this project.
+Operand examples use `registry.example.com/power/*` placeholders until the `nut-server`, `upsmon-agent`, and `node-actuator` images exist. Local testing may use community NUT images only as development scaffolding; they are not the recommended production baseline for this project.
 
 ## References
 

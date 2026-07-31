@@ -1,5 +1,11 @@
-# Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+# Image URL to use for building and pushing the manager image.
+IMG ?= ghcr.io/michaelzalud18/nut-operator:main
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+REVISION ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+CREATED ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+IMAGE_SOURCE ?= https://github.com/MichaelZalud18/nut-operator
+IMAGE_DOCUMENTATION ?= https://github.com/MichaelZalud18/nut-operator#readme
+IMAGE_LICENSES ?= Apache-2.0
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 # Disable VCS stamping by default so local scaffolds outside a clean git repo still build reproducibly.
@@ -124,7 +130,14 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg REVISION=$(REVISION) \
+		--build-arg CREATED=$(CREATED) \
+		--build-arg SOURCE=$(IMAGE_SOURCE) \
+		--build-arg DOCUMENTATION=$(IMAGE_DOCUMENTATION) \
+		--build-arg LICENSES=$(IMAGE_LICENSES) \
+		-t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -143,7 +156,16 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	- $(CONTAINER_TOOL) buildx create --name nut-operator-builder
 	$(CONTAINER_TOOL) buildx use nut-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
+	- $(CONTAINER_TOOL) buildx build --push \
+		--platform=$(PLATFORMS) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg REVISION=$(REVISION) \
+		--build-arg CREATED=$(CREATED) \
+		--build-arg SOURCE=$(IMAGE_SOURCE) \
+		--build-arg DOCUMENTATION=$(IMAGE_DOCUMENTATION) \
+		--build-arg LICENSES=$(IMAGE_LICENSES) \
+		--tag ${IMG} \
+		-f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm nut-operator-builder
 	rm Dockerfile.cross
 
