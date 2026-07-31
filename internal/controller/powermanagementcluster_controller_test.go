@@ -170,5 +170,62 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 			Expect(status.Ready).To(BeFalse())
 			Expect(message).To(ContainSubstring("was not found"))
 		})
+
+		It("maps CNPG cluster events to referencing PowerManagementClusters", func() {
+			scheme := runtime.NewScheme()
+			Expect(powerv1alpha1.AddToScheme(scheme)).To(Succeed())
+			scheme.AddKnownTypeWithName(cnpgClusterGVK, &unstructured.Unstructured{})
+			referencingCluster := &powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "power-alpha",
+					Name:      "alpha-cnpg",
+				},
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					Storage: powerv1alpha1.PowerStorageSpec{
+						Mode: powerv1alpha1.PowerStorageCNPG,
+						CNPG: &powerv1alpha1.CNPGStorageSpec{
+							ClusterRef: powerv1alpha1.NamespacedNameReference{
+								Namespace: "power-alpha",
+								Name:      "cluster-nut-operator-alpha",
+							},
+						},
+					},
+				},
+			}
+			ignoredCluster := &powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "power-alpha",
+					Name:      "other-cnpg",
+				},
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					Storage: powerv1alpha1.PowerStorageSpec{
+						Mode: powerv1alpha1.PowerStorageCNPG,
+						CNPG: &powerv1alpha1.CNPGStorageSpec{
+							ClusterRef: powerv1alpha1.NamespacedNameReference{
+								Namespace: "power-alpha",
+								Name:      "cluster-other",
+							},
+						},
+					},
+				},
+			}
+			reconciler := &PowerManagementClusterReconciler{
+				Client: fake.NewClientBuilder().
+					WithScheme(scheme).
+					WithIndex(&powerv1alpha1.PowerManagementCluster{}, powerManagementClusterCNPGRefField, indexPowerManagementClusterByCNPGCluster).
+					WithObjects(referencingCluster, ignoredCluster).
+					Build(),
+				Scheme: scheme,
+			}
+			cnpgCluster := &unstructured.Unstructured{}
+			cnpgCluster.SetGroupVersionKind(cnpgClusterGVK)
+			cnpgCluster.SetNamespace("power-alpha")
+			cnpgCluster.SetName("cluster-nut-operator-alpha")
+
+			requests := reconciler.mapCNPGClusterToPowerManagementClusters(context.Background(), cnpgCluster)
+
+			Expect(requests).To(HaveLen(1))
+			Expect(requests[0].NamespacedName).To(Equal(types.NamespacedName{Namespace: "power-alpha", Name: "alpha-cnpg"}))
+		})
 	})
 })

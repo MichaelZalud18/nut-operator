@@ -29,7 +29,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 )
@@ -45,6 +47,8 @@ var cnpgClusterGVK = schema.GroupVersionKind{
 	Version: "v1",
 	Kind:    "Cluster",
 }
+
+const powerManagementClusterCNPGRefField = ".spec.storage.cnpg.clusterRef"
 
 // +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters/status,verbs=get;update;patch
@@ -90,10 +94,29 @@ func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ct
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *PowerManagementClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&powerv1alpha1.PowerManagementCluster{},
+		powerManagementClusterCNPGRefField,
+		indexPowerManagementClusterByCNPGCluster,
+	); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&powerv1alpha1.PowerManagementCluster{}).
+		Watches(
+			newCNPGClusterObject(),
+			handler.EnqueueRequestsFromMapFunc(r.mapCNPGClusterToPowerManagementClusters),
+		).
 		Named("powermanagementcluster").
 		Complete(r)
+}
+
+func newCNPGClusterObject() *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(cnpgClusterGVK)
+	return obj
 }
 
 func (r *PowerManagementClusterReconciler) evaluateStorage(ctx context.Context, cluster *powerv1alpha1.PowerManagementCluster, result validationResult) (powerv1alpha1.StorageStatus, bool, string, string) {
@@ -164,4 +187,43 @@ func (r *PowerManagementClusterReconciler) evaluateCNPGStorage(ctx context.Conte
 	status.Ready = true
 	status.Message = fmt.Sprintf("CNPG cluster %s/%s reports %d/%d ready instances; schema and audit writers are not implemented yet", ref.Namespace, ref.Name, readyInstances, desiredInstances)
 	return status, true, "CNPGClusterReady", status.Message
+}
+
+func indexPowerManagementClusterByCNPGCluster(obj client.Object) []string {
+	cluster, ok := obj.(*powerv1alpha1.PowerManagementCluster)
+	if !ok {
+		return nil
+	}
+	if storageMode(cluster.Spec.Storage) != powerv1alpha1.PowerStorageCNPG || cluster.Spec.Storage.CNPG == nil {
+		return nil
+	}
+	ref := cluster.Spec.Storage.CNPG.ClusterRef
+	if ref.Namespace == "" || ref.Name == "" {
+		return nil
+	}
+	return []string{cnpgReferenceKey(ref.Namespace, ref.Name)}
+}
+
+func (r *PowerManagementClusterReconciler) mapCNPGClusterToPowerManagementClusters(ctx context.Context, obj client.Object) []reconcile.Request {
+	var clusters powerv1alpha1.PowerManagementClusterList
+	if err := r.List(ctx, &clusters, client.MatchingFields{
+		powerManagementClusterCNPGRefField: cnpgReferenceKey(obj.GetNamespace(), obj.GetName()),
+	}); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(clusters.Items))
+	for _, cluster := range clusters.Items {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: cluster.Namespace,
+				Name:      cluster.Name,
+			},
+		})
+	}
+	return requests
+}
+
+func cnpgReferenceKey(namespace, name string) string {
+	return namespace + "/" + name
 }
