@@ -52,7 +52,7 @@ Images include OCI source, documentation, license, revision, version, creation t
 
 ## Interim Development
 
-The current operand images are development images built from Debian packages. Local testing may use community NUT images only as development scaffolding; they are not the recommended production baseline for this project.
+The current operand images are development images built from Alpine packages. Local testing may use community NUT images only as development scaffolding; they are not the recommended production baseline for this project.
 
 ## References
 

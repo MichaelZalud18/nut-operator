@@ -1,5 +1,5 @@
-ARG DEBIAN_VERSION=13-slim
-FROM debian:${DEBIAN_VERSION}
+ARG ALPINE_VERSION=3.22
+FROM alpine:${ALPINE_VERSION}
 
 ARG VERSION=dev
 ARG REVISION=unknown
@@ -19,9 +19,7 @@ LABEL org.opencontainers.image.title="NUT Operator NUT Server" \
       org.opencontainers.image.licenses="${LICENSES}" \
       org.opencontainers.image.vendor="Michael Zalud"
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends nut-server ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
+RUN apk add --no-cache nut ca-certificates \
     && mkdir -p /run/nut \
     && chown -R 65532:65532 /run/nut
 
