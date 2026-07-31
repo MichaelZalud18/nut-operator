@@ -1,0 +1,8 @@
+NUT Operator
+Copyright 2026 Michael Zalud
+
+This product is licensed under the Apache License, Version 2.0.
+
+This project integrates with Network UPS Tools (NUT), but it is not an
+official Network UPS Tools project unless and until that relationship is
+explicitly established by the upstream NUT project.

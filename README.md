@@ -126,8 +126,17 @@ kubectl apply -k config/samples/
 - [Shutdown flow design](docs/shutdown-flow.md)
 - [Orion cluster example](docs/examples/orion-cluster/README.md)
 
+## Community and Project Info
+
+- [Contributing](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security Policy](SECURITY.md)
+- [Support](SUPPORT.md)
+- [Governance](GOVERNANCE.md)
+- [Maintainers](MAINTAINERS.md)
+
 ## License
 
 Copyright 2026 Michael Zalud.
 
-Licensed under the Apache License, Version 2.0.
+Licensed under the [Apache License, Version 2.0](LICENSE).
