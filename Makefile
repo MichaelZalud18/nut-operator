@@ -218,8 +218,6 @@ docker-push-images: docker-push docker-push-operands ## Push the manager and all
 PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	- $(CONTAINER_TOOL) buildx create --name nut-operator-builder
 	$(CONTAINER_TOOL) buildx use nut-operator-builder
 	- $(CONTAINER_TOOL) buildx build --push \
@@ -231,9 +229,8 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 		--build-arg DOCUMENTATION=$(IMAGE_DOCUMENTATION) \
 		--build-arg LICENSES=$(IMAGE_LICENSES) \
 		--tag ${IMG} \
-		-f Dockerfile.cross .
+		-f Dockerfile .
 	- $(CONTAINER_TOOL) buildx rm nut-operator-builder
-	rm Dockerfile.cross
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
