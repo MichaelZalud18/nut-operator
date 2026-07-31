@@ -15,8 +15,8 @@ spec:
       power.zalud.io/domain: rack-a
   replicas: 2
   image:
-    repository: registry.example.com/power/nut-server
-    tag: 2.8.5
+    repository: ghcr.io/michaelzalud18/nut-server
+    tag: main
     pullPolicy: IfNotPresent
   placement:
     nodeSelector:

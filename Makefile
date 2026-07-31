@@ -4,8 +4,17 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 REVISION ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 CREATED ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 IMAGE_SOURCE ?= https://github.com/MichaelZalud18/nut-operator
-IMAGE_DOCUMENTATION ?= https://github.com/MichaelZalud18/nut-operator#readme
+IMAGE_DOCUMENTATION ?= https://github.com/MichaelZalud18/nut-operator/blob/main/README.md
 IMAGE_LICENSES ?= Apache-2.0
+IMAGE_REGISTRY ?= ghcr.io/michaelzalud18
+IMAGE_TAG ?= main
+IMAGE_SHA_TAG ?= sha-$(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+NUT_SERVER_IMG ?= $(IMAGE_REGISTRY)/nut-server:$(IMAGE_TAG)
+NUT_SERVER_SHA_IMG ?= $(IMAGE_REGISTRY)/nut-server:$(IMAGE_SHA_TAG)
+UPSMON_AGENT_IMG ?= $(IMAGE_REGISTRY)/upsmon-agent:$(IMAGE_TAG)
+UPSMON_AGENT_SHA_IMG ?= $(IMAGE_REGISTRY)/upsmon-agent:$(IMAGE_SHA_TAG)
+NODE_ACTUATOR_IMG ?= $(IMAGE_REGISTRY)/node-actuator:$(IMAGE_TAG)
+NODE_ACTUATOR_SHA_IMG ?= $(IMAGE_REGISTRY)/node-actuator:$(IMAGE_SHA_TAG)
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 # Disable VCS stamping by default so local scaffolds outside a clean git repo still build reproducibly.
@@ -142,6 +151,63 @@ docker-build: ## Build docker image with the manager.
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+
+.PHONY: docker-build-nut-server
+docker-build-nut-server: ## Build the project-owned NUT server operand image.
+	$(CONTAINER_TOOL) build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg REVISION=$(REVISION) \
+		--build-arg CREATED=$(CREATED) \
+		--build-arg SOURCE=$(IMAGE_SOURCE) \
+		--build-arg DOCUMENTATION=$(IMAGE_DOCUMENTATION) \
+		--build-arg LICENSES=$(IMAGE_LICENSES) \
+		-f images/nut-server/Dockerfile \
+		-t $(NUT_SERVER_IMG) \
+		-t $(NUT_SERVER_SHA_IMG) .
+
+.PHONY: docker-build-upsmon-agent
+docker-build-upsmon-agent: ## Build the project-owned upsmon node-agent image.
+	$(CONTAINER_TOOL) build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg REVISION=$(REVISION) \
+		--build-arg CREATED=$(CREATED) \
+		--build-arg SOURCE=$(IMAGE_SOURCE) \
+		--build-arg DOCUMENTATION=$(IMAGE_DOCUMENTATION) \
+		--build-arg LICENSES=$(IMAGE_LICENSES) \
+		-f images/upsmon-agent/Dockerfile \
+		-t $(UPSMON_AGENT_IMG) \
+		-t $(UPSMON_AGENT_SHA_IMG) .
+
+.PHONY: docker-build-node-actuator
+docker-build-node-actuator: ## Build the project-owned node actuator image.
+	$(CONTAINER_TOOL) build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg REVISION=$(REVISION) \
+		--build-arg CREATED=$(CREATED) \
+		--build-arg SOURCE=$(IMAGE_SOURCE) \
+		--build-arg DOCUMENTATION=$(IMAGE_DOCUMENTATION) \
+		--build-arg LICENSES=$(IMAGE_LICENSES) \
+		-f images/node-actuator/Dockerfile \
+		-t $(NODE_ACTUATOR_IMG) \
+		-t $(NODE_ACTUATOR_SHA_IMG) .
+
+.PHONY: docker-build-operands
+docker-build-operands: docker-build-nut-server docker-build-upsmon-agent docker-build-node-actuator ## Build all project-owned operand images.
+
+.PHONY: docker-build-images
+docker-build-images: docker-build docker-build-operands ## Build the manager and all project-owned operand images.
+
+.PHONY: docker-push-operands
+docker-push-operands: ## Push all project-owned operand image tags.
+	$(CONTAINER_TOOL) push $(NUT_SERVER_IMG)
+	$(CONTAINER_TOOL) push $(NUT_SERVER_SHA_IMG)
+	$(CONTAINER_TOOL) push $(UPSMON_AGENT_IMG)
+	$(CONTAINER_TOOL) push $(UPSMON_AGENT_SHA_IMG)
+	$(CONTAINER_TOOL) push $(NODE_ACTUATOR_IMG)
+	$(CONTAINER_TOOL) push $(NODE_ACTUATOR_SHA_IMG)
+
+.PHONY: docker-push-images
+docker-push-images: docker-push docker-push-operands ## Push the manager and all project-owned operand image tags.
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:

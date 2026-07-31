@@ -499,6 +499,9 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 		daemonSet.Spec.Template.Spec.PriorityClassName = agent.Spec.Placement.PriorityClassName
 		daemonSet.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
 			RunAsNonRoot: ptrBool(true),
+			RunAsUser:    ptrInt64(65532),
+			RunAsGroup:   ptrInt64(65532),
+			FSGroup:      ptrInt64(65532),
 			SeccompProfile: &corev1.SeccompProfile{
 				Type: corev1.SeccompProfileTypeRuntimeDefault,
 			},
@@ -509,6 +512,7 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				VolumeSource: corev1.VolumeSource{
 					ConfigMap: &corev1.ConfigMapVolumeSource{
 						LocalObjectReference: corev1.LocalObjectReference{Name: spec.ConfigMapName},
+						DefaultMode:          ptrInt32(0440),
 					},
 				},
 			},
@@ -516,7 +520,8 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				Name: "upsmon-config",
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName: spec.SecretName,
+						SecretName:  spec.SecretName,
+						DefaultMode: ptrInt32(0440),
 					},
 				},
 			},

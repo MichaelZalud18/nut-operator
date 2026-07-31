@@ -528,6 +528,9 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 		deployment.Spec.Template.Spec.PriorityClassName = server.Spec.Placement.PriorityClassName
 		deployment.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
 			RunAsNonRoot: ptrBool(true),
+			RunAsUser:    ptrInt64(65532),
+			RunAsGroup:   ptrInt64(65532),
+			FSGroup:      ptrInt64(65532),
 			SeccompProfile: &corev1.SeccompProfile{
 				Type: corev1.SeccompProfileTypeRuntimeDefault,
 			},
@@ -538,6 +541,7 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				VolumeSource: corev1.VolumeSource{
 					ConfigMap: &corev1.ConfigMapVolumeSource{
 						LocalObjectReference: corev1.LocalObjectReference{Name: configName},
+						DefaultMode:          ptrInt32(0440),
 					},
 				},
 			},
@@ -545,7 +549,8 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				Name: "nut-users",
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName: secretRef.Name,
+						SecretName:  secretRef.Name,
+						DefaultMode: ptrInt32(0440),
 					},
 				},
 			},
@@ -588,7 +593,8 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				Name: "nut-tls",
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName: server.Spec.TLS.ServerCertificateRef.Name,
+						SecretName:  server.Spec.TLS.ServerCertificateRef.Name,
+						DefaultMode: ptrInt32(0440),
 					},
 				},
 			})
@@ -604,6 +610,14 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 }
 
 func ptrBool(value bool) *bool {
+	return &value
+}
+
+func ptrInt32(value int32) *int32 {
+	return &value
+}
+
+func ptrInt64(value int64) *int64 {
 	return &value
 }
 

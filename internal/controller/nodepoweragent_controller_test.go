@@ -127,12 +127,12 @@ var _ = Describe("NodePowerAgent Controller", func() {
 						Mode: powerv1alpha1.NodePowerAgentModeDryRun,
 						Images: powerv1alpha1.NodePowerAgentImages{
 							Upsmon: powerv1alpha1.ImageReference{
-								Repository: "registry.example.com/power/upsmon-agent",
-								Tag:        "2.8.5",
+								Repository: "ghcr.io/michaelzalud18/upsmon-agent",
+								Tag:        "main",
 							},
 							Actuator: powerv1alpha1.ImageReference{
-								Repository: "registry.example.com/power/node-actuator",
-								Tag:        "v0.1.0",
+								Repository: "ghcr.io/michaelzalud18/node-actuator",
+								Tag:        "main",
 							},
 						},
 					},
@@ -244,9 +244,10 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(*daemonSet.Spec.Template.Spec.AutomountServiceAccountToken).To(BeFalse())
 			Expect(daemonSet.Spec.Template.Spec.Containers).To(HaveLen(2))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Name).To(Equal("upsmon"))
-			Expect(daemonSet.Spec.Template.Spec.Containers[0].Image).To(Equal("registry.example.com/power/upsmon-agent:2.8.5"))
+			Expect(daemonSet.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/michaelzalud18/upsmon-agent:main"))
 			Expect(*daemonSet.Spec.Template.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(daemonSet.Spec.Template.Spec.Containers[1].Name).To(Equal("actuator"))
+			Expect(daemonSet.Spec.Template.Spec.Containers[1].Image).To(Equal("ghcr.io/michaelzalud18/node-actuator:main"))
 			Expect(*daemonSet.Spec.Template.Spec.Containers[1].SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 		})
 	})

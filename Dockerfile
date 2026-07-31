@@ -4,7 +4,7 @@ ARG VERSION=dev
 ARG REVISION=unknown
 ARG CREATED=unknown
 ARG SOURCE=https://github.com/MichaelZalud18/nut-operator
-ARG DOCUMENTATION=https://github.com/MichaelZalud18/nut-operator#readme
+ARG DOCUMENTATION=https://github.com/MichaelZalud18/nut-operator/blob/main/README.md
 ARG LICENSES=Apache-2.0
 
 # Build the manager binary

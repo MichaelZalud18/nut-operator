@@ -84,8 +84,8 @@ var _ = Describe("NUTServer Controller", func() {
 						},
 						Replicas: &replicas,
 						Image: powerv1alpha1.ImageReference{
-							Repository: "registry.example.com/power/nut-server",
-							Tag:        "2.8.5",
+							Repository: "ghcr.io/michaelzalud18/nut-server",
+							Tag:        "main",
 						},
 						TLS: powerv1alpha1.NUTTLSSpec{
 							Mode: powerv1alpha1.NUTTLSDisabled,
@@ -162,7 +162,7 @@ var _ = Describe("NUTServer Controller", func() {
 
 			deployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-server"}, deployment)).To(Succeed())
-			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal("registry.example.com/power/nut-server:2.8.5"))
+			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/michaelzalud18/nut-server:main"))
 			Expect(*deployment.Spec.Replicas).To(Equal(int32(2)))
 			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts).NotTo(BeEmpty())
 		})

@@ -17,16 +17,16 @@ spec:
       schema: power
   images:
     nutServer:
-      repository: registry.example.com/power/nut-server
-      tag: 2.8.5
+      repository: ghcr.io/michaelzalud18/nut-server
+      tag: main
       pullPolicy: IfNotPresent
     upsmonAgent:
-      repository: registry.example.com/power/upsmon-agent
-      tag: 2.8.5
+      repository: ghcr.io/michaelzalud18/upsmon-agent
+      tag: main
       pullPolicy: IfNotPresent
     actuator:
-      repository: registry.example.com/power/node-actuator
-      tag: v0.1.0
+      repository: ghcr.io/michaelzalud18/node-actuator
+      tag: main
       pullPolicy: IfNotPresent
   security:
     profile: Restricted
@@ -80,8 +80,8 @@ spec:
       power.zalud.io/domain: orion-core
   replicas: 2
   image:
-    repository: registry.example.com/power/nut-server
-    tag: 2.8.5
+    repository: ghcr.io/michaelzalud18/nut-server
+    tag: main
     pullPolicy: IfNotPresent
   placement:
     nodeSelector:

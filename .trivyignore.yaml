@@ -1,0 +1,50 @@
+---
+misconfigurations:
+  - id: DS-0026
+    paths:
+      - Dockerfile
+      - images/node-actuator/Dockerfile
+      - images/nut-server/Dockerfile
+      - images/upsmon-agent/Dockerfile
+    expired_at: 2027-07-31
+    statement: >-
+      Kubernetes liveness and readiness probes are the health contract for
+      these images; release hardening should revisit image-native health
+      checks.
+  - id: KSV-0125
+    paths:
+      - config/manager/manager.yaml
+    expired_at: 2027-07-31
+    statement: >-
+      GHCR under the project owner is the intended registry; Trivy's generic
+      trusted-registry policy does not include this project namespace.
+  - id: KSV-0041
+    paths:
+      - config/rbac/role.yaml
+    expired_at: 2027-07-31
+    statement: >-
+      The controller currently creates and reads operator-managed NUT credential
+      Secrets; future RBAC should split or namespace-bound this permission.
+  - id: KSV-0048
+    paths:
+      - config/rbac/role.yaml
+    expired_at: 2027-07-31
+    statement: >-
+      The controller renders Deployment and DaemonSet operands; admission
+      policy and namespace scoping should constrain this in production
+      installs.
+  - id: KSV-0049
+    paths:
+      - config/rbac/role.yaml
+    expired_at: 2027-07-31
+    statement: >-
+      The controller renders operand ConfigMaps; production install profiles
+      should keep this permission namespace-scoped where possible.
+  - id: KSV-0056
+    paths:
+      - config/rbac/role.yaml
+    expired_at: 2027-07-31
+    statement: >-
+      The controller renders Services and NetworkPolicies for operands;
+      production install profiles should keep this permission namespace-scoped
+      where possible.

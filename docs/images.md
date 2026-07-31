@@ -39,11 +39,20 @@ The first project-owned image is the operator manager:
 - `ghcr.io/michaelzalud18/nut-operator:main`
 - `ghcr.io/michaelzalud18/nut-operator:sha-<git-sha>`
 
-Images include OCI source, documentation, license, revision, version, creation time, and vendor labels so GHCR can associate the package with this repository.
+Project-owned operand development images are:
+
+- `ghcr.io/michaelzalud18/nut-server:main`
+- `ghcr.io/michaelzalud18/nut-server:sha-<git-sha>`
+- `ghcr.io/michaelzalud18/upsmon-agent:main`
+- `ghcr.io/michaelzalud18/upsmon-agent:sha-<git-sha>`
+- `ghcr.io/michaelzalud18/node-actuator:main`
+- `ghcr.io/michaelzalud18/node-actuator:sha-<git-sha>`
+
+Images include OCI source, documentation, license, revision, version, creation time, and vendor labels so GHCR can associate package metadata with this repository.
 
 ## Interim Development
 
-Operand examples use `registry.example.com/power/*` placeholders until the `nut-server`, `upsmon-agent`, and `node-actuator` images exist. Local testing may use community NUT images only as development scaffolding; they are not the recommended production baseline for this project.
+The current operand images are development images built from Debian packages. Local testing may use community NUT images only as development scaffolding; they are not the recommended production baseline for this project.
 
 ## References
 

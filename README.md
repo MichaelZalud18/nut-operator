@@ -2,6 +2,8 @@
 
 Kubernetes-native power management built around Network UPS Tools (NUT), controller-runtime, and declarative APIs.
 
+> Status: early alpha and mostly AI-assisted/vibe-coded. Treat this repository as a design-heavy working prototype until the published images, RBAC, dependency, and shutdown-actuation paths have passed independent review and production-grade validation.
+
 This project is intentionally designed as a reusable operator rather than a homelab-only manifest set. It models UPS devices, NUT server instances, node power agents, and shutdown flows as Kubernetes resources. Durable audit and execution state belongs in PostgreSQL, with CloudNativePG as the preferred Kubernetes-native backing store.
 
 ## Goals
@@ -67,15 +69,15 @@ Implemented now:
 - Dependency-graph validation and compiled-wave status for `ShutdownFlow`.
 - `NUTServer` operand rendering for Namespace, ConfigMap, operator-managed Secret, Service, NetworkPolicy, and Deployment.
 - `NodePowerAgent` operand rendering for Namespace, ServiceAccount, ConfigMap, Secret-backed `upsmon.conf`, egress NetworkPolicy, and non-privileged DaemonSet in monitor/dry-run/stub modes.
-- Manager image Docker build and basic entrypoint smoke test.
+- Manager and project-owned development operand image builds and GHCR tag conventions.
 - Production-shaped sample resources under `config/samples/`.
 
 Not implemented yet:
 
-- Advanced NUT config rendering, credential rotation, and production operand image publication.
+- Advanced NUT config rendering, credential rotation, and production-grade operand image release hardening.
 - PostgreSQL schema migrations and audit writer.
 - Admission webhooks.
-- Full image smoke tests, SBOMs, signing, scanning, and registry publication.
+- Release-grade image smoke tests, SBOMs, signing, scanning policy, provenance, and immutable digest examples.
 
 ## Development
 

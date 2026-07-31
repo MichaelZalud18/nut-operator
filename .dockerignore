@@ -13,4 +13,6 @@
 !cmd/**
 !internal/
 !internal/**
+!images/
+!images/**
 **/*_test.go
