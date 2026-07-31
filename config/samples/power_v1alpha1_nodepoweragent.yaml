@@ -1,0 +1,31 @@
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: rack-a-workers
+spec:
+  managementClusterRef:
+    name: production
+  namespace: power-system
+  nutServerRefs:
+    - name: rack-a
+  nodeSelector:
+    matchLabels:
+      topology.kubernetes.io/zone: rack-a
+  mode: DryRun
+  shutdownFlowRef:
+    name: rack-a-conservation
+  upsmon:
+    pollFrequency: 15s
+    alertPollFrequency: 5s
+    deadTime: 45s
+    hostSync: 15s
+    finalDelay: 10s
+  shutdown:
+    actuatorPolicy: Stub
+    signalPath: /run/power-agent/shutdown.json
+    signalTTL: 2m
+    requireFreshTelemetry: true

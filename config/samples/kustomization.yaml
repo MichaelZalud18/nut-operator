@@ -1,0 +1,9 @@
+---
+## Append samples of your project ##
+resources:
+  - power_v1alpha1_powermanagementcluster.yaml
+  - power_v1alpha1_upsdevice.yaml
+  - power_v1alpha1_nutserver.yaml
+  - power_v1alpha1_nodepoweragent.yaml
+  - power_v1alpha1_shutdownflow.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

@@ -1,0 +1,90 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - namespaces
+  - secrets
+  - serviceaccounts
+  - services
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  - deployments
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - nodepoweragents
+  - nutservers
+  - powermanagementclusters
+  - shutdownflows
+  - upsdevices
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - nodepoweragents/finalizers
+  - nutservers/finalizers
+  - powermanagementclusters/finalizers
+  - shutdownflows/finalizers
+  - upsdevices/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - nodepoweragents/status
+  - nutservers/status
+  - powermanagementclusters/status
+  - shutdownflows/status
+  - upsdevices/status
+  verbs:
+  - get
+  - patch
+  - update

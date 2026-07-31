@@ -1,0 +1,32 @@
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+    power.zalud.io/domain: rack-a
+  name: rack-a-ups
+spec:
+  displayName: Rack A UPS
+  driver: snmp-ups
+  endpoint:
+    host: ups-rack-a.example.net
+    port: 161
+  credentialSecretRef:
+    namespace: power-system
+    name: rack-a-ups-snmp
+  driverOptions:
+    desc: rack-a-ups
+    pollfreq: "15"
+    snmp_version: v3
+  powerDomains:
+    - rack-a
+  thresholds:
+    minRuntimeSeconds: 900
+    minChargePercent: 30
+    onBatteryHoldoff: 2m
+    staleAfter: 45s
+  telemetry:
+    pollInterval: 15s
+    alertPollInterval: 5s

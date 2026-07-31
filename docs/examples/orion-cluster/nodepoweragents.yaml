@@ -1,0 +1,87 @@
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  name: orion-standard
+spec:
+  managementClusterRef:
+    name: orion-production
+  namespace: power-system
+  nutServerRefs:
+    - name: orion-core
+  nodeSelector:
+    matchLabels:
+      power.example.com/node-group: standard
+      power.example.com/power-domain: orion-core
+  mode: DryRun
+  shutdownFlowRef:
+    name: orion-conservation
+  upsmon:
+    pollFrequency: 15s
+    alertPollFrequency: 5s
+    deadTime: 45s
+    hostSync: 15s
+    finalDelay: 10s
+  shutdown:
+    actuatorPolicy: Stub
+    signalPath: /run/power-agent/shutdown.json
+    signalTTL: 2m
+    requireFreshTelemetry: true
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  name: orion-controller
+spec:
+  managementClusterRef:
+    name: orion-production
+  namespace: power-system
+  nutServerRefs:
+    - name: orion-core
+  nodeSelector:
+    matchLabels:
+      power.example.com/controller: "true"
+      power.example.com/power-domain: orion-core
+  mode: DryRun
+  shutdownFlowRef:
+    name: orion-conservation
+  upsmon:
+    pollFrequency: 15s
+    alertPollFrequency: 5s
+    deadTime: 45s
+    hostSync: 15s
+    finalDelay: 10s
+  shutdown:
+    actuatorPolicy: Stub
+    signalPath: /run/power-agent/shutdown.json
+    signalTTL: 2m
+    requireFreshTelemetry: true
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  name: orion-burst
+spec:
+  managementClusterRef:
+    name: orion-production
+  namespace: power-system
+  nutServerRefs:
+    - name: orion-core
+  nodeSelector:
+    matchLabels:
+      power.example.com/node-group: burst
+      power.example.com/power-domain: orion-core
+  mode: DryRun
+  shutdownFlowRef:
+    name: orion-conservation
+  upsmon:
+    pollFrequency: 15s
+    alertPollFrequency: 5s
+    deadTime: 45s
+    hostSync: 15s
+    finalDelay: 10s
+  shutdown:
+    actuatorPolicy: Stub
+    signalPath: /run/power-agent/shutdown.json
+    signalTTL: 2m
+    requireFreshTelemetry: true

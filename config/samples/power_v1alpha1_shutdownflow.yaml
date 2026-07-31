@@ -1,0 +1,83 @@
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: ShutdownFlow
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: rack-a-conservation
+spec:
+  managementClusterRef:
+    name: production
+  mode: DryRun
+  triggers:
+    - type: OnBattery
+      powerDomains:
+        - rack-a
+      for: 2m
+    - type: RuntimeBelow
+      powerDomains:
+        - rack-a
+      runtimeBelowSeconds: 1200
+  groups:
+    - name: notify-on-battery
+      action: Notify
+      description: Emit the initial power event before disruptive actions.
+      before:
+        - wait-for-transfer-clear
+      phase: 0
+      params:
+        severity: warning
+    - name: wait-for-transfer-clear
+      action: Wait
+      description: Wait for short transfers to clear.
+      before:
+        - application-workloads
+      phase: 5
+      timeout: 2m
+    - name: application-workloads
+      action: ScaleWorkload
+      description: Scale non-critical apps before node drain.
+      target:
+        namespaceSelector:
+          matchLabels:
+            power.zalud.io/shutdown-tier: application
+      before:
+        - cordon-standard-workers
+      phase: 10
+      timeout: 5m
+    - name: cordon-standard-workers
+      action: CordonNodes
+      target:
+        nodeSelector:
+          matchLabels:
+            node.kubernetes.io/power-tier: standard
+      before:
+        - drain-standard-workers
+      phase: 20
+      timeout: 1m
+    - name: drain-standard-workers
+      action: DrainNodes
+      target:
+        nodeSelector:
+          matchLabels:
+            node.kubernetes.io/power-tier: standard
+      before:
+        - request-agent-shutdown
+      phase: 30
+      timeout: 10m
+    - name: request-agent-shutdown
+      action: AgentShutdown
+      target:
+        agentRefs:
+          - name: rack-a-workers
+      phase: 40
+      timeout: 5m
+  concurrencyPolicy: Forbid
+  abortPolicy:
+    behavior: HaltAndSurface
+    notify: true
+  safety:
+    requireManualApproval: true
+    approvalAnnotation: power.zalud.io/approved-for-enforce
+    maxEstimatedDuration: 20m

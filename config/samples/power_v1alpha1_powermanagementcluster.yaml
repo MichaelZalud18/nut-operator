@@ -1,0 +1,41 @@
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerManagementCluster
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: production
+spec:
+  operandNamespace:
+    name: power-system
+    create: true
+  storage:
+    mode: CNPG
+    cnpg:
+      clusterRef:
+        namespace: power-system
+        name: power-audit
+      database: power
+      schema: power
+  images:
+    nutServer:
+      repository: registry.example.com/power/nut-server
+      tag: 2.8.5
+      pullPolicy: IfNotPresent
+    upsmonAgent:
+      repository: registry.example.com/power/upsmon-agent
+      tag: 2.8.5
+      pullPolicy: IfNotPresent
+    actuator:
+      repository: registry.example.com/power/node-actuator
+      tag: v0.1.0
+      pullPolicy: IfNotPresent
+  security:
+    profile: Restricted
+    requireExplicitActuation: true
+    allowedActuatorNamespaces:
+      - power-system
+  observability:
+    serviceMonitor: true
+    kubernetesEvents: true

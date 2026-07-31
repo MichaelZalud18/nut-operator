@@ -1,0 +1,35 @@
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: rack-a
+spec:
+  managementClusterRef:
+    name: production
+  namespace: power-system
+  deviceSelector:
+    matchLabels:
+      power.zalud.io/domain: rack-a
+  replicas: 2
+  image:
+    repository: registry.example.com/power/nut-server
+    tag: 2.8.5
+    pullPolicy: IfNotPresent
+  placement:
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: ""
+  auth:
+    mode: OperatorManaged
+    perNodeUsers: true
+  tls:
+    mode: Required
+    serverCertificateRef:
+      namespace: power-system
+      name: rack-a-nut-server-tls
+    verifyClientCertificates: true
+  service:
+    type: ClusterIP
+    port: 3493

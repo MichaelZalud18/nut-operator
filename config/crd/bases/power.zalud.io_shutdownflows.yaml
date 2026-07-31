@@ -1,0 +1,835 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: shutdownflows.power.zalud.io
+spec:
+  group: power.zalud.io
+  names:
+    kind: ShutdownFlow
+    listKind: ShutdownFlowList
+    plural: shutdownflows
+    singular: shutdownflow
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ShutdownFlow is the Schema for the shutdownflows API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of ShutdownFlow
+            properties:
+              abortPolicy:
+                description: abortPolicy defines behavior after a failed or unsafe
+                  step.
+                properties:
+                  behavior:
+                    default: HaltAndSurface
+                    description: behavior controls what happens after abort.
+                    enum:
+                    - HaltAndSurface
+                    - ContinueSafeSteps
+                    type: string
+                  notify:
+                    default: true
+                    description: notify enables notification steps after abort.
+                    type: boolean
+                type: object
+              concurrencyPolicy:
+                default: Forbid
+                description: concurrencyPolicy controls overlapping flow evaluations.
+                enum:
+                - Forbid
+                - Replace
+                type: string
+              groups:
+                description: groups define the dependency graph used to compile ordered
+                  shutdown waves.
+                items:
+                  description: ShutdownGroup defines a shutdown subject and its graph
+                    relationships.
+                  properties:
+                    action:
+                      description: action selects the operation applied to the selected
+                        target.
+                      enum:
+                      - Notify
+                      - Wait
+                      - Gate
+                      - CordonNodes
+                      - DrainNodes
+                      - ScaleWorkload
+                      - RunWorkflow
+                      - AgentShutdown
+                      type: string
+                    after:
+                      description: after names groups that must complete before this
+                        group can begin.
+                      items:
+                        type: string
+                      type: array
+                    before:
+                      description: before names groups that cannot begin until this
+                        group has completed.
+                      items:
+                        type: string
+                      type: array
+                    description:
+                      description: description explains the operator-facing purpose
+                        of the group.
+                      type: string
+                    name:
+                      description: name is unique within the flow and is referenced
+                        by dependency fields.
+                      minLength: 1
+                      type: string
+                    params:
+                      additionalProperties:
+                        type: string
+                      description: params holds action-specific scalar parameters.
+                      type: object
+                    phase:
+                      description: |-
+                        phase is a numeric fallback ordering hint. Lower phases are compiled earlier.
+                        Explicit dependencies still take precedence.
+                      format: int32
+                      type: integer
+                    requires:
+                      description: |-
+                        requires names groups that must remain available while this group shuts down.
+                        During shutdown this group is ordered before the groups it requires.
+                      items:
+                        type: string
+                      type: array
+                    target:
+                      description: target selects the resources affected by this group.
+                      properties:
+                        agentRefs:
+                          description: agentRefs selects NodePowerAgent fleets for
+                            AgentShutdown steps.
+                          items:
+                            description: ObjectNameReference references another cluster-scoped
+                              power.zalud.io object by name.
+                            properties:
+                              name:
+                                description: name is the referenced object's metadata.name.
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                        namespaceSelector:
+                          description: namespaceSelector selects namespaces for namespace-oriented
+                            steps.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        namespaces:
+                          description: namespaces selects namespaces for namespace-oriented
+                            steps.
+                          items:
+                            type: string
+                          type: array
+                        nodeSelector:
+                          description: nodeSelector selects Nodes for node-oriented
+                            steps.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        workloadRefs:
+                          description: workloadRefs selects specific workloads.
+                          items:
+                            description: WorkloadReference identifies a namespaced
+                              Kubernetes workload.
+                            properties:
+                              apiVersion:
+                                description: apiVersion is the workload apiVersion.
+                                minLength: 1
+                                type: string
+                              kind:
+                                description: kind is the workload kind.
+                                minLength: 1
+                                type: string
+                              name:
+                                description: name is the workload name.
+                                minLength: 1
+                                type: string
+                              namespace:
+                                description: namespace is the workload namespace.
+                                minLength: 1
+                                type: string
+                            required:
+                            - apiVersion
+                            - kind
+                            - name
+                            - namespace
+                            type: object
+                          type: array
+                        workloadSelector:
+                          description: workloadSelector selects workloads by labels
+                            within selected namespaces.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                    timeout:
+                      description: timeout limits how long the group may run.
+                      type: string
+                  required:
+                  - action
+                  - name
+                  type: object
+                type: array
+              managementClusterRef:
+                description: managementClusterRef references the owning PowerManagementCluster.
+                properties:
+                  name:
+                    description: name is the referenced object's metadata.name.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              mode:
+                default: DryRun
+                description: mode controls whether the flow only compiles/evaluates
+                  or may execute actions.
+                enum:
+                - DryRun
+                - Enforce
+                type: string
+              safety:
+                description: safety defines global safety gates for this flow.
+                properties:
+                  approvalAnnotation:
+                    description: approvalAnnotation is the annotation key accepted
+                      as manual approval.
+                    type: string
+                  maxEstimatedDuration:
+                    description: maxEstimatedDuration rejects compiled plans that
+                      exceed this budget.
+                    type: string
+                  requireManualApproval:
+                    default: true
+                    description: requireManualApproval requires an approval annotation
+                      before Enforce mode can execute.
+                    type: boolean
+                type: object
+              steps:
+                description: steps define a linear fallback plan for simple installs.
+                items:
+                  description: ShutdownStep defines one ordered flow action.
+                  properties:
+                    continueOnError:
+                      default: false
+                      description: continueOnError allows later steps to continue
+                        after this step fails.
+                      type: boolean
+                    description:
+                      description: description explains the operator-facing purpose
+                        of the step.
+                      type: string
+                    duration:
+                      description: duration is used by Wait steps.
+                      type: string
+                    id:
+                      description: id is unique within the flow.
+                      minLength: 1
+                      type: string
+                    params:
+                      additionalProperties:
+                        type: string
+                      description: params holds step-type-specific scalar parameters.
+                      type: object
+                    target:
+                      description: target selects nodes, namespaces, or workloads
+                        depending on step type.
+                      properties:
+                        agentRefs:
+                          description: agentRefs selects NodePowerAgent fleets for
+                            AgentShutdown steps.
+                          items:
+                            description: ObjectNameReference references another cluster-scoped
+                              power.zalud.io object by name.
+                            properties:
+                              name:
+                                description: name is the referenced object's metadata.name.
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                        namespaceSelector:
+                          description: namespaceSelector selects namespaces for namespace-oriented
+                            steps.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        namespaces:
+                          description: namespaces selects namespaces for namespace-oriented
+                            steps.
+                          items:
+                            type: string
+                          type: array
+                        nodeSelector:
+                          description: nodeSelector selects Nodes for node-oriented
+                            steps.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        workloadRefs:
+                          description: workloadRefs selects specific workloads.
+                          items:
+                            description: WorkloadReference identifies a namespaced
+                              Kubernetes workload.
+                            properties:
+                              apiVersion:
+                                description: apiVersion is the workload apiVersion.
+                                minLength: 1
+                                type: string
+                              kind:
+                                description: kind is the workload kind.
+                                minLength: 1
+                                type: string
+                              name:
+                                description: name is the workload name.
+                                minLength: 1
+                                type: string
+                              namespace:
+                                description: namespace is the workload namespace.
+                                minLength: 1
+                                type: string
+                            required:
+                            - apiVersion
+                            - kind
+                            - name
+                            - namespace
+                            type: object
+                          type: array
+                        workloadSelector:
+                          description: workloadSelector selects workloads by labels
+                            within selected namespaces.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                    timeout:
+                      description: timeout limits how long the step may run.
+                      type: string
+                    type:
+                      description: type selects the action implementation.
+                      enum:
+                      - Notify
+                      - Wait
+                      - Gate
+                      - CordonNodes
+                      - DrainNodes
+                      - ScaleWorkload
+                      - RunWorkflow
+                      - AgentShutdown
+                      type: string
+                  required:
+                  - id
+                  - type
+                  type: object
+                type: array
+              triggers:
+                description: triggers define when this flow becomes eligible.
+                items:
+                  description: ShutdownTrigger defines when a flow is eligible to
+                    run.
+                  properties:
+                    chargeBelowPercent:
+                      description: chargeBelowPercent is used by ChargeBelow triggers.
+                      format: int32
+                      maximum: 100
+                      minimum: 0
+                      type: integer
+                    for:
+                      description: for requires the trigger condition to hold for
+                        this duration.
+                      type: string
+                    powerDomains:
+                      description: powerDomains limits this trigger to named power
+                        domains.
+                      items:
+                        type: string
+                      type: array
+                    runtimeBelowSeconds:
+                      description: runtimeBelowSeconds is used by RuntimeBelow triggers.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    type:
+                      description: type is the trigger kind.
+                      enum:
+                      - OnBattery
+                      - LowBattery
+                      - RuntimeBelow
+                      - ChargeBelow
+                      - TelemetryStale
+                      type: string
+                    upsDeviceRefs:
+                      description: upsDeviceRefs limits this trigger to specific UPSDevice
+                        resources.
+                      items:
+                        description: ObjectNameReference references another cluster-scoped
+                          power.zalud.io object by name.
+                        properties:
+                          name:
+                            description: name is the referenced object's metadata.name.
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      type: array
+                  required:
+                  - type
+                  type: object
+                minItems: 1
+                type: array
+            required:
+            - triggers
+            type: object
+          status:
+            description: status defines the observed state of ShutdownFlow
+            properties:
+              compiledSteps:
+                description: compiledSteps is the controller-compiled view of the
+                  flow for pre-flight review.
+                items:
+                  description: CompiledShutdownStep is the status-visible compiled
+                    form of one flow step.
+                  properties:
+                    cumulativeDuration:
+                      description: cumulativeDuration is the expected elapsed time
+                        through this step.
+                      type: string
+                    id:
+                      description: id is the source step id.
+                      type: string
+                    index:
+                      description: index is the zero-based compiled order.
+                      format: int32
+                      type: integer
+                    targetSummary:
+                      description: targetSummary summarizes selected targets without
+                        storing bulky object lists.
+                      type: string
+                    type:
+                      description: type is the source step type.
+                      enum:
+                      - Notify
+                      - Wait
+                      - Gate
+                      - CordonNodes
+                      - DrainNodes
+                      - ScaleWorkload
+                      - RunWorkflow
+                      - AgentShutdown
+                      type: string
+                  required:
+                  - id
+                  - index
+                  - type
+                  type: object
+                type: array
+              compiledWaves:
+                description: compiledWaves is the dependency-graph execution plan
+                  grouped into ordered waves.
+                items:
+                  description: CompiledShutdownWave is the status-visible execution
+                    form of shutdown groups.
+                  properties:
+                    cumulativeDuration:
+                      description: cumulativeDuration is the expected elapsed time
+                        through this wave.
+                      type: string
+                    duration:
+                      description: duration is the maximum expected duration of any
+                        group in this wave.
+                      type: string
+                    groups:
+                      description: groups are the shutdown group names in this wave.
+                      items:
+                        type: string
+                      type: array
+                    index:
+                      description: index is the zero-based wave order.
+                      format: int32
+                      type: integer
+                    phase:
+                      description: phase is the phase hint shared by this wave, when
+                        one was present.
+                      format: int32
+                      type: integer
+                  required:
+                  - groups
+                  - index
+                  type: object
+                type: array
+              conditions:
+                description: conditions represent the current state of the ShutdownFlow
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              configHash:
+                description: configHash identifies the compiled plan.
+                type: string
+              estimatedDuration:
+                description: estimatedDuration is the cumulative expected duration
+                  of the compiled plan.
+                type: string
+              lastEvaluationTime:
+                description: lastEvaluationTime is the most recent policy evaluation.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: observedGeneration is the last generation reconciled
+                  by the controller.
+                format: int64
+                type: integer
+              phase:
+                description: phase summarizes the current flow state.
+                enum:
+                - Pending
+                - Compiled
+                - Blocked
+                - Running
+                - Aborted
+                - Completed
+                - Error
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

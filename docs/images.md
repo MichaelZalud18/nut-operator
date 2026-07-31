@@ -1,0 +1,45 @@
+# Image Strategy
+
+`nut-operator` does not default to a third-party NUT container image.
+
+The preferred release shape is project-owned OCI images built from pinned, verified inputs:
+
+- `nut-server`: `upsd` plus network-capable NUT drivers required by the selected `UPSDevice` resources.
+- `upsmon-agent`: unprivileged NUT client used by the `NodePowerAgent` DaemonSet.
+- `node-actuator`: small host-action process. Stub mode must run without host privileges; real host shutdown is a future explicitly approved boundary.
+- `operator`: controller-manager image built from this repository.
+
+## Rationale
+
+The NUT project publishes source releases and distribution packages, not a single upstream, security-supported container image. Community images are useful for local experiments, but many are designed around direct USB UPS access and document privileged container usage. This operator intentionally targets network-reachable UPS devices, so the production images should not need USB device mounts, host device access, or privileged mode.
+
+The operator validates `UPSDevice` drivers against a network-driver allowlist before rendering operands. The initial allowlist is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests.
+
+## Build Requirements
+
+Release images should include:
+
+- pinned NUT version and base image digest
+- checksum and signature verification for NUT source inputs, or pinned distro package provenance
+- OCI annotations such as `org.opencontainers.image.source`, `revision`, `version`, `licenses`, and `documentation`
+- non-root runtime users
+- read-only root filesystem compatibility
+- `RuntimeDefault` seccomp compatibility
+- dropped Linux capabilities by default
+- multi-arch builds for `linux/amd64` and `linux/arm64`
+- SBOM attestation
+- SLSA provenance attestation
+- Sigstore/cosign signatures
+- immutable digest references in deployment examples
+
+## Interim Development
+
+Examples use `registry.example.com/power/*` placeholders until release images exist. Local testing may use community NUT images only as development scaffolding; they are not the recommended production baseline for this project.
+
+## References
+
+- [NUT download information](https://networkupstools.org/historic/v2.8.5/download.html)
+- [OCI image annotations](https://specs.opencontainers.org/image-spec/annotations/)
+- [Docker SBOM attestations](https://docs.docker.com/build/metadata/attestations/sbom/)
+- [Docker provenance attestations](https://docs.docker.com/build/metadata/attestations/slsa-provenance/)
+- [Sigstore container signing](https://docs.sigstore.dev/cosign/signing/signing_with_containers/)

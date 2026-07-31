@@ -1,0 +1,88 @@
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: ShutdownFlow
+metadata:
+  name: orion-conservation
+spec:
+  managementClusterRef:
+    name: orion-production
+  mode: DryRun
+  triggers:
+    - type: OnBattery
+      powerDomains:
+        - orion-core
+      for: 2m
+    - type: RuntimeBelow
+      powerDomains:
+        - orion-core
+      runtimeBelowSeconds: 1200
+  groups:
+    - name: burst-capacity
+      description: Shed optional burst capacity first.
+      action: AgentShutdown
+      target:
+        agentRefs:
+          - name: orion-burst
+      before:
+        - application-workloads
+      phase: 0
+      timeout: 3m
+    - name: application-workloads
+      description: Scale ordinary applications before data and storage services.
+      action: ScaleWorkload
+      target:
+        namespaceSelector:
+          matchLabels:
+            power.example.com/shutdown-tier: application
+      before:
+        - data-workloads
+      phase: 10
+      timeout: 5m
+    - name: data-workloads
+      description: Quiesce databases after clients stop.
+      action: ScaleWorkload
+      target:
+        workloadSelector:
+          matchLabels:
+            power.example.com/shutdown-tier: data
+      before:
+        - storage-services
+      phase: 20
+      timeout: 10m
+    - name: storage-services
+      description: Flush storage after data workloads stop.
+      action: RunWorkflow
+      target:
+        namespaceSelector:
+          matchLabels:
+            power.example.com/shutdown-tier: storage
+      before:
+        - standard-nodes
+      phase: 30
+      timeout: 10m
+    - name: standard-nodes
+      description: Power down standard workers before the controller.
+      action: AgentShutdown
+      target:
+        agentRefs:
+          - name: orion-standard
+      before:
+        - controller-node
+      phase: 40
+      timeout: 5m
+    - name: controller-node
+      description: Shut down the controller group last for the power domain.
+      action: AgentShutdown
+      target:
+        agentRefs:
+          - name: orion-controller
+      phase: 90
+      timeout: 5m
+  concurrencyPolicy: Forbid
+  abortPolicy:
+    behavior: HaltAndSurface
+    notify: true
+  safety:
+    requireManualApproval: true
+    approvalAnnotation: power.zalud.io/approved-for-enforce
+    maxEstimatedDuration: 45m

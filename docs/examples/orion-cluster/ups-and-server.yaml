@@ -1,0 +1,100 @@
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerManagementCluster
+metadata:
+  name: orion-production
+spec:
+  operandNamespace:
+    name: power-system
+    create: true
+  storage:
+    mode: CNPG
+    cnpg:
+      clusterRef:
+        namespace: power-system
+        name: power-audit
+      database: power
+      schema: power
+  images:
+    nutServer:
+      repository: registry.example.com/power/nut-server
+      tag: 2.8.5
+      pullPolicy: IfNotPresent
+    upsmonAgent:
+      repository: registry.example.com/power/upsmon-agent
+      tag: 2.8.5
+      pullPolicy: IfNotPresent
+    actuator:
+      repository: registry.example.com/power/node-actuator
+      tag: v0.1.0
+      pullPolicy: IfNotPresent
+  security:
+    profile: Restricted
+    requireExplicitActuation: true
+    allowedActuatorNamespaces:
+      - power-system
+  observability:
+    serviceMonitor: true
+    kubernetesEvents: true
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  name: orion-core-ups
+  labels:
+    power.zalud.io/domain: orion-core
+spec:
+  displayName: Orion Core UPS
+  driver: snmp-ups
+  endpoint:
+    host: ups-orion-core.example.net
+    port: 161
+  credentialSecretRef:
+    namespace: power-system
+    name: orion-core-ups-snmp
+  driverOptions:
+    desc: orion-core-ups
+    pollfreq: "15"
+    snmp_version: v3
+  powerDomains:
+    - orion-core
+  thresholds:
+    minRuntimeSeconds: 900
+    minChargePercent: 30
+    onBatteryHoldoff: 2m
+    staleAfter: 45s
+  telemetry:
+    pollInterval: 15s
+    alertPollInterval: 5s
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  name: orion-core
+spec:
+  managementClusterRef:
+    name: orion-production
+  namespace: power-system
+  deviceSelector:
+    matchLabels:
+      power.zalud.io/domain: orion-core
+  replicas: 2
+  image:
+    repository: registry.example.com/power/nut-server
+    tag: 2.8.5
+    pullPolicy: IfNotPresent
+  placement:
+    nodeSelector:
+      power.example.com/controller: "true"
+  auth:
+    mode: OperatorManaged
+    perNodeUsers: true
+  tls:
+    mode: Required
+    serverCertificateRef:
+      namespace: power-system
+      name: orion-core-nut-server-tls
+    verifyClientCertificates: true
+  service:
+    type: ClusterIP
+    port: 3493
