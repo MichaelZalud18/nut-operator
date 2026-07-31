@@ -24,7 +24,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -90,6 +93,82 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(resource.Status.Storage.Ready).To(BeTrue())
+		})
+	})
+
+	Context("When evaluating CNPG storage", func() {
+		It("reports a healthy referenced CNPG cluster as ready", func() {
+			scheme := runtime.NewScheme()
+			scheme.AddKnownTypeWithName(cnpgClusterGVK, &unstructured.Unstructured{})
+			cnpgCluster := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "postgresql.cnpg.io/v1",
+				"kind":       "Cluster",
+				"metadata": map[string]any{
+					"namespace": "power-data",
+					"name":      "cluster-power-audit",
+				},
+				"spec": map[string]any{
+					"instances": int64(3),
+				},
+				"status": map[string]any{
+					"phase":          "Cluster in healthy state",
+					"readyInstances": int64(3),
+				},
+			}}
+			reconciler := &PowerManagementClusterReconciler{
+				Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cnpgCluster).Build(),
+				Scheme: scheme,
+			}
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					Storage: powerv1alpha1.PowerStorageSpec{
+						Mode: powerv1alpha1.PowerStorageCNPG,
+						CNPG: &powerv1alpha1.CNPGStorageSpec{
+							ClusterRef: powerv1alpha1.NamespacedNameReference{
+								Namespace: "power-data",
+								Name:      "cluster-power-audit",
+							},
+						},
+					},
+				},
+			}
+
+			status, ready, reason, message := reconciler.evaluateStorage(context.Background(), cluster, accepted("contract accepted"))
+
+			Expect(ready).To(BeTrue())
+			Expect(reason).To(Equal("CNPGClusterReady"))
+			Expect(status.Ready).To(BeTrue())
+			Expect(status.Mode).To(Equal(powerv1alpha1.PowerStorageCNPG))
+			Expect(message).To(ContainSubstring("3/3 ready instances"))
+		})
+
+		It("reports a missing referenced CNPG cluster as not ready", func() {
+			scheme := runtime.NewScheme()
+			scheme.AddKnownTypeWithName(cnpgClusterGVK, &unstructured.Unstructured{})
+			reconciler := &PowerManagementClusterReconciler{
+				Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+				Scheme: scheme,
+			}
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					Storage: powerv1alpha1.PowerStorageSpec{
+						Mode: powerv1alpha1.PowerStorageCNPG,
+						CNPG: &powerv1alpha1.CNPGStorageSpec{
+							ClusterRef: powerv1alpha1.NamespacedNameReference{
+								Namespace: "power-data",
+								Name:      "cluster-missing",
+							},
+						},
+					},
+				},
+			}
+
+			status, ready, reason, message := reconciler.evaluateStorage(context.Background(), cluster, accepted("contract accepted"))
+
+			Expect(ready).To(BeFalse())
+			Expect(reason).To(Equal("CNPGClusterNotFound"))
+			Expect(status.Ready).To(BeFalse())
+			Expect(message).To(ContainSubstring("was not found"))
 		})
 	})
 })
