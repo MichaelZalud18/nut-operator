@@ -23,10 +23,21 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
+	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
 func compileShutdownFlow(obj *powerv1alpha1.ShutdownFlow) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string) {
 	plan, _, err := planner.Compile(plannerInputsFromShutdownFlow(obj), planner.TelemetryInputs{})
+	if err != nil {
+		return nil, nil, nil, ""
+	}
+
+	return apiCompiledSteps(plan.Steps), apiCompiledWaves(plan.Waves), apiDuration(plan.EstimatedDuration), plan.Hash
+}
+
+func compileShutdownFlowWithResolvedInputs(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string) {
+	inputs := resolver.AttachResolvedInputHash(plannerInputsFromShutdownFlow(obj), bundle)
+	plan, _, err := planner.Compile(inputs, planner.TelemetryInputs{})
 	if err != nil {
 		return nil, nil, nil, ""
 	}

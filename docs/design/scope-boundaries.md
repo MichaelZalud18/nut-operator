@@ -53,8 +53,9 @@ driver is unsupported; it is not a candidate for a bypass path.
 What varies by device is what returns over that path, not whether the path is used. Device
 variation is capability-profile content (SB-9) and resolves in three tiers:
 
-1. **Transport** — does a network driver exist for this device. Binary admission gate on
-   `UPSDevice`, partly enforced today by the driver allowlist.
+1. **Transport** — does a reviewed network driver or upstream NUT relay path exist for this
+   device. Binary admission gate on `UPSDevice`, partly enforced today by the driver allowlist
+   and the `spec.upstreamNUT` contract.
 2. **Telemetry richness** — which NUT variables the driver actually reports. Two devices both
    speaking `snmp-ups` may differ by an order of magnitude in exposed variables.
 3. **Actuation** — outlet control, delayed start, safe-shutdown handshake. See SB-2c.

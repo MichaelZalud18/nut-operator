@@ -98,6 +98,10 @@ type NUTServerStatus struct {
 	// +optional
 	ServiceEndpoints []ServiceEndpointStatus `json:"serviceEndpoints,omitempty"`
 
+	// upstreamNUT reports selected upstream NUT devices and their last TCP probe result.
+	// +optional
+	UpstreamNUT []NUTUpstreamStatus `json:"upstreamNUT,omitempty"`
+
 	// configHash identifies the rendered NUT configuration.
 	// +optional
 	ConfigHash string `json:"configHash,omitempty"`
@@ -131,6 +135,49 @@ type NUTServiceSpec struct {
 	// annotations are copied to the generated Service.
 	// +optional
 	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// NUTUpstreamStatus reports the rendered relay target for one upstream NUT device.
+type NUTUpstreamStatus struct {
+	// upsDevice is the selected UPSDevice resource name.
+	// +optional
+	UPSDevice string `json:"upsDevice,omitempty"`
+
+	// nutName is the local NUT name exposed by this NUTServer.
+	// +optional
+	NUTName string `json:"nutName,omitempty"`
+
+	// host is the upstream upsd host.
+	// +optional
+	Host string `json:"host,omitempty"`
+
+	// port is the upstream upsd TCP port.
+	// +optional
+	Port int32 `json:"port,omitempty"`
+
+	// upsName is the upstream UPS name on the upstream upsd server.
+	// +optional
+	UPSName string `json:"upsName,omitempty"`
+
+	// authMode is the authconf mode rendered for dummy-ups repeater mode.
+	// +optional
+	AuthMode UPSUpstreamNUTAuthMode `json:"authMode,omitempty"`
+
+	// strictStart reports whether upstream availability is fatal at driver startup.
+	// +optional
+	StrictStart bool `json:"strictStart,omitempty"`
+
+	// reachable is the result of the most recent TCP reachability probe.
+	// +optional
+	Reachable *bool `json:"reachable,omitempty"`
+
+	// lastProbeTime is when reachable was last observed.
+	// +optional
+	LastProbeTime *metav1.Time `json:"lastProbeTime,omitempty"`
+
+	// message summarizes the most recent upstream probe.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // NUTAuthMode configures NUT credential rendering.

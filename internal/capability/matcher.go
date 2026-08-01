@@ -45,12 +45,12 @@ func Match(device Device, profiles []Profile) (MatchResult, []Diagnostic, error)
 		return MatchResult{}, diagnostics, ErrRejected
 	}
 
-	if device.Model == "" {
+	if device.Model == "" && device.DriverFamily == "" {
 		diagnostics = append(diagnostics, Diagnostic{
 			Severity: DiagnosticWarning,
 			Reason:   "ProviderModelMissing",
 			Subject:  device.ID,
-			Message:  fmt.Sprintf("device %q has no model key; matching falls back to the universal floor", device.ID),
+			Message:  fmt.Sprintf("device %q has no model or driver-family key; matching falls back to the universal floor", device.ID),
 		})
 	}
 
@@ -164,7 +164,7 @@ func matchTier(device Device, selector ProfileSelector) (MatchTier, int, bool) {
 			return MatchTierModelGlob, 2, true
 		}
 	}
-	if device.Model != "" && selector.DriverFamily != "" && selector.DriverFamily == device.DriverFamily {
+	if device.DriverFamily != "" && selector.DriverFamily != "" && selector.DriverFamily == device.DriverFamily {
 		return MatchTierDriverFamily, 3, true
 	}
 	if selector.Universal {

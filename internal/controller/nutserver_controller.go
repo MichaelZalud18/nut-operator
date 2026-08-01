@@ -35,7 +35,8 @@ import (
 // NUTServerReconciler reconciles a NUTServer object
 type NUTServerReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme         *runtime.Scheme
+	UpstreamProber upstreamNUTProber
 }
 
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers,verbs=get;list;watch;create;update;patch;delete
@@ -71,6 +72,7 @@ func (r *NUTServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			server.Status.SelectedDevices = nil
 			server.Status.ReadyReplicas = 0
 			server.Status.ServiceEndpoints = nil
+			server.Status.UpstreamNUT = nil
 			server.Status.ConfigHash = ""
 			server.Status.ManagedResources = nil
 			setAcceptedCondition(&server.Status.Conditions, server.Generation, result)
@@ -87,6 +89,7 @@ func (r *NUTServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			server.Status.SelectedDevices = rendered.SelectedDevices
 			server.Status.ReadyReplicas = rendered.ReadyReplicas
 			server.Status.ServiceEndpoints = rendered.ServiceEndpoints
+			server.Status.UpstreamNUT = rendered.UpstreamNUT
 			server.Status.ConfigHash = rendered.ConfigHash
 			server.Status.ManagedResources = rendered.ManagedResources
 			setAcceptedCondition(&server.Status.Conditions, server.Generation, result)
@@ -98,14 +101,24 @@ func (r *NUTServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				reason = "Ready"
 				message = "NUT server operands are ready"
 			}
+			if upstreamStatusDegraded(rendered.UpstreamNUT) {
+				ready = false
+				server.Status.Phase = powerv1alpha1.NUTServerPhaseDegraded
+				reason = "UpstreamNUTUnavailable"
+				message = "one or more upstream NUT endpoints failed TCP reachability probing"
+			}
+			if len(rendered.UpstreamNUT) > 0 {
+				reconcileResult = ctrl.Result{RequeueAfter: time.Minute}
+			}
 			setReadyCondition(&server.Status.Conditions, server.Generation, ready, reason, message)
-			setDegradedCondition(&server.Status.Conditions, server.Generation, false, "AsExpected", "NUT server operands rendered")
+			setDegradedCondition(&server.Status.Conditions, server.Generation, upstreamStatusDegraded(rendered.UpstreamNUT), reason, message)
 		}
 	} else {
 		server.Status.Phase = powerv1alpha1.NUTServerPhaseError
 		server.Status.SelectedDevices = nil
 		server.Status.ReadyReplicas = 0
 		server.Status.ServiceEndpoints = nil
+		server.Status.UpstreamNUT = nil
 		server.Status.ConfigHash = ""
 		server.Status.ManagedResources = nil
 		setAcceptedCondition(&server.Status.Conditions, server.Generation, result)
@@ -125,6 +138,15 @@ func (r *NUTServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	return reconcileResult, nil
+}
+
+func upstreamStatusDegraded(statuses []powerv1alpha1.NUTUpstreamStatus) bool {
+	for _, status := range statuses {
+		if status.Reachable != nil && !*status.Reachable {
+			return true
+		}
+	}
+	return false
 }
 
 // SetupWithManager sets up the controller with the Manager.

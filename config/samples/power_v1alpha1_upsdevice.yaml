@@ -30,3 +30,69 @@ spec:
   telemetry:
     pollInterval: 15s
     alertPollInterval: 5s
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+    power.zalud.io/domain: lab-desktop
+    power.zalud.io/vendor: ubiquiti
+  name: unifi-ups-tower
+spec:
+  displayName: UniFi UPS Tower
+  identity:
+    model: TOWER_1000VA_120V
+  upstreamNUT:
+    host: ups-tower.example.net
+    port: 3493
+    upsName: ups
+    auth:
+      mode: None
+    strictStart: true
+  driverOptions:
+    desc: unifi-ups-tower
+  powerDomains:
+    - lab-desktop
+  thresholds:
+    minRuntimeSeconds: 600
+    minChargePercent: 30
+    onBatteryHoldoff: 2m
+    staleAfter: 45s
+  telemetry:
+    pollInterval: 15s
+    alertPollInterval: 5s
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+    power.zalud.io/domain: rack-a
+    power.zalud.io/vendor: ubiquiti
+  name: unifi-ups-2u
+spec:
+  displayName: UniFi UPS 2U
+  identity:
+    model: 2U_1440VA_120V
+  upstreamNUT:
+    host: ups-2u.example.net
+    port: 3493
+    upsName: ups
+    auth:
+      mode: None
+    strictStart: true
+  driverOptions:
+    desc: unifi-ups-2u
+  powerDomains:
+    - rack-a
+  thresholds:
+    minRuntimeSeconds: 900
+    minChargePercent: 30
+    onBatteryHoldoff: 2m
+    staleAfter: 45s
+  telemetry:
+    pollInterval: 15s
+    alertPollInterval: 5s

@@ -85,6 +85,26 @@ type ShutdownFlowStatus struct {
 	// +optional
 	ConfigHash string `json:"configHash,omitempty"`
 
+	// resolvedInputHash identifies the declarative inventory and UPS capability inputs used by the compiled plan.
+	// +optional
+	ResolvedInputHash string `json:"resolvedInputHash,omitempty"`
+
+	// topologyHash identifies the compiled declarative power and communication topology.
+	// +optional
+	TopologyHash string `json:"topologyHash,omitempty"`
+
+	// inventoryEntityCount records how many declarative inventory entities fed this plan.
+	// +optional
+	InventoryEntityCount int32 `json:"inventoryEntityCount,omitempty"`
+
+	// inventoryEdgeCount records how many declarative inventory edges fed this plan.
+	// +optional
+	InventoryEdgeCount int32 `json:"inventoryEdgeCount,omitempty"`
+
+	// capabilityMatchCount records how many UPS devices received capability profile matches.
+	// +optional
+	CapabilityMatchCount int32 `json:"capabilityMatchCount,omitempty"`
+
 	// lastEvaluationTime is the most recent policy evaluation.
 	// +optional
 	LastEvaluationTime *metav1.Time `json:"lastEvaluationTime,omitempty"`

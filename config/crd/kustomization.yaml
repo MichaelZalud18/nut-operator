@@ -7,6 +7,10 @@ resources:
 - bases/power.zalud.io_nutservers.yaml
 - bases/power.zalud.io_nodepoweragents.yaml
 - bases/power.zalud.io_shutdownflows.yaml
+- bases/power.zalud.io_powerinfrastructures.yaml
+- bases/power.zalud.io_upscapabilityprofiles.yaml
+- bases/power.zalud.io_powerinventoryedges.yaml
+- bases/power.zalud.io_powerinventorynodes.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

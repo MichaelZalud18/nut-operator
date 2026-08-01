@@ -107,8 +107,9 @@ hashing change is required.
 membership is computed. `ShutdownFlow` triggers continue to reference domains by name, so the
 existing CRD trigger surface is unchanged.
 
-Repository note: the current declared power-domain field on `UPSDevice` becomes the domain **label**,
-not a membership list. Existing samples need review for this distinction.
+Repository note: the declared power-domain field on `UPSDevice` is the domain **label**, not a
+membership list. The inventory graph computes membership from `feeds` edges; capability profiles
+remain product/SKU records and never carry membership.
 
 **IN-11 · Dual-domain membership is a natural consequence.** A node reachable from two `UPSDevice`
 roots belongs to both domains. No special case, no override syntax. This is the data PL-16 already

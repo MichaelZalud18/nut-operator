@@ -22,6 +22,18 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the nut-operator itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- powerinventorynode_admin_role.yaml
+- powerinventorynode_editor_role.yaml
+- powerinventorynode_viewer_role.yaml
+- powerinventoryedge_admin_role.yaml
+- powerinventoryedge_editor_role.yaml
+- powerinventoryedge_viewer_role.yaml
+- upscapabilityprofile_admin_role.yaml
+- upscapabilityprofile_editor_role.yaml
+- upscapabilityprofile_viewer_role.yaml
+- powerinfrastructure_admin_role.yaml
+- powerinfrastructure_editor_role.yaml
+- powerinfrastructure_viewer_role.yaml
 - shutdownflow_admin_role.yaml
 - shutdownflow_editor_role.yaml
 - shutdownflow_viewer_role.yaml

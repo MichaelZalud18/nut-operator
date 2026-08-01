@@ -1,0 +1,33 @@
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: rack-a-ups-feeds-worker-a
+spec:
+  from:
+    kind: UPSDevice
+    name: rack-a-ups
+  to:
+    kind: Node
+    name: worker-a
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: rack-a-switch-carries-worker-a
+spec:
+  from:
+    kind: PowerInfrastructure
+    name: rack-a-switch
+  to:
+    kind: Node
+    name: worker-a
+  relation: Carries
+  description: Rack switch carries the control path for the worker node.

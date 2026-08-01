@@ -1432,6 +1432,55 @@ spec:
                   - name
                   type: object
                 type: array
+              upstreamNUT:
+                description: upstreamNUT reports selected upstream NUT devices and
+                  their last TCP probe result.
+                items:
+                  description: NUTUpstreamStatus reports the rendered relay target
+                    for one upstream NUT device.
+                  properties:
+                    authMode:
+                      description: authMode is the authconf mode rendered for dummy-ups
+                        repeater mode.
+                      enum:
+                      - None
+                      - Default
+                      - Secret
+                      type: string
+                    host:
+                      description: host is the upstream upsd host.
+                      type: string
+                    lastProbeTime:
+                      description: lastProbeTime is when reachable was last observed.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message summarizes the most recent upstream probe.
+                      type: string
+                    nutName:
+                      description: nutName is the local NUT name exposed by this NUTServer.
+                      type: string
+                    port:
+                      description: port is the upstream upsd TCP port.
+                      format: int32
+                      type: integer
+                    reachable:
+                      description: reachable is the result of the most recent TCP
+                        reachability probe.
+                      type: boolean
+                    strictStart:
+                      description: strictStart reports whether upstream availability
+                        is fatal at driver startup.
+                      type: boolean
+                    upsDevice:
+                      description: upsDevice is the selected UPSDevice resource name.
+                      type: string
+                    upsName:
+                      description: upsName is the upstream UPS name on the upstream
+                        upsd server.
+                      type: string
+                  type: object
+                type: array
             type: object
         required:
         - spec

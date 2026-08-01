@@ -13,6 +13,11 @@ The preferred release shape is project-owned OCI images built from pinned, verif
 
 The NUT project publishes source releases and distribution packages, not a single upstream, security-supported container image. Community images are useful for local experiments, but many are designed around direct USB UPS access and document privileged container usage. This operator intentionally targets network-reachable UPS devices, so the production images should not need USB device mounts, host device access, or privileged mode.
 
+The current operand Dockerfiles package real Network UPS Tools binaries from Alpine packages:
+
+- `nut-server` installs `nut`, including `upsd`, `upsdrvctl`, `upsc`, and network-capable drivers such as `dummy-ups`.
+- `upsmon-agent` installs `nut`, including `upsmon` and `upsc`.
+
 The operator validates `UPSDevice` drivers against a network-driver allowlist before rendering operands. The initial allowlist is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests.
 
 ## Build Requirements
@@ -61,6 +66,12 @@ not the recommended production baseline for this project.
 Before production use, replace mutable tags in deployment examples with the
 immutable digest returned by the image workflow and add keyless Sigstore signing
 as a release gate.
+
+Local image smoke tests verify the expected NUT tooling is present:
+
+```sh
+make docker-smoke-operands
+```
 
 ## References
 

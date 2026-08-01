@@ -104,7 +104,7 @@ func TestMatchFallsBackToUniversalFloorWithWarning(t *testing.T) {
 	}
 }
 
-func TestMatchMissingModelUsesUniversalFloor(t *testing.T) {
+func TestMatchMissingModelCanUseDriverFamilyProfile(t *testing.T) {
 	device := Device{ID: "ups-a", DriverFamily: "snmp-ups"}
 	profiles := []Profile{
 		profile("driver-family", "1.0.0", ProfileSourceCRD, ProfileSelector{DriverFamily: "snmp-ups"}),
@@ -115,11 +115,14 @@ func TestMatchMissingModelUsesUniversalFloor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected match to succeed, got %v with diagnostics %#v", err, diagnostics)
 	}
-	if result.ProfileID != "universal" {
-		t.Fatalf("expected missing model to force universal floor, got %#v", result)
+	if result.ProfileID != "driver-family" {
+		t.Fatalf("expected missing model to use driver-family profile, got %#v", result)
 	}
-	if !hasDiagnosticReason(diagnostics, "ProviderModelMissing") {
-		t.Fatalf("expected ProviderModelMissing warning, got %#v", diagnostics)
+	if result.Tier != MatchTierDriverFamily {
+		t.Fatalf("expected driver-family tier, got %q", result.Tier)
+	}
+	if result.Fallback {
+		t.Fatalf("expected driver-family match not to be marked as fallback, got %#v", result)
 	}
 }
 

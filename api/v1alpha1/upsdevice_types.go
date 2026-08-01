@@ -27,16 +27,28 @@ type UPSDeviceSpec struct {
 	// +optional
 	DisplayName string `json:"displayName,omitempty"`
 
+	// identity declares stable capability matching keys when they are known from
+	// inventory, a trusted probe, or a vendor-reported NUT model string.
+	// +optional
+	Identity UPSDeviceIdentitySpec `json:"identity,omitempty"`
+
 	// driver is the Network UPS Tools driver name for a network-capable UPS driver,
 	// such as snmp-ups, netxml-ups, powerman-pdu, apcupsd-ups, or dummy-ups for
-	// tests. Local USB and serial drivers are intentionally unsupported by this API.
-	// +kubebuilder:validation:MinLength=1
-	Driver string `json:"driver"`
+	// tests. It is required unless upstreamNUT is set. Local USB and serial drivers
+	// are intentionally unsupported by this API.
+	// +optional
+	Driver string `json:"driver,omitempty"`
 
 	// endpoint describes the network endpoint reached by the NUT driver. It is not
-	// a USB, serial, or host device path.
+	// a USB, serial, or host device path. Use upstreamNUT instead for devices that
+	// already expose their own NUT data server.
 	// +optional
 	Endpoint *UPSEndpointSpec `json:"endpoint,omitempty"`
+
+	// upstreamNUT describes a UPS that already exposes a network NUT server. The
+	// generated NUTServer relays it through dummy-ups repeater mode.
+	// +optional
+	UpstreamNUT *UPSUpstreamNUTSpec `json:"upstreamNUT,omitempty"`
 
 	// credentialSecretRef points at driver credentials, such as SNMP community or SNMPv3 auth material.
 	// +optional
@@ -57,6 +69,17 @@ type UPSDeviceSpec struct {
 	// telemetry controls device polling and stale-data behavior.
 	// +optional
 	Telemetry UPSTelemetrySpec `json:"telemetry,omitempty"`
+}
+
+// UPSDeviceIdentitySpec declares capability matching keys for one UPS.
+type UPSDeviceIdentitySpec struct {
+	// model is the provider-reported NUT ups.model value or trusted inventory equivalent.
+	// +optional
+	Model string `json:"model,omitempty"`
+
+	// firmware narrows matching to a specific provider-reported firmware string.
+	// +optional
+	Firmware string `json:"firmware,omitempty"`
 }
 
 // UPSDeviceStatus defines the observed state of UPSDevice.
@@ -115,6 +138,64 @@ type UPSEndpointSpec struct {
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	Port *int32 `json:"port,omitempty"`
+}
+
+// UPSUpstreamNUTSpec describes a remotely served NUT UPS to relay.
+type UPSUpstreamNUTSpec struct {
+	// host is the DNS name or IP address of the upstream upsd server.
+	// +kubebuilder:validation:MinLength=1
+	Host string `json:"host"`
+
+	// port is the upstream upsd TCP port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=3493
+	// +optional
+	Port *int32 `json:"port,omitempty"`
+
+	// upsName is the upstream UPS name served by the upstream upsd server.
+	// +kubebuilder:validation:MinLength=1
+	UPSName string `json:"upsName"`
+
+	// auth configures how dummy-ups repeater mode discovers authentication and
+	// trust material for the upstream NUT server.
+	// +optional
+	Auth UPSUpstreamNUTAuthSpec `json:"auth,omitempty"`
+
+	// strictStart preserves dummy-ups repeater mode's strict startup behavior.
+	// When false, startup continues even if the upstream server is unavailable.
+	// +kubebuilder:default=true
+	// +optional
+	StrictStart *bool `json:"strictStart,omitempty"`
+}
+
+// UPSUpstreamNUTAuthMode selects how upstream NUT auth material is supplied.
+// +kubebuilder:validation:Enum=None;Default;Secret
+type UPSUpstreamNUTAuthMode string
+
+const (
+	// UPSUpstreamNUTAuthNone disables upstream authconf parsing.
+	UPSUpstreamNUTAuthNone UPSUpstreamNUTAuthMode = "None"
+
+	// UPSUpstreamNUTAuthDefault asks NUT to use its default authconf discovery.
+	UPSUpstreamNUTAuthDefault UPSUpstreamNUTAuthMode = "Default"
+
+	// UPSUpstreamNUTAuthSecret mounts an authconf file from a Kubernetes Secret.
+	UPSUpstreamNUTAuthSecret UPSUpstreamNUTAuthMode = "Secret"
+)
+
+// UPSUpstreamNUTAuthSpec configures upstream NUT authentication material.
+type UPSUpstreamNUTAuthSpec struct {
+	// mode selects the upstream authconf source. The default disables authconf
+	// parsing so unauthenticated appliances do not depend on image defaults.
+	// +kubebuilder:default=None
+	// +optional
+	Mode UPSUpstreamNUTAuthMode `json:"mode,omitempty"`
+
+	// secretKeyRef points at a Secret key containing a complete nutauth.conf file.
+	// The Secret must be in the rendered NUTServer operand namespace.
+	// +optional
+	SecretKeyRef *SecretKeyReference `json:"secretKeyRef,omitempty"`
 }
 
 // UPSThresholdsSpec defines policy-relevant safety thresholds.

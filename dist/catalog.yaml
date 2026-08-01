@@ -1,0 +1,115 @@
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSCapabilityProfile
+metadata:
+  labels:
+    app.kubernetes.io/component: capability-catalog
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: nut-operator
+    power.zalud.io/catalog: bundled
+    power.zalud.io/vendor: nut
+  name: nut-bundled-universal-floor
+spec:
+  selector:
+    universal: true
+  telemetry:
+    variables:
+    - ups.status
+  version: 0.1.0
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSCapabilityProfile
+metadata:
+  labels:
+    app.kubernetes.io/component: capability-catalog
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: nut-operator
+    power.zalud.io/catalog: bundled
+    power.zalud.io/vendor: ubiquiti
+  name: ubiquiti-unifi-ups-2u
+spec:
+  quirks:
+  - built-in-nut-server
+  - snmp-not-supported-by-ups
+  - firmware-before-1.4.18-had-nut-protocol-response-bugs
+  - instant-commands-not-confirmed
+  - reports-battery.low-instead-of-battery.charge.low
+  - credentialed-upsc-reads-may-require-client-config
+  selector:
+    modelGlob: 2U_*VA_*V
+  telemetry:
+    variables:
+    - battery.charge
+    - battery.low
+    - battery.runtime
+    - battery.voltage
+    - input.frequency
+    - input.transfer.high
+    - input.transfer.low
+    - input.voltage
+    - input.voltage.nominal
+    - output.current
+    - output.frequency
+    - output.power
+    - output.power.nominal
+    - output.voltage
+    - ups.id
+    - ups.load
+    - ups.mfr
+    - ups.model
+    - ups.serial
+    - ups.status
+    - ups.test.date
+    - ups.test.interval
+    - ups.test.result
+    - ups.type
+  version: 0.1.0
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSCapabilityProfile
+metadata:
+  labels:
+    app.kubernetes.io/component: capability-catalog
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: nut-operator
+    power.zalud.io/catalog: bundled
+    power.zalud.io/vendor: ubiquiti
+  name: ubiquiti-unifi-ups-tower
+spec:
+  quirks:
+  - built-in-nut-server
+  - snmp-not-supported-by-ups
+  - firmware-before-1.4.18-had-nut-protocol-response-bugs
+  - instant-commands-not-confirmed
+  - reports-battery.low-instead-of-battery.charge.low
+  - credentialed-upsc-reads-may-require-client-config
+  - tower-output-power-and-current-may-be-firmware-or-load-dependent
+  selector:
+    modelGlob: TOWER_*VA_*V
+  telemetry:
+    variables:
+    - battery.charge
+    - battery.low
+    - battery.runtime
+    - battery.voltage
+    - input.frequency
+    - input.transfer.high
+    - input.transfer.low
+    - input.voltage
+    - input.voltage.nominal
+    - output.current
+    - output.frequency
+    - output.power
+    - output.power.nominal
+    - output.voltage
+    - ups.id
+    - ups.load
+    - ups.mfr
+    - ups.model
+    - ups.serial
+    - ups.status
+    - ups.test.date
+    - ups.test.interval
+    - ups.test.result
+    - ups.type
+    - ups.temperature
+  version: 0.1.0

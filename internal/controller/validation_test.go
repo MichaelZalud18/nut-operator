@@ -76,6 +76,108 @@ func TestValidateUPSDeviceRejectsUnknownDriverOutsideNetworkAllowlist(t *testing
 	}
 }
 
+func TestValidateUPSDeviceRejectsFirmwareIdentityWithoutModel(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			Driver: "snmp-ups",
+			Endpoint: &powerv1alpha1.UPSEndpointSpec{
+				Host: "ups-rack-a.example.net",
+			},
+			Identity: powerv1alpha1.UPSDeviceIdentitySpec{
+				Firmware: "1.0.0",
+			},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if result.accepted {
+		t.Fatal("expected firmware identity without model to be rejected")
+	}
+	if result.reason != "IdentityFirmwareRequiresModel" {
+		t.Fatalf("expected IdentityFirmwareRequiresModel, got %q", result.reason)
+	}
+}
+
+func TestValidateUPSDeviceAcceptsUpstreamNUTWithoutDriver(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			UpstreamNUT: &powerv1alpha1.UPSUpstreamNUTSpec{
+				Host:    "ups-tower.example.net",
+				UPSName: "ups",
+			},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if !result.accepted {
+		t.Fatalf("expected upstream NUT UPSDevice to be accepted, got %s: %s", result.reason, result.message)
+	}
+}
+
+func TestValidateUPSDeviceRejectsUpstreamNUTDriverConflict(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			Driver: "snmp-ups",
+			UpstreamNUT: &powerv1alpha1.UPSUpstreamNUTSpec{
+				Host:    "ups-tower.example.net",
+				UPSName: "ups",
+			},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if result.accepted {
+		t.Fatal("expected upstream NUT driver conflict to be rejected")
+	}
+	if result.reason != "UpstreamNUTDriverConflict" {
+		t.Fatalf("expected UpstreamNUTDriverConflict, got %q", result.reason)
+	}
+}
+
+func TestValidateUPSDeviceRejectsReservedUpstreamNUTDriverOption(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			UpstreamNUT: &powerv1alpha1.UPSUpstreamNUTSpec{
+				Host:    "ups-tower.example.net",
+				UPSName: "ups",
+			},
+			DriverOptions: map[string]string{
+				"authconf": "default",
+			},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if result.accepted {
+		t.Fatal("expected reserved upstream NUT driver option to be rejected")
+	}
+	if result.reason != "UpstreamNUTReservedDriverOption" {
+		t.Fatalf("expected UpstreamNUTReservedDriverOption, got %q", result.reason)
+	}
+}
+
+func TestValidateUPSDeviceRejectsUpstreamNUTSecretAuthWithoutSecret(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			UpstreamNUT: &powerv1alpha1.UPSUpstreamNUTSpec{
+				Host:    "ups-tower.example.net",
+				UPSName: "ups",
+				Auth: powerv1alpha1.UPSUpstreamNUTAuthSpec{
+					Mode: powerv1alpha1.UPSUpstreamNUTAuthSecret,
+				},
+			},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if result.accepted {
+		t.Fatal("expected Secret auth without secretKeyRef to be rejected")
+	}
+	if result.reason != "UpstreamNUTAuthSecretRequired" {
+		t.Fatalf("expected UpstreamNUTAuthSecretRequired, got %q", result.reason)
+	}
+}
+
 func TestValidateShutdownFlowRejectsUnknownGroupDependency(t *testing.T) {
 	flow := shutdownFlowWithGroups([]powerv1alpha1.ShutdownGroup{
 		{
@@ -154,6 +256,116 @@ func TestCompileShutdownGroupsAllowsIndependentConcurrentWave(t *testing.T) {
 	}
 	if configHash == "" {
 		t.Fatal("expected compiled flow config hash to be set")
+	}
+}
+
+func TestValidatePowerInventoryNodeRequiresNodeName(t *testing.T) {
+	result := validatePowerInventoryNode(&powerv1alpha1.PowerInventoryNode{})
+	if result.accepted {
+		t.Fatal("expected inventory node without nodeName to be rejected")
+	}
+	if result.reason != "NodeNameRequired" {
+		t.Fatalf("expected NodeNameRequired, got %q", result.reason)
+	}
+}
+
+func TestValidatePowerInventoryEdgeRequiresFeedInput(t *testing.T) {
+	edge := &powerv1alpha1.PowerInventoryEdge{
+		Spec: powerv1alpha1.PowerInventoryEdgeSpec{
+			From: powerv1alpha1.PowerInventoryEntityReference{
+				Kind: powerv1alpha1.PowerInventoryEntityUPSDevice,
+				Name: "ups-a",
+			},
+			To: powerv1alpha1.PowerInventoryEntityReference{
+				Kind: powerv1alpha1.PowerInventoryEntityNode,
+				Name: "node-a",
+			},
+			Relation: powerv1alpha1.PowerInventoryEdgeFeeds,
+		},
+	}
+
+	result := validatePowerInventoryEdge(edge)
+	if result.accepted {
+		t.Fatal("expected feeds edge without input to be rejected")
+	}
+	if result.reason != "FeedInputRequired" {
+		t.Fatalf("expected FeedInputRequired, got %q", result.reason)
+	}
+}
+
+func TestValidateUPSCapabilityProfileRejectsAmbiguousSelector(t *testing.T) {
+	profile := &powerv1alpha1.UPSCapabilityProfile{
+		Spec: powerv1alpha1.UPSCapabilityProfileSpec{
+			Version: "1.0.0",
+			Selector: powerv1alpha1.UPSCapabilityProfileSelector{
+				Model:     "Vendor Model",
+				ModelGlob: "Vendor *",
+			},
+		},
+	}
+
+	result := validateUPSCapabilityProfile(profile)
+	if result.accepted {
+		t.Fatal("expected ambiguous profile selector to be rejected")
+	}
+	if result.reason != "AmbiguousProfileSelector" {
+		t.Fatalf("expected AmbiguousProfileSelector, got %q", result.reason)
+	}
+}
+
+func TestValidateUPSCapabilityProfileRejectsMultipleMatchTiers(t *testing.T) {
+	profile := &powerv1alpha1.UPSCapabilityProfile{
+		Spec: powerv1alpha1.UPSCapabilityProfileSpec{
+			Version: "1.0.0",
+			Selector: powerv1alpha1.UPSCapabilityProfileSelector{
+				Model:        "Vendor Model",
+				DriverFamily: "snmp-ups",
+			},
+		},
+	}
+
+	result := validateUPSCapabilityProfile(profile)
+	if result.accepted {
+		t.Fatal("expected profile with multiple match tiers to be rejected")
+	}
+	if result.reason != "AmbiguousProfileSelector" {
+		t.Fatalf("expected AmbiguousProfileSelector, got %q", result.reason)
+	}
+}
+
+func TestValidateUPSCapabilityProfileRejectsInvalidVersion(t *testing.T) {
+	profile := &powerv1alpha1.UPSCapabilityProfile{
+		Spec: powerv1alpha1.UPSCapabilityProfileSpec{
+			Version: "latest",
+			Selector: powerv1alpha1.UPSCapabilityProfileSelector{
+				DriverFamily: "snmp-ups",
+			},
+		},
+	}
+
+	result := validateUPSCapabilityProfile(profile)
+	if result.accepted {
+		t.Fatal("expected profile with invalid version to be rejected")
+	}
+	if result.reason != "ProfileVersionInvalid" {
+		t.Fatalf("expected ProfileVersionInvalid, got %q", result.reason)
+	}
+}
+
+func TestValidateUPSCapabilityProfileAcceptsUniversalFloor(t *testing.T) {
+	universal := true
+	profile := &powerv1alpha1.UPSCapabilityProfile{
+		Spec: powerv1alpha1.UPSCapabilityProfileSpec{
+			Version: "1.0.0",
+			Selector: powerv1alpha1.UPSCapabilityProfileSelector{
+				Universal: &universal,
+			},
+		},
+	}
+
+	result := validateUPSCapabilityProfile(profile)
+	if !result.accepted {
+		t.Fatalf("expected universal floor profile to be accepted, got %s: %s", result.reason, result.message)
 	}
 }
 

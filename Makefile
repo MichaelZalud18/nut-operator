@@ -197,6 +197,21 @@ docker-build-operands: docker-build-nut-server docker-build-upsmon-agent docker-
 .PHONY: docker-build-images
 docker-build-images: docker-build docker-build-operands ## Build the manager and all project-owned operand images.
 
+.PHONY: docker-smoke-nut-server
+docker-smoke-nut-server: ## Smoke test that the NUT server image contains real NUT server tooling.
+	hack/smoke-image.sh $(CONTAINER_TOOL) nut-server $(NUT_SERVER_IMG)
+
+.PHONY: docker-smoke-upsmon-agent
+docker-smoke-upsmon-agent: ## Smoke test that the upsmon image contains real NUT client tooling.
+	hack/smoke-image.sh $(CONTAINER_TOOL) upsmon-agent $(UPSMON_AGENT_IMG)
+
+.PHONY: docker-smoke-node-actuator
+docker-smoke-node-actuator: ## Smoke test the node actuator image entrypoint.
+	hack/smoke-image.sh $(CONTAINER_TOOL) node-actuator $(NODE_ACTUATOR_IMG)
+
+.PHONY: docker-smoke-operands
+docker-smoke-operands: docker-smoke-nut-server docker-smoke-upsmon-agent docker-smoke-node-actuator ## Smoke test all project-owned operand images.
+
 .PHONY: docker-push-operands
 docker-push-operands: ## Push all project-owned operand image tags.
 	$(CONTAINER_TOOL) push $(NUT_SERVER_IMG)
@@ -238,6 +253,11 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
 
+.PHONY: build-catalog
+build-catalog: kustomize ## Generate a consolidated YAML with project-maintained capability profiles.
+	mkdir -p dist
+	"$(KUSTOMIZE)" build config/catalog > dist/catalog.yaml
+
 ##@ Deployment
 
 ifndef ignore-not-found
@@ -259,9 +279,17 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
 
+.PHONY: deploy-catalog
+deploy-catalog: kustomize ## Deploy project-maintained UPS capability profile catalog CRs.
+	"$(KUSTOMIZE)" build config/catalog | "$(KUBECTL)" apply -f -
+
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+
+.PHONY: undeploy-catalog
+undeploy-catalog: kustomize ## Delete project-maintained UPS capability profile catalog CRs.
+	"$(KUSTOMIZE)" build config/catalog | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Dependencies
 

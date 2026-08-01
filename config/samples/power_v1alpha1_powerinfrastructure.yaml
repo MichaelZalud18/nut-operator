@@ -1,0 +1,11 @@
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInfrastructure
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: rack-a-switch
+spec:
+  displayName: Rack A access switch
+  class: Switch
+  description: Carries the control and NUT telemetry path for rack A nodes.

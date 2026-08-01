@@ -663,6 +663,11 @@ spec:
           status:
             description: status defines the observed state of ShutdownFlow
             properties:
+              capabilityMatchCount:
+                description: capabilityMatchCount records how many UPS devices received
+                  capability profile matches.
+                format: int32
+                type: integer
               compiledSteps:
                 description: compiledSteps is the controller-compiled view of the
                   flow for pre-flight review.
@@ -805,6 +810,16 @@ spec:
                 description: estimatedDuration is the cumulative expected duration
                   of the compiled plan.
                 type: string
+              inventoryEdgeCount:
+                description: inventoryEdgeCount records how many declarative inventory
+                  edges fed this plan.
+                format: int32
+                type: integer
+              inventoryEntityCount:
+                description: inventoryEntityCount records how many declarative inventory
+                  entities fed this plan.
+                format: int32
+                type: integer
               lastEvaluationTime:
                 description: lastEvaluationTime is the most recent policy evaluation.
                 format: date-time
@@ -824,6 +839,14 @@ spec:
                 - Aborted
                 - Completed
                 - Error
+                type: string
+              resolvedInputHash:
+                description: resolvedInputHash identifies the declarative inventory
+                  and UPS capability inputs used by the compiled plan.
+                type: string
+              topologyHash:
+                description: topologyHash identifies the compiled declarative power
+                  and communication topology.
                 type: string
             type: object
         required:

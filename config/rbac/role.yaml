@@ -63,8 +63,12 @@ rules:
   resources:
   - nodepoweragents
   - nutservers
+  - powerinfrastructures
+  - powerinventoryedges
+  - powerinventorynodes
   - powermanagementclusters
   - shutdownflows
+  - upscapabilityprofiles
   - upsdevices
   verbs:
   - create
@@ -79,8 +83,12 @@ rules:
   resources:
   - nodepoweragents/finalizers
   - nutservers/finalizers
+  - powerinfrastructures/finalizers
+  - powerinventoryedges/finalizers
+  - powerinventorynodes/finalizers
   - powermanagementclusters/finalizers
   - shutdownflows/finalizers
+  - upscapabilityprofiles/finalizers
   - upsdevices/finalizers
   verbs:
   - update
@@ -89,8 +97,12 @@ rules:
   resources:
   - nodepoweragents/status
   - nutservers/status
+  - powerinfrastructures/status
+  - powerinventoryedges/status
+  - powerinventorynodes/status
   - powermanagementclusters/status
   - shutdownflows/status
+  - upscapabilityprofiles/status
   - upsdevices/status
   verbs:
   - get

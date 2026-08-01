@@ -19,6 +19,9 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"path"
+	"regexp"
+	"strings"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
@@ -29,6 +32,8 @@ type validationResult struct {
 	reason   string
 	message  string
 }
+
+var semanticVersionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 
 func accepted(message string) validationResult {
 	return validationResult{accepted: true, reason: "Accepted", message: message}
@@ -58,8 +63,11 @@ func validatePowerManagementCluster(obj *powerv1alpha1.PowerManagementCluster) v
 }
 
 func validateUPSDevice(obj *powerv1alpha1.UPSDevice) validationResult {
+	if obj.Spec.UpstreamNUT != nil {
+		return validateUpstreamNUTUPSDevice(obj)
+	}
 	if obj.Spec.Driver == "" {
-		return rejected("DriverRequired", "spec.driver is required")
+		return rejected("DriverRequired", "spec.driver is required unless spec.upstreamNUT is set")
 	}
 	if isUnsupportedLocalUPSDriver(obj.Spec.Driver) {
 		return rejected("LocalDriverUnsupported", "driver %q requires local USB or serial access; this operator currently supports network-reachable UPS devices only", obj.Spec.Driver)
@@ -73,8 +81,69 @@ func validateUPSDevice(obj *powerv1alpha1.UPSDevice) validationResult {
 	if obj.Spec.Endpoint != nil && obj.Spec.Endpoint.Host == "" {
 		return rejected("EndpointHostRequired", "spec.endpoint.host is required")
 	}
+	if obj.Spec.Identity.Firmware != "" && obj.Spec.Identity.Model == "" {
+		return rejected("IdentityFirmwareRequiresModel", "spec.identity.firmware requires spec.identity.model")
+	}
 
 	return accepted("UPS device contract accepted")
+}
+
+func validateUpstreamNUTUPSDevice(obj *powerv1alpha1.UPSDevice) validationResult {
+	upstream := obj.Spec.UpstreamNUT
+	if obj.Spec.Driver != "" && obj.Spec.Driver != "dummy-ups" {
+		return rejected("UpstreamNUTDriverConflict", "spec.driver must be empty or dummy-ups when spec.upstreamNUT is set")
+	}
+	if obj.Spec.Endpoint != nil {
+		return rejected("UpstreamNUTEndpointConflict", "spec.endpoint cannot be set with spec.upstreamNUT")
+	}
+	if obj.Spec.CredentialSecretRef != nil {
+		return rejected("UpstreamNUTCredentialConflict", "spec.credentialSecretRef cannot be set with spec.upstreamNUT; use spec.upstreamNUT.auth.secretKeyRef")
+	}
+	if upstream.Host == "" {
+		return rejected("UpstreamNUTHostRequired", "spec.upstreamNUT.host is required")
+	}
+	if upstream.Port != nil && (*upstream.Port < 1 || *upstream.Port > 65535) {
+		return rejected("UpstreamNUTPortInvalid", "spec.upstreamNUT.port must be between 1 and 65535")
+	}
+	if strings.ContainsAny(upstream.Host, "\r\n[]@:") {
+		return rejected("UpstreamNUTHostInvalid", "spec.upstreamNUT.host contains unsupported NUT target characters")
+	}
+	if upstream.UPSName == "" {
+		return rejected("UpstreamNUTUPSNameRequired", "spec.upstreamNUT.upsName is required")
+	}
+	if strings.ContainsAny(upstream.UPSName, "\r\n[]@") {
+		return rejected("UpstreamNUTUPSNameInvalid", "spec.upstreamNUT.upsName contains unsupported NUT target characters")
+	}
+	for _, key := range []string{"port", "driver", "mode", "authconf", "repeater_disable_strict_start"} {
+		if _, exists := obj.Spec.DriverOptions[key]; exists {
+			return rejected("UpstreamNUTReservedDriverOption", "spec.driverOptions[%q] is rendered from spec.upstreamNUT and cannot be overridden", key)
+		}
+	}
+	authMode := upstreamAuthMode(upstream)
+	switch authMode {
+	case powerv1alpha1.UPSUpstreamNUTAuthNone, powerv1alpha1.UPSUpstreamNUTAuthDefault:
+		if upstream.Auth.SecretKeyRef != nil {
+			return rejected("UpstreamNUTAuthSecretUnused", "spec.upstreamNUT.auth.secretKeyRef requires spec.upstreamNUT.auth.mode Secret")
+		}
+	case powerv1alpha1.UPSUpstreamNUTAuthSecret:
+		if upstream.Auth.SecretKeyRef == nil {
+			return rejected("UpstreamNUTAuthSecretRequired", "spec.upstreamNUT.auth.mode Secret requires spec.upstreamNUT.auth.secretKeyRef")
+		}
+	default:
+		return rejected("UpstreamNUTAuthModeUnsupported", "unsupported spec.upstreamNUT.auth.mode %q", upstream.Auth.Mode)
+	}
+	if obj.Spec.Identity.Firmware != "" && obj.Spec.Identity.Model == "" {
+		return rejected("IdentityFirmwareRequiresModel", "spec.identity.firmware requires spec.identity.model")
+	}
+
+	return accepted("upstream NUT device contract accepted")
+}
+
+func upstreamAuthMode(upstream *powerv1alpha1.UPSUpstreamNUTSpec) powerv1alpha1.UPSUpstreamNUTAuthMode {
+	if upstream == nil || upstream.Auth.Mode == "" {
+		return powerv1alpha1.UPSUpstreamNUTAuthNone
+	}
+	return upstream.Auth.Mode
 }
 
 func isSupportedNetworkUPSDriver(driver string) bool {
@@ -172,4 +241,95 @@ func validateShutdownFlow(obj *powerv1alpha1.ShutdownFlow) validationResult {
 	}
 
 	return accepted("shutdown flow contract accepted")
+}
+
+func validatePowerInfrastructure(obj *powerv1alpha1.PowerInfrastructure) validationResult {
+	return accepted("power infrastructure inventory contract accepted")
+}
+
+func validatePowerInventoryNode(obj *powerv1alpha1.PowerInventoryNode) validationResult {
+	if obj.Spec.NodeName == "" {
+		return rejected("NodeNameRequired", "spec.nodeName is required")
+	}
+	return accepted("power inventory node contract accepted")
+}
+
+func validatePowerInventoryEdge(obj *powerv1alpha1.PowerInventoryEdge) validationResult {
+	if obj.Spec.From.Kind == "" || obj.Spec.From.Name == "" {
+		return rejected("FromRequired", "spec.from.kind and spec.from.name are required")
+	}
+	if obj.Spec.To.Kind == "" || obj.Spec.To.Name == "" {
+		return rejected("ToRequired", "spec.to.kind and spec.to.name are required")
+	}
+	if obj.Spec.From.Kind == obj.Spec.To.Kind && obj.Spec.From.Name == obj.Spec.To.Name {
+		return rejected("SelfEdge", "inventory edge %s/%s cannot reference itself", obj.Spec.From.Kind, obj.Spec.From.Name)
+	}
+	switch obj.Spec.Relation {
+	case powerv1alpha1.PowerInventoryEdgeFeeds:
+		if obj.Spec.Input == "" {
+			return rejected("FeedInputRequired", "Feeds edges require spec.input to identify the target power input")
+		}
+	case powerv1alpha1.PowerInventoryEdgeCarries:
+	default:
+		return rejected("UnsupportedEdgeRelation", "unsupported inventory edge relation %q", obj.Spec.Relation)
+	}
+	if !isSupportedInventoryEntityKind(obj.Spec.From.Kind) {
+		return rejected("UnsupportedEntityKind", "unsupported spec.from.kind %q", obj.Spec.From.Kind)
+	}
+	if !isSupportedInventoryEntityKind(obj.Spec.To.Kind) {
+		return rejected("UnsupportedEntityKind", "unsupported spec.to.kind %q", obj.Spec.To.Kind)
+	}
+	return accepted("power inventory edge contract accepted")
+}
+
+func isSupportedInventoryEntityKind(kind powerv1alpha1.PowerInventoryEntityKind) bool {
+	switch kind {
+	case powerv1alpha1.PowerInventoryEntityUPSDevice,
+		powerv1alpha1.PowerInventoryEntityNode,
+		powerv1alpha1.PowerInventoryEntityPowerInfrastructure:
+		return true
+	default:
+		return false
+	}
+}
+
+func validateUPSCapabilityProfile(obj *powerv1alpha1.UPSCapabilityProfile) validationResult {
+	if obj.Spec.Version == "" {
+		return rejected("ProfileVersionRequired", "spec.version is required")
+	}
+	if !semanticVersionPattern.MatchString(obj.Spec.Version) {
+		return rejected("ProfileVersionInvalid", "spec.version %q must be semantic version x.y.z, optionally prefixed with v and with prerelease/build metadata", obj.Spec.Version)
+	}
+	selector := obj.Spec.Selector
+	universal := selector.Universal != nil && *selector.Universal
+	selectorCount := 0
+	for _, value := range []string{selector.Model, selector.ModelGlob, selector.DriverFamily} {
+		if value != "" {
+			selectorCount++
+		}
+	}
+	if universal {
+		selectorCount++
+	}
+	if selectorCount == 0 {
+		return rejected("ProfileSelectorRequired", "spec.selector requires model, modelGlob, driverFamily, or universal")
+	}
+	if universal && selectorCount > 1 {
+		return rejected("UniversalSelectorExclusive", "universal capability profiles cannot include model, modelGlob, or driverFamily selectors")
+	}
+	if selectorCount > 1 {
+		return rejected("AmbiguousProfileSelector", "capability profiles require exactly one match tier; firmware may only narrow an exact model selector")
+	}
+	if selector.Firmware != "" && selector.Model == "" {
+		return rejected("FirmwareRequiresModel", "spec.selector.firmware requires spec.selector.model")
+	}
+	if selector.Model != "" && selector.ModelGlob != "" {
+		return rejected("AmbiguousProfileSelector", "spec.selector.model and spec.selector.modelGlob cannot both be set")
+	}
+	if selector.ModelGlob != "" {
+		if _, err := path.Match(selector.ModelGlob, "probe"); err != nil {
+			return rejected("InvalidModelGlob", "spec.selector.modelGlob %q is invalid", selector.ModelGlob)
+		}
+	}
+	return accepted("UPS capability profile contract accepted")
 }

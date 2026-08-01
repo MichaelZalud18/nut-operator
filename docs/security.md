@@ -12,6 +12,7 @@
 - Non-actuator containers should run as non-root with read-only root filesystems and `RuntimeDefault` seccomp.
 - UPS connectivity is network-only by default. Local USB and serial UPS access are unsupported, so NUT server and monitor containers do not require host device mounts or privileged mode.
 - UPS drivers are accepted through an explicit network-driver allowlist. Unknown drivers are rejected until reviewed.
+- Appliances that expose their own NUT server use explicit upstream relay configuration and still render as non-privileged network-only pods.
 
 ## Privilege Boundary
 
@@ -41,6 +42,7 @@ Expected policy edges:
 - Per-node secondary users are preferred over a shared fleet credential.
 - Existing Secrets are supported for organizations with external secret management.
 - SNMP credentials and PostgreSQL DSNs must always come from Secrets.
+- Upstream NUT relay credentials use Secret-projected `nutauth.conf` files; unauthenticated appliances must explicitly use `auth.mode: None`.
 - Generated credentials must be rotatable without recreating API objects.
 
 ## TLS
@@ -54,10 +56,10 @@ PostgreSQL TLS is required for external PostgreSQL by default.
 Unsafe behavior should be blocked in three places:
 
 1. CRD schema where possible.
-2. Admission webhooks once implemented.
+2. Admission webhooks for object-local unsafe combinations.
 3. Reconciler validation and status conditions.
 
-The current implementation provides schema and reconciler validation. Webhooks are a near-term requirement before alpha deployment.
+The current implementation provides schema and reconciler validation across the API surface, plus admission webhooks for `UPSDevice`, `UPSCapabilityProfile`, and the declarative inventory CRDs. Remaining policy-resource webhooks are still required before production-grade enforcement.
 
 ## Supply Chain
 

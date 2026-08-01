@@ -1,0 +1,12 @@
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: worker-a
+spec:
+  nodeName: worker-a
+  roles:
+    controlPlane: false
+    controlPlaneQuorumMember: false

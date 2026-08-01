@@ -37,6 +37,7 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/controller"
+	webhookv1alpha1 "github.com/MichaelZalud18/nut-operator/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -212,6 +213,57 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "shutdownflow")
 		os.Exit(1)
+	}
+	if err := (&controller.PowerInfrastructureReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "powerinfrastructure")
+		os.Exit(1)
+	}
+	if err := (&controller.PowerInventoryNodeReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "powerinventorynode")
+		os.Exit(1)
+	}
+	if err := (&controller.PowerInventoryEdgeReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "powerinventoryedge")
+		os.Exit(1)
+	}
+	if err := (&controller.UPSCapabilityProfileReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "upscapabilityprofile")
+		os.Exit(1)
+	}
+	// nolint:goconst
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := webhookv1alpha1.SetupUPSDeviceWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "UPSDevice")
+			os.Exit(1)
+		}
+		if err := webhookv1alpha1.SetupUPSCapabilityProfileWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "UPSCapabilityProfile")
+			os.Exit(1)
+		}
+		if err := webhookv1alpha1.SetupPowerInfrastructureWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "PowerInfrastructure")
+			os.Exit(1)
+		}
+		if err := webhookv1alpha1.SetupPowerInventoryNodeWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "PowerInventoryNode")
+			os.Exit(1)
+		}
+		if err := webhookv1alpha1.SetupPowerInventoryEdgeWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "PowerInventoryEdge")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 

@@ -1,0 +1,212 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-power-zalud-io-v1alpha1-powerinfrastructure
+  failurePolicy: Fail
+  name: mpowerinfrastructure-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - powerinfrastructures
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-power-zalud-io-v1alpha1-powerinventoryedge
+  failurePolicy: Fail
+  name: mpowerinventoryedge-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - powerinventoryedges
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-power-zalud-io-v1alpha1-powerinventorynode
+  failurePolicy: Fail
+  name: mpowerinventorynode-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - powerinventorynodes
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-power-zalud-io-v1alpha1-upscapabilityprofile
+  failurePolicy: Fail
+  name: mupscapabilityprofile-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - upscapabilityprofiles
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-power-zalud-io-v1alpha1-upsdevice
+  failurePolicy: Fail
+  name: mupsdevice-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - upsdevices
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-power-zalud-io-v1alpha1-powerinfrastructure
+  failurePolicy: Fail
+  name: vpowerinfrastructure-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - powerinfrastructures
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-power-zalud-io-v1alpha1-powerinventoryedge
+  failurePolicy: Fail
+  name: vpowerinventoryedge-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - powerinventoryedges
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-power-zalud-io-v1alpha1-powerinventorynode
+  failurePolicy: Fail
+  name: vpowerinventorynode-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - powerinventorynodes
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-power-zalud-io-v1alpha1-upscapabilityprofile
+  failurePolicy: Fail
+  name: vupscapabilityprofile-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - upscapabilityprofiles
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-power-zalud-io-v1alpha1-upsdevice
+  failurePolicy: Fail
+  name: vupsdevice-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - upsdevices
+  sideEffects: None

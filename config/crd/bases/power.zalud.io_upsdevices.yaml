@@ -63,8 +63,8 @@ spec:
                 description: |-
                   driver is the Network UPS Tools driver name for a network-capable UPS driver,
                   such as snmp-ups, netxml-ups, powerman-pdu, apcupsd-ups, or dummy-ups for
-                  tests. Local USB and serial drivers are intentionally unsupported by this API.
-                minLength: 1
+                  tests. It is required unless upstreamNUT is set. Local USB and serial drivers
+                  are intentionally unsupported by this API.
                 type: string
               driverOptions:
                 additionalProperties:
@@ -74,7 +74,8 @@ spec:
               endpoint:
                 description: |-
                   endpoint describes the network endpoint reached by the NUT driver. It is not
-                  a USB, serial, or host device path.
+                  a USB, serial, or host device path. Use upstreamNUT instead for devices that
+                  already expose their own NUT data server.
                 properties:
                   host:
                     description: host is the DNS name or IP address reached by the
@@ -89,6 +90,20 @@ spec:
                     type: integer
                 required:
                 - host
+                type: object
+              identity:
+                description: |-
+                  identity declares stable capability matching keys when they are known from
+                  inventory, a trusted probe, or a vendor-reported NUT model string.
+                properties:
+                  firmware:
+                    description: firmware narrows matching to a specific provider-reported
+                      firmware string.
+                    type: string
+                  model:
+                    description: model is the provider-reported NUT ups.model value
+                      or trusted inventory equivalent.
+                    type: string
                 type: object
               powerDomains:
                 description: powerDomains names the physical power domains this UPS
@@ -132,8 +147,76 @@ spec:
                       without a successful poll.
                     type: string
                 type: object
-            required:
-            - driver
+              upstreamNUT:
+                description: |-
+                  upstreamNUT describes a UPS that already exposes a network NUT server. The
+                  generated NUTServer relays it through dummy-ups repeater mode.
+                properties:
+                  auth:
+                    description: |-
+                      auth configures how dummy-ups repeater mode discovers authentication and
+                      trust material for the upstream NUT server.
+                    properties:
+                      mode:
+                        default: None
+                        description: |-
+                          mode selects the upstream authconf source. The default disables authconf
+                          parsing so unauthenticated appliances do not depend on image defaults.
+                        enum:
+                        - None
+                        - Default
+                        - Secret
+                        type: string
+                      secretKeyRef:
+                        description: |-
+                          secretKeyRef points at a Secret key containing a complete nutauth.conf file.
+                          The Secret must be in the rendered NUTServer operand namespace.
+                        properties:
+                          key:
+                            description: key is the data key inside the Secret.
+                            minLength: 1
+                            type: string
+                          name:
+                            description: name is the Secret name.
+                            minLength: 1
+                            type: string
+                          namespace:
+                            description: namespace is the Secret namespace.
+                            minLength: 1
+                            type: string
+                        required:
+                        - key
+                        - name
+                        - namespace
+                        type: object
+                    type: object
+                  host:
+                    description: host is the DNS name or IP address of the upstream
+                      upsd server.
+                    minLength: 1
+                    type: string
+                  port:
+                    default: 3493
+                    description: port is the upstream upsd TCP port.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  strictStart:
+                    default: true
+                    description: |-
+                      strictStart preserves dummy-ups repeater mode's strict startup behavior.
+                      When false, startup continues even if the upstream server is unavailable.
+                    type: boolean
+                  upsName:
+                    description: upsName is the upstream UPS name served by the upstream
+                      upsd server.
+                    minLength: 1
+                    type: string
+                required:
+                - host
+                - upsName
+                type: object
             type: object
           status:
             description: status defines the observed state of UPSDevice

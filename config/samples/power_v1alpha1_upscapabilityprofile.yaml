@@ -1,0 +1,20 @@
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSCapabilityProfile
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: example-snmp-ups-profile
+spec:
+  version: "0.1.0"
+  selector:
+    driverFamily: snmp-ups
+  telemetry:
+    variables:
+      - ups.status
+      - battery.charge
+      - battery.runtime
+      - input.voltage
+      - output.voltage
+  quirks:
+    - example-user-authored-profile

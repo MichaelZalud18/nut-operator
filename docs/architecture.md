@@ -9,15 +9,17 @@ The operator runs as a controller-runtime manager and reconciles cluster-scoped 
 - CRDs carry desired state and small status summaries.
 - `/status` carries conditions, observed generation, rendered config hashes, and compiled shutdown plans.
 - PostgreSQL carries audit events, telemetry history, and flow execution records.
-- Admission webhooks will reject unsafe combinations before persistence once webhook support is added.
+- Admission webhooks reject unsafe `UPSDevice`, capability profile, and declarative inventory combinations before persistence. Reconcilers keep the same checks in status for defense in depth and for installs that temporarily disable webhooks.
 
 ## Power APIs
 
 `PowerManagementCluster` is the root configuration object. It owns global security defaults, image defaults, observability, operand namespace policy, and storage.
 
-`UPSDevice` represents one physical or simulated network-reachable UPS. It intentionally models NUT driver names and driver options rather than inventing a parallel driver schema. Local USB and serial drivers are out of scope for this API so generated NUT server pods do not need host device mounts or privileged access for UPS connectivity. New drivers must be added to the network-driver allowlist deliberately; the initial set is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests.
+`UPSDevice` represents one physical or simulated network-reachable UPS. It supports either a reviewed NUT network driver or an explicit upstream NUT relay endpoint for appliances that already expose `upsd`. Local USB and serial drivers are out of scope for this API so generated NUT server pods do not need host device mounts or privileged access for UPS connectivity. New direct drivers must be added to the network-driver allowlist deliberately; the initial set is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests and upstream relays.
 
 `NUTServer` represents one logical `upsd` instance. It selects one or more `UPSDevice` objects and renders server-side NUT configuration, credentials, TLS material references, and service exposure.
+
+For built-in NUT appliances, `NUTServer` renders `dummy-ups` repeater mode rather than direct hardware drivers. This keeps Ubiquiti-style network UPS support non-privileged and avoids USB/serial host access.
 
 `NodePowerAgent` represents one DaemonSet fleet. It references one or more `NUTServer` objects, selects nodes, and declares whether the fleet is monitoring, dry-running, or allowed to actuate.
 
@@ -69,7 +71,7 @@ This keeps the CRD declarative while giving operators a reviewable plan before `
 1. Keep API validation and status reconciliation passing.
 2. Maintain pure renderers for NUT server config and node agent config.
 3. Extend `NUTServer` and `NodePowerAgent` operand rendering in monitor and dry-run mode.
-4. Add PostgreSQL migrations and audit writer.
-5. Add admission webhooks for unsafe modes.
+4. Add PostgreSQL migration runner and audit writer.
+5. Extend admission webhooks to remaining policy resources.
 6. Add release image builds, SBOM, signing, scanning, and image smoke tests.
 7. Only then add real host actuation behind explicit approvals.

@@ -185,7 +185,7 @@ func (r *PowerManagementClusterReconciler) evaluateCNPGStorage(ctx context.Conte
 	}
 
 	status.Ready = true
-	status.Message = fmt.Sprintf("CNPG cluster %s/%s reports %d/%d ready instances; schema and audit writers are not implemented yet", ref.Namespace, ref.Name, readyInstances, desiredInstances)
+	status.Message = fmt.Sprintf("CNPG cluster %s/%s reports %d/%d ready instances; schema migration and audit writes are not wired into reconciliation yet", ref.Namespace, ref.Name, readyInstances, desiredInstances)
 	return status, true, "CNPGClusterReady", status.Message
 }
 

@@ -51,6 +51,7 @@ type renderedNUTServer struct {
 	DesiredReplicas  int32
 	ReadyReplicas    int32
 	ServiceEndpoints []powerv1alpha1.ServiceEndpointStatus
+	UpstreamNUT      []powerv1alpha1.NUTUpstreamStatus
 	ConfigHash       string
 	ManagedResources []powerv1alpha1.ManagedResourceStatus
 }
@@ -92,14 +93,15 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
-	networkPolicy, err := r.ensureNUTServerNetworkPolicy(ctx, server, namespace)
+	networkPolicy, err := r.ensureNUTServerNetworkPolicy(ctx, server, namespace, devices)
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
-	deployment, err := r.ensureNUTServerDeployment(ctx, server, namespace, image, configMap.Name, secretRef, configHash)
+	deployment, err := r.ensureNUTServerDeployment(ctx, server, namespace, image, configMap.Name, secretRef, configHash, devices)
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
+	upstreamStatus := r.probeUpstreamNUTDevices(ctx, devices)
 
 	selected := make([]string, 0, len(devices))
 	for _, device := range devices {
@@ -141,6 +143,7 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 				Port:      servicePort(server),
 			},
 		},
+		UpstreamNUT:      upstreamStatus,
 		ConfigHash:       configHash,
 		ManagedResources: managed,
 	}, nil
@@ -260,16 +263,33 @@ func renderNUTServerConfig(server *powerv1alpha1.NUTServer, devices []powerv1alp
 func renderUPSConf(devices []powerv1alpha1.UPSDevice) (string, error) {
 	var out strings.Builder
 	for _, device := range devices {
+		if result := validateUPSDevice(&device); !result.accepted {
+			return "", fmt.Errorf("invalid selected UPSDevice %q: %s", device.Name, result.message)
+		}
+
 		name := nutDeviceName(device)
 		if err := validateNUTConfigToken(name); err != nil {
 			return "", fmt.Errorf("invalid NUT device name for UPSDevice %q: %w", device.Name, err)
 		}
-		if err := validateNUTConfigValue(device.Spec.Driver); err != nil {
+		driver := renderedUPSDriver(device)
+		if err := validateNUTConfigValue(driver); err != nil {
 			return "", fmt.Errorf("invalid driver for UPSDevice %q: %w", device.Name, err)
 		}
 
 		fmt.Fprintf(&out, "[%s]\n", name)
-		fmt.Fprintf(&out, "  driver = %s\n", device.Spec.Driver)
+		fmt.Fprintf(&out, "  driver = %s\n", driver)
+		if device.Spec.UpstreamNUT != nil {
+			target := upstreamNUTTarget(device)
+			if err := validateNUTConfigValue(target); err != nil {
+				return "", fmt.Errorf("invalid upstream NUT target for UPSDevice %q: %w", device.Name, err)
+			}
+			fmt.Fprintf(&out, "  port = %s\n", target)
+			fmt.Fprintf(&out, "  mode = repeater\n")
+			fmt.Fprintf(&out, "  authconf = %s\n", upstreamNUTAuthConf(device))
+			if !upstreamNUTStrictStart(device) {
+				fmt.Fprintf(&out, "  repeater_disable_strict_start = true\n")
+			}
+		}
 		if filename, ok, err := dummyUPSDefinitionFileName(device); err != nil {
 			return "", err
 		} else if ok {
@@ -312,6 +332,9 @@ func dummyUPSDefinitionFileName(device powerv1alpha1.UPSDevice) (string, bool, e
 	if device.Spec.Driver != "dummy-ups" {
 		return "", false, nil
 	}
+	if device.Spec.UpstreamNUT != nil {
+		return "", false, nil
+	}
 	if explicitPort := device.Spec.DriverOptions["port"]; explicitPort != "" {
 		return "", false, nil
 	}
@@ -320,6 +343,118 @@ func dummyUPSDefinitionFileName(device powerv1alpha1.UPSDevice) (string, bool, e
 		return "", false, fmt.Errorf("invalid dummy UPS definition filename for UPSDevice %q: %w", device.Name, err)
 	}
 	return filename, true, nil
+}
+
+func renderedUPSDriver(device powerv1alpha1.UPSDevice) string {
+	if device.Spec.UpstreamNUT != nil {
+		return "dummy-ups"
+	}
+	return device.Spec.Driver
+}
+
+func upstreamNUTTarget(device powerv1alpha1.UPSDevice) string {
+	upstream := device.Spec.UpstreamNUT
+	target := fmt.Sprintf("%s@%s", upstream.UPSName, upstream.Host)
+	port := upstreamNUTPort(device)
+	if port != 3493 || upstream.Port != nil {
+		target = fmt.Sprintf("%s:%d", target, port)
+	}
+	return target
+}
+
+func upstreamNUTPort(device powerv1alpha1.UPSDevice) int32 {
+	if device.Spec.UpstreamNUT != nil && device.Spec.UpstreamNUT.Port != nil {
+		return *device.Spec.UpstreamNUT.Port
+	}
+	return 3493
+}
+
+func upstreamNUTStrictStart(device powerv1alpha1.UPSDevice) bool {
+	if device.Spec.UpstreamNUT == nil || device.Spec.UpstreamNUT.StrictStart == nil {
+		return true
+	}
+	return *device.Spec.UpstreamNUT.StrictStart
+}
+
+func upstreamNUTAuthConf(device powerv1alpha1.UPSDevice) string {
+	switch upstreamAuthMode(device.Spec.UpstreamNUT) {
+	case powerv1alpha1.UPSUpstreamNUTAuthDefault:
+		return "default"
+	case powerv1alpha1.UPSUpstreamNUTAuthSecret:
+		return "/etc/nut/upstream-auth/" + nutDeviceName(device) + ".nutauth.conf"
+	default:
+		return "none"
+	}
+}
+
+func upstreamNUTEgressRules(devices []powerv1alpha1.UPSDevice) []networkingv1.NetworkPolicyEgressRule {
+	portsByNumber := map[int32]struct{}{}
+	for _, device := range devices {
+		if device.Spec.UpstreamNUT == nil {
+			continue
+		}
+		portsByNumber[upstreamNUTPort(device)] = struct{}{}
+	}
+	if len(portsByNumber) == 0 {
+		return nil
+	}
+
+	ports := make([]int, 0, len(portsByNumber))
+	for port := range portsByNumber {
+		ports = append(ports, int(port))
+	}
+	sort.Ints(ports)
+
+	rules := make([]networkingv1.NetworkPolicyEgressRule, 0, len(ports)+1)
+	for _, port := range ports {
+		rules = append(rules, networkingv1.NetworkPolicyEgressRule{
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: ptrProtocol(corev1.ProtocolTCP),
+					Port:     ptrIntOrStringFromInt32(int32(port)),
+				},
+			},
+		})
+	}
+	rules = append(rules, networkingv1.NetworkPolicyEgressRule{
+		Ports: []networkingv1.NetworkPolicyPort{
+			{
+				Protocol: ptrProtocol(corev1.ProtocolUDP),
+				Port:     ptrIntOrStringFromInt32(53),
+			},
+			{
+				Protocol: ptrProtocol(corev1.ProtocolTCP),
+				Port:     ptrIntOrStringFromInt32(53),
+			},
+		},
+	})
+	return rules
+}
+
+func upstreamNUTAuthProjections(devices []powerv1alpha1.UPSDevice, namespace string) ([]corev1.VolumeProjection, error) {
+	projections := make([]corev1.VolumeProjection, 0)
+	for _, device := range devices {
+		if device.Spec.UpstreamNUT == nil ||
+			upstreamAuthMode(device.Spec.UpstreamNUT) != powerv1alpha1.UPSUpstreamNUTAuthSecret {
+			continue
+		}
+		ref := device.Spec.UpstreamNUT.Auth.SecretKeyRef
+		if ref == nil {
+			return nil, fmt.Errorf("UPSDevice %q upstream NUT auth mode Secret requires secretKeyRef", device.Name)
+		}
+		if ref.Namespace != namespace {
+			return nil, fmt.Errorf("UPSDevice %q upstream NUT auth Secret must be in operand namespace %q", device.Name, namespace)
+		}
+		projections = append(projections, corev1.VolumeProjection{
+			Secret: &corev1.SecretProjection{
+				LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
+				Items: []corev1.KeyToPath{
+					{Key: ref.Key, Path: "upstream-auth/" + nutDeviceName(device) + ".nutauth.conf"},
+				},
+			},
+		})
+	}
+	return projections, nil
 }
 
 func renderDummyUPSDefinition(device powerv1alpha1.UPSDevice) (string, error) {
@@ -530,7 +665,7 @@ func (r *NUTServerReconciler) ensureNUTServerService(ctx context.Context, server
 	return service, err
 }
 
-func (r *NUTServerReconciler) ensureNUTServerNetworkPolicy(ctx context.Context, server *powerv1alpha1.NUTServer, namespace string) (*networkingv1.NetworkPolicy, error) {
+func (r *NUTServerReconciler) ensureNUTServerNetworkPolicy(ctx context.Context, server *powerv1alpha1.NUTServer, namespace string, devices []powerv1alpha1.UPSDevice) (*networkingv1.NetworkPolicy, error) {
 	policy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: networkPolicyName(server), Namespace: namespace}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, policy, func() error {
 		labels := labelsForNUTServer(server)
@@ -552,12 +687,23 @@ func (r *NUTServerReconciler) ensureNUTServerNetworkPolicy(ctx context.Context, 
 				},
 			},
 		}
+		egress := upstreamNUTEgressRules(devices)
+		if len(egress) > 0 {
+			policy.Spec.PolicyTypes = append(policy.Spec.PolicyTypes, networkingv1.PolicyTypeEgress)
+			policy.Spec.Egress = egress
+		} else {
+			policy.Spec.Egress = nil
+		}
 		return controllerutil.SetControllerReference(server, policy, r.Scheme)
 	})
 	return policy, err
 }
 
-func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, server *powerv1alpha1.NUTServer, namespace, image, configName string, secretRef powerv1alpha1.NamespacedNameReference, configHash string) (*appsv1.Deployment, error) {
+func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, server *powerv1alpha1.NUTServer, namespace, image, configName string, secretRef powerv1alpha1.NamespacedNameReference, configHash string, devices []powerv1alpha1.UPSDevice) (*appsv1.Deployment, error) {
+	upstreamAuthProjections, err := upstreamNUTAuthProjections(devices, namespace)
+	if err != nil {
+		return nil, err
+	}
 	replicas := int32(1)
 	if server.Spec.Replicas != nil {
 		replicas = *server.Spec.Replicas
@@ -568,7 +714,7 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 	}
 	labels := labelsForNUTServer(server)
 	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: deploymentName(server), Namespace: namespace}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
 		deployment.Labels = labels
 		deployment.Spec.Replicas = &replicas
 		deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
@@ -619,6 +765,12 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 					EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: resource.NewQuantity(16*1024*1024, resource.BinarySI)},
 				},
 			},
+		}
+		for _, projection := range upstreamAuthProjections {
+			deployment.Spec.Template.Spec.Volumes[0].Projected.Sources = append(
+				deployment.Spec.Template.Spec.Volumes[0].Projected.Sources,
+				projection,
+			)
 		}
 		deployment.Spec.Template.Spec.Containers = []corev1.Container{
 			{
