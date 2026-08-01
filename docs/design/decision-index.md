@@ -15,7 +15,7 @@ identifier, this file updates in the same change.
 | `faq.md` | User-facing answers | — |
 | Capability schema *(planned)* | Profile format | TBD |
 | Plan schema *(planned)* | Compiled plan format | Internal |
-| Audit schema *(planned)* | PostgreSQL record format | Migration-bound |
+| `audit-storage-schema.md` | PostgreSQL durable-state schema and writer boundary | Migration-bound |
 
 ## Identifier Namespaces
 

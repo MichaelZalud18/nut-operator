@@ -18,10 +18,12 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,13 +36,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 )
 
 // PowerManagementClusterReconciler reconciles a PowerManagementCluster object
 type PowerManagementClusterReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme           *runtime.Scheme
+	StorageConnector storageconfig.AuditStoreConnector
+	Clock            func() time.Time
 }
 
 var cnpgClusterGVK = schema.GroupVersionKind{
@@ -55,6 +60,7 @@ const powerManagementClusterCNPGRefField = ".spec.storage.cnpg.clusterRef"
 // +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 // Reconcile validates the top-level power management contract and records status.
 func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -85,6 +91,10 @@ func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ct
 	if err := r.Status().Update(ctx, &cluster); err != nil {
 		log.Error(err, "failed to update PowerManagementCluster status")
 		return ctrl.Result{}, err
+	}
+
+	if err := r.recordPowerManagementClusterAuditEvent(ctx, &cluster, result, storageStatus, readyReason, readyMessage); err != nil {
+		log.Error(err, "failed to record PowerManagementCluster audit event", "powermanagementcluster", cluster.Name)
 	}
 
 	if storageconfig.EffectiveMode(cluster.Spec.Storage) == powerv1alpha1.PowerStorageCNPG {
@@ -141,16 +151,94 @@ func (r *PowerManagementClusterReconciler) evaluateStorage(ctx context.Context, 
 		status.Message = "storage is disabled; suitable only for development or tests"
 		return status, true, "StorageDisabled", status.Message
 	case powerv1alpha1.PowerStorageExternalPostgres:
-		status.Ready = true
-		status.Message = "ExternalPostgres storage is configured; connectivity checks are not implemented yet"
-		return status, true, "StorageConfigured", status.Message
+		return r.ensureAuditStore(ctx, cluster, status, "ExternalPostgres storage")
 	case powerv1alpha1.PowerStorageCNPG:
-		return r.evaluateCNPGStorage(ctx, backend.CNPG.ClusterRef, status)
+		cnpgStatus, cnpgReady, reason, message := r.evaluateCNPGStorage(ctx, backend.CNPG.ClusterRef, status)
+		if !cnpgReady {
+			return cnpgStatus, cnpgReady, reason, message
+		}
+		return r.ensureAuditStore(
+			ctx,
+			cluster,
+			cnpgStatus,
+			fmt.Sprintf("CNPG cluster %s/%s", backend.CNPG.ClusterRef.Namespace, backend.CNPG.ClusterRef.Name),
+		)
 	default:
 		status.Ready = false
 		status.Message = result.message
 		return status, false, result.reason, result.message
 	}
+}
+
+func (r *PowerManagementClusterReconciler) ensureAuditStore(ctx context.Context, cluster *powerv1alpha1.PowerManagementCluster, status powerv1alpha1.StorageStatus, source string) (powerv1alpha1.StorageStatus, bool, string, string) {
+	store, err := r.storageConnector().OpenAuditStore(ctx, cluster)
+	if err != nil {
+		status.Ready = false
+		status.Message = fmt.Sprintf("%s is configured but audit store is not ready: %v", source, err)
+		return status, false, "AuditStoreNotReady", status.Message
+	}
+	closeErr := store.Close()
+	if closeErr != nil {
+		status.Ready = false
+		status.Message = fmt.Sprintf("%s audit store opened but close failed: %v", source, closeErr)
+		return status, false, "AuditStoreNotReady", status.Message
+	}
+
+	status.Ready = true
+	status.Message = source + " is ready; audit schema migration applied"
+	return status, true, "AuditStoreReady", status.Message
+}
+
+func (r *PowerManagementClusterReconciler) recordPowerManagementClusterAuditEvent(ctx context.Context, cluster *powerv1alpha1.PowerManagementCluster, result validationResult, storageStatus powerv1alpha1.StorageStatus, reason, message string) error {
+	if cluster == nil || storageStatus.Mode == powerv1alpha1.PowerStorageDisabled || !storageStatus.Ready {
+		return nil
+	}
+
+	store, err := r.storageConnector().OpenAuditStore(ctx, cluster)
+	if err != nil {
+		return err
+	}
+
+	generation := cluster.Generation
+	severity := "Info"
+	if !result.accepted {
+		severity = "Warning"
+	}
+	recordErr := store.RecordPowerEvent(ctx, audit.PowerEvent{
+		EventID:            uuid.NewString(),
+		ObservedAt:         r.now(),
+		EventType:          "PowerManagementClusterReconciled",
+		Severity:           severity,
+		SourceKind:         "PowerManagementCluster",
+		SourceName:         cluster.Name,
+		ResourceGeneration: &generation,
+		Message:            message,
+		Details: map[string]any{
+			"accepted":     result.accepted,
+			"reason":       reason,
+			"storageMode":  string(storageStatus.Mode),
+			"storageReady": storageStatus.Ready,
+		},
+	})
+	closeErr := store.Close()
+	if recordErr != nil || closeErr != nil {
+		return errors.Join(recordErr, closeErr)
+	}
+	return nil
+}
+
+func (r *PowerManagementClusterReconciler) storageConnector() storageconfig.AuditStoreConnector {
+	if r.StorageConnector != nil {
+		return r.StorageConnector
+	}
+	return storageconfig.NewKubernetesConnector(r.Client, storageconfig.ConnectorOptions{})
+}
+
+func (r *PowerManagementClusterReconciler) now() time.Time {
+	if r.Clock != nil {
+		return r.Clock().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func storageMode(spec powerv1alpha1.PowerStorageSpec) powerv1alpha1.PowerStorageMode {
@@ -188,7 +276,7 @@ func (r *PowerManagementClusterReconciler) evaluateCNPGStorage(ctx context.Conte
 	}
 
 	status.Ready = true
-	status.Message = fmt.Sprintf("CNPG cluster %s/%s reports %d/%d ready instances; schema migration and audit writes are not wired into reconciliation yet", ref.Namespace, ref.Name, readyInstances, desiredInstances)
+	status.Message = fmt.Sprintf("CNPG cluster %s/%s reports %d/%d ready instances", ref.Namespace, ref.Name, readyInstances, desiredInstances)
 	return status, true, "CNPGClusterReady", status.Message
 }
 

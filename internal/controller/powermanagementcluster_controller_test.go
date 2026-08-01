@@ -18,10 +18,12 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -31,7 +33,65 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/audit"
 )
+
+type fakeAuditConnector struct {
+	store *fakeAuditStore
+	err   error
+	opens int
+}
+
+func (f *fakeAuditConnector) OpenAuditStore(context.Context, *powerv1alpha1.PowerManagementCluster) (audit.Store, error) {
+	f.opens++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.store == nil {
+		f.store = &fakeAuditStore{}
+	}
+	return f.store, nil
+}
+
+type fakeAuditStore struct {
+	powerEvents []audit.PowerEvent
+	closeCalls  int
+	eventErr    error
+	closeErr    error
+}
+
+func (s *fakeAuditStore) EnsureSchema(context.Context) error {
+	return nil
+}
+
+func (s *fakeAuditStore) Close() error {
+	s.closeCalls++
+	return s.closeErr
+}
+
+func (s *fakeAuditStore) RecordPowerEvent(_ context.Context, event audit.PowerEvent) error {
+	if s.eventErr != nil {
+		return s.eventErr
+	}
+	s.powerEvents = append(s.powerEvents, event)
+	return nil
+}
+
+func (s *fakeAuditStore) RecordTelemetrySnapshot(context.Context, audit.TelemetrySnapshot) error {
+	return nil
+}
+
+func (s *fakeAuditStore) RecordCapabilityProfileMatch(context.Context, audit.CapabilityProfileMatch) error {
+	return nil
+}
+
+func (s *fakeAuditStore) RecordShutdownFlowCompilation(context.Context, audit.ShutdownFlowCompilation) error {
+	return nil
+}
+
+func (s *fakeAuditStore) RecordShutdownFlowDecision(context.Context, audit.ShutdownFlowDecision) error {
+	return nil
+}
 
 var _ = Describe("PowerManagementCluster Controller", func() {
 	Context("When reconciling a resource", func() {
@@ -49,7 +109,7 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind PowerManagementCluster")
 			err := k8sClient.Get(ctx, typeNamespacedName, powermanagementcluster)
-			if err != nil && errors.IsNotFound(err) {
+			if err != nil && apierrors.IsNotFound(err) {
 				resource := &powerv1alpha1.PowerManagementCluster{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: resourceName,
@@ -100,6 +160,7 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 		It("reports a healthy referenced CNPG cluster as ready", func() {
 			scheme := runtime.NewScheme()
 			scheme.AddKnownTypeWithName(cnpgClusterGVK, &unstructured.Unstructured{})
+			auditConnector := &fakeAuditConnector{}
 			cnpgCluster := &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "postgresql.cnpg.io/v1",
 				"kind":       "Cluster",
@@ -116,8 +177,9 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 				},
 			}}
 			reconciler := &PowerManagementClusterReconciler{
-				Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cnpgCluster).Build(),
-				Scheme: scheme,
+				Client:           fake.NewClientBuilder().WithScheme(scheme).WithObjects(cnpgCluster).Build(),
+				Scheme:           scheme,
+				StorageConnector: auditConnector,
 			}
 			cluster := &powerv1alpha1.PowerManagementCluster{
 				Spec: powerv1alpha1.PowerManagementClusterSpec{
@@ -136,10 +198,77 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 			status, ready, reason, message := reconciler.evaluateStorage(context.Background(), cluster, accepted("contract accepted"))
 
 			Expect(ready).To(BeTrue())
-			Expect(reason).To(Equal("CNPGClusterReady"))
+			Expect(reason).To(Equal("AuditStoreReady"))
 			Expect(status.Ready).To(BeTrue())
 			Expect(status.Mode).To(Equal(powerv1alpha1.PowerStorageCNPG))
-			Expect(message).To(ContainSubstring("3/3 ready instances"))
+			Expect(message).To(ContainSubstring("audit schema migration applied"))
+			Expect(auditConnector.opens).To(Equal(1))
+			Expect(auditConnector.store.closeCalls).To(Equal(1))
+		})
+
+		It("reports audit store failures as not ready", func() {
+			reconciler := &PowerManagementClusterReconciler{
+				StorageConnector: &fakeAuditConnector{err: errors.New("database unavailable")},
+			}
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					Storage: powerv1alpha1.PowerStorageSpec{
+						Mode: powerv1alpha1.PowerStorageExternalPostgres,
+						ExternalPostgres: &powerv1alpha1.ExternalPostgresStorageSpec{
+							DSNSecretKeyRef: powerv1alpha1.SecretKeyReference{
+								Namespace: "power-data",
+								Name:      "power-postgres",
+								Key:       "uri",
+							},
+						},
+					},
+				},
+			}
+
+			status, ready, reason, message := reconciler.evaluateStorage(context.Background(), cluster, accepted("contract accepted"))
+
+			Expect(ready).To(BeFalse())
+			Expect(reason).To(Equal("AuditStoreNotReady"))
+			Expect(status.Ready).To(BeFalse())
+			Expect(message).To(ContainSubstring("audit store is not ready"))
+		})
+
+		It("records a PowerManagementCluster audit event when storage is ready", func() {
+			store := &fakeAuditStore{}
+			fixed := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+			reconciler := &PowerManagementClusterReconciler{
+				StorageConnector: &fakeAuditConnector{store: store},
+				Clock: func() time.Time {
+					return fixed
+				},
+			}
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "alpha-power",
+					Generation: 7,
+				},
+			}
+			storageStatus := powerv1alpha1.StorageStatus{
+				Mode:    powerv1alpha1.PowerStorageExternalPostgres,
+				Ready:   true,
+				Message: "ExternalPostgres storage is ready",
+			}
+
+			err := reconciler.recordPowerManagementClusterAuditEvent(
+				context.Background(),
+				cluster,
+				accepted("contract accepted"),
+				storageStatus,
+				"AuditStoreReady",
+				"ExternalPostgres storage is ready",
+			)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.powerEvents).To(HaveLen(1))
+			Expect(store.powerEvents[0].EventType).To(Equal("PowerManagementClusterReconciled"))
+			Expect(store.powerEvents[0].ObservedAt).To(Equal(fixed))
+			Expect(*store.powerEvents[0].ResourceGeneration).To(Equal(int64(7)))
+			Expect(store.closeCalls).To(Equal(1))
 		})
 
 		It("reports a missing referenced CNPG cluster as not ready", func() {

@@ -2,7 +2,8 @@
 
 Production durable state is PostgreSQL, with CloudNativePG as the preferred in-cluster provider.
 The current code packages the first PostgreSQL migration and PostgreSQL-shaped writer boundary in
-`internal/audit`; it does not yet connect controller reconciliation to a live database.
+`internal/audit`, and `internal/storage` connects controller reconciliation to Secret-backed
+PostgreSQL/CNPG credentials through the pgx `database/sql` driver.
 
 ## Tables
 
@@ -21,8 +22,13 @@ streams, profile-match records, planner compilation records, and shutdown decisi
 The writer uses a narrow generic SQL executor interface, so CNPG and external PostgreSQL are
 connection-management choices rather than separate domain models. The storage resolver in
 `internal/storage` keeps `Disabled`, `ExternalPostgres`, and `CNPG` selection separate from
-database driver wiring.
+domain validation and controller status.
 
-The next storage step is controller-owned connection wiring that obtains the DSN/credentials for
-CNPG or external PostgreSQL, applies migrations through the audit store, and records events without
-putting PostgreSQL on the critical shutdown decision path.
+`PowerManagementCluster` reconciliation now opens the configured audit store, pings PostgreSQL,
+applies bundled migrations, and records durable reconciliation events after status updates. External
+PostgreSQL requires TLS by default. CNPG mode reads the generated application credential Secret and
+prefers the FQDN URI when present.
+
+The next storage step is expanding audit writes from root reconciliation events into telemetry,
+capability match, planner compilation, and shutdown decision paths without putting PostgreSQL on the
+critical host-actuation path.

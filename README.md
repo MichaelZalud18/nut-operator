@@ -79,7 +79,9 @@ Implemented now:
 - `NodePowerAgent` operand rendering for Namespace, ServiceAccount, ConfigMap, Secret-backed `upsmon.conf`, egress NetworkPolicy, and non-privileged DaemonSet in monitor/dry-run/stub modes.
 - PostgreSQL audit schema migration package for power events, telemetry snapshots, capability matches, planner compilations, and shutdown decisions.
 - PostgreSQL-shaped audit writer boundary with generic SQL executor interfaces and no CNPG-only coupling.
-- Provider-neutral storage backend resolver for `Disabled`, `ExternalPostgres`, and `CNPG` modes, with PostgreSQL audit-store construction behind an injected SQL executor.
+- Provider-neutral storage backend resolver for `Disabled`, `ExternalPostgres`, and `CNPG` modes.
+- PostgreSQL audit-store connector with Secret-backed DSN resolution, CNPG application credential URI support, TLS-required external PostgreSQL checks, pgx-backed connection opening, ping, schema migration, and owned connection lifecycle.
+- `PowerManagementCluster` storage readiness now verifies the configured PostgreSQL audit store and records durable reconciliation audit events when storage is ready.
 - Installable project-maintained capability profile catalog under `config/catalog/`, including real first-party project profiles for supported UPS product families.
 - Manager and project-owned development operand image builds and GHCR tag conventions.
 - Production-shaped example resources under `config/samples/`.
@@ -88,7 +90,6 @@ Not implemented yet:
 
 - Advanced NUT config rendering, credential rotation, and production-grade operand image release hardening.
 - Live NUT variable polling, telemetry normalization, and status-to-policy evaluation.
-- Controller wiring for PostgreSQL connection opening, Secret resolution, migration execution, and audit write calls.
 - Release-grade image smoke tests, SBOMs, signing, scanning policy, provenance, and immutable digest examples.
 
 ## Development

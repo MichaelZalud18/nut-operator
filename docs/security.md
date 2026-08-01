@@ -59,7 +59,7 @@ Unsafe behavior should be blocked in three places:
 2. Admission webhooks for object-local unsafe combinations.
 3. Reconciler validation and status conditions.
 
-The current implementation provides schema and reconciler validation across the API surface, plus admission webhooks for `UPSDevice`, `UPSCapabilityProfile`, and the declarative inventory CRDs. Remaining policy-resource webhooks are still required before production-grade enforcement.
+The current implementation provides schema and reconciler validation across the API surface, plus admission webhooks for all v1alpha1 resources. Production-grade enforcement still requires broader in-cluster soak testing and release-signing gates.
 
 ## Supply Chain
 
