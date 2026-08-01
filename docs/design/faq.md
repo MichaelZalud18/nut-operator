@@ -1,0 +1,84 @@
+# FAQ
+
+Answers to the questions the design most often prompts. Internal identifiers (SB-n, GP-n, etc.)
+reference the design documents; users can ignore them.
+
+## Does this replace Kured?
+
+No, and it deliberately does not try to.
+
+Kured reboots nodes because the OS needs patching. `nut-operator` shuts nodes down because power is
+failing. The end action looks similar — both cordon, both drain, both act on the host — but the
+triggers are different products. This project's rule is that trigger provenance defines scope: if
+the initiating signal is not power state, it is out of scope (GP-1, SB-5).
+
+The two coexist. One operational caveat: both cordon nodes, so a Kured reboot interleaving with a
+power event is possible. The power flow treats an already-cordoned node like any other node it must
+clear.
+
+## Why network-reachable UPS devices only? My UPS is USB.
+
+Because it keeps the entire UPS path unprivileged.
+
+USB and serial UPS access requires host device mounts and, in most community images, privileged
+containers. Network drivers (`snmp-ups`, `netxml-ups`, and the rest of the allowlist) require
+neither, which is why the NUT server pods run non-privileged with read-only roots and no host
+access (RB-1, RB-3).
+
+USB support is a deliberate deferral, not a rejection — it is on the v2 candidate list, and it will
+arrive with its own isolated actuation boundary rather than by weakening the current one (SB-4,
+OD-10).
+
+## Do I need NetBox?
+
+No. NetBox shaped the data model heavily, but the default build ships without it.
+
+Topology — which UPS feeds which node, which switch carries which control path — is declared
+through CRDs by default. NetBox is an optional provider that can supply the same information from
+your existing inventory. If you run NetBox, the operator renders a snapshot of it at reconcile
+time; it never queries NetBox live during a power event (SB-8, IN-14).
+
+## Do I need PostgreSQL?
+
+For production, yes. For development, no (`storage.mode: Disabled`).
+
+PostgreSQL holds the record: audit events, execution history, what actually shut down and in what
+order. It does not hold decisions — compiled plans live in Kubernetes, and a PostgreSQL outage
+degrades auditability without halting power response (SB-11, GP-3).
+
+CloudNativePG is the recommended in-cluster implementation. If you have PostgreSQL outside the
+cluster, `ExternalPostgres` is actually the more resilient choice for this workload, because a
+database outside the cluster is not in the shutdown path of the event it is recording.
+
+## Why doesn't it bring my cluster back up?
+
+Recovery is a genuinely different problem. Shutdown runs while the control plane still exists;
+bring-up starts from hardware settings (BIOS, PDU delayed-start) before any orchestration exists to
+help. NUT's own scope ends at clean shutdown for the same reason.
+
+Whether a recovery story joins the project later is an open decision (SB-1, OD-1). It is not an
+oversight.
+
+## Will this shut my nodes down by accident?
+
+It is designed so that it cannot shut anything down until you have said so twice.
+
+Every layer defaults to dry-run. Real host shutdown requires both an enforcement approval on the
+`ShutdownFlow` and an actuation approval on the `NodePowerAgent` — two separate annotations,
+reviewable in Git, visible in status before they take effect (GP-2, RB-4). Dry-run executes the
+entire flow except the effects, so you can rehearse the real plan, not a simulation of one.
+
+## What happens if the operator can't see the UPS during an outage?
+
+The design treats this as a first-class scenario rather than an edge case. The communication path
+between operator and UPS — every switch on it — is modeled in the topology, and those devices are
+ordered late in shutdown precisely so the event pipeline stays alive until the end. Telemetry loss
+raises an explicit condition, and stale power data can never produce an optimistic feasibility
+verdict (PL-32, RS-17).
+
+## Why is the actuator a stub? When does real shutdown land?
+
+Deliberately last. The implementation order puts real host actuation after audit, admission
+webhooks, and release hardening — dangerous behavior ships only once everything needed to review,
+gate, and record it already works. Until then the actuator renders as a stub and the rest of the
+system is fully exercisable in dry-run.

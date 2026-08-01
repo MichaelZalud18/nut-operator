@@ -1,0 +1,367 @@
+# Planner Requirements
+
+Status: working document. Defines the requirements for the planner package — the "decide" stage of
+`nut-operator`.
+
+Companion to `scope-boundaries.md`. `PL-n` identifiers are stable and are not reused or renumbered.
+
+## Position in the System
+
+The system splits into **detect → decide → act**. The planner is only "decide."
+
+| Stage | Owns | I/O |
+| --- | --- | --- |
+| Resolver (detect) | Kubernetes reads, NUT telemetry, capability profile loading, topology provider resolution, inventory merge | Yes |
+| **Planner (decide)** | **Graph construction, validation, wave compilation, feasibility** | **No** |
+| Executor (act) | Actuation, eviction, node release, audit writes | Yes |
+
+Everything the planner needs arrives as a resolved input bundle. This is what makes it unit-testable
+in isolation and what makes audit correlation possible.
+
+---
+
+## Architecture
+
+**PL-1** · Pure function. `Compile(StructuralInputs, TelemetryInputs) → (Plan, Diagnostics, error)`.
+No Kubernetes client, no NUT client, no database handle, no filesystem access, no network access.
+
+**PL-2** · Clock is injected. No `time.Now()` in the package. Durations are arithmetic over input
+values.
+
+**PL-3** · No ambient state. No environment reads, no hostname resolution, no randomness, no global
+mutable state.
+
+**PL-4** · The resolver owns all I/O upstream. The executor owns all actuation downstream. Neither
+concern leaks into the planner.
+
+---
+
+## Inputs
+
+Inputs are partitioned into two bundles. The partition is load-bearing — see PL-42.
+
+### Structural bundle
+
+Slow-changing. Hashed, determinism-tested, staleness-checked.
+
+**PL-5** · Flow spec: groups, `requires` / `before` / `after` edges, phase hints, timeouts,
+trigger declarations, abort policy.
+
+**PL-6** · Topology bundle: the `feeds` and `carries` edge sets over the inventory entity set, with
+input qualifiers on `feeds`. Power domains are **not** supplied — they are derived by transitive
+closure over `feeds` from each `UPSDevice` root, computed in the pure package alongside capability
+matching. See `inventory-provider-contract.md`.
+
+**PL-7** · Resolved capability profiles, one per device, already matched by the resolver via the
+deterministic precedence chain (exact model+firmware → exact model → model glob → driver family →
+universal floor; CRD source over bundled within a tier; highest semver within a source). The planner
+consumes matched results and never performs matching. Matching is pure logic and lives in its own
+package under the same determinism discipline as the planner; the resolver calls it.
+
+**PL-9** · Node inventory with roles: control-plane membership, quorum requirements, last-ditch role
+assignments.
+
+**PL-10** · Workload inventory sufficient for node-clearance reasoning and PodDisruptionBudget
+awareness.
+
+### Telemetry bundle
+
+Continuously changing. Never hashed, never part of plan identity.
+
+**PL-8** · Power state snapshot per power domain: runtime remaining, battery charge, on-battery
+duration, each carrying an explicit confidence and staleness marker.
+
+### Common
+
+**PL-11** · Every input carries a source identifier and observation timestamp so diagnostics can
+attribute a rejection to the input that caused it.
+
+**PL-42** · The structural/telemetry partition is enforced at the type level, not by convention.
+Telemetry values must be structurally incapable of reaching the hash computation in PL-14. Without
+this, plan identity changes on every telemetry tick, determinism testing becomes impossible, and
+the revalidation check in PL-31 can never pass.
+
+---
+
+## Outputs
+
+**PL-12** · Compiled waves: ordered, each carrying its concurrent group set, per-group timeout, wave
+duration, and cumulative duration. Extends the existing `status.compiledWaves`.
+
+**PL-13** · Flattened review view, as `status.compiledSteps` provides today.
+
+**PL-14** · Plan identity: a deterministic hash over the **structural** input bundle plus the emitted
+plan. Required for audit correlation across restarts and for the revalidation check in PL-31. The
+actuator handoff file already carries flow identity; this is the key that makes it resolvable.
+
+**PL-15** · Edge provenance. Every edge in the compiled graph is labeled authored or derived, and
+derived edges name the rule that produced them. This is what makes "why was this node in wave four"
+answerable from stored structure per SB-12 rather than from log archaeology.
+
+**PL-16** · Feasibility verdict, per power domain — **advisory at compile time, authoritative at
+trigger time**. Three states: `Feasible`, `Infeasible`, `Unknown`. A compile-time verdict computed
+while on wall power reads against a full runtime budget and carries little meaning; it is emitted
+for review, not for decisions. The binding verdict is recomputed against live telemetry when a
+trigger fires. Both verdicts are recorded.
+
+**PL-17** · Structured diagnostics. Rejections and warnings cite the specific groups, edges, or
+devices involved. "Cycle detected" is not acceptable output; "cycle: applications → databases →
+applications" is.
+
+**PL-18** · Abort-policy annotation. Groups eligible under `abortPolicy.behavior: ContinueSafeSteps`
+are marked in the compiled plan, not resolved at execution time.
+
+---
+
+## Compilation
+
+The nine compilation steps in `docs/shutdown-flow.md` remain. These are additions and amendments.
+
+**PL-19** · Trigger-capability validation. Validate every declared trigger against the resolved
+capability profiles of all devices in the referenced power domains. A `RuntimeBelow` trigger aimed at
+a device whose driver never reports runtime fails silently, during an outage, at the one moment
+nobody is watching.
+
+Resolution of the PL-19/PL-33 interaction:
+
+- A trigger unsatisfiable by **some** devices in a domain degrades to a coarser trigger class and
+  emits a warning. The compile succeeds and the plan is marked degraded. Degrade mechanics — which
+  coarser class substitutes, and whether substitution is automatic or requires a declared fallback
+  trigger on the flow — are specified in the capability schema doc.
+- A trigger unsatisfiable by **every** device in a domain is a hard rejection. A plan whose triggers
+  can never fire is not a degraded plan; it is a non-functional one.
+- Use of a fallback profile (PL-33) does not by itself escalate a warning into a rejection. The
+  above two rules apply identically whether the profile was resolved or fell back.
+
+**PL-20** · Derive node-clearance edges. Nodes are terminal vertices and cannot power off until
+assigned workloads, storage operations, and cluster responsibilities have cleared. These must be
+emitted as actual graph edges, not left as prose the executor is trusted to honor. Subject to
+execution-time revalidation per OD-11.
+
+**PL-21** · Derive communication-path edges. A network device carrying the control-plane or NUT path
+for node N cannot precede N in shutdown order. The communication path is modeled as `carries` edges
+per IN-5; OD-3 is closed.
+
+**PL-22** · Resolve last-ditch roles into terminal ordering constraints. "Must stay until phase X" is
+a role in input and a set of edges in output. Requires the phase taxonomy in OD-4.
+
+**PL-23** · Enforce quorum. With an HA control plane, no wave may drop the control plane below quorum
+while later waves still require orchestration. Hard constraint. This is the mechanism behind
+"minimum viable control plane."
+
+**PL-24** · Enforce explicit control-plane ordering. Control-plane nodes carry explicit late
+dependencies rather than relying on a high phase number. Reject or warn when they do not.
+
+**PL-25** · Detect co-wave contention, and act on it. Two groups with no dependency edge between them
+share a wave and execute concurrently; if both target workloads on the same node, concurrent draining
+can violate a PodDisruptionBudget or overwhelm the node. Absence of an authored edge is not proof of
+independence.
+
+Detection alone is insufficient. Behavior is governed by a policy field with three settings:
+
+| Setting | Behavior |
+| --- | --- |
+| `Warn` (default) | Emit a diagnostic; leave the wave as compiled |
+| `Serialize` | Insert a derived ordering edge, labeled per PL-15, and recompile |
+| `Reject` | Fail the compile |
+
+**PL-26** · Compilation is atomic. It fully succeeds or fully fails. No partial plan is ever emitted.
+
+---
+
+## Determinism
+
+**PL-27** · Identical **structural** inputs produce byte-identical plans and identical plan hashes.
+Sorted iteration everywhere; no map-order leakage into wave membership or edge lists.
+
+**PL-28** · Determinism is a test target, not an aspiration. Compile twice within the test suite and
+assert equality.
+
+This buys three things: audit records that can be trusted, plan-to-plan diffing that shows what a
+topology change did to ordering, and reproducible fixtures.
+
+---
+
+## Staleness and Revalidation
+
+**PL-29** · Plans carry their structural input hash. Staleness is detectable rather than assumed.
+
+**PL-30** · Recompile on spec generation change, on watch events against referenced structural
+inputs, and on a periodic floor.
+
+**PL-31** · Revalidate immediately before execution. If the structural input hash no longer matches
+at trigger time, the planner does **not** simply refuse.
+
+The sequence is:
+
+1. Attempt recompilation within a bounded time budget.
+2. If recompilation succeeds, execute the fresh plan.
+3. If recompilation fails or exceeds its budget, a policy field decides between executing the stale
+   plan and refusing.
+
+Refusal is never the silent default. A cluster that dies ungracefully because it declined to run a
+slightly stale plan is a worse outcome than executing one. This is the same failure class as OD-12
+and takes the same shape of answer.
+
+**PL-44** · Orphan validation. Every Kubernetes node must be reachable from at least one
+`UPSDevice` via `feeds` edges, or carry an explicit exemption marker excluding it from power
+planning. Neither reachable nor exempted is a hard validation failure. This is the guardrail that
+makes derived domain membership safe — without it, one unrecorded edge silently drops a node out of
+every domain, no trigger covers it, and it hard-drops during an outage with nothing in any log.
+
+**PL-43** · Node-clearance edges derived under PL-20 are computed from compile-time workload
+placement, which execution-time instance enumeration can invalidate. Node clearance is revalidated
+at execution alongside instance resolution, per OD-11.
+
+---
+
+## Degradation
+
+**PL-32** · Missing or stale data never yields an optimistic verdict. Absent runtime telemetry
+produces `Unknown` feasibility, never `Feasible`.
+
+**PL-33** · A device that matches no specific profile matches the universal floor profile — the
+least-specific selector in the precedence chain, bundled with the operator and guaranteed to always
+match — and raises a warning. This is not a special case; it is the terminal tier of the matching
+algorithm. It does not by itself fail the compile. Interaction with PL-19 is specified under PL-19.
+
+**PL-34** · Planning succeeds against partial input where structurally possible. The plan is marked
+degraded and the degradation reasons are enumerated.
+
+---
+
+## Non-requirements
+
+**PL-35** · The planner does not execute anything.
+
+**PL-36** · The planner validates trigger *definitions*. The controller evaluates trigger
+*conditions*. Separate concerns, separate code paths.
+
+**PL-37** · `DryRun` versus `Enforce` is not the planner's concern. It always compiles. Gating lives
+in the controller per GP-2.
+
+**PL-38** · The planner does not write to PostgreSQL or to Kubernetes. It returns values; callers
+persist them.
+
+---
+
+## Testability
+
+**PL-39** · Table-driven fixtures mapping input bundle to expected plan, with golden-file outputs.
+
+**PL-40** · Property tests: output contains no cycles; every input group appears exactly once; no wave
+depends on a later wave; quorum holds at every wave boundary.
+
+**PL-41** · Fuzz the graph builder against malformed and adversarial edge sets.
+
+---
+
+## Capability Resolution Model
+
+Settled during capability schema deconfliction. Recorded here because it constrains planner inputs.
+
+**CR-1** · Declaration is authoritative; probing is advisory. The planner and the trigger path see
+only declared profiles. Runtime probing of NUT variables runs as a reconciliation-time drift
+detector: probe, compare against declaration, raise a condition on mismatch. Probe results never
+feed the planner and never automatically demote a profile — auto-demotion would reintroduce a
+runtime dependency into the failure path. The correction loop is probe → condition → human profile
+fix → structural input change → recompile per PL-30.
+
+**CR-2** · Trigger support is derived, not declared. Profiles declare NUT variables (telemetry
+section) and behaviors/quirks (actuation section). Trigger-class support is derived from declared
+variables through a mapping table owned and versioned by the operator, not by the profile schema. A
+profile cannot claim `RuntimeBelow` support directly; it can only declare `battery.runtime`, and the
+operator decides what that implies.
+
+**CR-3** · Profile corrections that reduce declared capability are MAJOR version bumps, even though
+they are behaviorally fixes. Plans validated against the prior version may fail PL-19 under the
+corrected one.
+
+---
+
+## Resolved Decisions
+
+**OD-11 · Selector resolution timing — hybrid.** The graph and its ordering compile ahead of time.
+Concrete workload instances enumerate at execution. Consequence: every duration estimate in a
+compiled plan is an approximation and must be labeled as such in the plan rather than implied.
+Node-clearance edges revalidate at execution per PL-43.
+
+**OD-12 · Infeasible-plan behavior — policy field.** When plan duration exceeds the runtime budget,
+behavior is configured, not hardcoded: reject, emit with warning, or emit a truncated best-effort
+plan. Rejecting during an actual outage is the worst available outcome, so the default must not be
+rejection.
+
+**OD-13 · Load-shedding granularity — node-level in v1.** "What does shedding X buy me" requires
+per-workload power draw. Nothing in the system measures that. v1 therefore reasons at whole-node
+granularity — "power off this node early, gain N minutes" — and the limitation is stated up front
+rather than discovered. Per-workload attribution is a later capability with an unresolved data
+source.
+
+---
+
+**OD-7 · Profile storage — closed.** Profiles are CRDs plus bundled operator data. NetBox is
+referenced from, never maintained in; at most it carries a custom field pointing at a profile name.
+
+**OD-8 · Merge precedence — dissolved.** There is no field-level merge. The topology provider
+supplies matching keys (model, firmware); profiles supply match selectors and capabilities. It is a
+lookup, not a merge. Residue: validation rules for malformed or missing model strings from the
+provider — a resolver concern, tracked as OD-8r.
+
+**OD-9 · Trigger-capability mismatch — resolved in structure, folded into capability schema.** The
+some/all split in PL-19 answers reject-versus-degrade. Remaining degrade mechanics are capability
+schema doc content, not a standalone decision.
+
+## Open Decisions
+
+Carried from `scope-boundaries.md`: OD-4 (last-ditch phase taxonomy).
+
+OD-2 and OD-3 are closed by `inventory-provider-contract.md`. There is one entity set with two edge
+relations; the logical shutdown graph is compiled output, not a third input.
+
+**OD-16 · Missing `carries` coverage.** Whether a node with no modeled communication path is a hard
+validation failure or requires an explicit exemption marker, mirroring PL-44. Silent-assume is
+excluded.
+
+**OD-8r · Provider key validation.** Resolver behavior when the topology provider supplies a
+malformed or missing model string: reject the device, floor-match with warning, or configurable.
+
+**OD-15 · Probe history persistence.** Profile drift detection implies a "last verified against
+firmware X" record. Per GP-3 that is a PostgreSQL record, not CR status — which adds a table to the
+audit schema that would not otherwise exist. Flag for the audit schema doc.
+
+**OD-14 · Plan scope under partial-domain outage.** The design targets multiple UPS devices and
+multiple power domains, and triggers already reference `powerDomains`. If one domain loses power
+while another does not, nothing currently defines whether the compiled plan is cluster-wide or a
+domain-scoped subgraph. Partial-domain outage is a realistic scenario for the multi-UPS design and
+has no defined behavior. Blocks PL-16 semantics and PL-23 quorum enforcement, since a domain-scoped
+plan may need to reason about control-plane members outside its own domain.
+
+No longer blocked on missing structure: derived domains (IN-7) plus input-qualified `feeds` edges
+(IN-4) supply the data this decision needed. Only the policy choice remains.
+
+---
+
+## Change Log
+
+**2026-07-31 — initial draft, revised after review.** Five corrections applied before publication:
+
+- **Inputs partitioned** (PL-42). Telemetry in the hashed bundle would have made PL-14 plan identity
+  change on every tick, PL-27 determinism untestable, and PL-31 revalidation permanently failing.
+- **PL-16 split into advisory and authoritative verdicts** as a consequence of the partition.
+- **PL-31 rewritten.** Original text could block shutdown during an outage by refusing a stale plan.
+  Now: bounded recompile, then policy decision, with refusal explicitly not the default.
+- **PL-19/PL-33 collision resolved.** The fallback profile path and trigger validation previously
+  contradicted each other. Rules now stated in PL-19.
+- **PL-25 given a consequence.** Detection without defined resolution moved the problem to the
+  executor.
+
+Also added: PL-43 (node-clearance revalidation), OD-14 (partial-domain plan scope).
+
+**2026-07-31 — capability deconfliction pass.** Added CR-1 through CR-3. PL-7 rewritten from merge
+to deterministic matching. PL-33 redefined as the universal-floor tier of the matching algorithm.
+PL-19 degrade mechanics delegated to the capability schema doc. OD-7 closed, OD-8 dissolved (OD-8r
+residue), OD-9 folded into the capability schema. OD-15 added.
+
+**2026-07-31 — inventory contract pass.** PL-6 rewritten for derived power domains. PL-44 added
+(orphan rule). PL-21 unblocked by OD-3 closure. OD-2 and OD-3 removed from carried decisions; OD-16
+added. OD-14 marked unblocked on structure.

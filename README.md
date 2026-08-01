@@ -66,7 +66,8 @@ Implemented now:
 - Kubebuilder/controller-runtime scaffold.
 - Five cluster-scoped CRDs with status subresources.
 - Validation/status reconcilers for all five resources.
-- Dependency-graph validation and compiled-wave status for `ShutdownFlow`.
+- Pure planner package for `ShutdownFlow` graph validation, compiled-wave status, and plan config hashes.
+- Pure inventory, capability matching, and resolver assembly packages for provider-neutral topology, profile precedence, and planner input identity.
 - `NUTServer` operand rendering for Namespace, ConfigMap, operator-managed Secret, Service, NetworkPolicy, and Deployment.
 - `NodePowerAgent` operand rendering for Namespace, ServiceAccount, ConfigMap, Secret-backed `upsmon.conf`, egress NetworkPolicy, and non-privileged DaemonSet in monitor/dry-run/stub modes.
 - Manager and project-owned development operand image builds and GHCR tag conventions.
@@ -126,6 +127,13 @@ kubectl apply -k config/samples/
 - [Security](docs/security.md)
 - [Image strategy](docs/images.md)
 - [Shutdown flow design](docs/shutdown-flow.md)
+- [Design decision index](docs/design/decision-index.md)
+- [Scope boundaries](docs/design/scope-boundaries.md)
+- [Planner requirements](docs/design/planner-requirements.md)
+- [Resolver requirements](docs/design/resolver-requirements.md)
+- [Executor requirements](docs/design/executor-requirements.md)
+- [Inventory provider contract](docs/design/inventory-provider-contract.md)
+- [FAQ](docs/design/faq.md)
 - [Orion cluster example](docs/examples/orion-cluster/README.md)
 
 ## Community and Project Info

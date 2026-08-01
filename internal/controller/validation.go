@@ -17,13 +17,11 @@ limitations under the License.
 package controller
 
 import (
+	"errors"
 	"fmt"
-	"sort"
-	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/planner"
 )
 
 type validationResult struct {
@@ -150,43 +148,17 @@ func validateNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) validationResult 
 }
 
 func validateShutdownFlow(obj *powerv1alpha1.ShutdownFlow) validationResult {
-	if len(obj.Spec.Triggers) == 0 {
-		return rejected("TriggersRequired", "spec.triggers requires at least one trigger")
-	}
-	if len(obj.Spec.Groups) == 0 && len(obj.Spec.Steps) == 0 {
-		return rejected("PlanRequired", "spec.groups or spec.steps requires at least one shutdown action")
-	}
-
-	seen := map[string]struct{}{}
-	for _, step := range obj.Spec.Steps {
-		if step.ID == "" {
-			return rejected("StepIDRequired", "every shutdown step requires an id")
-		}
-		if _, exists := seen[step.ID]; exists {
-			return rejected("DuplicateStepID", "shutdown step id %q is duplicated", step.ID)
-		}
-		seen[step.ID] = struct{}{}
-	}
-
-	groupNames := map[string]struct{}{}
-	for _, group := range obj.Spec.Groups {
-		if group.Name == "" {
-			return rejected("GroupNameRequired", "every shutdown group requires a name")
-		}
-		if _, exists := groupNames[group.Name]; exists {
-			return rejected("DuplicateGroupName", "shutdown group name %q is duplicated", group.Name)
-		}
-		groupNames[group.Name] = struct{}{}
-	}
-	for _, group := range obj.Spec.Groups {
-		for _, dependency := range append(append([]string{}, group.Requires...), append(group.Before, group.After...)...) {
-			if _, exists := groupNames[dependency]; !exists {
-				return rejected("UnknownDependency", "shutdown group %q references unknown dependency %q", group.Name, dependency)
+	_, diagnostics, err := planner.Compile(plannerInputsFromShutdownFlow(obj), planner.TelemetryInputs{})
+	if err != nil {
+		for _, diagnostic := range diagnostics {
+			if diagnostic.Severity == planner.DiagnosticError {
+				return rejected(diagnostic.Reason, "%s", diagnostic.Message)
 			}
 		}
-	}
-	if hasShutdownGroupCycle(obj.Spec.Groups) {
-		return rejected("DependencyCycle", "shutdown groups contain a dependency cycle")
+		if errors.Is(err, planner.ErrRejected) {
+			return rejected("PlannerRejected", "shutdown flow planner rejected structural inputs")
+		}
+		return rejected("PlannerFailed", "shutdown flow planner failed: %v", err)
 	}
 
 	if obj.Spec.Mode == powerv1alpha1.ShutdownFlowModeEnforce {
@@ -200,202 +172,4 @@ func validateShutdownFlow(obj *powerv1alpha1.ShutdownFlow) validationResult {
 	}
 
 	return accepted("shutdown flow contract accepted")
-}
-
-func hasShutdownGroupCycle(groups []powerv1alpha1.ShutdownGroup) bool {
-	edges := shutdownGroupEdges(groups)
-	visiting := map[string]bool{}
-	visited := map[string]bool{}
-
-	var visit func(string) bool
-	visit = func(name string) bool {
-		if visiting[name] {
-			return true
-		}
-		if visited[name] {
-			return false
-		}
-		visiting[name] = true
-		for _, next := range edges[name] {
-			if visit(next) {
-				return true
-			}
-		}
-		visiting[name] = false
-		visited[name] = true
-		return false
-	}
-
-	for _, group := range groups {
-		if visit(group.Name) {
-			return true
-		}
-	}
-	return false
-}
-
-func shutdownGroupEdges(groups []powerv1alpha1.ShutdownGroup) map[string][]string {
-	edges := map[string][]string{}
-	for _, group := range groups {
-		edges[group.Name] = append(edges[group.Name], group.Requires...)
-		edges[group.Name] = append(edges[group.Name], group.Before...)
-		for _, after := range group.After {
-			edges[after] = append(edges[after], group.Name)
-		}
-	}
-	return edges
-}
-
-func compileShutdownFlow(obj *powerv1alpha1.ShutdownFlow) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration) {
-	if len(obj.Spec.Groups) == 0 {
-		steps, duration := compileShutdownSteps(obj.Spec.Steps)
-		return steps, nil, duration
-	}
-
-	steps, waves, duration := compileShutdownGroups(obj.Spec.Groups)
-	return steps, waves, duration
-}
-
-func compileShutdownGroups(groups []powerv1alpha1.ShutdownGroup) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration) {
-	byName := map[string]powerv1alpha1.ShutdownGroup{}
-	indegree := map[string]int{}
-	edges := shutdownGroupEdges(groups)
-	for _, group := range groups {
-		byName[group.Name] = group
-		indegree[group.Name] = 0
-	}
-	for _, successors := range edges {
-		for _, successor := range successors {
-			indegree[successor]++
-		}
-	}
-
-	var waves []powerv1alpha1.CompiledShutdownWave
-	var steps []powerv1alpha1.CompiledShutdownStep
-	var cumulative time.Duration
-	var stepIndex int32
-	var waveIndex int32
-
-	for len(indegree) > 0 {
-		ready := make([]powerv1alpha1.ShutdownGroup, 0)
-		for name, count := range indegree {
-			if count == 0 {
-				ready = append(ready, byName[name])
-			}
-		}
-		sort.Slice(ready, func(i, j int) bool {
-			phaseI, phaseJ := groupPhase(ready[i]), groupPhase(ready[j])
-			if phaseI != phaseJ {
-				return phaseI < phaseJ
-			}
-			return ready[i].Name < ready[j].Name
-		})
-
-		phase := groupPhase(ready[0])
-		waveGroups := make([]powerv1alpha1.ShutdownGroup, 0, len(ready))
-		for _, group := range ready {
-			if groupPhase(group) == phase {
-				waveGroups = append(waveGroups, group)
-			}
-		}
-
-		var waveDuration time.Duration
-		for _, group := range waveGroups {
-			if group.Timeout != nil && group.Timeout.Duration > waveDuration {
-				waveDuration = group.Timeout.Duration
-			}
-		}
-
-		groupNames := make([]string, 0, len(waveGroups))
-		for _, group := range waveGroups {
-			groupNames = append(groupNames, group.Name)
-			duration := metav1.Duration{Duration: cumulative + waveDuration}
-			steps = append(steps, powerv1alpha1.CompiledShutdownStep{
-				ID:                 group.Name,
-				Index:              stepIndex,
-				Type:               group.Action,
-				TargetSummary:      summarizeStepTarget(group.Target),
-				CumulativeDuration: &duration,
-			})
-			stepIndex++
-		}
-
-		cumulative += waveDuration
-		duration := metav1.Duration{Duration: waveDuration}
-		cumulativeDuration := metav1.Duration{Duration: cumulative}
-		wave := powerv1alpha1.CompiledShutdownWave{
-			Index:              waveIndex,
-			Groups:             groupNames,
-			Duration:           &duration,
-			CumulativeDuration: &cumulativeDuration,
-		}
-		if phase != 0 {
-			phaseCopy := phase
-			wave.Phase = &phaseCopy
-		}
-		waves = append(waves, wave)
-		waveIndex++
-
-		for _, group := range waveGroups {
-			delete(indegree, group.Name)
-			for _, successor := range edges[group.Name] {
-				indegree[successor]--
-			}
-		}
-	}
-
-	total := metav1.Duration{Duration: cumulative}
-	return steps, waves, &total
-}
-
-func groupPhase(group powerv1alpha1.ShutdownGroup) int32 {
-	if group.Phase == nil {
-		return 0
-	}
-	return *group.Phase
-}
-
-func compileShutdownSteps(steps []powerv1alpha1.ShutdownStep) ([]powerv1alpha1.CompiledShutdownStep, *metav1.Duration) {
-	compiled := make([]powerv1alpha1.CompiledShutdownStep, 0, len(steps))
-	var cumulative time.Duration
-
-	for i, step := range steps {
-		if step.Duration != nil {
-			cumulative += step.Duration.Duration
-		}
-		if step.Timeout != nil && step.Type != powerv1alpha1.ShutdownStepWait {
-			cumulative += step.Timeout.Duration
-		}
-
-		duration := metav1.Duration{Duration: cumulative}
-		compiled = append(compiled, powerv1alpha1.CompiledShutdownStep{
-			ID:                 step.ID,
-			Index:              int32(i),
-			Type:               step.Type,
-			TargetSummary:      summarizeStepTarget(step.Target),
-			CumulativeDuration: &duration,
-		})
-	}
-
-	total := metav1.Duration{Duration: cumulative}
-	return compiled, &total
-}
-
-func summarizeStepTarget(target powerv1alpha1.ShutdownStepTarget) string {
-	switch {
-	case target.NodeSelector != nil:
-		return "nodes selected by label selector"
-	case target.NamespaceSelector != nil:
-		return "namespaces selected by label selector"
-	case target.WorkloadSelector != nil:
-		return "workloads selected by label selector"
-	case len(target.AgentRefs) > 0:
-		return fmt.Sprintf("%d node power agent fleet(s)", len(target.AgentRefs))
-	case len(target.WorkloadRefs) > 0:
-		return fmt.Sprintf("%d workload(s)", len(target.WorkloadRefs))
-	case len(target.Namespaces) > 0:
-		return fmt.Sprintf("%d namespace(s)", len(target.Namespaces))
-	default:
-		return "no explicit target"
-	}
 }

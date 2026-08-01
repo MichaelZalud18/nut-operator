@@ -106,6 +106,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.CompiledWaves).To(HaveLen(2))
 			Expect(resource.Status.CompiledWaves[0].Groups).To(ConsistOf("applications"))
 			Expect(resource.Status.CompiledWaves[1].Groups).To(ConsistOf("databases"))
+			Expect(resource.Status.ConfigHash).NotTo(BeEmpty())
 		})
 	})
 })

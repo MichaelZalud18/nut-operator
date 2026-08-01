@@ -142,7 +142,7 @@ func TestCompileShutdownGroupsAllowsIndependentConcurrentWave(t *testing.T) {
 		t.Fatalf("expected flow to be accepted, got %s: %s", result.reason, result.message)
 	}
 
-	_, waves, _ := compileShutdownFlow(flow)
+	_, waves, _, configHash := compileShutdownFlow(flow)
 	if len(waves) != 2 {
 		t.Fatalf("expected 2 compiled waves, got %d", len(waves))
 	}
@@ -151,6 +151,9 @@ func TestCompileShutdownGroupsAllowsIndependentConcurrentWave(t *testing.T) {
 	}
 	if waves[1].Groups[0] != "databases" {
 		t.Fatalf("expected databases in second wave, got %#v", waves[1].Groups)
+	}
+	if configHash == "" {
+		t.Fatal("expected compiled flow config hash to be set")
 	}
 }
 

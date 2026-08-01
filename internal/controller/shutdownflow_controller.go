@@ -55,16 +55,18 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	flow.Status.ObservedGeneration = flow.Generation
 	flow.Status.LastEvaluationTime = ptrNow()
 	if result.accepted {
-		compiled, compiledWaves, estimatedDuration := compileShutdownFlow(&flow)
+		compiled, compiledWaves, estimatedDuration, configHash := compileShutdownFlow(&flow)
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseCompiled
 		flow.Status.CompiledSteps = compiled
 		flow.Status.CompiledWaves = compiledWaves
 		flow.Status.EstimatedDuration = estimatedDuration
+		flow.Status.ConfigHash = configHash
 	} else {
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseError
 		flow.Status.CompiledSteps = nil
 		flow.Status.CompiledWaves = nil
 		flow.Status.EstimatedDuration = nil
+		flow.Status.ConfigHash = ""
 	}
 	setAcceptedCondition(&flow.Status.Conditions, flow.Generation, result)
 	setReadyCondition(
