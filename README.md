@@ -73,12 +73,13 @@ Implemented now:
 - Pure planner package for `ShutdownFlow` graph validation, compiled-wave status, and plan config hashes.
 - Pure inventory, capability matching, bundled profile catalog, and resolver assembly packages for provider-neutral topology, profile precedence, and planner input identity.
 - `ShutdownFlow` reconciliation against cluster-scoped declarative inventory and UPS capability profiles, with resolved input hashes in status.
-- Admission webhooks for `UPSDevice`, `UPSCapabilityProfile`, `PowerInfrastructure`, `PowerInventoryNode`, and `PowerInventoryEdge`.
+- Admission webhooks for all nine v1alpha1 resources, including storage/backend validation, NUT auth/TLS coupling, explicit actuation gates, and planner-backed `ShutdownFlow` validation.
 - `NUTServer` operand rendering for Namespace, ConfigMap, operator-managed Secret, Service, NetworkPolicy, and Deployment.
 - Upstream NUT-server relay rendering through `dummy-ups` repeater mode, including Secret-projected `authconf`, egress policy rules, and TCP reachability status.
 - `NodePowerAgent` operand rendering for Namespace, ServiceAccount, ConfigMap, Secret-backed `upsmon.conf`, egress NetworkPolicy, and non-privileged DaemonSet in monitor/dry-run/stub modes.
 - PostgreSQL audit schema migration package for power events, telemetry snapshots, capability matches, planner compilations, and shutdown decisions.
 - PostgreSQL-shaped audit writer boundary with generic SQL executor interfaces and no CNPG-only coupling.
+- Provider-neutral storage backend resolver for `Disabled`, `ExternalPostgres`, and `CNPG` modes, with PostgreSQL audit-store construction behind an injected SQL executor.
 - Installable project-maintained capability profile catalog under `config/catalog/`, including real first-party project profiles for supported UPS product families.
 - Manager and project-owned development operand image builds and GHCR tag conventions.
 - Production-shaped example resources under `config/samples/`.
@@ -87,8 +88,7 @@ Not implemented yet:
 
 - Advanced NUT config rendering, credential rotation, and production-grade operand image release hardening.
 - Live NUT variable polling, telemetry normalization, and status-to-policy evaluation.
-- Controller wiring for PostgreSQL connections, migration execution, and audit write calls.
-- Admission webhooks for `PowerManagementCluster`, `NUTServer`, `NodePowerAgent`, and `ShutdownFlow`.
+- Controller wiring for PostgreSQL connection opening, Secret resolution, migration execution, and audit write calls.
 - Release-grade image smoke tests, SBOMs, signing, scanning policy, provenance, and immutable digest examples.
 
 ## Development

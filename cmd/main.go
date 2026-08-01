@@ -264,6 +264,22 @@ func main() {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "PowerInventoryEdge")
 			os.Exit(1)
 		}
+		if err := webhookv1alpha1.SetupPowerManagementClusterWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "PowerManagementCluster")
+			os.Exit(1)
+		}
+		if err := webhookv1alpha1.SetupNUTServerWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "NUTServer")
+			os.Exit(1)
+		}
+		if err := webhookv1alpha1.SetupNodePowerAgentWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "NodePowerAgent")
+			os.Exit(1)
+		}
+		if err := webhookv1alpha1.SetupShutdownFlowWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "ShutdownFlow")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 

@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 )
 
 // PowerManagementClusterReconciler reconciles a PowerManagementCluster object
@@ -86,7 +87,7 @@ func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 
-	if storageMode(cluster.Spec.Storage) == powerv1alpha1.PowerStorageCNPG {
+	if storageconfig.EffectiveMode(cluster.Spec.Storage) == powerv1alpha1.PowerStorageCNPG {
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 	return ctrl.Result{}, nil
@@ -120,15 +121,21 @@ func newCNPGClusterObject() *unstructured.Unstructured {
 }
 
 func (r *PowerManagementClusterReconciler) evaluateStorage(ctx context.Context, cluster *powerv1alpha1.PowerManagementCluster, result validationResult) (powerv1alpha1.StorageStatus, bool, string, string) {
-	mode := storageMode(cluster.Spec.Storage)
+	backend, err := storageconfig.Resolve(cluster.Spec.Storage)
+	mode := storageconfig.EffectiveMode(cluster.Spec.Storage)
 	status := powerv1alpha1.StorageStatus{Mode: mode}
 	if !result.accepted {
 		status.Ready = false
 		status.Message = result.message
 		return status, false, result.reason, result.message
 	}
+	if err != nil {
+		status.Ready = false
+		status.Message = err.Error()
+		return status, false, "StorageConfigurationInvalid", status.Message
+	}
 
-	switch mode {
+	switch backend.Source {
 	case powerv1alpha1.PowerStorageDisabled:
 		status.Ready = true
 		status.Message = "storage is disabled; suitable only for development or tests"
@@ -138,7 +145,7 @@ func (r *PowerManagementClusterReconciler) evaluateStorage(ctx context.Context, 
 		status.Message = "ExternalPostgres storage is configured; connectivity checks are not implemented yet"
 		return status, true, "StorageConfigured", status.Message
 	case powerv1alpha1.PowerStorageCNPG:
-		return r.evaluateCNPGStorage(ctx, cluster, status)
+		return r.evaluateCNPGStorage(ctx, backend.CNPG.ClusterRef, status)
 	default:
 		status.Ready = false
 		status.Message = result.message
@@ -147,14 +154,10 @@ func (r *PowerManagementClusterReconciler) evaluateStorage(ctx context.Context, 
 }
 
 func storageMode(spec powerv1alpha1.PowerStorageSpec) powerv1alpha1.PowerStorageMode {
-	if spec.Mode != "" {
-		return spec.Mode
-	}
-	return powerv1alpha1.PowerStorageCNPG
+	return storageconfig.EffectiveMode(spec)
 }
 
-func (r *PowerManagementClusterReconciler) evaluateCNPGStorage(ctx context.Context, cluster *powerv1alpha1.PowerManagementCluster, status powerv1alpha1.StorageStatus) (powerv1alpha1.StorageStatus, bool, string, string) {
-	ref := cluster.Spec.Storage.CNPG.ClusterRef
+func (r *PowerManagementClusterReconciler) evaluateCNPGStorage(ctx context.Context, ref powerv1alpha1.NamespacedNameReference, status powerv1alpha1.StorageStatus) (powerv1alpha1.StorageStatus, bool, string, string) {
 	cnpgCluster := &unstructured.Unstructured{}
 	cnpgCluster.SetGroupVersionKind(cnpgClusterGVK)
 	if err := r.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, cnpgCluster); err != nil {

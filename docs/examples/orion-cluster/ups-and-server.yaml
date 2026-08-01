@@ -94,6 +94,9 @@ spec:
     serverCertificateRef:
       namespace: power-system
       name: orion-core-nut-server-tls
+    clientCARef:
+      namespace: power-system
+      name: orion-core-nut-client-ca
     verifyClientCertificates: true
   service:
     type: ClusterIP

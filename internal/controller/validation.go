@@ -25,6 +25,7 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
+	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 )
 
 type validationResult struct {
@@ -217,7 +218,7 @@ func validateNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) validationResult 
 }
 
 func validateShutdownFlow(obj *powerv1alpha1.ShutdownFlow) validationResult {
-	_, diagnostics, err := planner.Compile(plannerInputsFromShutdownFlow(obj), planner.TelemetryInputs{})
+	_, diagnostics, err := planner.Compile(shutdownflowadapter.PlannerInputs(obj), planner.TelemetryInputs{})
 	if err != nil {
 		for _, diagnostic := range diagnostics {
 			if diagnostic.Severity == planner.DiagnosticError {

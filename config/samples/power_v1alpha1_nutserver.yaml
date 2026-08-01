@@ -29,6 +29,9 @@ spec:
     serverCertificateRef:
       namespace: power-system
       name: rack-a-nut-server-tls
+    clientCARef:
+      namespace: power-system
+      name: rack-a-nut-client-ca
     verifyClientCertificates: true
   service:
     type: ClusterIP

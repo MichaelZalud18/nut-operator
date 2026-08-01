@@ -10,6 +10,46 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /mutate-power-zalud-io-v1alpha1-nodepoweragent
+  failurePolicy: Fail
+  name: mnodepoweragent-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - nodepoweragents
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-power-zalud-io-v1alpha1-nutserver
+  failurePolicy: Fail
+  name: mnutserver-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - nutservers
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /mutate-power-zalud-io-v1alpha1-powerinfrastructure
   failurePolicy: Fail
   name: mpowerinfrastructure-v1alpha1.kb.io
@@ -70,6 +110,46 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /mutate-power-zalud-io-v1alpha1-powermanagementcluster
+  failurePolicy: Fail
+  name: mpowermanagementcluster-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - powermanagementclusters
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-power-zalud-io-v1alpha1-shutdownflow
+  failurePolicy: Fail
+  name: mshutdownflow-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - shutdownflows
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /mutate-power-zalud-io-v1alpha1-upscapabilityprofile
   failurePolicy: Fail
   name: mupscapabilityprofile-v1alpha1.kb.io
@@ -110,6 +190,46 @@ kind: ValidatingWebhookConfiguration
 metadata:
   name: validating-webhook-configuration
 webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-power-zalud-io-v1alpha1-nodepoweragent
+  failurePolicy: Fail
+  name: vnodepoweragent-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - nodepoweragents
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-power-zalud-io-v1alpha1-nutserver
+  failurePolicy: Fail
+  name: vnutserver-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - nutservers
+  sideEffects: None
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -169,6 +289,46 @@ webhooks:
     - UPDATE
     resources:
     - powerinventorynodes
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-power-zalud-io-v1alpha1-powermanagementcluster
+  failurePolicy: Fail
+  name: vpowermanagementcluster-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - powermanagementclusters
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-power-zalud-io-v1alpha1-shutdownflow
+  failurePolicy: Fail
+  name: vshutdownflow-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - shutdownflows
   sideEffects: None
 - admissionReviewVersions:
   - v1

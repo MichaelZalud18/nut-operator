@@ -17,6 +17,10 @@ resources:
   kind: PowerManagementCluster
   path: github.com/MichaelZalud18/nut-operator/api/v1alpha1
   version: v1alpha1
+  webhooks:
+    defaulting: true
+    validation: true
+    webhookVersion: v1
 - api:
     crdVersion: v1
   controller: true
@@ -37,6 +41,10 @@ resources:
   kind: NUTServer
   path: github.com/MichaelZalud18/nut-operator/api/v1alpha1
   version: v1alpha1
+  webhooks:
+    defaulting: true
+    validation: true
+    webhookVersion: v1
 - api:
     crdVersion: v1
   controller: true
@@ -45,6 +53,10 @@ resources:
   kind: NodePowerAgent
   path: github.com/MichaelZalud18/nut-operator/api/v1alpha1
   version: v1alpha1
+  webhooks:
+    defaulting: true
+    validation: true
+    webhookVersion: v1
 - api:
     crdVersion: v1
   controller: true
@@ -53,6 +65,10 @@ resources:
   kind: ShutdownFlow
   path: github.com/MichaelZalud18/nut-operator/api/v1alpha1
   version: v1alpha1
+  webhooks:
+    defaulting: true
+    validation: true
+    webhookVersion: v1
 - api:
     crdVersion: v1
   controller: true

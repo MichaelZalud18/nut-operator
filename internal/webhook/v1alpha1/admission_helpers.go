@@ -49,6 +49,21 @@ func validateDNSSubdomain(path *field.Path, value string) field.ErrorList {
 	return errs
 }
 
+func validateDNSLabel(path *field.Path, value string) field.ErrorList {
+	var errs field.ErrorList
+	for _, msg := range apivalidation.IsDNS1123Label(value) {
+		errs = append(errs, field.Invalid(path, value, msg))
+	}
+	return errs
+}
+
+func validateOptionalNamespace(path *field.Path, value string) field.ErrorList {
+	if value == "" {
+		return nil
+	}
+	return validateDNSLabel(path, value)
+}
+
 func containsControlCharacter(value string) bool {
 	return strings.ContainsFunc(value, func(r rune) bool {
 		return r < 0x20 || r == 0x7f
@@ -67,4 +82,100 @@ func validateIdentifierText(path *field.Path, value, purpose string) field.Error
 
 func boolValue(value *bool) bool {
 	return value != nil && *value
+}
+
+func validateObjectNameReference(path *field.Path, ref powerv1alpha1.ObjectNameReference) field.ErrorList {
+	var errs field.ErrorList
+	if ref.Name == "" {
+		errs = append(errs, field.Required(path.Child("name"), "required as the referenced object name"))
+	} else {
+		errs = append(errs, validateDNSSubdomain(path.Child("name"), ref.Name)...)
+	}
+	return errs
+}
+
+func validateOptionalObjectNameReference(path *field.Path, ref *powerv1alpha1.ObjectNameReference) field.ErrorList {
+	if ref == nil {
+		return nil
+	}
+	return validateObjectNameReference(path, *ref)
+}
+
+func validateNamespacedNameReference(path *field.Path, ref powerv1alpha1.NamespacedNameReference) field.ErrorList {
+	var errs field.ErrorList
+	if ref.Namespace == "" {
+		errs = append(errs, field.Required(path.Child("namespace"), "required as the referenced object namespace"))
+	} else {
+		errs = append(errs, validateDNSLabel(path.Child("namespace"), ref.Namespace)...)
+	}
+	if ref.Name == "" {
+		errs = append(errs, field.Required(path.Child("name"), "required as the referenced object name"))
+	} else {
+		errs = append(errs, validateDNSSubdomain(path.Child("name"), ref.Name)...)
+	}
+	return errs
+}
+
+func validateOptionalNamespacedNameReference(path *field.Path, ref *powerv1alpha1.NamespacedNameReference) field.ErrorList {
+	if ref == nil {
+		return nil
+	}
+	return validateNamespacedNameReference(path, *ref)
+}
+
+func validateSecretKeyReference(path *field.Path, ref powerv1alpha1.SecretKeyReference) field.ErrorList {
+	var errs field.ErrorList
+	if ref.Namespace == "" {
+		errs = append(errs, field.Required(path.Child("namespace"), "required as the Secret namespace"))
+	} else {
+		errs = append(errs, validateDNSLabel(path.Child("namespace"), ref.Namespace)...)
+	}
+	if ref.Name == "" {
+		errs = append(errs, field.Required(path.Child("name"), "required as the Secret name"))
+	} else {
+		errs = append(errs, validateDNSSubdomain(path.Child("name"), ref.Name)...)
+	}
+	if ref.Key == "" {
+		errs = append(errs, field.Required(path.Child("key"), "required as the Secret data key"))
+	} else if containsControlCharacter(ref.Key) {
+		errs = append(errs, field.Invalid(path.Child("key"), ref.Key, "must not contain control characters"))
+	}
+	return errs
+}
+
+func validateAnnotationKey(path *field.Path, value string) field.ErrorList {
+	if value == "" {
+		return nil
+	}
+	var errs field.ErrorList
+	for _, msg := range apivalidation.IsQualifiedName(value) {
+		errs = append(errs, field.Invalid(path, value, msg))
+	}
+	return errs
+}
+
+func validatePositiveDuration(path *field.Path, duration *metav1.Duration) field.ErrorList {
+	if duration == nil {
+		return nil
+	}
+	if duration.Duration <= 0 {
+		return field.ErrorList{field.Invalid(path, duration.Duration.String(), "must be greater than zero")}
+	}
+	return nil
+}
+
+func validatePodHardening(path *field.Path, hardening powerv1alpha1.PodHardeningSpec) field.ErrorList {
+	if hardening.SeccompProfileType == "" {
+		return nil
+	}
+	switch hardening.SeccompProfileType {
+	case "RuntimeDefault", "Localhost", "Unconfined":
+		return nil
+	default:
+		return field.ErrorList{field.NotSupported(path.Child("seccompProfileType"), hardening.SeccompProfileType, []string{
+			"RuntimeDefault",
+			"Localhost",
+			"Unconfined",
+		})}
+	}
 }
