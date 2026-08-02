@@ -1,7 +1,8 @@
 # Telemetry Normalization
 
-`internal/telemetry` is the pure normalization layer for NUT variable snapshots. It does not own
-TCP, `upsc`, Kubernetes status updates, database connections, or shutdown policy decisions.
+`internal/telemetry` is the pure normalization layer for NUT variable snapshots. `internal/nut`
+owns the narrow NUT protocol client for read-only variable polling. Neither package owns Kubernetes
+status updates, database connections, or shutdown policy decisions.
 
 ## Boundary
 
@@ -29,9 +30,13 @@ snapshot. That keeps future/vendor-specific statuses from breaking reconciliatio
 
 ## Next Work
 
-The next layer should provide a transport-backed NUT poller that fetches variables from a selected
-`NUTServer`, feeds this normalizer, updates `UPSDevice` status, and records telemetry snapshots
-through the referenced `PowerManagementCluster` audit store.
+The transport layer uses the NUT `LIST VAR <upsname>` command against TCP port 3493 and parses the
+documented `BEGIN LIST VAR`, `VAR ... "<value>"`, `END LIST VAR` response. It never authenticates
+or issues administrative commands.
+
+The next layer should select the correct `NUTServer`, feed polled variables into this normalizer,
+update `UPSDevice` status, and record telemetry snapshots through the referenced
+`PowerManagementCluster` audit store.
 
 ## References
 
