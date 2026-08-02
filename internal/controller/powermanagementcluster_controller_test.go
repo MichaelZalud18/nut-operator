@@ -55,6 +55,7 @@ func (f *fakeAuditConnector) OpenAuditStore(context.Context, *powerv1alpha1.Powe
 
 type fakeAuditStore struct {
 	powerEvents              []audit.PowerEvent
+	telemetrySnapshots       []audit.TelemetrySnapshot
 	capabilityProfileMatches []audit.CapabilityProfileMatch
 	shutdownFlowCompilations []audit.ShutdownFlowCompilation
 	closeCalls               int
@@ -79,7 +80,8 @@ func (s *fakeAuditStore) RecordPowerEvent(_ context.Context, event audit.PowerEv
 	return nil
 }
 
-func (s *fakeAuditStore) RecordTelemetrySnapshot(context.Context, audit.TelemetrySnapshot) error {
+func (s *fakeAuditStore) RecordTelemetrySnapshot(_ context.Context, snapshot audit.TelemetrySnapshot) error {
+	s.telemetrySnapshots = append(s.telemetrySnapshots, snapshot)
 	return nil
 }
 

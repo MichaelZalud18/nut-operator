@@ -18,16 +18,19 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -37,6 +40,7 @@ import (
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/nut"
 	"github.com/MichaelZalud18/nut-operator/internal/polling"
+	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 	"github.com/MichaelZalud18/nut-operator/internal/telemetry"
 )
 
@@ -49,17 +53,25 @@ type telemetryPoller interface {
 	Poll(ctx context.Context, target polling.Target) (polling.Result, error)
 }
 
+type telemetryAuditRecorder interface {
+	RecordTelemetrySnapshot(ctx context.Context, clusterName string, result polling.Result) error
+}
+
 // UPSDeviceReconciler reconciles a UPSDevice object
 type UPSDeviceReconciler struct {
 	client.Client
-	Scheme          *runtime.Scheme
-	TelemetryPoller telemetryPoller
+	Scheme            *runtime.Scheme
+	TelemetryPoller   telemetryPoller
+	TelemetryRecorder telemetryAuditRecorder
+	StorageConnector  storageconfig.AuditStoreConnector
 }
 
 // +kubebuilder:rbac:groups=power.zalud.io,resources=upsdevices,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=power.zalud.io,resources=upsdevices/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=upsdevices/finalizers,verbs=update
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 // Reconcile validates UPS device configuration and records telemetry readiness status.
 func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -77,6 +89,9 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	device.Status.ObservedGeneration = device.Generation
 	device.Status.NUTName = nutDeviceName(device)
 	reconcileResult := ctrl.Result{}
+	var telemetryRecord polling.Result
+	telemetryRecordCluster := ""
+	shouldRecordTelemetry := false
 	if !result.accepted {
 		device.Status.Phase = powerv1alpha1.UPSDevicePhaseUnavailable
 		device.Status.ServerRefs = nil
@@ -121,6 +136,9 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				setDegradedCondition(&device.Status.Conditions, device.Generation, true, "TelemetryPollFailed", pollErr.Error())
 			} else {
 				applyTelemetrySnapshotStatus(&device, pollResult.Snapshot)
+				telemetryRecord = pollResult
+				telemetryRecordCluster = resolution.ManagementClusterName
+				shouldRecordTelemetry = telemetryRecordCluster != ""
 				reconcileResult = ctrl.Result{RequeueAfter: telemetryPollIntervalForPhase(&device, pollResult.Snapshot.Phase)}
 				degraded, reason, message := telemetryDegradedStatus(pollResult.Snapshot)
 				setReadyCondition(
@@ -138,6 +156,12 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err := r.Status().Update(ctx, &device); err != nil {
 		log.Error(err, "failed to update UPSDevice status")
 		return ctrl.Result{}, err
+	}
+
+	if shouldRecordTelemetry {
+		if err := r.telemetryRecorder().RecordTelemetrySnapshot(ctx, telemetryRecordCluster, telemetryRecord); err != nil {
+			log.Error(err, "failed to record UPSDevice telemetry audit snapshot", "upsdevice", device.Name, "powermanagementcluster", telemetryRecordCluster)
+		}
 	}
 
 	return reconcileResult, nil
@@ -159,11 +183,29 @@ func (r *UPSDeviceReconciler) telemetryPoller() telemetryPoller {
 	return polling.NewPoller(polling.Options{})
 }
 
+func (r *UPSDeviceReconciler) telemetryRecorder() telemetryAuditRecorder {
+	if r.TelemetryRecorder != nil {
+		return r.TelemetryRecorder
+	}
+	return storageTelemetryRecorder{
+		client:    r.Client,
+		connector: r.storageConnector(),
+	}
+}
+
+func (r *UPSDeviceReconciler) storageConnector() storageconfig.AuditStoreConnector {
+	if r.StorageConnector != nil {
+		return r.StorageConnector
+	}
+	return storageconfig.NewKubernetesConnector(r.Client, storageconfig.ConnectorOptions{})
+}
+
 type telemetryTargetResolution struct {
-	Found      bool
-	Reason     string
-	Message    string
-	ServerRefs []string
+	Found                 bool
+	Reason                string
+	Message               string
+	ServerRefs            []string
+	ManagementClusterName string
 }
 
 func (r *UPSDeviceReconciler) resolveTelemetryTarget(ctx context.Context, device *powerv1alpha1.UPSDevice) (polling.Target, telemetryTargetResolution, error) {
@@ -181,6 +223,7 @@ func (r *UPSDeviceReconciler) resolveTelemetryTarget(ctx context.Context, device
 	}
 	var target polling.Target
 	targetFound := false
+	targetManagementClusterName := ""
 	endpointMissingServer := ""
 	for i := range servers.Items {
 		server := &servers.Items[i]
@@ -214,16 +257,18 @@ func (r *UPSDeviceReconciler) resolveTelemetryTarget(ctx context.Context, device
 				Host:      endpoint.Host,
 				Port:      endpoint.Port,
 			}
+			targetManagementClusterName = nutServerManagementClusterName(server)
 			targetFound = true
 		}
 	}
 	sort.Strings(resolution.ServerRefs)
 	if targetFound {
 		return target, telemetryTargetResolution{
-			Found:      true,
-			Reason:     "TelemetryTargetResolved",
-			Message:    fmt.Sprintf("NUTServer %q service endpoint is ready for telemetry polling", target.NUTServer),
-			ServerRefs: resolution.ServerRefs,
+			Found:                 true,
+			Reason:                "TelemetryTargetResolved",
+			Message:               fmt.Sprintf("NUTServer %q service endpoint is ready for telemetry polling", target.NUTServer),
+			ServerRefs:            resolution.ServerRefs,
+			ManagementClusterName: targetManagementClusterName,
 		}, nil
 	}
 	if endpointMissingServer != "" {
@@ -257,6 +302,13 @@ func firstTelemetryEndpoint(server *powerv1alpha1.NUTServer) (telemetryEndpoint,
 		return telemetryEndpoint{Host: host, Port: port}, true
 	}
 	return telemetryEndpoint{}, false
+}
+
+func nutServerManagementClusterName(server *powerv1alpha1.NUTServer) string {
+	if server == nil || server.Spec.ManagementClusterRef == nil {
+		return ""
+	}
+	return server.Spec.ManagementClusterRef.Name
 }
 
 func nutServerSelectsDevice(server *powerv1alpha1.NUTServer, device *powerv1alpha1.UPSDevice) (bool, error) {
@@ -436,4 +488,39 @@ func stringSliceContains(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+type storageTelemetryRecorder struct {
+	client    client.Client
+	connector storageconfig.AuditStoreConnector
+}
+
+func (r storageTelemetryRecorder) RecordTelemetrySnapshot(ctx context.Context, clusterName string, result polling.Result) error {
+	if clusterName == "" {
+		return nil
+	}
+	if r.client == nil {
+		return errors.New("Kubernetes client is required to record telemetry audit snapshots")
+	}
+	var cluster powerv1alpha1.PowerManagementCluster
+	if err := r.client.Get(ctx, types.NamespacedName{Name: clusterName}, &cluster); err != nil {
+		return fmt.Errorf("get PowerManagementCluster %q for telemetry audit: %w", clusterName, err)
+	}
+	if !managementClusterStorageReady(&cluster) {
+		return nil
+	}
+	connector := r.connector
+	if connector == nil {
+		connector = storageconfig.NewKubernetesConnector(r.client, storageconfig.ConnectorOptions{})
+	}
+	store, err := connector.OpenAuditStore(ctx, &cluster)
+	if err != nil {
+		return err
+	}
+	recordErr := store.RecordTelemetrySnapshot(ctx, result.AuditSnapshot(uuid.NewString()))
+	closeErr := store.Close()
+	if recordErr != nil || closeErr != nil {
+		return errors.Join(recordErr, closeErr)
+	}
+	return nil
 }

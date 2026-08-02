@@ -38,11 +38,18 @@ or issues administrative commands.
 The polling layer accepts an already-resolved NUT target, calls the transport, normalizes the raw
 variables, and exposes an audit adapter for `ups_telemetry_snapshots`.
 
+## Controller Wiring
+
+`UPSDevice` reconciliation resolves a ready selected `NUTServer`, polls its in-cluster Service
+endpoint, updates `UPSDevice.status`, and records successful snapshots through the referenced
+`PowerManagementCluster` audit store when storage is ready. Audit write failures are logged but do
+not block status updates.
+
 ## Next Work
 
-The controller layer should select the correct `NUTServer`, hand an in-cluster Service endpoint to
-the poller, update `UPSDevice` status, and record telemetry snapshots through the referenced
-`PowerManagementCluster` audit store.
+The next layer should evaluate telemetry against shutdown triggers, emit Kubernetes Events/metrics,
+and move durable telemetry recording behind a long-lived writer/cache suitable for high polling
+volume.
 
 ## References
 

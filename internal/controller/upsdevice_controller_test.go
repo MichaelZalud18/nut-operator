@@ -94,6 +94,7 @@ var _ = Describe("UPSDevice Controller", func() {
 			deviceName := "telemetry-ups"
 			serverName := "telemetry-server"
 			namespace := "telemetry-power-system"
+			powerClusterName := "telemetry-power"
 			pollInterval := metav1.Duration{Duration: time.Minute}
 			alertPollInterval := metav1.Duration{Duration: 3 * time.Second}
 			observedAt := time.Date(2026, 8, 2, 19, 0, 0, 0, time.UTC)
@@ -117,10 +118,42 @@ var _ = Describe("UPSDevice Controller", func() {
 				}
 			})
 
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: powerClusterName},
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					Storage: powerv1alpha1.PowerStorageSpec{
+						Mode: powerv1alpha1.PowerStorageExternalPostgres,
+						ExternalPostgres: &powerv1alpha1.ExternalPostgresStorageSpec{
+							DSNSecretKeyRef: powerv1alpha1.SecretKeyReference{
+								Namespace: "power-data",
+								Name:      "power-postgres",
+								Key:       "uri",
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
+			DeferCleanup(func() {
+				resource := &powerv1alpha1.PowerManagementCluster{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: powerClusterName}, resource)
+				if err == nil {
+					Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+				}
+			})
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: powerClusterName}, cluster)).To(Succeed())
+			cluster.Status.Storage = powerv1alpha1.StorageStatus{
+				Mode:    powerv1alpha1.PowerStorageExternalPostgres,
+				Ready:   true,
+				Message: "test audit store ready",
+			}
+			Expect(k8sClient.Status().Update(ctx, cluster)).To(Succeed())
+
 			server := &powerv1alpha1.NUTServer{
 				ObjectMeta: metav1.ObjectMeta{Name: serverName},
 				Spec: powerv1alpha1.NUTServerSpec{
-					Namespace: namespace,
+					ManagementClusterRef: &powerv1alpha1.ObjectNameReference{Name: powerClusterName},
+					Namespace:            namespace,
 					DeviceRefs: []powerv1alpha1.ObjectNameReference{
 						{Name: deviceName},
 					},
@@ -184,10 +217,13 @@ var _ = Describe("UPSDevice Controller", func() {
 					}),
 				},
 			}
+			auditStore := &fakeAuditStore{}
+			auditConnector := &fakeAuditConnector{store: auditStore}
 			controllerReconciler := &UPSDeviceReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
-				TelemetryPoller: fakePoller,
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				TelemetryPoller:  fakePoller,
+				StorageConnector: auditConnector,
 			}
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -222,6 +258,16 @@ var _ = Describe("UPSDevice Controller", func() {
 			Expect(degraded).NotTo(BeNil())
 			Expect(degraded.Status).To(Equal(metav1.ConditionTrue))
 			Expect(degraded.Reason).To(Equal("UPSLowBattery"))
+
+			Expect(auditConnector.opens).To(Equal(1))
+			Expect(auditStore.closeCalls).To(Equal(1))
+			Expect(auditStore.telemetrySnapshots).To(HaveLen(1))
+			auditSnapshot := auditStore.telemetrySnapshots[0]
+			Expect(auditSnapshot.SnapshotID).NotTo(BeEmpty())
+			Expect(auditSnapshot.UPSDevice).To(Equal(deviceName))
+			Expect(auditSnapshot.NUTServer).To(Equal(serverName))
+			Expect(auditSnapshot.NUTName).To(Equal(deviceName))
+			Expect(auditSnapshot.UPSStatus).To(Equal("OB LB"))
 		})
 	})
 })
