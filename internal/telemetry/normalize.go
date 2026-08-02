@@ -20,6 +20,7 @@ package telemetry
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -212,7 +213,7 @@ func parseFloatVariable(variables map[string]string, name string) (*float64, []D
 		return nil, nil
 	}
 	value, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
+	if err != nil || !finiteFloat(value) {
 		return nil, []Diagnostic{{
 			Severity: DiagnosticWarning,
 			Reason:   "VariableParseFailed",
@@ -232,7 +233,7 @@ func parseRuntimeSeconds(variables map[string]string, name string) (*int64, []Di
 		return &value, nil
 	}
 	floatValue, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
+	if err != nil || !finiteFloat(floatValue) {
 		return nil, []Diagnostic{{
 			Severity: DiagnosticWarning,
 			Reason:   "VariableParseFailed",
@@ -242,6 +243,10 @@ func parseRuntimeSeconds(variables map[string]string, name string) (*int64, []Di
 	}
 	value := int64(floatValue)
 	return &value, nil
+}
+
+func finiteFloat(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func copyVariables(variables map[string]string) map[string]string {

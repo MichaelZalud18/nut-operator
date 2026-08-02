@@ -96,6 +96,36 @@ func TestNormalizeReportsMissingStatusAndBadNumbers(t *testing.T) {
 	}
 }
 
+func TestNormalizeRejectsNonFiniteNumbers(t *testing.T) {
+	snapshot := Normalize(Sample{
+		Variables: map[string]string{
+			VariableUPSStatus:      "OL",
+			VariableBatteryCharge:  "NaN",
+			VariableBatteryRuntime: "+Inf",
+			VariableUPSLoad:        "-Inf",
+		},
+	})
+
+	if snapshot.BatteryChargePercent != nil {
+		t.Fatalf("expected non-finite charge to be rejected, got %#v", snapshot.BatteryChargePercent)
+	}
+	if snapshot.RuntimeSeconds != nil {
+		t.Fatalf("expected non-finite runtime to be rejected, got %#v", snapshot.RuntimeSeconds)
+	}
+	if snapshot.LoadPercent != nil {
+		t.Fatalf("expected non-finite load to be rejected, got %#v", snapshot.LoadPercent)
+	}
+	if !hasDiagnostic(snapshot.Diagnostics, "VariableParseFailed", VariableBatteryCharge) {
+		t.Fatalf("expected charge parse diagnostic, got %#v", snapshot.Diagnostics)
+	}
+	if !hasDiagnostic(snapshot.Diagnostics, "VariableParseFailed", VariableBatteryRuntime) {
+		t.Fatalf("expected runtime parse diagnostic, got %#v", snapshot.Diagnostics)
+	}
+	if !hasDiagnostic(snapshot.Diagnostics, "VariableParseFailed", VariableUPSLoad) {
+		t.Fatalf("expected load parse diagnostic, got %#v", snapshot.Diagnostics)
+	}
+}
+
 func TestNormalizeDoesNotMutateInputVariables(t *testing.T) {
 	variables := map[string]string{VariableUPSStatus: "OL"}
 	snapshot := Normalize(Sample{Variables: variables})
