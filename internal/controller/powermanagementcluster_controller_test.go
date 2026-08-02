@@ -54,10 +54,12 @@ func (f *fakeAuditConnector) OpenAuditStore(context.Context, *powerv1alpha1.Powe
 }
 
 type fakeAuditStore struct {
-	powerEvents []audit.PowerEvent
-	closeCalls  int
-	eventErr    error
-	closeErr    error
+	powerEvents              []audit.PowerEvent
+	capabilityProfileMatches []audit.CapabilityProfileMatch
+	shutdownFlowCompilations []audit.ShutdownFlowCompilation
+	closeCalls               int
+	eventErr                 error
+	closeErr                 error
 }
 
 func (s *fakeAuditStore) EnsureSchema(context.Context) error {
@@ -81,11 +83,13 @@ func (s *fakeAuditStore) RecordTelemetrySnapshot(context.Context, audit.Telemetr
 	return nil
 }
 
-func (s *fakeAuditStore) RecordCapabilityProfileMatch(context.Context, audit.CapabilityProfileMatch) error {
+func (s *fakeAuditStore) RecordCapabilityProfileMatch(_ context.Context, match audit.CapabilityProfileMatch) error {
+	s.capabilityProfileMatches = append(s.capabilityProfileMatches, match)
 	return nil
 }
 
-func (s *fakeAuditStore) RecordShutdownFlowCompilation(context.Context, audit.ShutdownFlowCompilation) error {
+func (s *fakeAuditStore) RecordShutdownFlowCompilation(_ context.Context, compilation audit.ShutdownFlowCompilation) error {
+	s.shutdownFlowCompilations = append(s.shutdownFlowCompilations, compilation)
 	return nil
 }
 

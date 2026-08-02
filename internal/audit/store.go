@@ -186,6 +186,7 @@ type ShutdownFlowDecision struct {
 // DiagnosticRecord is the durable, package-local diagnostic shape.
 type DiagnosticRecord struct {
 	Severity string `json:"severity"`
+	Source   string `json:"source,omitempty"`
 	Reason   string `json:"reason"`
 	Subject  string `json:"subject,omitempty"`
 	Message  string `json:"message"`

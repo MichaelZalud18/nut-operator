@@ -18,16 +18,21 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/capability"
+	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
 const (
@@ -194,6 +199,86 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.ConfigHash).To(BeEmpty())
 			Expect(resource.Status.ResolvedInputHash).To(BeEmpty())
 			Expect(resource.Status.TopologyHash).To(BeEmpty())
+		})
+
+		It("records compilation audit through the referenced management cluster", func() {
+			scheme := runtime.NewScheme()
+			Expect(powerv1alpha1.AddToScheme(scheme)).To(Succeed())
+			store := &fakeAuditStore{}
+			fixed := time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC)
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-power"},
+				Status: powerv1alpha1.PowerManagementClusterStatus{
+					Storage: powerv1alpha1.StorageStatus{
+						Mode:  powerv1alpha1.PowerStorageExternalPostgres,
+						Ready: true,
+					},
+				},
+			}
+			reconciler := &ShutdownFlowReconciler{
+				Client:           fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(cluster).WithObjects(cluster).Build(),
+				StorageConnector: &fakeAuditConnector{store: store},
+				Clock: func() time.Time {
+					return fixed
+				},
+			}
+			flow := &powerv1alpha1.ShutdownFlow{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-flow",
+					Generation: 4,
+				},
+				Spec: powerv1alpha1.ShutdownFlowSpec{
+					ManagementClusterRef: &powerv1alpha1.ObjectNameReference{Name: "test-power"},
+				},
+			}
+			diagnostics := []resolver.Diagnostic{{
+				Severity: resolver.DiagnosticWarning,
+				Source:   resolver.DiagnosticSourceInventory,
+				Reason:   "CommunicationPathUnmodeled",
+				Subject:  "node/test-node",
+				Message:  "communication path is not fully modeled",
+			}}
+			waves := []powerv1alpha1.CompiledShutdownWave{{
+				Index:  0,
+				Groups: []string{"applications"},
+			}}
+			bundle := resolver.StructuralBundle{
+				Hash: "input-hash-a",
+				CapabilityMatches: []capability.MatchResult{{
+					DeviceID:       "ups-a",
+					ProfileID:      "profile-a",
+					ProfileVersion: "1.0.0",
+					ProfileSource:  capability.ProfileSourceBundled,
+					Tier:           capability.MatchTierDriverFamily,
+				}},
+			}
+
+			err := reconciler.recordShutdownFlowAudit(
+				context.Background(),
+				flow,
+				accepted("compiled"),
+				diagnostics,
+				bundle,
+				waves,
+				"plan-hash-a",
+			)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.shutdownFlowCompilations).To(HaveLen(1))
+			compilation := store.shutdownFlowCompilations[0]
+			Expect(compilation.ShutdownFlow).To(Equal("test-flow"))
+			Expect(compilation.ResourceGeneration).To(Equal(int64(4)))
+			Expect(compilation.ConfigHash).To(Equal("plan-hash-a"))
+			Expect(compilation.InputHash).To(Equal("input-hash-a"))
+			Expect(compilation.ObservedAt).To(Equal(fixed))
+			Expect(compilation.CompiledWaves).To(Equal(waves))
+			Expect(compilation.Diagnostics).To(HaveLen(1))
+			Expect(compilation.Diagnostics[0].Source).To(Equal(resolver.DiagnosticSourceInventory))
+			Expect(store.capabilityProfileMatches).To(HaveLen(1))
+			Expect(store.capabilityProfileMatches[0].UPSDevice).To(Equal("ups-a"))
+			Expect(store.capabilityProfileMatches[0].ProfileID).To(Equal("profile-a"))
+			Expect(store.capabilityProfileMatches[0].ProfileSource).To(Equal(string(capability.ProfileSourceBundled)))
+			Expect(store.closeCalls).To(Equal(1))
 		})
 
 	})

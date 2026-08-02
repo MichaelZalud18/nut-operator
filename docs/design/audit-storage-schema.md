@@ -25,10 +25,11 @@ connection-management choices rather than separate domain models. The storage re
 domain validation and controller status.
 
 `PowerManagementCluster` reconciliation now opens the configured audit store, pings PostgreSQL,
-applies bundled migrations, and records durable reconciliation events after status updates. External
-PostgreSQL requires TLS by default. CNPG mode reads the generated application credential Secret and
-prefers the FQDN URI when present.
+applies bundled migrations, and records durable reconciliation events after status updates. Accepted
+`ShutdownFlow` reconciliations record planner compilation rows and capability profile match rows
+through the referenced `PowerManagementCluster` storage backend. External PostgreSQL requires TLS by
+default. CNPG mode reads the generated application credential Secret and prefers the FQDN URI when
+present.
 
-The next storage step is expanding audit writes from root reconciliation events into telemetry,
-capability match, planner compilation, and shutdown decision paths without putting PostgreSQL on the
-critical host-actuation path.
+The next storage step is expanding audit writes into telemetry, rejected planner compilation, and
+shutdown decision paths without putting PostgreSQL on the critical host-actuation path.

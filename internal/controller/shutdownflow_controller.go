@@ -19,7 +19,10 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -33,13 +36,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
+	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 )
 
 // ShutdownFlowReconciler reconciles a ShutdownFlow object
 type ShutdownFlowReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme           *runtime.Scheme
+	StorageConnector storageconfig.AuditStoreConnector
+	Clock            func() time.Time
 }
 
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows,verbs=get;list;watch;create;update;patch;delete
@@ -142,6 +149,10 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	if err := r.recordShutdownFlowAudit(ctx, &flow, result, resolverDiagnostics, bundle, compiledWaves, configHash); err != nil {
+		log.Error(err, "failed to record ShutdownFlow audit records", "shutdownflow", flow.Name)
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -180,6 +191,116 @@ func (r *ShutdownFlowReconciler) shutdownFlowRequestsForInventoryChange(ctx cont
 		})
 	}
 	return requests
+}
+
+func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, result validationResult, diagnostics []resolver.Diagnostic, bundle resolver.StructuralBundle, compiledWaves []powerv1alpha1.CompiledShutdownWave, configHash string) error {
+	if flow == nil || !result.accepted || configHash == "" {
+		return nil
+	}
+	cluster, err := r.getManagementCluster(ctx, flow)
+	if err != nil || cluster == nil || !managementClusterStorageReady(cluster) {
+		return err
+	}
+
+	store, err := r.storageConnector().OpenAuditStore(ctx, cluster)
+	if err != nil {
+		return err
+	}
+
+	observedAt := r.now()
+	recordErr := store.RecordShutdownFlowCompilation(ctx, audit.ShutdownFlowCompilation{
+		CompilationID:      uuid.NewString(),
+		ObservedAt:         observedAt,
+		ShutdownFlow:       flow.Name,
+		ResourceGeneration: flow.Generation,
+		ConfigHash:         configHash,
+		InputHash:          bundle.Hash,
+		Accepted:           true,
+		Diagnostics:        auditDiagnosticsFromResolver(diagnostics),
+		CompiledWaves:      compiledWaves,
+	})
+	for _, match := range bundle.CapabilityMatches {
+		err := store.RecordCapabilityProfileMatch(ctx, audit.CapabilityProfileMatch{
+			MatchID:        uuid.NewString(),
+			ObservedAt:     observedAt,
+			UPSDevice:      match.DeviceID,
+			ProfileID:      match.ProfileID,
+			ProfileVersion: match.ProfileVersion,
+			ProfileSource:  string(match.ProfileSource),
+			MatchTier:      string(match.Tier),
+			Fallback:       match.Fallback,
+			Diagnostics:    auditDiagnosticsForCapabilityMatch(diagnostics, match.DeviceID),
+		})
+		if err != nil {
+			recordErr = errors.Join(recordErr, err)
+		}
+	}
+	closeErr := store.Close()
+	if recordErr != nil || closeErr != nil {
+		return errors.Join(recordErr, closeErr)
+	}
+	return nil
+}
+
+func (r *ShutdownFlowReconciler) getManagementCluster(ctx context.Context, flow *powerv1alpha1.ShutdownFlow) (*powerv1alpha1.PowerManagementCluster, error) {
+	if flow.Spec.ManagementClusterRef == nil || flow.Spec.ManagementClusterRef.Name == "" {
+		return nil, nil
+	}
+
+	var cluster powerv1alpha1.PowerManagementCluster
+	if err := r.Get(ctx, types.NamespacedName{Name: flow.Spec.ManagementClusterRef.Name}, &cluster); err != nil {
+		return nil, fmt.Errorf("get PowerManagementCluster %q: %w", flow.Spec.ManagementClusterRef.Name, err)
+	}
+	return &cluster, nil
+}
+
+func (r *ShutdownFlowReconciler) storageConnector() storageconfig.AuditStoreConnector {
+	if r.StorageConnector != nil {
+		return r.StorageConnector
+	}
+	return storageconfig.NewKubernetesConnector(r.Client, storageconfig.ConnectorOptions{})
+}
+
+func (r *ShutdownFlowReconciler) now() time.Time {
+	if r.Clock != nil {
+		return r.Clock().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func managementClusterStorageReady(cluster *powerv1alpha1.PowerManagementCluster) bool {
+	if cluster == nil {
+		return false
+	}
+	mode := cluster.Status.Storage.Mode
+	if mode == "" {
+		mode = storageconfig.EffectiveMode(cluster.Spec.Storage)
+	}
+	return mode != powerv1alpha1.PowerStorageDisabled && cluster.Status.Storage.Ready
+}
+
+func auditDiagnosticsFromResolver(diagnostics []resolver.Diagnostic) []audit.DiagnosticRecord {
+	records := make([]audit.DiagnosticRecord, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		records = append(records, audit.DiagnosticRecord{
+			Severity: diagnostic.Severity,
+			Source:   diagnostic.Source,
+			Reason:   diagnostic.Reason,
+			Subject:  diagnostic.Subject,
+			Message:  diagnostic.Message,
+		})
+	}
+	return records
+}
+
+func auditDiagnosticsForCapabilityMatch(diagnostics []resolver.Diagnostic, deviceID string) []audit.DiagnosticRecord {
+	var filtered []resolver.Diagnostic
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Source == resolver.DiagnosticSourceCapability && diagnostic.Subject == deviceID {
+			filtered = append(filtered, diagnostic)
+		}
+	}
+	return auditDiagnosticsFromResolver(filtered)
 }
 
 func validationResultFromResolverDiagnostics(diagnostics []resolver.Diagnostic) validationResult {
