@@ -14,6 +14,7 @@ identifier, this file updates in the same change.
 | `inventory-provider-contract.md` | Topology input contract | IN |
 | `faq.md` | User-facing answers | — |
 | Capability schema *(planned)* | Profile format | TBD |
+| `telemetry-normalization.md` | NUT variable normalization boundary | Runtime telemetry facts |
 | Plan schema *(planned)* | Compiled plan format | Internal |
 | `audit-storage-schema.md` | PostgreSQL durable-state schema and writer boundary | Migration-bound |
 

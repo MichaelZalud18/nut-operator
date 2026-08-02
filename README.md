@@ -83,6 +83,7 @@ Implemented now:
 - PostgreSQL audit-store connector with Secret-backed DSN resolution, CNPG application credential URI support, TLS-required external PostgreSQL checks, pgx-backed connection opening, ping, schema migration, and owned connection lifecycle.
 - `PowerManagementCluster` storage readiness now verifies the configured PostgreSQL audit store and records durable reconciliation audit events when storage is ready.
 - `ShutdownFlow` reconciliation records accepted planner compilation and capability profile match audit records through the referenced `PowerManagementCluster` storage backend.
+- Pure telemetry normalization package for NUT status symbols, battery charge, runtime, load, non-fatal diagnostics, and audit snapshot adaptation.
 - Installable project-maintained capability profile catalog under `config/catalog/`, including real first-party project profiles for supported UPS product families.
 - Manager and project-owned development operand image builds and GHCR tag conventions.
 - Production-shaped example resources under `config/samples/`.
@@ -163,6 +164,7 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [Capability profiles](docs/design/capability-profiles.md)
 - [Upstream NUT relay](docs/design/upstream-nut-relay.md)
 - [Audit storage schema](docs/design/audit-storage-schema.md)
+- [Telemetry normalization](docs/design/telemetry-normalization.md)
 - [Design decision index](docs/design/decision-index.md)
 - [Scope boundaries](docs/design/scope-boundaries.md)
 - [Planner requirements](docs/design/planner-requirements.md)

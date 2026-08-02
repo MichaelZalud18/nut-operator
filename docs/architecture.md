@@ -71,7 +71,7 @@ This keeps the CRD declarative while giving operators a reviewable plan before `
 1. Keep API validation and status reconciliation passing.
 2. Maintain pure renderers for NUT server config and node agent config.
 3. Extend `NUTServer` and `NodePowerAgent` operand rendering beyond the current monitor/dry-run/stub baseline.
-4. Expand PostgreSQL-backed audit writes into telemetry, rejected planner attempts, and execution paths.
+4. Add transport-backed NUT polling, UPS status updates, telemetry audit writes, rejected planner attempts, and execution paths.
 5. Add in-cluster soak tests for admission/defaulting behavior and rendered operands.
 6. Add release image builds, SBOM, signing, scanning, and image smoke tests.
 7. Only then add real host actuation behind explicit approvals.
