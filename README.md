@@ -4,7 +4,7 @@ Kubernetes-native power management built around Network UPS Tools (NUT), control
 
 > Disclosure: this project is mostly AI-assisted/vibe-coded. Treat the implementation as requiring normal independent review, security validation, and production qualification before relying on it for real power events.
 
-This project is intentionally designed as a reusable operator rather than a homelab-only manifest set. It models UPS devices, NUT server instances, node power agents, and shutdown flows as Kubernetes resources. Durable audit and execution state belongs in PostgreSQL, with CloudNativePG as the preferred Kubernetes-native backing store.
+`nut-operator` models UPS devices, power topology, and node/workload shutdown ordering as Kubernetes CRDs, so it installs against any cluster's own hardware and inventory rather than assuming a specific site's wiring. It models UPS devices, NUT server instances, node power agents, and shutdown flows as Kubernetes resources. Durable audit and execution state belongs in PostgreSQL, with CloudNativePG as the preferred Kubernetes-native backing store.
 
 ## Goals
 
@@ -16,7 +16,6 @@ This project is intentionally designed as a reusable operator rather than a home
 - Treat Kubernetes resources, events, logs, and GitOps-managed manifests as the v1 user interface.
 - Use Kubernetes-native security controls: least-privilege RBAC, status subresources, conditions, NetworkPolicy-ready operands, read-only roots, seccomp, and explicit host-actuator isolation.
 - Keep long-lived audit, telemetry, and flow execution state out of CR status and in PostgreSQL.
-- Avoid a dedicated v1 web UI; any future UI is a separate consumer of the operator APIs.
 - Decline the Operator Framework's "Auto Pilot" maturity level by design: no auto-scaling,
   auto-tuning, or auto-remediation. Power state is the only trigger the operator acts on.
 
@@ -95,7 +94,7 @@ Durable records are written to PostgreSQL. Kubernetes status remains a current-s
 
 ## Interface Model
 
-There is no dedicated UI for v1. The primary interface is Kubernetes:
+Kubernetes is the primary interface:
 
 - CRDs declare desired state.
 - GitOps manages configuration changes.
@@ -179,7 +178,11 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [Image strategy](docs/images.md)
 - [Shutdown flow design](docs/shutdown-flow.md)
 - [Project tasks and current build state](docs/tasks.md)
-- [Operator maturity benchmarks and audit records](docs/audits/operator-maturity-benchmarks.md)
+- [Operator maturity benchmarks](docs/audits/operator-maturity-benchmarks.md)
+- [Node agent DaemonSet audit](docs/audits/node-agent-daemonset-audit.md)
+- [NUTServer pod audit](docs/audits/nutserver-pod-audit.md)
+- [NUT usage and fidelity audit](docs/audits/nut-usage-audit.md)
+- [Quirk handling, aliasing, and firmware gating](docs/audits/quirks-aliasing-firmware.md)
 - [Capability profiles](docs/design/capability-profiles.md)
 - [Capability profiles and upsd configuration](docs/design/capability-profiles-and-upsd-config.md)
 - [Device profile scope and provenance](docs/design/device-profile-scope-and-provenance.md)
