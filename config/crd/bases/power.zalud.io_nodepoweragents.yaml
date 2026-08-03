@@ -1449,6 +1449,50 @@ spec:
                   - name
                   type: object
                 type: array
+              nodeStatuses:
+                description: |-
+                  nodeStatuses records per-node agent pod coverage observed from Kubernetes pod readiness.
+                  It is the Kubernetes-native node-agent heartbeat used by shutdown execution safety gates.
+                items:
+                  description: NodePowerAgentNodeStatus records controller-observed
+                    agent coverage for one selected node.
+                  properties:
+                    lastHeartbeatTime:
+                      description: lastHeartbeatTime is the latest pod readiness transition
+                        observed by the controller.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message explains the observed coverage state for
+                        operators and audit records.
+                      type: string
+                    nodeName:
+                      description: nodeName is the Kubernetes Node name selected by
+                        this NodePowerAgent.
+                      type: string
+                    phase:
+                      description: phase is the observed pod phase, when present.
+                      type: string
+                    podName:
+                      description: podName is the observed agent pod on this node,
+                        when present.
+                      type: string
+                    ready:
+                      description: ready is true when a current, ready NodePowerAgent
+                        pod is observed on this node.
+                      type: boolean
+                    reason:
+                      description: reason is a machine-readable coverage reason such
+                        as AgentPodReady or AgentPodMissing.
+                      type: string
+                  required:
+                  - nodeName
+                  - ready
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - nodeName
+                x-kubernetes-list-type: map
               numberReady:
                 description: numberReady mirrors the generated DaemonSet status.
                 format: int32
@@ -1467,12 +1511,22 @@ spec:
                 - Degraded
                 - Error
                 type: string
+              readyNodeCount:
+                description: readyNodeCount records selected nodes with an observed
+                  ready agent pod.
+                format: int32
+                type: integer
               selectedNodes:
                 description: selectedNodes lists nodes selected by this fleet at the
                   last reconcile.
                 items:
                   type: string
                 type: array
+              unavailableNodeCount:
+                description: unavailableNodeCount records selected nodes without an
+                  observed ready agent pod.
+                format: int32
+                type: integer
             type: object
         required:
         - spec

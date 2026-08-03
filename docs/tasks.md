@@ -6,7 +6,7 @@ Architecture, security, API, and design documents describe the system in its fin
 build state, open implementation work, and validation gates live here so the architecture docs do
 not become a progress diary.
 
-Last reviewed: 2026-08-02
+Last reviewed: 2026-08-03
 
 ## Built
 
@@ -49,6 +49,10 @@ Last reviewed: 2026-08-02
 - Kubernetes action runner boundary for enforce-mode `ScaleWorkload`, `CordonNodes`, `DrainNodes`,
   provider-neutral `RunWorkflow` hooks, and `AgentShutdown` release validation. The
   `ShutdownFlow` controller enumerates concrete workloads, nodes, and namespaces at execution time.
+- Partition-aware `NodePowerAgent` coverage status records selected-node readiness from agent pod
+  readiness, publishes per-node heartbeat facts in CR status, and feeds those facts into
+  `AgentShutdown` executor release evidence. Enforce-mode releases block when a target node lacks a
+  ready agent pod; dry-run records the same degraded facts without acting.
 - Node actuator signal handling validates structured shutdown JSON, enforces signal TTL and
   node-name matching, skips dry-run `SystemdPoweroff` signals, and supports command-backed
   poweroff execution behind the still-blocked host actuation rendering gate.
@@ -70,8 +74,6 @@ Last reviewed: 2026-08-02
 
 - Resolve shutdown-time audit durability: local spool, audit-store last-ditch placement, or
   documented preference and test coverage for `ExternalPostgres`.
-- Implement partition-aware node-agent heartbeat/status and executor progress reasons for
-  unreachable nodes.
 - Complete real host-actuation deployment: cluster-to-node signal delivery, approved
   `SystemdPoweroff` rendering, and the minimal host access profile for real poweroff.
 - Harden release images with signing policy, cosign verification docs, and immutable digest

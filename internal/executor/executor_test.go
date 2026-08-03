@@ -154,6 +154,7 @@ func TestExecutorRecordsOrderedDryRunEvidence(t *testing.T) {
 					NodeName:       "node-a",
 					NodePowerAgent: "rack-a-agents",
 					SignalPath:     "/run/power-agent/shutdown.json",
+					AgentReady:     true,
 				}},
 			},
 		},
@@ -262,6 +263,75 @@ func TestExecutorBlocksEnforceWithoutActionRunner(t *testing.T) {
 	if gotPhases := executionPhases(writer.executions); fmt.Sprint(gotPhases) != "[Running Aborted]" {
 		t.Fatalf("unexpected execution phases: %#v", gotPhases)
 	}
+}
+
+func TestExecutorBlocksEnforceAgentShutdownWhenNodeAgentIsUnavailable(t *testing.T) {
+	writer := &fakeAuditWriter{}
+	fixed := time.Date(2026, 8, 2, 15, 0, 0, 0, time.UTC)
+	executor := Executor{
+		Writer: writer,
+		Clock: func() time.Time {
+			return fixed
+		},
+		NewID: sequenceIDs(),
+		Runner: fakeActionRunner{
+			outcome: ActionOutcome{Outcome: OutcomeSucceeded},
+		},
+	}
+
+	result, err := executor.Execute(context.Background(), Input{
+		ExecutionID:    "execution-c",
+		ShutdownFlow:   "conserve-power",
+		Mode:           ModeEnforce,
+		Approved:       true,
+		PlanConfigHash: "plan-hash-c",
+		Waves:          []Wave{{Index: 0, Groups: []string{"node-a"}}},
+		Groups: []Group{{
+			Name:   "node-a",
+			Action: ActionAgentShutdown,
+			NodeReleases: []NodeRelease{{
+				NodeName:         "node-a",
+				NodePowerAgent:   "rack-a-agents",
+				ReadinessReason:  "AgentPodMissing",
+				ReadinessMessage: "no NodePowerAgent pod is currently observed on this selected node",
+			}},
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "AgentPodMissing") {
+		t.Fatalf("expected unavailable node-agent error, got %v", err)
+	}
+	if result.Phase != PhaseAborted || result.NodeReleases != 1 {
+		t.Fatalf("expected aborted result with one node release, got %#v", result)
+	}
+	if len(writer.actionAttempts) != 1 {
+		t.Fatalf("expected one action attempt, got %d", len(writer.actionAttempts))
+	}
+	attempt := writer.actionAttempts[0]
+	if attempt.Outcome != OutcomeBlocked || !strings.Contains(attempt.Error, "AgentPodMissing") {
+		t.Fatalf("expected blocked action attempt, got %#v", attempt)
+	}
+	if len(writer.nodeReleases) != 1 {
+		t.Fatalf("expected one node release, got %d", len(writer.nodeReleases))
+	}
+	release := writer.nodeReleases[0]
+	if release.Released || release.Reason != "AgentPodMissing" {
+		t.Fatalf("expected unreleased AgentPodMissing record, got %#v", release)
+	}
+	if len(writer.nodeSignalHandoffs) != 1 {
+		t.Fatalf("expected one signal handoff record, got %d", len(writer.nodeSignalHandoffs))
+	}
+	handoff := writer.nodeSignalHandoffs[0]
+	if handoff.Accepted || handoff.Reason != "AgentPodMissing" {
+		t.Fatalf("expected rejected AgentPodMissing handoff, got %#v", handoff)
+	}
+}
+
+type fakeActionRunner struct {
+	outcome ActionOutcome
+}
+
+func (r fakeActionRunner) RunAction(context.Context, Action) (ActionOutcome, error) {
+	return r.outcome, nil
 }
 
 func sequenceIDs() func() string {

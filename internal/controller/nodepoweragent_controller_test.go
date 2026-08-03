@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -40,6 +41,7 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			deviceName   = "rack-a-ups"
 			serverName   = "rack-a"
 			namespace    = "test-agent-power-system"
+			nodeName     = "test-agent-node"
 		)
 
 		ctx := context.Background()
@@ -50,9 +52,23 @@ var _ = Describe("NodePowerAgent Controller", func() {
 		nodepoweragent := &powerv1alpha1.NodePowerAgent{}
 
 		BeforeEach(func() {
+			By("creating a selected Kubernetes Node")
+			node := &corev1.Node{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node)
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: nodeName,
+						Labels: map[string]string{
+							"power.zalud.io/test-agent-node": "true",
+						},
+					},
+				})).To(Succeed())
+			}
+
 			By("creating the operand namespace")
 			ns := &corev1.Namespace{}
-			err := k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, ns)
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, ns)
 			if err != nil && errors.IsNotFound(err) {
 				Expect(k8sClient.Create(ctx, &corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{Name: namespace},
@@ -124,6 +140,11 @@ var _ = Describe("NodePowerAgent Controller", func() {
 						NUTServerRefs: []powerv1alpha1.ObjectNameReference{
 							{Name: serverName},
 						},
+						NodeSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"power.zalud.io/test-agent-node": "true",
+							},
+						},
 						Mode: powerv1alpha1.NodePowerAgentModeDryRun,
 						Images: powerv1alpha1.NodePowerAgentImages{
 							Upsmon: powerv1alpha1.ImageReference{
@@ -183,6 +204,12 @@ var _ = Describe("NodePowerAgent Controller", func() {
 				Expect(k8sClient.Delete(ctx, networkPolicy)).To(Succeed())
 			}
 
+			pod := &corev1.Pod{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent-ready"}, pod)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, pod)).To(Succeed())
+			}
+
 			server := &powerv1alpha1.NUTServer{}
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: serverName}, server)
 			if err == nil {
@@ -199,6 +226,12 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, ns)
 			if err == nil {
 				Expect(k8sClient.Delete(ctx, ns)).To(Succeed())
+			}
+
+			node := &corev1.Node{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, node)).To(Succeed())
 			}
 		})
 		It("should successfully reconcile the resource", func() {
@@ -218,6 +251,10 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			condition := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionAccepted)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(resource.Status.SelectedNodes).To(ConsistOf(nodeName))
+			Expect(resource.Status.UnavailableNodeCount).To(Equal(int32(1)))
+			Expect(resource.Status.NodeStatuses).To(HaveLen(1))
+			Expect(resource.Status.NodeStatuses[0].Reason).To(Equal("AgentPodMissing"))
 			Expect(resource.Status.ConfigHash).NotTo(BeEmpty())
 			Expect(resource.Status.ManagedResources).NotTo(BeEmpty())
 
@@ -262,6 +299,45 @@ var _ = Describe("NodePowerAgent Controller", func() {
 					FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"},
 				},
 			}))
+
+			By("publishing ready pod coverage for the selected node")
+			heartbeat := metav1.NewTime(time.Date(2026, 8, 3, 9, 0, 0, 0, time.UTC))
+			readyPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: namespace,
+					Name:      "test-resource-node-power-agent-ready",
+					Labels:    labelsForNodePowerAgent(resource),
+				},
+				Spec: corev1.PodSpec{
+					NodeName: nodeName,
+					Containers: []corev1.Container{{
+						Name:  "upsmon",
+						Image: "ghcr.io/michaelzalud18/upsmon-agent:main",
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, readyPod)).To(Succeed())
+			readyPod.Status.Phase = corev1.PodRunning
+			readyPod.Status.Conditions = []corev1.PodCondition{{
+				Type:               corev1.PodReady,
+				Status:             corev1.ConditionTrue,
+				LastTransitionTime: heartbeat,
+			}}
+			Expect(k8sClient.Status().Update(ctx, readyPod)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.ReadyNodeCount).To(Equal(int32(1)))
+			Expect(resource.Status.UnavailableNodeCount).To(Equal(int32(0)))
+			Expect(resource.Status.NodeStatuses).To(HaveLen(1))
+			Expect(resource.Status.NodeStatuses[0].NodeName).To(Equal(nodeName))
+			Expect(resource.Status.NodeStatuses[0].Ready).To(BeTrue())
+			Expect(resource.Status.NodeStatuses[0].Reason).To(Equal("AgentPodReady"))
+			Expect(resource.Status.NodeStatuses[0].PodName).To(Equal("test-resource-node-power-agent-ready"))
+			Expect(resource.Status.NodeStatuses[0].LastHeartbeatTime.Time).To(BeTemporally("==", heartbeat.Time))
 		})
 	})
 })

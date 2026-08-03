@@ -239,15 +239,47 @@ func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, targ
 		if err := r.Get(ctx, client.ObjectKey{Name: ref.Name}, &agent); err != nil {
 			return nil, fmt.Errorf("get NodePowerAgent %q for shutdown execution: %w", ref.Name, err)
 		}
+		nodeStatuses := nodePowerAgentStatusByNode(agent.Status.NodeStatuses)
 		for _, nodeName := range agent.Status.SelectedNodes {
+			nodeStatus, found := nodeStatuses[nodeName]
+			readinessReason := "AgentReadinessUnknown"
+			readinessMessage := "NodePowerAgent has not published readiness for this selected node"
+			if found {
+				readinessReason = nodeStatus.Reason
+				readinessMessage = nodeStatus.Message
+			}
 			releases = append(releases, executorpkg.NodeRelease{
-				NodeName:       nodeName,
-				NodePowerAgent: agent.Name,
-				SignalPath:     nodePowerAgentSignalPath(&agent),
+				NodeName:          nodeName,
+				NodePowerAgent:    agent.Name,
+				SignalPath:        nodePowerAgentSignalPath(&agent),
+				AgentReady:        found && nodeStatus.Ready,
+				ReadinessReason:   readinessReason,
+				ReadinessMessage:  readinessMessage,
+				PodName:           nodeStatus.PodName,
+				LastHeartbeatTime: metav1TimeToTimePtr(nodeStatus.LastHeartbeatTime),
 			})
 		}
 	}
 	return releases, nil
+}
+
+func nodePowerAgentStatusByNode(statuses []powerv1alpha1.NodePowerAgentNodeStatus) map[string]powerv1alpha1.NodePowerAgentNodeStatus {
+	indexed := make(map[string]powerv1alpha1.NodePowerAgentNodeStatus, len(statuses))
+	for _, status := range statuses {
+		if status.NodeName == "" {
+			continue
+		}
+		indexed[status.NodeName] = status
+	}
+	return indexed
+}
+
+func metav1TimeToTimePtr(value *metav1.Time) *time.Time {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+	out := value.Time
+	return &out
 }
 
 func (r *ShutdownFlowReconciler) executorTargetsForAction(ctx context.Context, action powerv1alpha1.ShutdownStepType, target powerv1alpha1.ShutdownStepTarget) ([]executorpkg.Target, error) {

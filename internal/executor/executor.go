@@ -103,9 +103,14 @@ type Target struct {
 
 // NodeRelease describes a terminal node-agent handoff candidate.
 type NodeRelease struct {
-	NodeName       string
-	NodePowerAgent string
-	SignalPath     string
+	NodeName          string
+	NodePowerAgent    string
+	SignalPath        string
+	AgentReady        bool
+	ReadinessReason   string
+	ReadinessMessage  string
+	PodName           string
+	LastHeartbeatTime *time.Time
 }
 
 // Action is passed to an injected action runner for non-dry-run execution.
@@ -347,7 +352,19 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 		Details: map[string]any{"dryRun": true},
 	}
 	var actionErr error
-	if !dryRun {
+	if group.Action == ActionAgentShutdown {
+		if readinessErr := agentShutdownReadinessError(dryRun, group); readinessErr != nil {
+			actionErr = readinessErr
+			outcome = ActionOutcome{
+				Outcome: OutcomeBlocked,
+				Error:   readinessErr.Error(),
+				Details: map[string]any{
+					"blockedNodeReleases": blockedNodeReleaseDetails(group.NodeReleases),
+				},
+			}
+		}
+	}
+	if !dryRun && actionErr == nil {
 		if e.Runner == nil {
 			actionErr = fmt.Errorf("enforce execution requires an action runner")
 			outcome = ActionOutcome{Outcome: OutcomeBlocked, Error: actionErr.Error()}
@@ -411,7 +428,7 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 	}))
 
 	result := groupExecutionResult{ActionAttempts: 1, RecordError: recordErr}
-	if group.Action == ActionAgentShutdown && actionErr == nil {
+	if group.Action == ActionAgentShutdown {
 		releaseCount, releaseErr := e.recordNodeReleases(ctx, writer, input, executionID, dryRun, group, completedAt)
 		result.NodeReleases = releaseCount
 		result.RecordError = errors.Join(result.RecordError, releaseErr)
@@ -431,11 +448,8 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 			signalPath = DefaultSignalPath
 		}
 		staleAfter := observedAt.Add(signalTTL(input.SignalTTL))
-		released := !dryRun
-		reason := "ReleaseApproved"
-		if dryRun {
-			reason = "DryRunRelease"
-		}
+		released := release.AgentReady && !dryRun
+		reason := nodeReleaseReason(release, dryRun)
 		recordErr = errors.Join(recordErr, writer.RecordNodeRelease(ctx, audit.NodeReleaseRecord{
 			ReleaseID:      e.newID(),
 			ExecutionID:    executionID,
@@ -447,17 +461,19 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 			Released:       released,
 			Reason:         reason,
 			Clearance: map[string]any{
-				"dryRun": dryRun,
-				"group":  group.Name,
+				"agentReady":        release.AgentReady,
+				"dryRun":            dryRun,
+				"group":             group.Name,
+				"lastHeartbeatTime": releaseHeartbeatTime(release),
+				"podName":           release.PodName,
+				"readinessReason":   release.ReadinessReason,
 			},
 			Details: map[string]any{
+				"readinessMessage":   release.ReadinessMessage,
 				"selectedUPSDevices": append([]string(nil), input.SelectedUPSDevices...),
 			},
 		}))
-		handoffReason := "SignalAccepted"
-		if dryRun {
-			handoffReason = "DryRunSignal"
-		}
+		handoffReason := nodeSignalHandoffReason(release, dryRun)
 		recordErr = errors.Join(recordErr, writer.RecordNodeSignalHandoff(ctx, audit.NodeSignalHandoff{
 			HandoffID:      e.newID(),
 			ExecutionID:    executionID,
@@ -466,22 +482,100 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 			NodePowerAgent: release.NodePowerAgent,
 			SignalPath:     signalPath,
 			SignalPayload: map[string]any{
+				"agentReady":         release.AgentReady,
 				"dryRun":             dryRun,
 				"executionID":        executionID,
+				"lastHeartbeatTime":  releaseHeartbeatTime(release),
 				"nodeName":           release.NodeName,
 				"planConfigHash":     input.PlanConfigHash,
+				"podName":            release.PodName,
+				"readinessReason":    release.ReadinessReason,
 				"reason":             reason,
 				"selectedUPSDevices": append([]string(nil), input.SelectedUPSDevices...),
 				"shutdownFlow":       input.ShutdownFlow,
 				"timestamp":          observedAt.UTC().Format(time.RFC3339Nano),
 			},
 			StaleAfter: &staleAfter,
-			Accepted:   !dryRun,
+			Accepted:   release.AgentReady && !dryRun,
 			Reason:     handoffReason,
-			Details:    map[string]any{"group": group.Name},
+			Details: map[string]any{
+				"group":             group.Name,
+				"readinessMessage":  release.ReadinessMessage,
+				"readinessReason":   release.ReadinessReason,
+				"lastHeartbeatTime": releaseHeartbeatTime(release),
+			},
 		}))
 	}
 	return len(group.NodeReleases), recordErr
+}
+
+func agentShutdownReadinessError(dryRun bool, group Group) error {
+	if dryRun {
+		return nil
+	}
+	var out error
+	for _, release := range group.NodeReleases {
+		if release.AgentReady {
+			continue
+		}
+		reason := release.ReadinessReason
+		if reason == "" {
+			reason = "AgentReadinessUnknown"
+		}
+		out = errors.Join(out, fmt.Errorf("node %q is not ready for AgentShutdown: %s", release.NodeName, reason))
+	}
+	return out
+}
+
+func blockedNodeReleaseDetails(releases []NodeRelease) []map[string]any {
+	blocked := make([]map[string]any, 0)
+	for _, release := range releases {
+		if release.AgentReady {
+			continue
+		}
+		blocked = append(blocked, map[string]any{
+			"lastHeartbeatTime": releaseHeartbeatTime(release),
+			"nodeName":          release.NodeName,
+			"nodePowerAgent":    release.NodePowerAgent,
+			"podName":           release.PodName,
+			"readinessMessage":  release.ReadinessMessage,
+			"readinessReason":   release.ReadinessReason,
+		})
+	}
+	return blocked
+}
+
+func nodeReleaseReason(release NodeRelease, dryRun bool) string {
+	if !release.AgentReady {
+		if release.ReadinessReason != "" {
+			return release.ReadinessReason
+		}
+		return "AgentReadinessUnknown"
+	}
+	if dryRun {
+		return "DryRunRelease"
+	}
+	return "ReleaseApproved"
+}
+
+func nodeSignalHandoffReason(release NodeRelease, dryRun bool) string {
+	if !release.AgentReady {
+		if release.ReadinessReason != "" {
+			return release.ReadinessReason
+		}
+		return "AgentReadinessUnknown"
+	}
+	if dryRun {
+		return "DryRunSignal"
+	}
+	return "SignalAccepted"
+}
+
+func releaseHeartbeatTime(release NodeRelease) string {
+	if release.LastHeartbeatTime == nil || release.LastHeartbeatTime.IsZero() {
+		return ""
+	}
+	return release.LastHeartbeatTime.UTC().Format(time.RFC3339Nano)
 }
 
 func indexGroups(groups []Group) (map[string]Group, error) {

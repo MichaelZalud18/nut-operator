@@ -607,6 +607,78 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(groups[2].SelectedTargets).To(ConsistOf(executorpkg.Target{APIVersion: "v1", Kind: "Namespace", Name: "storage"}))
 		})
 
+		It("maps NodePowerAgent coverage into AgentShutdown releases", func() {
+			scheme := runtime.NewScheme()
+			Expect(powerv1alpha1.AddToScheme(scheme)).To(Succeed())
+			heartbeat := metav1.NewTime(time.Date(2026, 8, 3, 9, 30, 0, 0, time.UTC))
+			agent := &powerv1alpha1.NodePowerAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-a-agents"},
+				Spec: powerv1alpha1.NodePowerAgentSpec{
+					NUTServerRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-a"}},
+				},
+				Status: powerv1alpha1.NodePowerAgentStatus{
+					SelectedNodes: []string{"node-a", "node-b"},
+					NodeStatuses: []powerv1alpha1.NodePowerAgentNodeStatus{
+						{
+							NodeName:          "node-a",
+							Ready:             true,
+							PodName:           "agent-node-a",
+							Reason:            "AgentPodReady",
+							Message:           "ready NodePowerAgent pod is observed on this node",
+							LastHeartbeatTime: &heartbeat,
+						},
+						{
+							NodeName: "node-b",
+							Ready:    false,
+							Reason:   "AgentPodMissing",
+							Message:  "no NodePowerAgent pod is currently observed on this selected node",
+						},
+					},
+				},
+			}
+			reconciler := &ShutdownFlowReconciler{
+				Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).Build(),
+			}
+			flow := &powerv1alpha1.ShutdownFlow{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-flow"},
+				Spec: powerv1alpha1.ShutdownFlowSpec{
+					Groups: []powerv1alpha1.ShutdownGroup{{
+						Name:   "nodes",
+						Action: powerv1alpha1.ShutdownStepAgentShutdown,
+						Target: powerv1alpha1.ShutdownStepTarget{
+							AgentRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-a-agents"}},
+						},
+					}},
+				},
+			}
+
+			groups, err := reconciler.executorGroupsFromFlow(context.Background(), flow)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(groups).To(HaveLen(1))
+			Expect(groups[0].NodeReleases).To(HaveLen(2))
+			releasesByNode := map[string]executorpkg.NodeRelease{}
+			for _, release := range groups[0].NodeReleases {
+				releasesByNode[release.NodeName] = release
+			}
+			Expect(releasesByNode["node-a"].NodePowerAgent).To(Equal("rack-a-agents"))
+			Expect(releasesByNode["node-a"].SignalPath).To(Equal("/run/power-agent/shutdown.json"))
+			Expect(releasesByNode["node-a"].AgentReady).To(BeTrue())
+			Expect(releasesByNode["node-a"].ReadinessReason).To(Equal("AgentPodReady"))
+			Expect(releasesByNode["node-a"].ReadinessMessage).To(Equal("ready NodePowerAgent pod is observed on this node"))
+			Expect(releasesByNode["node-a"].PodName).To(Equal("agent-node-a"))
+			Expect(releasesByNode["node-a"].LastHeartbeatTime).NotTo(BeNil())
+			Expect(*releasesByNode["node-a"].LastHeartbeatTime).To(BeTemporally("==", heartbeat.Time))
+			Expect(releasesByNode["node-b"]).To(Equal(executorpkg.NodeRelease{
+				NodeName:         "node-b",
+				NodePowerAgent:   "rack-a-agents",
+				SignalPath:       "/run/power-agent/shutdown.json",
+				AgentReady:       false,
+				ReadinessReason:  "AgentPodMissing",
+				ReadinessMessage: "no NodePowerAgent pod is currently observed on this selected node",
+			}))
+		})
+
 		It("records rejected compilation audit without requiring a plan hash", func() {
 			scheme := runtime.NewScheme()
 			Expect(powerv1alpha1.AddToScheme(scheme)).To(Succeed())

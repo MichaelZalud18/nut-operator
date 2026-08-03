@@ -25,9 +25,12 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 )
@@ -45,6 +48,7 @@ type NodePowerAgentReconciler struct {
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps;secrets;serviceaccounts,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch
 
@@ -71,6 +75,9 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			agent.Status.SelectedNodes = nil
 			agent.Status.DesiredNumberScheduled = 0
 			agent.Status.NumberReady = 0
+			agent.Status.ReadyNodeCount = 0
+			agent.Status.UnavailableNodeCount = 0
+			agent.Status.NodeStatuses = nil
 			agent.Status.ConfigHash = ""
 			agent.Status.ManagedResources = nil
 			setAcceptedCondition(&agent.Status.Conditions, agent.Generation, result)
@@ -87,25 +94,35 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			agent.Status.SelectedNodes = rendered.SelectedNodes
 			agent.Status.DesiredNumberScheduled = rendered.DesiredNumberScheduled
 			agent.Status.NumberReady = rendered.NumberReady
+			agent.Status.ReadyNodeCount = rendered.ReadyNodeCount
+			agent.Status.UnavailableNodeCount = rendered.UnavailableNodeCount
+			agent.Status.NodeStatuses = rendered.NodeStatuses
 			agent.Status.ConfigHash = rendered.ConfigHash
 			agent.Status.ManagedResources = rendered.ManagedResources
 			setAcceptedCondition(&agent.Status.Conditions, agent.Generation, result)
-			ready := rendered.NumberReady >= rendered.DesiredNumberScheduled
+			ready := rendered.NumberReady >= rendered.DesiredNumberScheduled && rendered.UnavailableNodeCount == 0
 			reason := "AwaitingDaemonSet"
 			message := "Node power agent operands rendered; waiting for DaemonSet readiness"
 			if ready {
 				agent.Status.Phase = powerv1alpha1.NodePowerAgentPhaseReady
 				reason = "Ready"
 				message = "Node power agent operands are ready"
+			} else if rendered.UnavailableNodeCount > 0 {
+				agent.Status.Phase = powerv1alpha1.NodePowerAgentPhaseDegraded
+				reason = "AgentPodsUnavailable"
+				message = "Node power agent operands rendered, but one or more selected nodes lack a ready agent pod"
 			}
 			setReadyCondition(&agent.Status.Conditions, agent.Generation, ready, reason, message)
-			setDegradedCondition(&agent.Status.Conditions, agent.Generation, false, "AsExpected", "Node power agent operands rendered")
+			setDegradedCondition(&agent.Status.Conditions, agent.Generation, rendered.UnavailableNodeCount > 0, reason, message)
 		}
 	} else {
 		agent.Status.Phase = powerv1alpha1.NodePowerAgentPhaseError
 		agent.Status.SelectedNodes = nil
 		agent.Status.DesiredNumberScheduled = 0
 		agent.Status.NumberReady = 0
+		agent.Status.ReadyNodeCount = 0
+		agent.Status.UnavailableNodeCount = 0
+		agent.Status.NodeStatuses = nil
 		agent.Status.ConfigHash = ""
 		agent.Status.ManagedResources = nil
 		setAcceptedCondition(&agent.Status.Conditions, agent.Generation, result)
@@ -133,6 +150,13 @@ func (r *NodePowerAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&powerv1alpha1.NodePowerAgent{}).
 		Owns(&appsv1.DaemonSet{}).
 		Owns(&corev1.ConfigMap{}).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
+			agentName := obj.GetLabels()["power.zalud.io/nodepoweragent"]
+			if agentName == "" {
+				return nil
+			}
+			return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: agentName}}}
+		})).
 		Owns(&corev1.Secret{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&networkingv1.NetworkPolicy{}).

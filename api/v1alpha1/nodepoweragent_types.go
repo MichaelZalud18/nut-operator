@@ -96,6 +96,21 @@ type NodePowerAgentStatus struct {
 	// +optional
 	NumberReady int32 `json:"numberReady,omitempty"`
 
+	// readyNodeCount records selected nodes with an observed ready agent pod.
+	// +optional
+	ReadyNodeCount int32 `json:"readyNodeCount,omitempty"`
+
+	// unavailableNodeCount records selected nodes without an observed ready agent pod.
+	// +optional
+	UnavailableNodeCount int32 `json:"unavailableNodeCount,omitempty"`
+
+	// nodeStatuses records per-node agent pod coverage observed from Kubernetes pod readiness.
+	// It is the Kubernetes-native node-agent heartbeat used by shutdown execution safety gates.
+	// +listType=map
+	// +listMapKey=nodeName
+	// +optional
+	NodeStatuses []NodePowerAgentNodeStatus `json:"nodeStatuses,omitempty"`
+
 	// configHash identifies the rendered agent configuration.
 	// +optional
 	ConfigHash string `json:"configHash,omitempty"`
@@ -109,6 +124,35 @@ type NodePowerAgentStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// NodePowerAgentNodeStatus records controller-observed agent coverage for one selected node.
+type NodePowerAgentNodeStatus struct {
+	// nodeName is the Kubernetes Node name selected by this NodePowerAgent.
+	NodeName string `json:"nodeName"`
+
+	// ready is true when a current, ready NodePowerAgent pod is observed on this node.
+	Ready bool `json:"ready"`
+
+	// podName is the observed agent pod on this node, when present.
+	// +optional
+	PodName string `json:"podName,omitempty"`
+
+	// phase is the observed pod phase, when present.
+	// +optional
+	Phase corev1.PodPhase `json:"phase,omitempty"`
+
+	// reason is a machine-readable coverage reason such as AgentPodReady or AgentPodMissing.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// message explains the observed coverage state for operators and audit records.
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// lastHeartbeatTime is the latest pod readiness transition observed by the controller.
+	// +optional
+	LastHeartbeatTime *metav1.Time `json:"lastHeartbeatTime,omitempty"`
 }
 
 // NodePowerAgentMode controls host action authority.
