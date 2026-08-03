@@ -159,8 +159,11 @@ execution-time revalidation per OD-11.
 for node N cannot precede N in shutdown order. The communication path is modeled as `carries` edges
 per IN-5; OD-3 is closed.
 
-**PL-22** · Resolve last-ditch roles into terminal ordering constraints. "Must stay until phase X" is
-a role in input and a set of edges in output. Requires the phase taxonomy in OD-4.
+**PL-22** · Resolve last-ditch roles into terminal ordering constraints. "Must stay until phase X"
+is a role in input and a set of edges in output. The phase taxonomy is the numbered-tier scheme
+(OD-4, closed): tier N+1 → tier N compiles to derived edges labeled per PL-15; explicit `requires`
+still orders within a tier; tier 0 members are excluded from flow targeting entirely and any flow
+that targets one is rejected.
 
 **PL-23** · Enforce quorum. With an HA control plane, no wave may drop the control plane below quorum
 while later waves still require orchestration. Hard constraint. This is the mechanism behind
@@ -333,7 +336,7 @@ schema doc content, not a standalone decision.
 
 ## Open Decisions
 
-Carried from `scope-boundaries.md`: OD-4 (last-ditch phase taxonomy).
+OD-4 is closed (numbered tiers; see `scope-boundaries.md` change log 2026-08-03).
 
 OD-2 and OD-3 are closed by `inventory-provider-contract.md`. There is one entity set with two edge
 relations; the logical shutdown graph is compiled output, not a third input.

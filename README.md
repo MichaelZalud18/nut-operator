@@ -17,6 +17,8 @@ This project is intentionally designed as a reusable operator rather than a home
 - Use Kubernetes-native security controls: least-privilege RBAC, status subresources, conditions, NetworkPolicy-ready operands, read-only roots, seccomp, and explicit host-actuator isolation.
 - Keep long-lived audit, telemetry, and flow execution state out of CR status and in PostgreSQL.
 - Avoid a dedicated v1 web UI; any future UI is a separate consumer of the operator APIs.
+- Decline the Operator Framework's "Auto Pilot" maturity level by design: no auto-scaling,
+  auto-tuning, or auto-remediation. Power state is the only trigger the operator acts on.
 
 ## API Shape
 
@@ -177,7 +179,10 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [Image strategy](docs/images.md)
 - [Shutdown flow design](docs/shutdown-flow.md)
 - [Project tasks and current build state](docs/tasks.md)
+- [Operator maturity benchmarks and audit records](docs/audits/operator-maturity-benchmarks.md)
 - [Capability profiles](docs/design/capability-profiles.md)
+- [Capability profiles and upsd configuration](docs/design/capability-profiles-and-upsd-config.md)
+- [Device profile scope and provenance](docs/design/device-profile-scope-and-provenance.md)
 - [Upstream NUT relay](docs/design/upstream-nut-relay.md)
 - [Audit storage schema](docs/design/audit-storage-schema.md)
 - [Telemetry normalization](docs/design/telemetry-normalization.md)
@@ -189,6 +194,8 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [Planner requirements](docs/design/planner-requirements.md)
 - [Resolver requirements](docs/design/resolver-requirements.md)
 - [Executor requirements](docs/design/executor-requirements.md)
+- [Adaptive execution tier pointer](docs/design/adaptive-execution-tier-pointer.md)
+- [Scaling and sizing](docs/design/scaling-and-sizing.md)
 - [Inventory provider contract](docs/design/inventory-provider-contract.md)
 - [FAQ](docs/design/faq.md)
 - [Orion cluster example](docs/examples/orion-cluster/README.md)

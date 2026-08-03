@@ -311,17 +311,85 @@ for defense in depth.
 
 | ID | Decision | Blocks |
 | --- | --- | --- |
-| OD-4 | Last-ditch phase taxonomy — the actual enumeration behind "must stay until phase X" | Planner design |
 | OD-6 | Audit durability during shutdown. The sample flow scales `databases` and `storage` down in early waves while later waves still have execution records to write. Options: local spool draining post-recovery, audit cluster exempted into the last-ditch set, or documented preference for `ExternalPostgres` | Audit writer |
 | OD-8r | Resolver behavior on malformed or missing model strings from the topology provider: reject, floor-match with warning, or configurable | Resolver design |
 | OD-9 | Degrade mechanics for trigger-capability mismatch — folded into capability schema doc | Capability schema doc |
 | OD-10 | USB and serial UPS support: version target and isolation model | v2 scoping |
 | OD-16 | Missing `carries` coverage — node with no modeled communication path: hard failure or explicit exemption marker. Silent-assume excluded | Inventory validation |
+| OD-18 | Tier inversion: lower-tier workload on higher-tier node. Node cannot clear under PL-20 while the workload runs. Options: compile-time validation, opt-in migration, node blocking. Node-local PVCs constrain migration | Planner tier compilation |
+| OD-19 | FSD usage: whether NUT's forced-shutdown broadcast becomes the final release signal or is deliberately declined in favor of the executor's signal file. Affects whether shutdown is observable through standard NUT tooling | Executor design |
+| OD-20 | Instant command scope and gating: which NUT instant commands and writable variables enter scope, how they are gated given they can cut power to equipment, and which capability profile fields declare support. Bounded by OD-1 on anything touching power-return | Capability schema |
+| OD-21 | Driver configuration ownership: whether driver name, poll interval, and driver-specific parameters move from `UPSDevice` spec into capability profiles, or remain in spec with profiles supplying defaults and validation. Hybrid — profile default, spec override — is the likely answer (RS-5 pattern) | Capability schema |
+| OD-22 | Firmware-conditional quirks: structured quirk objects with firmware constraints, versus firmware-ranged selectors and version-scoped profiles | Capability schema |
+| OD-23 | Telemetry variable aliasing: whether alias mappings live in the profile telemetry section, and how collisions and precedence resolve when a canonical name is both aliased and natively reported | Capability schema |
+| OD-24 | Non-NUT power device actuation: second actuation path for power devices without NUT drivers, or permanently topological. Decided alongside OD-10, since both concern control surfaces outside the RB-1/SB-2a NUT-network-only posture | v2 scoping |
+| OD-25 | PDU profile kind: schema shape for the parallel PDU capability kind, and which machinery is factored out of `UPSCapabilityProfile` for shared use. Scaffolding only in v1 | PDU scaffolding |
+| OD-26 | Provenance field semantics: whether `provenance` is advisory metadata or affects resolution — for example, whether a `Community` profile requires explicit opt-in or emits a warning condition when matched | Capability schema |
+| OD-27 | Timing adaptation parameters: hysteresis count, improvement margin, and scope | Adaptive execution |
+| OD-28 | Relationship to OD-12: OD-12 decides what to do with an infeasible plan before it starts; timing adaptation re-decides during | Adaptive execution |
+| OD-29 | Tier ascent trigger: what power condition moves the tier pointer up | Adaptive execution |
+| OD-30 | Cadence intervals: publish interval during idle versus active flow, and whether it is global or per-flow | Adaptive execution |
 
 ## Closed Decisions
 
 | ID | Resolution |
 | --- | --- |
 | OD-1 | Recovery and startup execution are outside project scope. Other systems consume published artifacts. |
+| OD-4 | Numbered shutdown tiers. See the change log entry of 2026-08-03. |
 | OD-5 | Startup ordering is an advisory projection for subscribers, not an operator-executed graph. |
 | OD-15 | Probe-history persistence uses PostgreSQL `capability_profile_verifications` rows for "last verified against firmware X" and drift evidence. |
+
+---
+
+## Change Log
+
+**2026-08-03 — OD-4 closed: numbered shutdown tiers.** The phase taxonomy is an integer tier
+assigned to shutdown targets.
+
+Direction: lower number shuts down later. Adding earlier tiers never renumbers critical ones.
+
+Tier semantics:
+
+- Tier 0 — never issued a stop; dies when its node powers off. Workload-only; a node assigned tier
+  0 is rejected, since tier 0 means "stops when its node stops" and a node has nothing beneath it.
+  Members: the operator's own pod, CNI, kube-system.
+- Tier 1 — final orchestrated stop before node release. Lowest tier valid for nodes. Control-plane
+  nodes default here: the operator cannot gracefully stop the control plane it is issuing commands
+  through, but the node itself still shuts down cleanly at the OS layer via the actuator, with
+  systemd stopping kubelet and etcd in order.
+- Tier 2+ — progressively earlier.
+
+Assignment and precedence, total and deterministic: explicit label on the object > selector rule in
+central config > default tier. Same override-chain pattern as capability matching (RS-5); not a
+field-level merge.
+
+Storage: a central CR holds tier definitions, the default, and selector-based assignment rules,
+giving one auditable tier map that hashes cleanly as structural input (PL-42). Per-object labels
+override it for one-offs.
+
+Default tier: configurable. Unconfigured, the default is the highest tier present — earliest
+shutdown, safest failure. Tiers 0 and 1 are reserved and cannot be set as the default; a
+misconfigured default of 0 would silently make everything last-ditch.
+
+Scope: tiers apply to namespaces, workloads, and nodes. The existing `lastDitchRole` on
+`PowerInventoryNode` maps to the tier scheme rather than remaining a parallel mechanism.
+
+Cross-kind comparison is invalid. Tier numbers order workloads against workloads and nodes against
+nodes. A tier 1 workload does not outrank a tier 2 node. Ordering across the two kinds comes
+entirely from node-clearance edges (PL-20): a node cannot power off until its workloads have
+cleared, regardless of tier.
+
+Compilation: tier N+1 to tier N becomes derived edges labeled per PL-15, layered on the existing
+`requires` mechanism, which continues to order within a tier. One ordering system underneath.
+
+Unlabeled targets take the default tier and raise the unmatched-workload warning where no group
+targets them at all.
+
+TBD, not blocking:
+
+- Tier-inversion handling (tracked as OD-18): a lower-tier workload sitting on a higher-tier node.
+  The node cannot clear under PL-20 while the workload is still running. Options include
+  compile-time validation, opt-in migration, and node blocking; node-local PVCs constrain the
+  migration path.
+- Whether the audit store belongs in tier 0 or tier 1, bound to OD-6.
+- Label key and central CR shape.

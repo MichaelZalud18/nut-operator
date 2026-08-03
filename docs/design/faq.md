@@ -37,6 +37,23 @@ through CRDs by default. NetBox is an optional provider that can supply the same
 your existing inventory. If you run NetBox, the operator renders a snapshot of it at reconcile
 time; it never queries NetBox live during a power event (SB-8, IN-14).
 
+## Can I add my own capability profiles, and will an upgrade overwrite them?
+
+Yes, and no.
+
+Capability profiles are `UPSCapabilityProfile` custom resources. Profiles you create live in your
+cluster as CRs; the profiles that ship with the operator live inside the operator image. Upgrading
+the operator replaces the bundled set and never touches your resources.
+
+Where both cover the same device, yours wins. Profile matching walks a fixed precedence chain —
+exact model and firmware, then exact model, then model glob, then driver family, then the
+universal floor — and within any tier, a profile you supplied outranks a bundled one. You do not
+need to fork the catalog or disable bundled profiles to override one.
+
+The bundled catalog is deliberately small. Profiles marked `ProjectVerified` have been exercised
+against real hardware; the project cannot verify devices it does not own. If you have a device
+that is not covered, a contributed profile is welcome.
+
 ## Do I need PostgreSQL?
 
 For production, yes. For development, no (`storage.mode: Disabled`).

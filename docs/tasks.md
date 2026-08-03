@@ -72,6 +72,24 @@ Last reviewed: 2026-08-03
 
 ## Open Build Items
 
+- Implement the numbered shutdown tiers closed under OD-4: tier label key naming and the central
+  tier-config CR shape, planner expansion of tiers into derived edges (the planner currently builds
+  graphs from authored edges only), mapping `PowerInventoryNode.spec.roles.lastDitchRole` onto the
+  tier scheme (retain as alias or deprecate), and the admission rejection rule for nodes assigned
+  tier 0.
+- Work the 2026-08-03 audit findings (F-1 – F-27) recorded under `docs/audits/`, following each
+  audit's recommended order. Leading items: leader-election default (F-2), finalizers (F-1), RBAC
+  narrowing (F-4, F-5), replica pinning for `upsd` (F-15), node-agent priority class and toleration
+  defaults (F-9, F-10), and the telemetry alias mechanism (F-25).
+- Fold the provisional adaptive-execution identifiers (AE-1 – AE-6 in
+  `docs/design/adaptive-execution-tier-pointer.md`) into the planner and executor requirement docs
+  with real PL/EX numbers once the design settles.
+- Refresh the example pod placement diagram and add it to `docs/diagrams/`. It is intentionally not
+  in the repo yet; node naming is undecided (tree names versus the Orion example's `orion-*`
+  convention).
+- Reconcile the Orion example's string shutdown-tier labels (`application`, `data`, `storage`) with
+  the numbered tier scheme closed under OD-4. Numbered tiers take precedence, but named tags like
+  storage and data may still occur and need a defined mapping or coexistence rule.
 - Resolve shutdown-time audit durability: local spool, audit-store last-ditch placement, or
   documented preference and test coverage for `ExternalPostgres`.
 - Complete real host-actuation deployment: cluster-to-node signal delivery, approved

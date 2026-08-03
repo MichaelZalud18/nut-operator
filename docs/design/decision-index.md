@@ -14,11 +14,27 @@ this file updates in the same change.
 | `inventory-provider-contract.md` | Topology input contract | IN |
 | `faq.md` | User-facing answers | — |
 | `capability-profiles.md` | Profile catalog and SKU capability records | CR |
+| `capability-profiles-and-upsd-config.md` | Profile influence on `upsd`: configuration yes, sizing never | — |
+| `device-profile-scope-and-provenance.md` | Profile scope by device class, provenance, non-NUT power devices | — |
 | `telemetry-normalization.md` | NUT variable normalization boundary | Runtime telemetry facts |
 | `trigger-evaluation.md` | Telemetry-to-flow trigger decisions | Runtime decision facts |
 | `published-planner-artifacts.md` | Kubernetes-first interface and published plan artifacts | Artifact contract |
 | `shutdown-flow.md` | Public shutdown-flow model | Compiled plan format |
 | `audit-storage-schema.md` | PostgreSQL durable-state schema and writer boundary | Migration-bound |
+| `scaling-and-sizing.md` | Component scaling guidance and what actually binds | — |
+| `adaptive-execution-tier-pointer.md` | Mid-flow adaptation: tier pointer and timing modes | AE (provisional) |
+
+## Audit Records
+
+Dated audit and findings records live in `docs/audits/` and share the `F-n` findings namespace.
+
+| Doc | Scope | Findings |
+| --- | --- | --- |
+| `operator-maturity-benchmarks.md` | External maturity standards and the recurring audit | F-1 – F-7 |
+| `node-agent-daemonset-audit.md` | Node agent DaemonSet render | F-8 – F-14 |
+| `nutserver-pod-audit.md` | `NUTServer` CRD and the `upsd` Deployment it renders | F-15 – F-19, F-23 |
+| `nut-usage-audit.md` | Cross-component NUT mechanism usage and fidelity | F-20 – F-22, F-24 |
+| `quirks-aliasing-firmware.md` | Quirk handling, variable aliasing, firmware gating | F-25 – F-27 |
 
 ## Identifier Namespaces
 
@@ -27,12 +43,14 @@ this file updates in the same change.
 | GP | Governing principle | scope-boundaries | GP-1 – GP-7 |
 | SB | Scope boundary | scope-boundaries | SB-1 – SB-14 |
 | RB | Repository-derived boundary | scope-boundaries | RB-1 – RB-7 |
-| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-17, OD-8r |
+| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-30, OD-8r |
 | PL | Planner requirement | planner-requirements | PL-1 – PL-49 |
 | CR | Capability resolution rule | planner-requirements | CR-1 – CR-3 |
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
 | EX | Executor requirement | executor-requirements | EX-1 – EX-21 |
 | IN | Inventory contract rule | inventory-provider-contract | IN-1 – IN-16 |
+| F | Audit finding | audit records (`docs/audits/`) | F-1 – F-27 (2026-08-03) |
+| AE | Adaptive execution (provisional; folds into PL and EX) | adaptive-execution-tier-pointer | AE-1 – AE-6 |
 
 Identifiers are stable: never reused, never renumbered. Superseded items are marked in place.
 
@@ -42,7 +60,6 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 
 | ID | Question | Blocks | Likely owner doc |
 | --- | --- | --- | --- |
-| OD-4 | Last-ditch phase taxonomy | PL-22 | Planner design |
 | OD-6 | Audit durability while the audit store is shutting down | Audit writer, EX-14, EX-20 | Audit schema |
 | OD-8r | Provider key validation policy (interim: floor-match + warning, RS-6) | Resolver | Resolver |
 | OD-9 | Trigger degrade mechanics | — | Capability schema |
@@ -50,6 +67,19 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | OD-12 | Infeasible-plan policy field default and options | EX-3 | Planner design |
 | OD-14 | Partial-domain outage: cluster-wide vs domain-scoped plan (structure now available) | PL-16, PL-23, EX-10 | Planner design |
 | OD-16 | Missing `carries` coverage: error vs explicit exemption | Inventory validation | inventory contract |
+| OD-18 | Tier inversion: lower-tier workload on higher-tier node. Node cannot clear under PL-20 while the workload runs. Options: compile-time validation, opt-in migration, node blocking. Node-local PVCs constrain migration | Planner tier compilation | Planner design |
+| OD-19 | FSD usage: NUT's forced-shutdown broadcast as the final release signal, or deliberately declined in favor of the executor's signal file | F-20 | Executor design |
+| OD-20 | Instant command scope and gating, and which capability profile fields declare support. Bounded by OD-1 on power-return | F-22, F-23, F-27 | Capability schema |
+| OD-21 | Driver configuration ownership: capability profile vs `UPSDevice` spec; hybrid default-plus-override likely (RS-5 pattern) | — | Capability schema |
+| OD-22 | Firmware-conditional quirks: structured quirk objects vs firmware-ranged selectors | F-26 | Capability schema |
+| OD-23 | Telemetry variable aliasing: profile-supplied alias maps and collision precedence | F-25 | Capability schema |
+| OD-24 | Non-NUT power device actuation: second actuation path or permanently topological. Decided alongside OD-10 | — | v2 scoping |
+| OD-25 | PDU profile kind: parallel capability kind schema and factored shared machinery. Scaffolding only in v1 | — | Capability schema |
+| OD-26 | Provenance field semantics: advisory metadata or resolution-affecting | — | Capability schema |
+| OD-27 | Timing adaptation parameters: hysteresis count, improvement margin, and scope | — | Adaptive execution |
+| OD-28 | Relationship to OD-12: infeasible-plan policy before start vs timing re-decisions during | — | Adaptive execution |
+| OD-29 | Tier ascent trigger: what power condition moves the pointer up | — | Adaptive execution |
+| OD-30 | Cadence intervals: publish interval during idle vs active flow; global or per-flow | — | Adaptive execution |
 
 ### Closed
 
@@ -57,6 +87,7 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | --- | --- | --- |
 | OD-2 | Collapsed — one entity set, two edge relations; logical graph is compiled output | inventory contract |
 | OD-3 | Communication path modeled minimally as `carries` edges | IN-5 |
+| OD-4 | Numbered shutdown tiers: 0 = last-ditch (workload-only), 1 = final stop / lowest for nodes, 2+ earlier; configurable default; compiled to derived edges. Tier-inversion handling deferred to OD-18 | scope-boundaries change log |
 | OD-15 | Capability profile probe history is persisted in PostgreSQL as `capability_profile_verifications` | Audit schema |
 | OD-1 | Recovery/startup execution is out of scope; external systems consume published artifacts | scope-boundaries |
 | OD-5 | Startup ordering is an advisory projection for subscribers, not operator-executed recovery | scope-boundaries |
@@ -104,7 +135,18 @@ advisory (SB-9, CR-1, CR-2).
 to match. The terminal tier of the matching chain, not a special case (PL-33).
 
 **Last-ditch** — the role marking services and nodes that must survive until a given shutdown
-phase; under HA, the minimum viable control plane. The detailed taxonomy is tracked by OD-4.
+phase; under HA, the minimum viable control plane. Concretely: tier 0 in the numbered-tier
+scheme (OD-4, closed).
+
+**Shutdown tier** — integer coarse-ordering label on namespaces, workloads, and nodes. Tier 0 =
+last-ditch, workload-only. Tier 1 = final orchestrated stop, lowest valid for nodes. Tier 2+ =
+progressively earlier. Lower shuts down later. Not comparable across kinds — workload-to-node
+ordering comes from clearance edges (PL-20). Compiled into derived edges; `requires` orders within
+a tier.
+
+**Tier pointer** — the executor's record of how far down the tier sequence a shutdown has
+progressed. Descends as power degrades and waves execute; ascends as bookkeeping only, restoring
+nothing (AE-1 – AE-3).
 
 **Signal file** — the structured in-pod handoff from executor authority to host actuation:
 timestamp, reason, UPS identity, flow identity, plan hash. The actuator rejects stale files
