@@ -10,6 +10,7 @@ The graph model is the primary design. Numeric phases are only a convenience for
 - Let independent groups shut down concurrently while preserving required ordering.
 - Keep dangerous actions dry-run and status-visible before enforcement.
 - Reject ambiguous or unsafe plans before execution.
+- Publish reusable planner artifacts instead of hiding the plan inside execution.
 - Preserve a small Kubernetes status surface while writing durable execution history to PostgreSQL.
 
 ## Prior Art
@@ -144,9 +145,11 @@ Reconciliation performs a deterministic compile before any enforcement behavior:
 4. Build directed edges from `requires`, `before`, and `after`.
 5. Reject dependency cycles.
 6. Topologically sort the graph.
-7. Emit ordered waves in `status.compiledWaves`.
-8. Emit a flattened operator review view in `status.compiledSteps`.
-9. Estimate total duration from each wave's longest timeout.
+7. Emit the dependency graph with edge provenance and explanations.
+8. Emit ordered shutdown waves in `status.compiledWaves`.
+9. Emit advisory startup wave projections for external consumers.
+10. Emit a flattened operator review view in `status.compiledSteps`.
+11. Estimate total duration from each wave's longest timeout.
 
 Example compiled status shape:
 
@@ -166,6 +169,18 @@ status:
       cumulativeDuration: 15m
 ```
 
+## Published Artifacts
+
+The planner produces artifacts that can be reviewed and consumed independently of execution:
+
+- Compiled execution plan.
+- Dependency graph.
+- Shutdown waves and advisory startup wave projections.
+- Planner explanations for decisions, warnings, and feasibility verdicts.
+- Per-edge explanations, such as "declared by `requires`" or "inferred from inventory `feeds` edge."
+
+The operator publishes current artifacts through CR status and Kubernetes Events, and writes durable copies to PostgreSQL. Visualization exporters render Mermaid, Graphviz/DOT, and D2 from the structured graph. Those exports are for existing tools and future consumers, not an embedded web UI.
+
 ## Execution Semantics
 
 Execution uses the compiled waves, not raw YAML order.
@@ -178,6 +193,8 @@ Execution uses the compiled waves, not raw YAML order.
 - Control-plane or controller nodes carry explicit late dependencies, not just a high phase number.
 
 Execution records, action attempts, telemetry snapshots, and approval evidence belong in PostgreSQL. CR status remains a current summary and review surface.
+
+Execution also publishes current state and wave progress as facts. Subscribers may watch those facts, but the operator does not delegate shutdown ordering or host actuation to subscribers.
 
 ## Resource Semantics
 

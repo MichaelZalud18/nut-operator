@@ -181,8 +181,7 @@ authored and snapshotted, never live-queried), IN-12 (derived closure guarded by
 completeness rule).
 
 Recorded as a governing principle because it has now decided three separate design questions and
-continues to govern new boundary decisions. It belongs in `scope-boundaries.md` alongside GP-1
-through GP-4.
+continues to govern new boundary decisions. It is promoted into `scope-boundaries.md` as GP-5.
 
 ---
 
@@ -210,6 +209,8 @@ Carried and now unblocked by this contract:
 supply the data this decision needed. The policy question — cluster-wide plan versus domain-scoped
 subgraph — remains open, but is no longer blocked on missing structure.
 
-Carried unchanged: OD-1 (recovery scope), OD-4 (last-ditch phase taxonomy), OD-5 (`requires` edge
-inversion), OD-6 (audit durability), OD-8r (provider key validation), OD-10 (USB support), OD-15
-(probe history persistence).
+Carried unchanged: OD-4 (last-ditch phase taxonomy), OD-6 (audit durability), OD-8r (provider key
+validation), OD-10 (USB support), OD-15 (probe history persistence).
+
+Closed elsewhere: OD-1 (recovery execution is external subscriber scope) and OD-5 (startup waves
+are advisory projections, not operator-executed recovery).

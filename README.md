@@ -12,8 +12,11 @@ This project is intentionally designed as a reusable operator rather than a home
 - Support many network-reachable UPS devices and physical power domains.
 - Keep UPS telemetry, policy compilation, and node actuation as separate concerns.
 - Default to dry-run and status-visible compiled plans before allowing any host shutdown.
+- Publish reusable planner artifacts: compiled execution plans, dependency graphs, waves, execution progress, and explanations.
+- Treat Kubernetes resources, events, logs, and GitOps-managed manifests as the v1 user interface.
 - Use Kubernetes-native security controls: least-privilege RBAC, status subresources, conditions, NetworkPolicy-ready operands, read-only roots, seccomp, and explicit host-actuator isolation.
 - Keep long-lived audit, telemetry, and flow execution state out of CR status and in PostgreSQL.
+- Avoid a dedicated v1 web UI; any future UI is a separate consumer of the operator APIs.
 
 ## API Shape
 
@@ -74,8 +77,10 @@ flowchart TD
   Operator -->|status summaries| CRDs[power.zalud.io CRDs]
   Operator -->|audit and telemetry| Postgres[(PostgreSQL / CNPG)]
   Operator -->|compiled waves and decisions| Flow[ShutdownFlow]
+  Operator -->|published plan artifacts| Artifacts[Plans / graphs / waves / explanations]
   Flow -->|approved handoff| Agents[NodePowerAgent DaemonSets]
   Agents -->|local signal| Actuator[Host actuator boundary]
+  Artifacts -.-> Subscribers[Dashboards / monitoring / docs / recovery consumers]
 ```
 
 The control plane separates detect, decide, and act:
@@ -85,6 +90,17 @@ The control plane separates detect, decide, and act:
 - Act: dry-run execution, Kubernetes workload coordination, node-agent handoff, and explicitly approved local host shutdown.
 
 Durable records are written to PostgreSQL. Kubernetes status remains a current-state review surface, not an event log.
+
+## Interface Model
+
+There is no dedicated UI for v1. The primary interface is Kubernetes:
+
+- CRDs declare desired state.
+- GitOps manages configuration changes.
+- `/status`, Kubernetes Events, logs, and PostgreSQL audit records expose current state and history.
+- `kubectl` is sufficient for day-to-day operation.
+
+The operator publishes facts, not external commands. Other systems may consume published planner artifacts for dashboards, documentation, monitoring, recovery orchestration, or future automation. The project boundary remains: `nut-operator` owns power-event planning and shutdown execution; subscribers own what they do with the published plan.
 
 ## Development
 
@@ -158,6 +174,7 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [Audit storage schema](docs/design/audit-storage-schema.md)
 - [Telemetry normalization](docs/design/telemetry-normalization.md)
 - [Trigger evaluation](docs/design/trigger-evaluation.md)
+- [Published planner artifacts](docs/design/published-planner-artifacts.md)
 - [Design decision index](docs/design/decision-index.md)
 - [Scope boundaries](docs/design/scope-boundaries.md)
 - [Planner requirements](docs/design/planner-requirements.md)

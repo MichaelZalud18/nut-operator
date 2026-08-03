@@ -55,8 +55,17 @@ Recovery is a genuinely different problem. Shutdown runs while the control plane
 bring-up starts from hardware settings (BIOS, PDU delayed-start) before any orchestration exists to
 help. NUT's own scope ends at clean shutdown for the same reason.
 
-Whether a recovery story joins the project later is an open decision (SB-1, OD-1). It is not an
-oversight.
+Recovery orchestration is not owned by this project (SB-1, OD-1). External recovery systems can
+consume the published dependency graph and advisory startup wave projections, but `nut-operator`
+does not execute bring-up.
+
+## Is there a UI?
+
+No dedicated UI ships in v1.
+
+Kubernetes is the interface: CRDs, GitOps-managed manifests, `kubectl`, Events, logs, status, and
+PostgreSQL audit records. A future UI can exist as a separate subscriber of the published planner
+artifacts, not as part of the core operator.
 
 ## Can this shut my nodes down by accident?
 

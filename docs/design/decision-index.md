@@ -16,6 +16,7 @@ this file updates in the same change.
 | `capability-profiles.md` | Profile catalog and SKU capability records | CR |
 | `telemetry-normalization.md` | NUT variable normalization boundary | Runtime telemetry facts |
 | `trigger-evaluation.md` | Telemetry-to-flow trigger decisions | Runtime decision facts |
+| `published-planner-artifacts.md` | Kubernetes-first interface and published plan artifacts | Artifact contract |
 | `shutdown-flow.md` | Public shutdown-flow model | Compiled plan format |
 | `audit-storage-schema.md` | PostgreSQL durable-state schema and writer boundary | Migration-bound |
 
@@ -23,11 +24,11 @@ this file updates in the same change.
 
 | Prefix | Meaning | Home | Range in use |
 | --- | --- | --- | --- |
-| GP | Governing principle | scope-boundaries | GP-1 – GP-5 |
-| SB | Scope boundary | scope-boundaries | SB-1 – SB-13 |
+| GP | Governing principle | scope-boundaries | GP-1 – GP-7 |
+| SB | Scope boundary | scope-boundaries | SB-1 – SB-14 |
 | RB | Repository-derived boundary | scope-boundaries | RB-1 – RB-7 |
 | OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-17, OD-8r |
-| PL | Planner requirement | planner-requirements | PL-1 – PL-44 |
+| PL | Planner requirement | planner-requirements | PL-1 – PL-49 |
 | CR | Capability resolution rule | planner-requirements | CR-1 – CR-3 |
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
 | EX | Executor requirement | executor-requirements | EX-1 – EX-21 |
@@ -41,9 +42,7 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 
 | ID | Question | Blocks | Likely owner doc |
 | --- | --- | --- | --- |
-| OD-1 | Recovery/startup: in-project at all, and which version | OD-5 | scope-boundaries |
 | OD-4 | Last-ditch phase taxonomy | PL-22 | Planner design |
-| OD-5 | `requires` edge inversion under startup semantics | — (contingent on OD-1) | Planner design |
 | OD-6 | Audit durability while the audit store is shutting down | Audit writer, EX-14, EX-20 | Audit schema |
 | OD-8r | Provider key validation policy (interim: floor-match + warning, RS-6) | Resolver | Resolver |
 | OD-9 | Trigger degrade mechanics | — | Capability schema |
@@ -59,6 +58,8 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | --- | --- | --- |
 | OD-2 | Collapsed — one entity set, two edge relations; logical graph is compiled output | inventory contract |
 | OD-3 | Communication path modeled minimally as `carries` edges | IN-5 |
+| OD-1 | Recovery/startup execution is out of scope; external systems consume published artifacts | scope-boundaries |
+| OD-5 | Startup ordering is an advisory projection for subscribers, not operator-executed recovery | scope-boundaries |
 | OD-7 | Profiles are CRDs + bundled data; NetBox references at most | planner CR section |
 | OD-8 | Dissolved — lookup, not merge; residue → OD-8r | planner CR section |
 | OD-11 | Hybrid selector resolution: compile graph, enumerate at execution | planner Resolved |
@@ -86,6 +87,14 @@ feasibility only (PL-42).
 
 **Plan hash** — deterministic hash over structural inputs plus emitted plan; the correlation key
 across CR status, the signal file, and audit records (PL-14).
+
+**Published artifact** — structured planner or executor output exposed for consumers: compiled
+plan, dependency graph, waves, trigger decisions, explanations, progress, and renderable graph
+views.
+
+**Subscriber** — an external consumer of published artifacts, such as recovery orchestration,
+dashboards, documentation generators, monitoring systems, or future automation. Subscribers do not
+own shutdown planning or host actuation.
 
 **Capability profile** — versioned artifact declaring a device's NUT variables (telemetry section)
 and behaviors/quirks (actuation section). Matched, not merged; declaration authoritative, probing

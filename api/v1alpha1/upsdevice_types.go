@@ -23,7 +23,7 @@ import (
 
 // UPSDeviceSpec defines the desired state of UPSDevice
 type UPSDeviceSpec struct {
-	// displayName is a human-readable name for dashboards and events.
+	// displayName is a human-readable name for events and published artifacts.
 	// +optional
 	DisplayName string `json:"displayName,omitempty"`
 

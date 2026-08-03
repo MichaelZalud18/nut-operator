@@ -56,8 +56,8 @@ spec:
                 - namespace
                 type: object
               displayName:
-                description: displayName is a human-readable name for dashboards and
-                  events.
+                description: displayName is a human-readable name for events and published
+                  artifacts.
                 type: string
               driver:
                 description: |-

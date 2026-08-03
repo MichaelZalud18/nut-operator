@@ -23,7 +23,7 @@ import (
 
 // PowerInfrastructureSpec defines the desired state of PowerInfrastructure
 type PowerInfrastructureSpec struct {
-	// displayName is a human-readable label for dashboards and events.
+	// displayName is a human-readable label for events and published artifacts.
 	// +optional
 	DisplayName string `json:"displayName,omitempty"`
 

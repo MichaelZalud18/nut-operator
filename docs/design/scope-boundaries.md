@@ -31,6 +31,18 @@ state summaries live in CR status. Event history, telemetry streams, and executi
 **GP-4 · Consume signals, do not rebuild them.** The operator reads from existing monitoring and
 inventory systems. It does not become one.
 
+**GP-5 · Declared in the failure path; derived only to confirm or alarm.** Anything consumed while
+power is failing is authored, structural input. Runtime-derived or externally queried data may
+verify that input and raise conditions on mismatch, but never feeds decisions directly.
+
+**GP-6 · Kubernetes is the interface.** The v1 product is operated through CRDs, status, Events,
+logs, and PostgreSQL audit records. GitOps is the primary configuration mechanism, and `kubectl`
+is sufficient for day-to-day operation.
+
+**GP-7 · Publish facts, not commands.** The operator publishes compiled plans, dependency graphs,
+waves, progress, and explanations for subscribers. Subscribers may visualize, document, monitor,
+or recover from those facts, but they do not own shutdown planning or host actuation.
+
 ---
 
 ## SB-1 · Shutdown and recovery are separate concerns
@@ -38,7 +50,9 @@ inventory systems. It does not become one.
 Shutdown orchestration and bring-up orchestration are distinct control paths. NUT's own scope
 stops at clean shutdown; conventional bring-up is BIOS/PDU behavior plus service recovery on boot.
 
-Whether recovery is in-project at all, and if so in which version, is **open** (OD-1).
+Recovery orchestration is out of scope for this project (OD-1, closed). External recovery systems
+may subscribe to published planner artifacts, including advisory startup wave projections, but the
+operator does not execute recovery and does not own bring-up policy.
 
 ## SB-2 · Relationship to NUT
 
@@ -234,6 +248,14 @@ The planner is a Go package inside the operator repository, kept behind an inter
 substitutable. Any decoupling happens at the interface level — a second implementation
 reachable over gRPC, for instance — not at the language level.
 
+## SB-14 · No embedded UI in v1
+
+The project is fully usable through Kubernetes resources, CRDs, Events, logs, and PostgreSQL audit
+records. A dedicated web UI is not part of v1.
+
+If a UI exists later, it is a completely separate consumer of the operator's APIs and published
+planner artifacts. It must not become part of the core reconciliation, planning, or execution path.
+
 ---
 
 ## Repository-Derived Boundaries
@@ -270,7 +292,9 @@ for defense in depth.
 
 ## Consolidated Out of Scope
 
-- Bringing hosts and services back up — outside the shutdown path unless OD-1 changes.
+- Recovery orchestration and startup execution; consumers may use published artifacts, but the
+  operator does not own bring-up.
+- Dedicated v1 web UI, embedded dashboard, or frontend control plane.
 - Kured, and OS-patch reboot orchestration generally.
 - Node Problem Detector, MachineHealthCheck, descheduler, and node fault remediation.
 - General hardware monitoring.
@@ -287,12 +311,17 @@ for defense in depth.
 
 | ID | Decision | Blocks |
 | --- | --- | --- |
-| OD-1 | Recovery and startup scope: in-project or not, and in which version | OD-5 |
 | OD-4 | Last-ditch phase taxonomy — the actual enumeration behind "must stay until phase X" | Planner design |
-| OD-5 | `requires` edge inversion. Shutdown semantics compile `applications requires: [databases]` to `applications -> databases`; the required group shuts down later. Correct for shutdown, inverted for startup, and not symmetric against `before` and `after` | Contingent on OD-1 |
 | OD-6 | Audit durability during shutdown. The sample flow scales `databases` and `storage` down in early waves while later waves still have execution records to write. Options: local spool draining post-recovery, audit cluster exempted into the last-ditch set, or documented preference for `ExternalPostgres` | Audit writer |
 | OD-8r | Resolver behavior on malformed or missing model strings from the topology provider: reject, floor-match with warning, or configurable | Resolver design |
 | OD-9 | Degrade mechanics for trigger-capability mismatch — folded into capability schema doc | Capability schema doc |
 | OD-10 | USB and serial UPS support: version target and isolation model | v2 scoping |
 | OD-15 | Probe-history persistence — "last verified against firmware X" implies a PostgreSQL table in the audit schema that would not otherwise exist | Audit schema doc |
 | OD-16 | Missing `carries` coverage — node with no modeled communication path: hard failure or explicit exemption marker. Silent-assume excluded | Inventory validation |
+
+## Closed Decisions
+
+| ID | Resolution |
+| --- | --- |
+| OD-1 | Recovery and startup execution are outside project scope. Other systems consume published artifacts. |
+| OD-5 | Startup ordering is an advisory projection for subscribers, not an operator-executed graph. |

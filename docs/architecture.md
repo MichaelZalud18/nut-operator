@@ -16,6 +16,7 @@ flowchart LR
     Resolver[Topology and capability resolver]
     Trigger[Trigger evaluator]
     Planner[ShutdownFlow planner]
+    Publisher[Artifact publisher]
   end
 
   subgraph Runtime[Act]
@@ -25,6 +26,8 @@ flowchart LR
   end
 
   Postgres[(PostgreSQL / CNPG audit store)]
+  Artifacts[Published planner artifacts]
+  Subscribers[External subscribers]
 
   UPS --> NUTServer
   Upstream --> NUTServer
@@ -34,11 +37,14 @@ flowchart LR
   Polling --> Trigger
   Resolver --> Planner
   Trigger --> Planner
+  Planner --> Publisher
+  Publisher --> Artifacts
   Planner --> Agent
   Agent --> Actuator
   Polling --> Postgres
   Planner --> Postgres
   Agent --> Postgres
+  Artifacts -.-> Subscribers
 ```
 
 ## Control Plane
@@ -48,7 +54,19 @@ The operator runs as a controller-runtime manager and reconciles cluster-scoped 
 - CRDs carry desired state and small status summaries.
 - `/status` carries conditions, observed generation, rendered config hashes, and compiled shutdown plans.
 - PostgreSQL carries audit events, telemetry history, and flow execution records.
+- Published planner artifacts expose the current execution plan, dependency graph, wave state, and explanations for consumers.
 - Admission webhooks reject unsafe `UPSDevice`, capability profile, and declarative inventory combinations before persistence. Reconcilers keep the same checks in status for defense in depth and for installs that temporarily disable webhooks.
+
+## Primary Interface
+
+Kubernetes is the primary user interface for v1.
+
+- CRDs are the configuration and review surface.
+- GitOps is the normal configuration mechanism.
+- `kubectl`, Kubernetes Events, controller logs, CR status, and PostgreSQL audit queries are sufficient for day-to-day operation.
+- There is no embedded dashboard or dedicated frontend in v1.
+
+A future UI is a separate consumer of the operator APIs and published artifacts. It does not become part of the core reconciliation, planning, or execution path.
 
 ## Power APIs
 
@@ -93,6 +111,20 @@ PostgreSQL is the durable state store. CloudNativePG is the preferred in-cluster
 
 Do not store event history, telemetry streams, or execution logs in CR status. CR status is for current state summaries, conditions, and compiled plan review.
 
+## Publishing Model
+
+The operator publishes facts, not external commands. The planner and executor publish:
+
+- The compiled execution plan.
+- The dependency graph with edge provenance and explanations.
+- Shutdown waves and advisory startup wave projections.
+- Trigger decisions and planner explanations.
+- Current execution state and wave progress.
+
+Publishing targets are Kubernetes status for compact current state, Kubernetes Events for state transitions, logs for operator-readable detail, and PostgreSQL for durable history. Visualization is exported from the same structured artifacts as Mermaid, Graphviz/DOT, and D2; those rendered formats are views, not sources of truth.
+
+Subscribers can include recovery orchestration, dashboards, documentation generators, monitoring systems, and future automation. The boundary is explicit: `nut-operator` owns power-event planning and shutdown; other systems consume the published plan.
+
 ## Shutdown Flow Compilation
 
 `ShutdownFlow` compilation turns user-declared `groups` into status-visible `compiledWaves`.
@@ -113,12 +145,14 @@ sequenceDiagram
   participant Op as Operator
   participant DB as PostgreSQL
   participant Flow as ShutdownFlow
+  participant Pub as Published artifacts
   participant Agent as NodePowerAgent
 
   UPS->>Op: NUT LIST VAR snapshot
   Op->>Op: Normalize status and evaluate triggers
   Op->>DB: Record telemetry snapshot
   Op->>Flow: Compile and evaluate shutdown waves
+  Op->>Pub: Publish plan, graph, waves, explanations
   Op->>DB: Record planner and decision evidence
   Flow->>Agent: Approved dry-run or enforce handoff
   Agent->>Agent: Validate local signal and mode gates

@@ -57,8 +57,8 @@ spec:
                   planning.
                 type: string
               displayName:
-                description: displayName is a human-readable label for dashboards
-                  and events.
+                description: displayName is a human-readable label for events and
+                  published artifacts.
                 type: string
             type: object
           status:

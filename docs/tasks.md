@@ -29,6 +29,8 @@ Last reviewed: 2026-08-02
 - `ShutdownFlow` dry-run execution dispatch wired from eligible trigger decisions to
   `internal/executor`, with `status.lastExecution`, active-trigger deduplication, durable execution
   evidence, and `ExecutionReady` condition updates.
+- Kubernetes-first interface decision: no dedicated v1 UI; CRDs, status, Events, logs, GitOps, and
+  PostgreSQL records are the project interface.
 - PostgreSQL audit schema and storage boundary for power events, telemetry snapshots, capability
   matches, accepted and rejected planner compilations, shutdown decisions, executor runs,
   wave/group progress, action attempts, node release records, signal-file handoff evidence, and
@@ -46,6 +48,8 @@ Last reviewed: 2026-08-02
 
 - Add Kubernetes action runners for workload scaling, node cordon/drain, workflow hooks, and
   enforce-mode node-agent signal handoff.
+- Publish full planner artifact set: dependency graph, planner explanations, advisory startup wave
+  projections, and Mermaid/Graphviz/DOT/D2 exports.
 - Resolve shutdown-time audit durability: local spool, audit-store last-ditch placement, or
   documented preference and test coverage for `ExternalPostgres`.
 - Add probe-history persistence for capability drift checks, including firmware/profile verification
@@ -67,3 +71,5 @@ Last reviewed: 2026-08-02
   topology.
 - Alpha deployments run in dry-run by default and expose compiled plans, telemetry status, audit
   records, and approval-gate state before any host action is possible.
+- Day-to-day operation works with CRDs, GitOps, `kubectl`, Events, logs, and audit records; no
+  embedded dashboard is required for v1.

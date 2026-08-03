@@ -111,6 +111,23 @@ applications" is.
 **PL-18** · Abort-policy annotation. Groups eligible under `abortPolicy.behavior: ContinueSafeSteps`
 are marked in the compiled plan, not resolved at execution time.
 
+**PL-45** · Published plan artifact. The planner returns a single structured artifact containing
+the compiled execution plan, dependency graph, shutdown waves, advisory startup wave projection,
+diagnostics, feasibility verdicts, plan hash, and duration estimates. Status, audit storage, and
+rendered diagram outputs are all views of this artifact.
+
+**PL-46** · Dependency graph artifact. The graph is emitted as normalized vertices and edges, not as
+formatted text. Every edge carries relation type, source object references, provenance
+(`Declared`, `Derived`, or `Policy`), and a stable explanation string.
+
+**PL-47** · Startup waves are advisory projections. The shutdown plan is authoritative for
+execution. Startup wave projections are published so recovery systems can consume the same topology,
+but `nut-operator` does not execute recovery or own bring-up orchestration.
+
+**PL-48** · Diagram renderers are deterministic exports. Mermaid, Graphviz/DOT, and D2 renderings
+are generated from the structured graph artifact. They are conveniences for visualization and AI-
+assisted diagramming, never independent sources of truth.
+
 ---
 
 ## Compilation
@@ -243,6 +260,10 @@ in the controller per GP-2.
 **PL-38** · The planner does not write to PostgreSQL or to Kubernetes. It returns values; callers
 persist them.
 
+**PL-49** · The planner does not own a UI. Kubernetes status, Events, logs, PostgreSQL records, and
+deterministic graph exports are the v1 interfaces. A future UI consumes these artifacts as an
+external subscriber.
+
 ---
 
 ## Testability
@@ -316,6 +337,9 @@ Carried from `scope-boundaries.md`: OD-4 (last-ditch phase taxonomy).
 
 OD-2 and OD-3 are closed by `inventory-provider-contract.md`. There is one entity set with two edge
 relations; the logical shutdown graph is compiled output, not a third input.
+
+OD-1 and OD-5 are closed by the published-artifacts boundary: recovery is external subscriber scope,
+and startup waves are advisory projections rather than operator-executed recovery.
 
 **OD-16 · Missing `carries` coverage.** Whether a node with no modeled communication path is a hard
 validation failure or requires an explicit exemption marker, mirroring PL-44. Silent-assume is
