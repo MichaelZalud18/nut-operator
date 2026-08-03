@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/audit"
 )
 
 type connectorFakeDB struct {
@@ -227,8 +228,8 @@ func TestKubernetesConnectorOpensPingsMigratesAndOwnsStore(t *testing.T) {
 	if !strings.Contains(openedDSN, "sslmode=require") {
 		t.Fatalf("expected opener to receive DSN, got %q", openedDSN)
 	}
-	if db.execCalls != 1 {
-		t.Fatalf("expected migration to be applied once, got %d calls", db.execCalls)
+	if db.execCalls != audit.CurrentSchemaVersion {
+		t.Fatalf("expected %d migrations to be applied, got %d calls", audit.CurrentSchemaVersion, db.execCalls)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close returned error: %v", err)

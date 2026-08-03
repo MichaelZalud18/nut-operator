@@ -58,6 +58,14 @@ type fakeAuditStore struct {
 	telemetrySnapshots       []audit.TelemetrySnapshot
 	capabilityProfileMatches []audit.CapabilityProfileMatch
 	shutdownFlowCompilations []audit.ShutdownFlowCompilation
+	shutdownFlowDecisions    []audit.ShutdownFlowDecision
+	shutdownFlowExecutions   []audit.ShutdownFlowExecution
+	executionWaves           []audit.ShutdownFlowExecutionWave
+	executionGroups          []audit.ShutdownFlowExecutionGroup
+	actionAttempts           []audit.ShutdownFlowActionAttempt
+	nodeReleases             []audit.NodeReleaseRecord
+	nodeSignalHandoffs       []audit.NodeSignalHandoff
+	executorResumeStates     []audit.ExecutorResumeState
 	closeCalls               int
 	eventErr                 error
 	closeErr                 error
@@ -95,7 +103,43 @@ func (s *fakeAuditStore) RecordShutdownFlowCompilation(_ context.Context, compil
 	return nil
 }
 
-func (s *fakeAuditStore) RecordShutdownFlowDecision(context.Context, audit.ShutdownFlowDecision) error {
+func (s *fakeAuditStore) RecordShutdownFlowDecision(_ context.Context, decision audit.ShutdownFlowDecision) error {
+	s.shutdownFlowDecisions = append(s.shutdownFlowDecisions, decision)
+	return nil
+}
+
+func (s *fakeAuditStore) RecordShutdownFlowExecution(_ context.Context, execution audit.ShutdownFlowExecution) error {
+	s.shutdownFlowExecutions = append(s.shutdownFlowExecutions, execution)
+	return nil
+}
+
+func (s *fakeAuditStore) RecordShutdownFlowExecutionWave(_ context.Context, wave audit.ShutdownFlowExecutionWave) error {
+	s.executionWaves = append(s.executionWaves, wave)
+	return nil
+}
+
+func (s *fakeAuditStore) RecordShutdownFlowExecutionGroup(_ context.Context, group audit.ShutdownFlowExecutionGroup) error {
+	s.executionGroups = append(s.executionGroups, group)
+	return nil
+}
+
+func (s *fakeAuditStore) RecordShutdownFlowActionAttempt(_ context.Context, attempt audit.ShutdownFlowActionAttempt) error {
+	s.actionAttempts = append(s.actionAttempts, attempt)
+	return nil
+}
+
+func (s *fakeAuditStore) RecordNodeRelease(_ context.Context, release audit.NodeReleaseRecord) error {
+	s.nodeReleases = append(s.nodeReleases, release)
+	return nil
+}
+
+func (s *fakeAuditStore) RecordNodeSignalHandoff(_ context.Context, handoff audit.NodeSignalHandoff) error {
+	s.nodeSignalHandoffs = append(s.nodeSignalHandoffs, handoff)
+	return nil
+}
+
+func (s *fakeAuditStore) UpsertExecutorResumeState(_ context.Context, state audit.ExecutorResumeState) error {
+	s.executorResumeStates = append(s.executorResumeStates, state)
 	return nil
 }
 

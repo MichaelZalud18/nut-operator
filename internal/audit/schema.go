@@ -15,7 +15,8 @@ limitations under the License.
 */
 
 // Package audit owns PostgreSQL schema artifacts for durable power events,
-// telemetry snapshots, planner compilations, and shutdown decisions.
+// telemetry snapshots, planner compilations, shutdown decisions, and executor
+// state.
 package audit
 
 import (
@@ -29,7 +30,7 @@ const (
 	DefaultSchema = "power"
 
 	// CurrentSchemaVersion is the latest bundled migration version.
-	CurrentSchemaVersion = 1
+	CurrentSchemaVersion = 2
 )
 
 // Migration is one ordered PostgreSQL migration.
@@ -51,6 +52,11 @@ func Migrations(schema string) ([]Migration, error) {
 			Version: 1,
 			Name:    "initial_power_audit_schema",
 			SQL:     initialSchemaSQL(quotedSchema),
+		},
+		{
+			Version: 2,
+			Name:    "executor_state_schema",
+			SQL:     executorStateSchemaSQL(quotedSchema),
 		},
 	}, nil
 }
@@ -166,6 +172,150 @@ CREATE INDEX IF NOT EXISTS shutdownflow_decisions_flow_time_idx
 
 INSERT INTO %[1]s.audit_schema_migrations (version, name)
 VALUES (1, 'initial_power_audit_schema')
+ON CONFLICT (version) DO NOTHING;
+`, schema)
+}
+
+func executorStateSchemaSQL(schema string) string {
+	return fmt.Sprintf(`ALTER TABLE %[1]s.shutdownflow_compilations
+  ALTER COLUMN config_hash DROP NOT NULL;
+
+CREATE TABLE IF NOT EXISTS %[1]s.shutdownflow_executions (
+  execution_id uuid PRIMARY KEY,
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  shutdownflow text NOT NULL,
+  trigger_decision_id uuid,
+  mode text NOT NULL,
+  phase text NOT NULL,
+  reason text,
+  plan_config_hash text NOT NULL,
+  input_hash text,
+  started_at timestamptz,
+  completed_at timestamptz,
+  dry_run boolean NOT NULL DEFAULT true,
+  approved boolean NOT NULL DEFAULT false,
+  approval_evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+  revalidation jsonb NOT NULL DEFAULT '{}'::jsonb,
+  details jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS shutdownflow_executions_flow_time_idx
+  ON %[1]s.shutdownflow_executions (shutdownflow, observed_at DESC);
+
+CREATE INDEX IF NOT EXISTS shutdownflow_executions_plan_hash_idx
+  ON %[1]s.shutdownflow_executions (plan_config_hash);
+
+CREATE TABLE IF NOT EXISTS %[1]s.shutdownflow_execution_waves (
+  wave_record_id uuid PRIMARY KEY,
+  execution_id uuid NOT NULL REFERENCES %[1]s.shutdownflow_executions (execution_id) ON DELETE CASCADE,
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  wave_index integer NOT NULL,
+  phase text NOT NULL,
+  started_at timestamptz,
+  completed_at timestamptz,
+  group_names jsonb NOT NULL DEFAULT '[]'::jsonb,
+  details jsonb NOT NULL DEFAULT '{}'::jsonb,
+  UNIQUE (execution_id, wave_index)
+);
+
+CREATE INDEX IF NOT EXISTS shutdownflow_execution_waves_execution_idx
+  ON %[1]s.shutdownflow_execution_waves (execution_id, wave_index);
+
+CREATE TABLE IF NOT EXISTS %[1]s.shutdownflow_execution_groups (
+  group_record_id uuid PRIMARY KEY,
+  execution_id uuid NOT NULL REFERENCES %[1]s.shutdownflow_executions (execution_id) ON DELETE CASCADE,
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  wave_index integer NOT NULL,
+  group_name text NOT NULL,
+  action text NOT NULL,
+  phase text NOT NULL,
+  started_at timestamptz,
+  completed_at timestamptz,
+  selected_targets jsonb NOT NULL DEFAULT '[]'::jsonb,
+  details jsonb NOT NULL DEFAULT '{}'::jsonb,
+  UNIQUE (execution_id, wave_index, group_name)
+);
+
+CREATE INDEX IF NOT EXISTS shutdownflow_execution_groups_execution_idx
+  ON %[1]s.shutdownflow_execution_groups (execution_id, wave_index, group_name);
+
+CREATE TABLE IF NOT EXISTS %[1]s.shutdownflow_action_attempts (
+  attempt_id uuid PRIMARY KEY,
+  execution_id uuid NOT NULL REFERENCES %[1]s.shutdownflow_executions (execution_id) ON DELETE CASCADE,
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  wave_index integer,
+  group_name text,
+  action text NOT NULL,
+  target_kind text,
+  target_namespace text,
+  target_name text,
+  started_at timestamptz,
+  completed_at timestamptz,
+  outcome text NOT NULL,
+  error text,
+  dry_run boolean NOT NULL DEFAULT true,
+  details jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS shutdownflow_action_attempts_execution_idx
+  ON %[1]s.shutdownflow_action_attempts (execution_id, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS %[1]s.node_release_records (
+  release_id uuid PRIMARY KEY,
+  execution_id uuid NOT NULL REFERENCES %[1]s.shutdownflow_executions (execution_id) ON DELETE CASCADE,
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  node_name text NOT NULL,
+  node_power_agent text,
+  plan_config_hash text,
+  approved boolean NOT NULL DEFAULT false,
+  released boolean NOT NULL DEFAULT false,
+  reason text NOT NULL,
+  clearance jsonb NOT NULL DEFAULT '{}'::jsonb,
+  details jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS node_release_records_execution_idx
+  ON %[1]s.node_release_records (execution_id, observed_at DESC);
+
+CREATE INDEX IF NOT EXISTS node_release_records_node_time_idx
+  ON %[1]s.node_release_records (node_name, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS %[1]s.node_signal_handoffs (
+  handoff_id uuid PRIMARY KEY,
+  execution_id uuid NOT NULL REFERENCES %[1]s.shutdownflow_executions (execution_id) ON DELETE CASCADE,
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  node_name text NOT NULL,
+  node_power_agent text,
+  signal_path text,
+  signal_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  stale_after timestamptz,
+  accepted boolean NOT NULL DEFAULT false,
+  reason text NOT NULL,
+  details jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS node_signal_handoffs_execution_idx
+  ON %[1]s.node_signal_handoffs (execution_id, observed_at DESC);
+
+CREATE INDEX IF NOT EXISTS node_signal_handoffs_node_time_idx
+  ON %[1]s.node_signal_handoffs (node_name, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS %[1]s.executor_resume_states (
+  execution_id uuid PRIMARY KEY REFERENCES %[1]s.shutdownflow_executions (execution_id) ON DELETE CASCADE,
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  shutdownflow text NOT NULL,
+  plan_config_hash text NOT NULL,
+  current_wave_index integer,
+  phase text NOT NULL,
+  state jsonb NOT NULL DEFAULT '{}'::jsonb,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS executor_resume_states_flow_idx
+  ON %[1]s.executor_resume_states (shutdownflow, updated_at DESC);
+
+INSERT INTO %[1]s.audit_schema_migrations (version, name)
+VALUES (2, 'executor_state_schema')
 ON CONFLICT (version) DO NOTHING;
 `, schema)
 }

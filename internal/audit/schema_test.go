@@ -26,13 +26,13 @@ func TestMigrationsRenderInitialPostgreSQLSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrations returned error: %v", err)
 	}
-	if len(migrations) != 1 {
-		t.Fatalf("expected one migration, got %#v", migrations)
+	if len(migrations) != 2 {
+		t.Fatalf("expected two migrations, got %#v", migrations)
 	}
-	migration := migrations[0]
-	if migration.Version != CurrentSchemaVersion {
-		t.Fatalf("expected current schema version %d, got %d", CurrentSchemaVersion, migration.Version)
+	if migrations[len(migrations)-1].Version != CurrentSchemaVersion {
+		t.Fatalf("expected current schema version %d, got %d", CurrentSchemaVersion, migrations[len(migrations)-1].Version)
 	}
+	combinedSQL := migrations[0].SQL + "\n" + migrations[1].SQL
 	for _, want := range []string{
 		`CREATE SCHEMA IF NOT EXISTS "power";`,
 		`CREATE TABLE IF NOT EXISTS "power".power_events`,
@@ -40,13 +40,22 @@ func TestMigrationsRenderInitialPostgreSQLSchema(t *testing.T) {
 		`CREATE TABLE IF NOT EXISTS "power".capability_profile_matches`,
 		`CREATE TABLE IF NOT EXISTS "power".shutdownflow_compilations`,
 		`CREATE TABLE IF NOT EXISTS "power".shutdownflow_decisions`,
+		`ALTER TABLE "power".shutdownflow_compilations`,
+		`ALTER COLUMN config_hash DROP NOT NULL`,
+		`CREATE TABLE IF NOT EXISTS "power".shutdownflow_executions`,
+		`CREATE TABLE IF NOT EXISTS "power".shutdownflow_execution_waves`,
+		`CREATE TABLE IF NOT EXISTS "power".shutdownflow_execution_groups`,
+		`CREATE TABLE IF NOT EXISTS "power".shutdownflow_action_attempts`,
+		`CREATE TABLE IF NOT EXISTS "power".node_release_records`,
+		`CREATE TABLE IF NOT EXISTS "power".node_signal_handoffs`,
+		`CREATE TABLE IF NOT EXISTS "power".executor_resume_states`,
 	} {
-		if !strings.Contains(migration.SQL, want) {
-			t.Fatalf("migration SQL missing %q:\n%s", want, migration.SQL)
+		if !strings.Contains(combinedSQL, want) {
+			t.Fatalf("migration SQL missing %q:\n%s", want, combinedSQL)
 		}
 	}
-	if strings.Contains(strings.ToLower(migration.SQL), "sqlite") {
-		t.Fatalf("migration SQL must remain PostgreSQL/CNPG-specific:\n%s", migration.SQL)
+	if strings.Contains(strings.ToLower(combinedSQL), "sqlite") {
+		t.Fatalf("migration SQL must remain PostgreSQL/CNPG-specific:\n%s", combinedSQL)
 	}
 }
 
@@ -55,8 +64,10 @@ func TestMigrationsQuoteCustomSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrations returned error: %v", err)
 	}
-	if !strings.Contains(migrations[0].SQL, `CREATE SCHEMA IF NOT EXISTS "power""audit";`) {
-		t.Fatalf("expected custom schema to be quoted safely:\n%s", migrations[0].SQL)
+	combinedSQL := migrations[0].SQL + "\n" + migrations[1].SQL
+	if !strings.Contains(combinedSQL, `CREATE SCHEMA IF NOT EXISTS "power""audit";`) ||
+		!strings.Contains(combinedSQL, `"power""audit".shutdownflow_executions`) {
+		t.Fatalf("expected custom schema to be quoted safely:\n%s", combinedSQL)
 	}
 }
 

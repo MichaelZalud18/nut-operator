@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 )
 
@@ -45,6 +46,13 @@ type Writer interface {
 	RecordCapabilityProfileMatch(ctx context.Context, match CapabilityProfileMatch) error
 	RecordShutdownFlowCompilation(ctx context.Context, compilation ShutdownFlowCompilation) error
 	RecordShutdownFlowDecision(ctx context.Context, decision ShutdownFlowDecision) error
+	RecordShutdownFlowExecution(ctx context.Context, execution ShutdownFlowExecution) error
+	RecordShutdownFlowExecutionWave(ctx context.Context, wave ShutdownFlowExecutionWave) error
+	RecordShutdownFlowExecutionGroup(ctx context.Context, group ShutdownFlowExecutionGroup) error
+	RecordShutdownFlowActionAttempt(ctx context.Context, attempt ShutdownFlowActionAttempt) error
+	RecordNodeRelease(ctx context.Context, release NodeReleaseRecord) error
+	RecordNodeSignalHandoff(ctx context.Context, handoff NodeSignalHandoff) error
+	UpsertExecutorResumeState(ctx context.Context, state ExecutorResumeState) error
 }
 
 // SQLStoreOptions configure a PostgreSQL-backed Store.
@@ -113,6 +121,23 @@ func (NoopStore) RecordShutdownFlowCompilation(context.Context, ShutdownFlowComp
 	return nil
 }
 func (NoopStore) RecordShutdownFlowDecision(context.Context, ShutdownFlowDecision) error { return nil }
+func (NoopStore) RecordShutdownFlowExecution(context.Context, ShutdownFlowExecution) error {
+	return nil
+}
+func (NoopStore) RecordShutdownFlowExecutionWave(context.Context, ShutdownFlowExecutionWave) error {
+	return nil
+}
+func (NoopStore) RecordShutdownFlowExecutionGroup(context.Context, ShutdownFlowExecutionGroup) error {
+	return nil
+}
+func (NoopStore) RecordShutdownFlowActionAttempt(context.Context, ShutdownFlowActionAttempt) error {
+	return nil
+}
+func (NoopStore) RecordNodeRelease(context.Context, NodeReleaseRecord) error { return nil }
+func (NoopStore) RecordNodeSignalHandoff(context.Context, NodeSignalHandoff) error {
+	return nil
+}
+func (NoopStore) UpsertExecutorResumeState(context.Context, ExecutorResumeState) error { return nil }
 
 // PowerEvent records a controller or executor decision/event.
 type PowerEvent struct {
@@ -181,6 +206,114 @@ type ShutdownFlowDecision struct {
 	SelectedUPSDevices []string
 	PlanConfigHash     string
 	Details            map[string]any
+}
+
+// ShutdownFlowExecution records one executor run for a compiled plan.
+type ShutdownFlowExecution struct {
+	ExecutionID       string
+	ObservedAt        time.Time
+	ShutdownFlow      string
+	TriggerDecisionID string
+	Mode              string
+	Phase             string
+	Reason            string
+	PlanConfigHash    string
+	InputHash         string
+	StartedAt         *time.Time
+	CompletedAt       *time.Time
+	DryRun            bool
+	Approved          bool
+	ApprovalEvidence  map[string]any
+	Revalidation      map[string]any
+	Details           map[string]any
+}
+
+// ShutdownFlowExecutionWave records durable progress for one execution wave.
+type ShutdownFlowExecutionWave struct {
+	WaveRecordID string
+	ExecutionID  string
+	ObservedAt   time.Time
+	WaveIndex    int32
+	Phase        string
+	StartedAt    *time.Time
+	CompletedAt  *time.Time
+	GroupNames   []string
+	Details      map[string]any
+}
+
+// ShutdownFlowExecutionGroup records durable progress for one group inside a wave.
+type ShutdownFlowExecutionGroup struct {
+	GroupRecordID   string
+	ExecutionID     string
+	ObservedAt      time.Time
+	WaveIndex       int32
+	GroupName       string
+	Action          string
+	Phase           string
+	StartedAt       *time.Time
+	CompletedAt     *time.Time
+	SelectedTargets any
+	Details         map[string]any
+}
+
+// ShutdownFlowActionAttempt records one effectful or dry-run executor action.
+type ShutdownFlowActionAttempt struct {
+	AttemptID       string
+	ExecutionID     string
+	ObservedAt      time.Time
+	WaveIndex       *int32
+	GroupName       string
+	Action          string
+	TargetKind      string
+	TargetNamespace string
+	TargetName      string
+	StartedAt       *time.Time
+	CompletedAt     *time.Time
+	Outcome         string
+	Error           string
+	DryRun          bool
+	Details         map[string]any
+}
+
+// NodeReleaseRecord records the executor-to-node-agent release decision.
+type NodeReleaseRecord struct {
+	ReleaseID      string
+	ExecutionID    string
+	ObservedAt     time.Time
+	NodeName       string
+	NodePowerAgent string
+	PlanConfigHash string
+	Approved       bool
+	Released       bool
+	Reason         string
+	Clearance      map[string]any
+	Details        map[string]any
+}
+
+// NodeSignalHandoff records the signal-file handoff to the host actuator boundary.
+type NodeSignalHandoff struct {
+	HandoffID      string
+	ExecutionID    string
+	ObservedAt     time.Time
+	NodeName       string
+	NodePowerAgent string
+	SignalPath     string
+	SignalPayload  map[string]any
+	StaleAfter     *time.Time
+	Accepted       bool
+	Reason         string
+	Details        map[string]any
+}
+
+// ExecutorResumeState stores compact executor restart state for one execution.
+type ExecutorResumeState struct {
+	ExecutionID      string
+	ObservedAt       time.Time
+	ShutdownFlow     string
+	PlanConfigHash   string
+	CurrentWaveIndex *int32
+	Phase            string
+	State            map[string]any
 }
 
 // DiagnosticRecord is the durable, package-local diagnostic shape.
@@ -279,8 +412,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`, s.quotedSchema),
 }
 
 func (s *SQLStore) RecordShutdownFlowCompilation(ctx context.Context, compilation ShutdownFlowCompilation) error {
-	if compilation.CompilationID == "" || compilation.ShutdownFlow == "" || compilation.ConfigHash == "" {
-		return fmt.Errorf("shutdown flow compilation requires compilation ID, flow, and config hash")
+	if compilation.CompilationID == "" || compilation.ShutdownFlow == "" {
+		return fmt.Errorf("shutdown flow compilation requires compilation ID and flow")
+	}
+	if compilation.Accepted && compilation.ConfigHash == "" {
+		return fmt.Errorf("accepted shutdown flow compilation requires config hash")
 	}
 	diagnostics, err := jsonArray(compilation.Diagnostics)
 	if err != nil {
@@ -297,7 +433,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)`, s.quotedSchema),
 		observedAt(compilation.ObservedAt),
 		compilation.ShutdownFlow,
 		compilation.ResourceGeneration,
-		compilation.ConfigHash,
+		optionalString(compilation.ConfigHash),
 		optionalString(compilation.InputHash),
 		compilation.Accepted,
 		diagnostics,
@@ -342,6 +478,275 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb)`, s.quotedSc
 	return nil
 }
 
+func (s *SQLStore) RecordShutdownFlowExecution(ctx context.Context, execution ShutdownFlowExecution) error {
+	if execution.ExecutionID == "" || execution.ShutdownFlow == "" || execution.Mode == "" || execution.Phase == "" || execution.PlanConfigHash == "" {
+		return fmt.Errorf("shutdown flow execution requires execution ID, flow, mode, phase, and plan config hash")
+	}
+	approvalEvidence, err := jsonObject(execution.ApprovalEvidence)
+	if err != nil {
+		return err
+	}
+	revalidation, err := jsonObject(execution.Revalidation)
+	if err != nil {
+		return err
+	}
+	details, err := jsonObject(execution.Details)
+	if err != nil {
+		return err
+	}
+	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.shutdownflow_executions
+(execution_id, observed_at, shutdownflow, trigger_decision_id, mode, phase, reason, plan_config_hash, input_hash, started_at, completed_at, dry_run, approved, approval_evidence, revalidation, details)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16::jsonb)
+ON CONFLICT (execution_id) DO UPDATE SET
+  observed_at = EXCLUDED.observed_at,
+  shutdownflow = EXCLUDED.shutdownflow,
+  trigger_decision_id = EXCLUDED.trigger_decision_id,
+  mode = EXCLUDED.mode,
+  phase = EXCLUDED.phase,
+  reason = EXCLUDED.reason,
+  plan_config_hash = EXCLUDED.plan_config_hash,
+  input_hash = EXCLUDED.input_hash,
+  started_at = EXCLUDED.started_at,
+  completed_at = EXCLUDED.completed_at,
+  dry_run = EXCLUDED.dry_run,
+  approved = EXCLUDED.approved,
+  approval_evidence = EXCLUDED.approval_evidence,
+  revalidation = EXCLUDED.revalidation,
+  details = EXCLUDED.details`, s.quotedSchema),
+		execution.ExecutionID,
+		observedAt(execution.ObservedAt),
+		execution.ShutdownFlow,
+		optionalString(execution.TriggerDecisionID),
+		execution.Mode,
+		execution.Phase,
+		optionalString(execution.Reason),
+		execution.PlanConfigHash,
+		optionalString(execution.InputHash),
+		optionalTime(execution.StartedAt),
+		optionalTime(execution.CompletedAt),
+		execution.DryRun,
+		execution.Approved,
+		approvalEvidence,
+		revalidation,
+		details,
+	)
+	if err != nil {
+		return fmt.Errorf("record shutdown flow execution %q: %w", execution.ExecutionID, err)
+	}
+	return nil
+}
+
+func (s *SQLStore) RecordShutdownFlowExecutionWave(ctx context.Context, wave ShutdownFlowExecutionWave) error {
+	if wave.WaveRecordID == "" || wave.ExecutionID == "" || wave.Phase == "" {
+		return fmt.Errorf("shutdown flow execution wave requires wave record ID, execution ID, and phase")
+	}
+	groupNames, err := jsonArray(wave.GroupNames)
+	if err != nil {
+		return err
+	}
+	details, err := jsonObject(wave.Details)
+	if err != nil {
+		return err
+	}
+	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.shutdownflow_execution_waves
+(wave_record_id, execution_id, observed_at, wave_index, phase, started_at, completed_at, group_names, details)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)
+ON CONFLICT (execution_id, wave_index) DO UPDATE SET
+  observed_at = EXCLUDED.observed_at,
+  phase = EXCLUDED.phase,
+  started_at = EXCLUDED.started_at,
+  completed_at = EXCLUDED.completed_at,
+  group_names = EXCLUDED.group_names,
+  details = EXCLUDED.details`, s.quotedSchema),
+		wave.WaveRecordID,
+		wave.ExecutionID,
+		observedAt(wave.ObservedAt),
+		wave.WaveIndex,
+		wave.Phase,
+		optionalTime(wave.StartedAt),
+		optionalTime(wave.CompletedAt),
+		groupNames,
+		details,
+	)
+	if err != nil {
+		return fmt.Errorf("record shutdown flow execution wave %q: %w", wave.WaveRecordID, err)
+	}
+	return nil
+}
+
+func (s *SQLStore) RecordShutdownFlowExecutionGroup(ctx context.Context, group ShutdownFlowExecutionGroup) error {
+	if group.GroupRecordID == "" || group.ExecutionID == "" || group.GroupName == "" || group.Action == "" || group.Phase == "" {
+		return fmt.Errorf("shutdown flow execution group requires group record ID, execution ID, group, action, and phase")
+	}
+	selectedTargets, err := jsonArrayValue(group.SelectedTargets)
+	if err != nil {
+		return err
+	}
+	details, err := jsonObject(group.Details)
+	if err != nil {
+		return err
+	}
+	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.shutdownflow_execution_groups
+(group_record_id, execution_id, observed_at, wave_index, group_name, action, phase, started_at, completed_at, selected_targets, details)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)
+ON CONFLICT (execution_id, wave_index, group_name) DO UPDATE SET
+  observed_at = EXCLUDED.observed_at,
+  action = EXCLUDED.action,
+  phase = EXCLUDED.phase,
+  started_at = EXCLUDED.started_at,
+  completed_at = EXCLUDED.completed_at,
+  selected_targets = EXCLUDED.selected_targets,
+  details = EXCLUDED.details`, s.quotedSchema),
+		group.GroupRecordID,
+		group.ExecutionID,
+		observedAt(group.ObservedAt),
+		group.WaveIndex,
+		group.GroupName,
+		group.Action,
+		group.Phase,
+		optionalTime(group.StartedAt),
+		optionalTime(group.CompletedAt),
+		selectedTargets,
+		details,
+	)
+	if err != nil {
+		return fmt.Errorf("record shutdown flow execution group %q: %w", group.GroupRecordID, err)
+	}
+	return nil
+}
+
+func (s *SQLStore) RecordShutdownFlowActionAttempt(ctx context.Context, attempt ShutdownFlowActionAttempt) error {
+	if attempt.AttemptID == "" || attempt.ExecutionID == "" || attempt.Action == "" || attempt.Outcome == "" {
+		return fmt.Errorf("shutdown flow action attempt requires attempt ID, execution ID, action, and outcome")
+	}
+	details, err := jsonObject(attempt.Details)
+	if err != nil {
+		return err
+	}
+	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.shutdownflow_action_attempts
+(attempt_id, execution_id, observed_at, wave_index, group_name, action, target_kind, target_namespace, target_name, started_at, completed_at, outcome, error, dry_run, details)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)`, s.quotedSchema),
+		attempt.AttemptID,
+		attempt.ExecutionID,
+		observedAt(attempt.ObservedAt),
+		optionalInt32(attempt.WaveIndex),
+		optionalString(attempt.GroupName),
+		attempt.Action,
+		optionalString(attempt.TargetKind),
+		optionalString(attempt.TargetNamespace),
+		optionalString(attempt.TargetName),
+		optionalTime(attempt.StartedAt),
+		optionalTime(attempt.CompletedAt),
+		attempt.Outcome,
+		optionalString(attempt.Error),
+		attempt.DryRun,
+		details,
+	)
+	if err != nil {
+		return fmt.Errorf("record shutdown flow action attempt %q: %w", attempt.AttemptID, err)
+	}
+	return nil
+}
+
+func (s *SQLStore) RecordNodeRelease(ctx context.Context, release NodeReleaseRecord) error {
+	if release.ReleaseID == "" || release.ExecutionID == "" || release.NodeName == "" || release.Reason == "" {
+		return fmt.Errorf("node release record requires release ID, execution ID, node name, and reason")
+	}
+	clearance, err := jsonObject(release.Clearance)
+	if err != nil {
+		return err
+	}
+	details, err := jsonObject(release.Details)
+	if err != nil {
+		return err
+	}
+	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.node_release_records
+(release_id, execution_id, observed_at, node_name, node_power_agent, plan_config_hash, approved, released, reason, clearance, details)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)`, s.quotedSchema),
+		release.ReleaseID,
+		release.ExecutionID,
+		observedAt(release.ObservedAt),
+		release.NodeName,
+		optionalString(release.NodePowerAgent),
+		optionalString(release.PlanConfigHash),
+		release.Approved,
+		release.Released,
+		release.Reason,
+		clearance,
+		details,
+	)
+	if err != nil {
+		return fmt.Errorf("record node release %q: %w", release.ReleaseID, err)
+	}
+	return nil
+}
+
+func (s *SQLStore) RecordNodeSignalHandoff(ctx context.Context, handoff NodeSignalHandoff) error {
+	if handoff.HandoffID == "" || handoff.ExecutionID == "" || handoff.NodeName == "" || handoff.Reason == "" {
+		return fmt.Errorf("node signal handoff requires handoff ID, execution ID, node name, and reason")
+	}
+	signalPayload, err := jsonObject(handoff.SignalPayload)
+	if err != nil {
+		return err
+	}
+	details, err := jsonObject(handoff.Details)
+	if err != nil {
+		return err
+	}
+	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.node_signal_handoffs
+(handoff_id, execution_id, observed_at, node_name, node_power_agent, signal_path, signal_payload, stale_after, accepted, reason, details)
+VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb)`, s.quotedSchema),
+		handoff.HandoffID,
+		handoff.ExecutionID,
+		observedAt(handoff.ObservedAt),
+		handoff.NodeName,
+		optionalString(handoff.NodePowerAgent),
+		optionalString(handoff.SignalPath),
+		signalPayload,
+		optionalTime(handoff.StaleAfter),
+		handoff.Accepted,
+		handoff.Reason,
+		details,
+	)
+	if err != nil {
+		return fmt.Errorf("record node signal handoff %q: %w", handoff.HandoffID, err)
+	}
+	return nil
+}
+
+func (s *SQLStore) UpsertExecutorResumeState(ctx context.Context, state ExecutorResumeState) error {
+	if state.ExecutionID == "" || state.ShutdownFlow == "" || state.PlanConfigHash == "" || state.Phase == "" {
+		return fmt.Errorf("executor resume state requires execution ID, flow, plan config hash, and phase")
+	}
+	encodedState, err := jsonObject(state.State)
+	if err != nil {
+		return err
+	}
+	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.executor_resume_states
+(execution_id, observed_at, shutdownflow, plan_config_hash, current_wave_index, phase, state, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now())
+ON CONFLICT (execution_id) DO UPDATE SET
+  observed_at = EXCLUDED.observed_at,
+  shutdownflow = EXCLUDED.shutdownflow,
+  plan_config_hash = EXCLUDED.plan_config_hash,
+  current_wave_index = EXCLUDED.current_wave_index,
+  phase = EXCLUDED.phase,
+  state = EXCLUDED.state,
+  updated_at = now()`, s.quotedSchema),
+		state.ExecutionID,
+		observedAt(state.ObservedAt),
+		state.ShutdownFlow,
+		state.PlanConfigHash,
+		optionalInt32(state.CurrentWaveIndex),
+		state.Phase,
+		encodedState,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert executor resume state %q: %w", state.ExecutionID, err)
+	}
+	return nil
+}
+
 func observedAt(value time.Time) time.Time {
 	if value.IsZero() {
 		return time.Now().UTC()
@@ -363,6 +768,13 @@ func optionalInt64(value *int64) any {
 	return *value
 }
 
+func optionalInt32(value *int32) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
 func optionalFloat64(value *float64) any {
 	if value == nil {
 		return nil
@@ -370,8 +782,15 @@ func optionalFloat64(value *float64) any {
 	return *value
 }
 
-func jsonObject(value any) (string, error) {
+func optionalTime(value *time.Time) any {
 	if value == nil {
+		return nil
+	}
+	return value.UTC()
+}
+
+func jsonObject(value any) (string, error) {
+	if isNilJSONValue(value) {
 		return "{}", nil
 	}
 	encoded, err := json.Marshal(value)
@@ -392,7 +811,7 @@ func jsonArray[T any](value []T) (string, error) {
 }
 
 func jsonArrayValue(value any) (string, error) {
-	if value == nil {
+	if isNilJSONValue(value) {
 		return "[]", nil
 	}
 	encoded, err := json.Marshal(value)
@@ -403,4 +822,17 @@ func jsonArrayValue(value any) (string, error) {
 		return "", fmt.Errorf("expected JSON array payload")
 	}
 	return string(encoded), nil
+}
+
+func isNilJSONValue(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
 }
