@@ -160,7 +160,9 @@ func fakeNUTServer(t *testing.T, serve func(*testing.T, net.Conn)) DialContext {
 	return func(context.Context, string, string) (net.Conn, error) {
 		clientConn, serverConn := net.Pipe()
 		go func() {
-			defer serverConn.Close()
+			defer func() {
+				_ = serverConn.Close()
+			}()
 			serve(t, serverConn)
 		}()
 		return clientConn, nil

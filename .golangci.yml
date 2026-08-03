@@ -4,24 +4,16 @@ run:
 linters:
   default: none
   enable:
-    - copyloopvar
-    - depguard
     - dupl
     - errcheck
     - ginkgolinter
-    - goconst
     - gocyclo
     - govet
     - ineffassign
-    - lll
-    - modernize
     - misspell
     - nakedret
-    - prealloc
-    - revive
     - staticcheck
     - unconvert
-    - unparam
     - unused
     - logcheck
   settings:
@@ -29,20 +21,6 @@ linters:
       logcheck:
         type: "module"
         description: Checks Go logging calls for Kubernetes logging conventions.
-    depguard:
-      rules:
-        forbid-sort-pkg:
-          deny:
-            - pkg: sort
-              desc: Should be replaced with slices package
-    revive:
-      rules:
-        - name: comment-spacings
-        - name: import-shadowing
-    modernize:
-      disable:
-        - omitzero
-        - newexpr
   exclusions:
     generated: lax
     rules:

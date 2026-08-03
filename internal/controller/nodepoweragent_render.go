@@ -378,7 +378,7 @@ func durationSeconds(duration *metav1.Duration, fallback int64) int64 {
 	if duration == nil {
 		return fallback
 	}
-	seconds := int64(duration.Duration.Round(time.Second) / time.Second)
+	seconds := int64(duration.Round(time.Second) / time.Second)
 	if seconds < 1 {
 		return 1
 	}

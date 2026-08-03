@@ -100,7 +100,9 @@ func (c *Client) ListVariables(ctx context.Context, target Target) (map[string]s
 	if err != nil {
 		return nil, fmt.Errorf("connect to NUT server %s: %w", target.Address(), err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 	if c.timeout > 0 {
 		_ = conn.SetDeadline(time.Now().Add(c.timeout))
 	}

@@ -23,14 +23,14 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "-h", "--help", "help":
-			fmt.Fprintln(os.Stdout, "Usage: node-actuator [--help|--version]")
-			fmt.Fprintln(os.Stdout, "Watches POWER_SIGNAL_PATH, validates structured shutdown signals, and performs the configured actuator policy.")
+			_, _ = fmt.Fprintln(os.Stdout, "Usage: node-actuator [--help|--version]")
+			_, _ = fmt.Fprintln(os.Stdout, "Watches POWER_SIGNAL_PATH, validates structured shutdown signals, and performs the configured actuator policy.")
 			return
 		case "--version", "version":
-			fmt.Fprintln(os.Stdout, version)
+			_, _ = fmt.Fprintln(os.Stdout, version)
 			return
 		default:
-			fmt.Fprintf(os.Stderr, "unknown argument %q\n", os.Args[1])
+			_, _ = fmt.Fprintf(os.Stderr, "unknown argument %q\n", os.Args[1])
 			os.Exit(64)
 		}
 	}

@@ -73,7 +73,7 @@ type Runner struct {
 // RunAction implements executor.ActionRunner.
 func (r Runner) RunAction(ctx context.Context, action executor.Action) (executor.ActionOutcome, error) {
 	if r.Client == nil {
-		err := fmt.Errorf("Kubernetes action runner requires a client")
+		err := fmt.Errorf("kubernetes action runner requires a client")
 		return blocked(err), err
 	}
 	switch action.Group.Action {
@@ -109,7 +109,6 @@ func (r Runner) scaleWorkloads(ctx context.Context, action executor.Action) (exe
 	var changed int
 	var visited int
 	for _, target := range action.Group.SelectedTargets {
-		target := target
 		switch target.Kind {
 		case "Deployment":
 			updated, err := r.scaleDeployment(ctx, target, replicas)
@@ -270,7 +269,6 @@ func (r Runner) evictPodsOnNode(ctx context.Context, nodeName string) (int, erro
 		if pod.Spec.NodeName != nodeName || !evictablePod(pod) {
 			continue
 		}
-		pod := pod
 		eviction := &policyv1.Eviction{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: pod.Namespace,

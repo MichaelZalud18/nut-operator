@@ -500,7 +500,7 @@ func (r storageTelemetryRecorder) RecordTelemetrySnapshot(ctx context.Context, c
 		return nil
 	}
 	if r.client == nil {
-		return errors.New("Kubernetes client is required to record telemetry audit snapshots")
+		return errors.New("kubernetes client is required to record telemetry audit snapshots")
 	}
 	var cluster powerv1alpha1.PowerManagementCluster
 	if err := r.client.Get(ctx, types.NamespacedName{Name: clusterName}, &cluster); err != nil {

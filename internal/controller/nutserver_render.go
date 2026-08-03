@@ -766,12 +766,10 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				},
 			},
 		}
-		for _, projection := range upstreamAuthProjections {
-			deployment.Spec.Template.Spec.Volumes[0].Projected.Sources = append(
-				deployment.Spec.Template.Spec.Volumes[0].Projected.Sources,
-				projection,
-			)
-		}
+		deployment.Spec.Template.Spec.Volumes[0].Projected.Sources = append(
+			deployment.Spec.Template.Spec.Volumes[0].Projected.Sources,
+			upstreamAuthProjections...,
+		)
 		deployment.Spec.Template.Spec.Containers = []corev1.Container{
 			{
 				Name:            "upsd",

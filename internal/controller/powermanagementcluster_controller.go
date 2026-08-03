@@ -86,7 +86,7 @@ func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ct
 		readyReason,
 		readyMessage,
 	)
-	setDegradedCondition(&cluster.Status.Conditions, cluster.Generation, !(result.accepted && storageReady), readyReason, readyMessage)
+	setDegradedCondition(&cluster.Status.Conditions, cluster.Generation, !result.accepted || !storageReady, readyReason, readyMessage)
 
 	if err := r.Status().Update(ctx, &cluster); err != nil {
 		log.Error(err, "failed to update PowerManagementCluster status")

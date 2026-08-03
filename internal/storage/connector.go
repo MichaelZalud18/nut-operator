@@ -79,13 +79,13 @@ type KubernetesConnector struct {
 }
 
 // NewKubernetesConnector creates the production storage connector.
-func NewKubernetesConnector(client client.Client, opts ConnectorOptions) *KubernetesConnector {
+func NewKubernetesConnector(k8sClient client.Client, opts ConnectorOptions) *KubernetesConnector {
 	open := opts.Open
 	if open == nil {
 		open = defaultSQLOpen
 	}
 	return &KubernetesConnector{
-		client: client,
+		client: k8sClient,
 		open:   open,
 		opts:   opts,
 	}
@@ -161,7 +161,7 @@ func (s *ownedStore) Close() error {
 // ResolveDSN reads the Kubernetes Secret containing the backend DSN.
 func (c *KubernetesConnector) ResolveDSN(ctx context.Context, backend Backend) (string, error) {
 	if c.client == nil {
-		return "", fmt.Errorf("Kubernetes client is required to resolve storage Secrets")
+		return "", fmt.Errorf("kubernetes client is required to resolve storage Secrets")
 	}
 	switch backend.Source {
 	case powerv1alpha1.PowerStorageExternalPostgres:

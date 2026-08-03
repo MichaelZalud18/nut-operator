@@ -288,10 +288,10 @@ func renderMermaid(graph Graph) string {
 	var builder strings.Builder
 	builder.WriteString("flowchart TD\n")
 	for _, vertex := range graph.Vertices {
-		builder.WriteString(fmt.Sprintf("  %s[%q]\n", nodeIDs[vertex.ID], diagramLabel(vertex)))
+		fmt.Fprintf(&builder, "  %s[%q]\n", nodeIDs[vertex.ID], diagramLabel(vertex))
 	}
 	for _, edge := range graph.Edges {
-		builder.WriteString(fmt.Sprintf("  %s -->|%s| %s\n", nodeIDs[edge.From], edge.Relation, nodeIDs[edge.To]))
+		fmt.Fprintf(&builder, "  %s -->|%s| %s\n", nodeIDs[edge.From], edge.Relation, nodeIDs[edge.To])
 	}
 	return builder.String()
 }
@@ -301,10 +301,10 @@ func renderGraphvizDOT(graph Graph) string {
 	builder.WriteString("digraph shutdown_plan {\n")
 	builder.WriteString("  rankdir=LR;\n")
 	for _, vertex := range graph.Vertices {
-		builder.WriteString(fmt.Sprintf("  %q [label=%q];\n", vertex.ID, diagramLabel(vertex)))
+		fmt.Fprintf(&builder, "  %q [label=%q];\n", vertex.ID, diagramLabel(vertex))
 	}
 	for _, edge := range graph.Edges {
-		builder.WriteString(fmt.Sprintf("  %q -> %q [label=%q];\n", edge.From, edge.To, edge.Relation))
+		fmt.Fprintf(&builder, "  %q -> %q [label=%q];\n", edge.From, edge.To, edge.Relation)
 	}
 	builder.WriteString("}\n")
 	return builder.String()
@@ -313,10 +313,10 @@ func renderGraphvizDOT(graph Graph) string {
 func renderD2(graph Graph) string {
 	var builder strings.Builder
 	for _, vertex := range graph.Vertices {
-		builder.WriteString(fmt.Sprintf("%s: %q\n", safeGraphID(vertex.ID), diagramLabel(vertex)))
+		fmt.Fprintf(&builder, "%s: %q\n", safeGraphID(vertex.ID), diagramLabel(vertex))
 	}
 	for _, edge := range graph.Edges {
-		builder.WriteString(fmt.Sprintf("%s -> %s: %s\n", safeGraphID(edge.From), safeGraphID(edge.To), edge.Relation))
+		fmt.Fprintf(&builder, "%s -> %s: %s\n", safeGraphID(edge.From), safeGraphID(edge.To), edge.Relation)
 	}
 	return builder.String()
 }

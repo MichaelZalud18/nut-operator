@@ -131,9 +131,10 @@ func applyLastExecutionPhase(flow *powerv1alpha1.ShutdownFlow) {
 		return
 	}
 	status := flow.Status.LastExecution
-	if status.Phase == powerv1alpha1.ShutdownExecutionPhaseCompleted {
+	switch status.Phase {
+	case powerv1alpha1.ShutdownExecutionPhaseCompleted:
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseCompleted
-	} else if status.Phase == powerv1alpha1.ShutdownExecutionPhaseAborted || status.Phase == powerv1alpha1.ShutdownExecutionPhaseFailed {
+	case powerv1alpha1.ShutdownExecutionPhaseAborted, powerv1alpha1.ShutdownExecutionPhaseFailed:
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseAborted
 	}
 }
