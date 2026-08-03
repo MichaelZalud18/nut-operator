@@ -924,6 +924,176 @@ spec:
                 - Completed
                 - Error
                 type: string
+              publishedArtifact:
+                description: publishedArtifact is the structured planner artifact
+                  published for subscribers.
+                properties:
+                  diagrams:
+                    description: diagrams are deterministic renderings generated from
+                      graph.
+                    properties:
+                      d2:
+                        description: d2 is the D2 rendering.
+                        type: string
+                      graphvizDOT:
+                        description: graphvizDOT is the Graphviz DOT rendering.
+                        type: string
+                      mermaid:
+                        description: mermaid is the Mermaid flowchart rendering.
+                        type: string
+                    type: object
+                  explanations:
+                    description: explanations record planner and edge-level "why"
+                      statements.
+                    items:
+                      description: PlannerExplanationStatus is a publishable planner
+                        "why" statement.
+                      properties:
+                        id:
+                          description: id is the stable explanation id.
+                          type: string
+                        message:
+                          description: message is the human-readable explanation.
+                          type: string
+                        reason:
+                          description: reason is a machine-readable explanation reason.
+                          type: string
+                        subject:
+                          description: subject identifies the graph edge, wave, or
+                            planner object explained.
+                          type: string
+                      required:
+                      - id
+                      - message
+                      type: object
+                    type: array
+                  graph:
+                    description: graph is the normalized dependency graph.
+                    properties:
+                      edges:
+                        description: edges are directed dependencies from from to
+                          to.
+                        items:
+                          description: PlannerGraphEdgeStatus is one normalized graph
+                            edge.
+                          properties:
+                            explanation:
+                              description: explanation is the stable publishable reason
+                                for this edge.
+                              type: string
+                            from:
+                              description: from is the source graph vertex id.
+                              type: string
+                            id:
+                              description: id is the stable graph edge id.
+                              type: string
+                            provenance:
+                              description: provenance records whether the edge was
+                                declared, derived, or policy-produced.
+                              type: string
+                            relation:
+                              description: relation is the planner relation that produced
+                                this edge.
+                              type: string
+                            sources:
+                              description: sources identify the declarative fields
+                                that produced this edge.
+                              items:
+                                description: PlannerGraphSourceRefStatus identifies
+                                  a declarative source for a graph edge.
+                                properties:
+                                  field:
+                                    description: field identifies the source input
+                                      field.
+                                    type: string
+                                  kind:
+                                    description: kind identifies the source input
+                                      kind.
+                                    type: string
+                                  name:
+                                    description: name identifies the source input
+                                      object or item.
+                                    type: string
+                                type: object
+                              type: array
+                            to:
+                              description: to is the destination graph vertex id.
+                              type: string
+                          required:
+                          - from
+                          - id
+                          - to
+                          type: object
+                        type: array
+                      vertices:
+                        description: vertices are graph nodes.
+                        items:
+                          description: PlannerGraphVertexStatus is one normalized
+                            graph vertex.
+                          properties:
+                            action:
+                              description: action is the compiled shutdown action
+                                associated with the vertex.
+                              type: string
+                            id:
+                              description: id is the stable graph vertex id.
+                              type: string
+                            kind:
+                              description: kind identifies the source vertex kind.
+                              type: string
+                            label:
+                              description: label is the human-readable vertex label.
+                              type: string
+                            phase:
+                              description: phase is the shutdown phase hint, when
+                                present.
+                              format: int32
+                              type: integer
+                            targetSummary:
+                              description: targetSummary summarizes selected targets
+                                without storing bulky object lists.
+                              type: string
+                          required:
+                          - id
+                          type: object
+                        type: array
+                    type: object
+                  startupWaves:
+                    description: startupWaves is the advisory reverse-order projection
+                      for subscriber-owned recovery.
+                    items:
+                      description: CompiledShutdownWave is the status-visible execution
+                        form of shutdown groups.
+                      properties:
+                        cumulativeDuration:
+                          description: cumulativeDuration is the expected elapsed
+                            time through this wave.
+                          type: string
+                        duration:
+                          description: duration is the maximum expected duration of
+                            any group in this wave.
+                          type: string
+                        groups:
+                          description: groups are the shutdown group names in this
+                            wave.
+                          items:
+                            type: string
+                          type: array
+                        index:
+                          description: index is the zero-based wave order.
+                          format: int32
+                          type: integer
+                        phase:
+                          description: phase is the phase hint shared by this wave,
+                            when one was present.
+                          format: int32
+                          type: integer
+                      required:
+                      - groups
+                      - index
+                      type: object
+                    type: array
+                type: object
               resolvedInputHash:
                 description: resolvedInputHash identifies the declarative inventory
                   and UPS capability inputs used by the compiled plan.

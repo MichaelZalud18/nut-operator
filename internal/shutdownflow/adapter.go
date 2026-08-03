@@ -28,23 +28,35 @@ import (
 
 // Compile returns the Kubernetes status-shaped view of a ShutdownFlow plan.
 func Compile(obj *powerv1alpha1.ShutdownFlow) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string) {
+	steps, waves, duration, hash, _ := CompileArtifact(obj)
+	return steps, waves, duration, hash
+}
+
+// CompileArtifact returns the Kubernetes status-shaped view of a ShutdownFlow plan and its published artifact.
+func CompileArtifact(obj *powerv1alpha1.ShutdownFlow) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string, *powerv1alpha1.PublishedPlannerArtifactStatus) {
 	plan, _, err := planner.Compile(PlannerInputs(obj), planner.TelemetryInputs{})
 	if err != nil {
-		return nil, nil, nil, ""
+		return nil, nil, nil, "", nil
 	}
 
-	return APICompiledSteps(plan.Steps), APICompiledWaves(plan.Waves), APIDuration(plan.EstimatedDuration), plan.Hash
+	return APICompiledSteps(plan.Steps), APICompiledWaves(plan.Waves), APIDuration(plan.EstimatedDuration), plan.Hash, APIPlannerArtifact(plan)
 }
 
 // CompileWithResolvedInputs includes resolved inventory and capability identity in the plan hash.
 func CompileWithResolvedInputs(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string) {
+	steps, waves, duration, hash, _ := CompileArtifactWithResolvedInputs(obj, bundle)
+	return steps, waves, duration, hash
+}
+
+// CompileArtifactWithResolvedInputs includes resolved inventory and capability identity in the plan hash and artifact.
+func CompileArtifactWithResolvedInputs(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string, *powerv1alpha1.PublishedPlannerArtifactStatus) {
 	inputs := resolver.AttachResolvedInputHash(PlannerInputs(obj), bundle)
 	plan, _, err := planner.Compile(inputs, planner.TelemetryInputs{})
 	if err != nil {
-		return nil, nil, nil, ""
+		return nil, nil, nil, "", nil
 	}
 
-	return APICompiledSteps(plan.Steps), APICompiledWaves(plan.Waves), APIDuration(plan.EstimatedDuration), plan.Hash
+	return APICompiledSteps(plan.Steps), APICompiledWaves(plan.Waves), APIDuration(plan.EstimatedDuration), plan.Hash, APIPlannerArtifact(plan)
 }
 
 // PlannerInputs converts the Kubernetes API object into pure planner inputs.
@@ -144,6 +156,83 @@ func APICompiledWaves(waves []planner.Wave) []powerv1alpha1.CompiledShutdownWave
 		})
 	}
 	return compiled
+}
+
+// APIPlannerArtifact converts the pure planner artifact into the compact ShutdownFlow status shape.
+func APIPlannerArtifact(plan planner.Plan) *powerv1alpha1.PublishedPlannerArtifactStatus {
+	return &powerv1alpha1.PublishedPlannerArtifactStatus{
+		Graph:        APIPlannerGraph(plan.Graph),
+		StartupWaves: APICompiledWaves(plan.StartupWaves),
+		Explanations: APIPlannerExplanations(plan.Explanations),
+		Diagrams: powerv1alpha1.PlannerDiagramExportsStatus{
+			Mermaid:     plan.Diagrams.Mermaid,
+			GraphvizDOT: plan.Diagrams.GraphvizDOT,
+			D2:          plan.Diagrams.D2,
+		},
+	}
+}
+
+// APIPlannerGraph converts a pure planner graph into the ShutdownFlow status shape.
+func APIPlannerGraph(graph planner.Graph) powerv1alpha1.PlannerGraphStatus {
+	status := powerv1alpha1.PlannerGraphStatus{
+		Vertices: make([]powerv1alpha1.PlannerGraphVertexStatus, 0, len(graph.Vertices)),
+		Edges:    make([]powerv1alpha1.PlannerGraphEdgeStatus, 0, len(graph.Edges)),
+	}
+	for _, vertex := range graph.Vertices {
+		status.Vertices = append(status.Vertices, powerv1alpha1.PlannerGraphVertexStatus{
+			ID:            vertex.ID,
+			Kind:          vertex.Kind,
+			Label:         vertex.Label,
+			Action:        vertex.Action,
+			Phase:         vertex.Phase,
+			TargetSummary: vertex.TargetSummary,
+		})
+	}
+	for _, edge := range graph.Edges {
+		status.Edges = append(status.Edges, powerv1alpha1.PlannerGraphEdgeStatus{
+			ID:          edge.ID,
+			From:        edge.From,
+			To:          edge.To,
+			Relation:    edge.Relation,
+			Provenance:  edge.Provenance,
+			Sources:     APIPlannerGraphSources(edge.Sources),
+			Explanation: edge.Explanation,
+		})
+	}
+	return status
+}
+
+// APIPlannerGraphSources converts pure graph source refs into the ShutdownFlow status shape.
+func APIPlannerGraphSources(sources []planner.GraphSourceRef) []powerv1alpha1.PlannerGraphSourceRefStatus {
+	if len(sources) == 0 {
+		return nil
+	}
+	status := make([]powerv1alpha1.PlannerGraphSourceRefStatus, 0, len(sources))
+	for _, source := range sources {
+		status = append(status, powerv1alpha1.PlannerGraphSourceRefStatus{
+			Kind:  source.Kind,
+			Name:  source.Name,
+			Field: source.Field,
+		})
+	}
+	return status
+}
+
+// APIPlannerExplanations converts pure planner explanations into the ShutdownFlow status shape.
+func APIPlannerExplanations(explanations []planner.Explanation) []powerv1alpha1.PlannerExplanationStatus {
+	if len(explanations) == 0 {
+		return nil
+	}
+	status := make([]powerv1alpha1.PlannerExplanationStatus, 0, len(explanations))
+	for _, explanation := range explanations {
+		status = append(status, powerv1alpha1.PlannerExplanationStatus{
+			ID:      explanation.ID,
+			Subject: explanation.Subject,
+			Reason:  explanation.Reason,
+			Message: explanation.Message,
+		})
+	}
+	return status
 }
 
 // APIDuration converts planner durations into Kubernetes API durations.

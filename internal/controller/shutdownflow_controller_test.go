@@ -22,6 +22,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -32,6 +34,7 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
+	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
@@ -121,6 +124,12 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.CompiledWaves).To(HaveLen(2))
 			Expect(resource.Status.CompiledWaves[0].Groups).To(ConsistOf("applications"))
 			Expect(resource.Status.CompiledWaves[1].Groups).To(ConsistOf("databases"))
+			Expect(resource.Status.PublishedArtifact).NotTo(BeNil())
+			Expect(resource.Status.PublishedArtifact.Graph.Vertices).To(HaveLen(2))
+			Expect(resource.Status.PublishedArtifact.Graph.Edges).To(HaveLen(1))
+			Expect(resource.Status.PublishedArtifact.StartupWaves).To(HaveLen(2))
+			Expect(resource.Status.PublishedArtifact.Explanations).NotTo(BeEmpty())
+			Expect(resource.Status.PublishedArtifact.Diagrams.Mermaid).To(ContainSubstring("applications -->|Before| databases"))
 			Expect(resource.Status.ConfigHash).NotTo(BeEmpty())
 			Expect(resource.Status.ResolvedInputHash).NotTo(BeEmpty())
 			Expect(resource.Status.TopologyHash).NotTo(BeEmpty())
@@ -360,6 +369,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(condition.Reason).To(Equal("UnknownEdgeEndpoint"))
 			Expect(resource.Status.Phase).To(Equal(powerv1alpha1.ShutdownFlowPhaseError))
 			Expect(resource.Status.CompiledSteps).To(BeEmpty())
+			Expect(resource.Status.PublishedArtifact).To(BeNil())
 			Expect(resource.Status.ConfigHash).To(BeEmpty())
 			Expect(resource.Status.ResolvedInputHash).To(BeEmpty())
 			Expect(resource.Status.TopologyHash).To(BeEmpty())
@@ -444,6 +454,32 @@ var _ = Describe("ShutdownFlow Controller", func() {
 					Tier:           capability.MatchTierDriverFamily,
 				}},
 			}
+			publishedArtifact := &powerv1alpha1.PublishedPlannerArtifactStatus{
+				Graph: powerv1alpha1.PlannerGraphStatus{
+					Vertices: []powerv1alpha1.PlannerGraphVertexStatus{{
+						ID:     "applications",
+						Kind:   "ShutdownGroup",
+						Action: "ScaleWorkload",
+					}},
+					Edges: []powerv1alpha1.PlannerGraphEdgeStatus{{
+						ID:          "applications-before-databases",
+						From:        "applications",
+						To:          "databases",
+						Relation:    "Before",
+						Provenance:  "Declared",
+						Explanation: "applications runs before databases because applications declares before: databases.",
+					}},
+				},
+				StartupWaves: waves,
+				Explanations: []powerv1alpha1.PlannerExplanationStatus{{
+					ID:      "plan-compiled",
+					Reason:  "PlanCompiled",
+					Message: "compiled one test plan",
+				}},
+				Diagrams: powerv1alpha1.PlannerDiagramExportsStatus{
+					Mermaid: "flowchart TD",
+				},
+			}
 
 			err := reconciler.recordShutdownFlowAudit(
 				context.Background(),
@@ -452,6 +488,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				diagnostics,
 				bundle,
 				waves,
+				publishedArtifact,
 				"plan-hash-a",
 				triggerEvaluation,
 			)
@@ -465,6 +502,10 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(compilation.InputHash).To(Equal("input-hash-a"))
 			Expect(compilation.ObservedAt).To(Equal(fixed))
 			Expect(compilation.CompiledWaves).To(Equal(waves))
+			Expect(compilation.DependencyGraph).To(Equal(publishedArtifact.Graph))
+			Expect(compilation.StartupWaves).To(Equal(publishedArtifact.StartupWaves))
+			Expect(compilation.Explanations).To(Equal(publishedArtifact.Explanations))
+			Expect(compilation.DiagramExports).To(Equal(publishedArtifact.Diagrams))
 			Expect(compilation.Diagnostics).To(HaveLen(1))
 			Expect(compilation.Diagnostics[0].Source).To(Equal(resolver.DiagnosticSourceInventory))
 			Expect(store.capabilityProfileMatches).To(HaveLen(1))
@@ -493,6 +534,77 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(flow.Status.LastExecution.Phase).To(Equal(powerv1alpha1.ShutdownExecutionPhaseCompleted))
 			Expect(flow.Status.LastExecution.TriggerActive).To(BeTrue())
 			Expect(store.closeCalls).To(Equal(1))
+		})
+
+		It("enumerates concrete executor targets from selectors", func() {
+			scheme := runtime.NewScheme()
+			Expect(powerv1alpha1.AddToScheme(scheme)).To(Succeed())
+			Expect(appsv1.AddToScheme(scheme)).To(Succeed())
+			Expect(corev1.AddToScheme(scheme)).To(Succeed())
+			reconciler := &ShutdownFlowReconciler{
+				Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+					&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+						Name:   "apps",
+						Labels: map[string]string{"power.example.com/shutdown-tier": "application"},
+					}},
+					&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+						Name:   "storage",
+						Labels: map[string]string{"power.example.com/shutdown-tier": "storage"},
+					}},
+					&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
+						Namespace: "apps",
+						Name:      "web",
+						Labels:    map[string]string{"app": "web"},
+					}},
+					&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{
+						Namespace: "storage",
+						Name:      "postgres",
+						Labels:    map[string]string{"app": "postgres"},
+					}},
+					&corev1.Node{ObjectMeta: metav1.ObjectMeta{
+						Name:   "node-a",
+						Labels: map[string]string{"node-role": "worker"},
+					}},
+				).Build(),
+			}
+			flow := &powerv1alpha1.ShutdownFlow{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-flow"},
+				Spec: powerv1alpha1.ShutdownFlowSpec{
+					Groups: []powerv1alpha1.ShutdownGroup{
+						{
+							Name:   "applications",
+							Action: powerv1alpha1.ShutdownStepScaleWorkload,
+							Target: powerv1alpha1.ShutdownStepTarget{
+								NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"power.example.com/shutdown-tier": "application"}},
+							},
+							Params: map[string]string{"replicas": "0"},
+						},
+						{
+							Name:   "nodes",
+							Action: powerv1alpha1.ShutdownStepCordonNodes,
+							Target: powerv1alpha1.ShutdownStepTarget{
+								NodeSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"node-role": "worker"}},
+							},
+						},
+						{
+							Name:   "workflow",
+							Action: powerv1alpha1.ShutdownStepRunWorkflow,
+							Target: powerv1alpha1.ShutdownStepTarget{
+								NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"power.example.com/shutdown-tier": "storage"}},
+							},
+						},
+					},
+				},
+			}
+
+			groups, err := reconciler.executorGroupsFromFlow(context.Background(), flow)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(groups).To(HaveLen(3))
+			Expect(groups[0].Params).To(HaveKeyWithValue("replicas", "0"))
+			Expect(groups[0].SelectedTargets).To(ConsistOf(executorpkg.Target{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "apps", Name: "web"}))
+			Expect(groups[1].SelectedTargets).To(ConsistOf(executorpkg.Target{APIVersion: "v1", Kind: "Node", Name: "node-a"}))
+			Expect(groups[2].SelectedTargets).To(ConsistOf(executorpkg.Target{APIVersion: "v1", Kind: "Namespace", Name: "storage"}))
 		})
 
 		It("records rejected compilation audit without requiring a plan hash", func() {
@@ -532,6 +644,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				rejected("PlannerRejected", "cycle detected"),
 				nil,
 				resolver.StructuralBundle{},
+				nil,
 				nil,
 				"",
 				nil,

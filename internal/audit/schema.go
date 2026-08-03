@@ -30,7 +30,7 @@ const (
 	DefaultSchema = "power"
 
 	// CurrentSchemaVersion is the latest bundled migration version.
-	CurrentSchemaVersion = 2
+	CurrentSchemaVersion = 4
 )
 
 // Migration is one ordered PostgreSQL migration.
@@ -57,6 +57,16 @@ func Migrations(schema string) ([]Migration, error) {
 			Version: 2,
 			Name:    "executor_state_schema",
 			SQL:     executorStateSchemaSQL(quotedSchema),
+		},
+		{
+			Version: 3,
+			Name:    "capability_profile_verification_schema",
+			SQL:     capabilityProfileVerificationSchemaSQL(quotedSchema),
+		},
+		{
+			Version: 4,
+			Name:    "planner_artifact_schema",
+			SQL:     plannerArtifactSchemaSQL(quotedSchema),
 		},
 	}, nil
 }
@@ -172,6 +182,19 @@ CREATE INDEX IF NOT EXISTS shutdownflow_decisions_flow_time_idx
 
 INSERT INTO %[1]s.audit_schema_migrations (version, name)
 VALUES (1, 'initial_power_audit_schema')
+ON CONFLICT (version) DO NOTHING;
+`, schema)
+}
+
+func plannerArtifactSchemaSQL(schema string) string {
+	return fmt.Sprintf(`ALTER TABLE %[1]s.shutdownflow_compilations
+  ADD COLUMN IF NOT EXISTS dependency_graph jsonb NOT NULL DEFAULT '{"vertices":[],"edges":[]}'::jsonb,
+  ADD COLUMN IF NOT EXISTS startup_waves jsonb NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS explanations jsonb NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS diagram_exports jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+INSERT INTO %[1]s.audit_schema_migrations (version, name)
+VALUES (4, 'planner_artifact_schema')
 ON CONFLICT (version) DO NOTHING;
 `, schema)
 }
@@ -316,6 +339,45 @@ CREATE INDEX IF NOT EXISTS executor_resume_states_flow_idx
 
 INSERT INTO %[1]s.audit_schema_migrations (version, name)
 VALUES (2, 'executor_state_schema')
+ON CONFLICT (version) DO NOTHING;
+`, schema)
+}
+
+func capabilityProfileVerificationSchemaSQL(schema string) string {
+	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %[1]s.capability_profile_verifications (
+  verification_id uuid PRIMARY KEY,
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  ups_device text NOT NULL,
+  profile_id text NOT NULL,
+  profile_version text NOT NULL,
+  profile_source text NOT NULL,
+  model text,
+  firmware text,
+  nut_driver text,
+  nut_server text,
+  nut_name text,
+  verified boolean NOT NULL DEFAULT false,
+  drift_detected boolean NOT NULL DEFAULT false,
+  probe_variables jsonb NOT NULL DEFAULT '{}'::jsonb,
+  expected_variables jsonb NOT NULL DEFAULT '[]'::jsonb,
+  missing_variables jsonb NOT NULL DEFAULT '[]'::jsonb,
+  unexpected_variables jsonb NOT NULL DEFAULT '[]'::jsonb,
+  diagnostics jsonb NOT NULL DEFAULT '[]'::jsonb,
+  details jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS capability_profile_verifications_device_time_idx
+  ON %[1]s.capability_profile_verifications (ups_device, observed_at DESC);
+
+CREATE INDEX IF NOT EXISTS capability_profile_verifications_profile_time_idx
+  ON %[1]s.capability_profile_verifications (profile_id, profile_version, observed_at DESC);
+
+CREATE INDEX IF NOT EXISTS capability_profile_verifications_drift_time_idx
+  ON %[1]s.capability_profile_verifications (observed_at DESC)
+  WHERE drift_detected;
+
+INSERT INTO %[1]s.audit_schema_migrations (version, name)
+VALUES (3, 'capability_profile_verification_schema')
 ON CONFLICT (version) DO NOTHING;
 `, schema)
 }

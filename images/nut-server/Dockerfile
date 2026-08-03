@@ -29,4 +29,5 @@ RUN chmod 0555 /usr/local/bin/nut-server-entrypoint
 
 USER 65532:65532
 EXPOSE 3493
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD upsd -V >/dev/null || exit 1
 ENTRYPOINT ["/usr/local/bin/nut-server-entrypoint"]

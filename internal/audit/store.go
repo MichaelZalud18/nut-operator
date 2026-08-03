@@ -34,6 +34,7 @@ type SQLExecutor interface {
 // Store owns schema readiness and durable audit writes.
 type Store interface {
 	EnsureSchema(ctx context.Context) error
+	EnforceRetention(ctx context.Context, now time.Time) error
 	Writer
 	Close() error
 }
@@ -44,6 +45,7 @@ type Writer interface {
 	RecordPowerEvent(ctx context.Context, event PowerEvent) error
 	RecordTelemetrySnapshot(ctx context.Context, snapshot TelemetrySnapshot) error
 	RecordCapabilityProfileMatch(ctx context.Context, match CapabilityProfileMatch) error
+	RecordCapabilityProfileVerification(ctx context.Context, verification CapabilityProfileVerification) error
 	RecordShutdownFlowCompilation(ctx context.Context, compilation ShutdownFlowCompilation) error
 	RecordShutdownFlowDecision(ctx context.Context, decision ShutdownFlowDecision) error
 	RecordShutdownFlowExecution(ctx context.Context, execution ShutdownFlowExecution) error
@@ -57,7 +59,8 @@ type Writer interface {
 
 // SQLStoreOptions configure a PostgreSQL-backed Store.
 type SQLStoreOptions struct {
-	Schema string
+	Schema    string
+	Retention RetentionPolicy
 }
 
 // SQLStore writes audit records through a PostgreSQL-compatible executor.
@@ -65,6 +68,7 @@ type SQLStore struct {
 	executor     SQLExecutor
 	schema       string
 	quotedSchema string
+	retention    RetentionPolicy
 }
 
 // NewSQLStore creates a PostgreSQL-shaped audit store without taking ownership
@@ -82,6 +86,7 @@ func NewSQLStore(executor SQLExecutor, options SQLStoreOptions) (*SQLStore, erro
 		executor:     executor,
 		schema:       schema,
 		quotedSchema: quotedSchema,
+		retention:    options.Retention,
 	}, nil
 }
 
@@ -99,6 +104,70 @@ func (s *SQLStore) EnsureSchema(ctx context.Context) error {
 	return nil
 }
 
+// RetentionPolicy controls pruning of durable audit records. A zero duration
+// keeps that record family indefinitely.
+type RetentionPolicy struct {
+	Events    time.Duration
+	Telemetry time.Duration
+}
+
+func (p RetentionPolicy) validate() error {
+	if p.Events < 0 {
+		return fmt.Errorf("event retention duration must not be negative")
+	}
+	if p.Telemetry < 0 {
+		return fmt.Errorf("telemetry retention duration must not be negative")
+	}
+	return nil
+}
+
+// EnforceRetention prunes records older than the configured retention windows.
+// It intentionally deletes only from root tables; executor child tables are
+// removed by ON DELETE CASCADE from shutdownflow_executions.
+func (s *SQLStore) EnforceRetention(ctx context.Context, now time.Time) error {
+	if err := s.retention.validate(); err != nil {
+		return err
+	}
+	if s.retention.Events == 0 && s.retention.Telemetry == 0 {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if s.retention.Events > 0 {
+		cutoff := now.Add(-s.retention.Events)
+		for _, table := range eventRetentionTables {
+			if err := s.deleteOlderThan(ctx, table, cutoff); err != nil {
+				return err
+			}
+		}
+	}
+	if s.retention.Telemetry > 0 {
+		if err := s.deleteOlderThan(ctx, "ups_telemetry_snapshots", now.Add(-s.retention.Telemetry)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var eventRetentionTables = []string{
+	"power_events",
+	"capability_profile_matches",
+	"capability_profile_verifications",
+	"shutdownflow_compilations",
+	"shutdownflow_decisions",
+	"shutdownflow_executions",
+}
+
+func (s *SQLStore) deleteOlderThan(ctx context.Context, table string, cutoff time.Time) error {
+	_, err := s.executor.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %[1]s.%[2]s
+WHERE observed_at < $1`, s.quotedSchema, table), cutoff.UTC())
+	if err != nil {
+		return fmt.Errorf("enforce audit retention for %s: %w", table, err)
+	}
+	return nil
+}
+
 // Close releases store-owned resources. SQLStore does not own its executor, so
 // this is intentionally a no-op.
 func (s *SQLStore) Close() error {
@@ -110,11 +179,17 @@ func (s *SQLStore) Close() error {
 type NoopStore struct{}
 
 func (NoopStore) EnsureSchema(context.Context) error { return nil }
-func (NoopStore) Close() error                       { return nil }
+func (NoopStore) EnforceRetention(context.Context, time.Time) error {
+	return nil
+}
+func (NoopStore) Close() error { return nil }
 
 func (NoopStore) RecordPowerEvent(context.Context, PowerEvent) error               { return nil }
 func (NoopStore) RecordTelemetrySnapshot(context.Context, TelemetrySnapshot) error { return nil }
 func (NoopStore) RecordCapabilityProfileMatch(context.Context, CapabilityProfileMatch) error {
+	return nil
+}
+func (NoopStore) RecordCapabilityProfileVerification(context.Context, CapabilityProfileVerification) error {
 	return nil
 }
 func (NoopStore) RecordShutdownFlowCompilation(context.Context, ShutdownFlowCompilation) error {
@@ -180,6 +255,30 @@ type CapabilityProfileMatch struct {
 	Diagnostics    []DiagnosticRecord
 }
 
+// CapabilityProfileVerification records runtime evidence that a matched profile
+// was checked against observed NUT variables and provider identity.
+type CapabilityProfileVerification struct {
+	VerificationID      string
+	ObservedAt          time.Time
+	UPSDevice           string
+	ProfileID           string
+	ProfileVersion      string
+	ProfileSource       string
+	Model               string
+	Firmware            string
+	NUTDriver           string
+	NUTServer           string
+	NUTName             string
+	Verified            bool
+	DriftDetected       bool
+	ProbeVariables      map[string]string
+	ExpectedVariables   []string
+	MissingVariables    []string
+	UnexpectedVariables []string
+	Diagnostics         []DiagnosticRecord
+	Details             map[string]any
+}
+
 // ShutdownFlowCompilation records a planner compilation.
 type ShutdownFlowCompilation struct {
 	CompilationID      string
@@ -191,6 +290,10 @@ type ShutdownFlowCompilation struct {
 	Accepted           bool
 	Diagnostics        []DiagnosticRecord
 	CompiledWaves      any
+	DependencyGraph    any
+	StartupWaves       any
+	Explanations       any
+	DiagramExports     any
 }
 
 // ShutdownFlowDecision records a dry-run or enforce decision for a trigger.
@@ -411,6 +514,63 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`, s.quotedSchema),
 	return nil
 }
 
+func (s *SQLStore) RecordCapabilityProfileVerification(ctx context.Context, verification CapabilityProfileVerification) error {
+	if verification.VerificationID == "" || verification.UPSDevice == "" || verification.ProfileID == "" || verification.ProfileVersion == "" || verification.ProfileSource == "" {
+		return fmt.Errorf("capability profile verification requires verification ID, UPS device, profile, and source")
+	}
+	probeVariables, err := jsonObject(verification.ProbeVariables)
+	if err != nil {
+		return err
+	}
+	expectedVariables, err := jsonArray(verification.ExpectedVariables)
+	if err != nil {
+		return err
+	}
+	missingVariables, err := jsonArray(verification.MissingVariables)
+	if err != nil {
+		return err
+	}
+	unexpectedVariables, err := jsonArray(verification.UnexpectedVariables)
+	if err != nil {
+		return err
+	}
+	diagnostics, err := jsonArray(verification.Diagnostics)
+	if err != nil {
+		return err
+	}
+	details, err := jsonObject(verification.Details)
+	if err != nil {
+		return err
+	}
+	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.capability_profile_verifications
+(verification_id, observed_at, ups_device, profile_id, profile_version, profile_source, model, firmware, nut_driver, nut_server, nut_name, verified, drift_detected, probe_variables, expected_variables, missing_variables, unexpected_variables, diagnostics, details)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb)`, s.quotedSchema),
+		verification.VerificationID,
+		observedAt(verification.ObservedAt),
+		verification.UPSDevice,
+		verification.ProfileID,
+		verification.ProfileVersion,
+		verification.ProfileSource,
+		optionalString(verification.Model),
+		optionalString(verification.Firmware),
+		optionalString(verification.NUTDriver),
+		optionalString(verification.NUTServer),
+		optionalString(verification.NUTName),
+		verification.Verified,
+		verification.DriftDetected,
+		probeVariables,
+		expectedVariables,
+		missingVariables,
+		unexpectedVariables,
+		diagnostics,
+		details,
+	)
+	if err != nil {
+		return fmt.Errorf("record capability profile verification %q: %w", verification.VerificationID, err)
+	}
+	return nil
+}
+
 func (s *SQLStore) RecordShutdownFlowCompilation(ctx context.Context, compilation ShutdownFlowCompilation) error {
 	if compilation.CompilationID == "" || compilation.ShutdownFlow == "" {
 		return fmt.Errorf("shutdown flow compilation requires compilation ID and flow")
@@ -426,9 +586,25 @@ func (s *SQLStore) RecordShutdownFlowCompilation(ctx context.Context, compilatio
 	if err != nil {
 		return err
 	}
+	dependencyGraph, err := jsonObject(compilation.DependencyGraph)
+	if err != nil {
+		return err
+	}
+	startupWaves, err := jsonArrayValue(compilation.StartupWaves)
+	if err != nil {
+		return err
+	}
+	explanations, err := jsonArrayValue(compilation.Explanations)
+	if err != nil {
+		return err
+	}
+	diagramExports, err := jsonObject(compilation.DiagramExports)
+	if err != nil {
+		return err
+	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.shutdownflow_compilations
-(compilation_id, observed_at, shutdownflow, resource_generation, config_hash, input_hash, accepted, diagnostics, compiled_waves)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)`, s.quotedSchema),
+(compilation_id, observed_at, shutdownflow, resource_generation, config_hash, input_hash, accepted, diagnostics, compiled_waves, dependency_graph, startup_waves, explanations, diagram_exports)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb)`, s.quotedSchema),
 		compilation.CompilationID,
 		observedAt(compilation.ObservedAt),
 		compilation.ShutdownFlow,
@@ -438,6 +614,10 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)`, s.quotedSchema),
 		compilation.Accepted,
 		diagnostics,
 		waves,
+		dependencyGraph,
+		startupWaves,
+		explanations,
+		diagramExports,
 	)
 	if err != nil {
 		return fmt.Errorf("record shutdown flow compilation %q: %w", compilation.CompilationID, err)

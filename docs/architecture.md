@@ -159,3 +159,12 @@ sequenceDiagram
 ```
 
 The operator treats PostgreSQL as the durable record path, not as the critical decision path. A storage outage degrades auditability but does not erase the current CR specs or compiled status surfaces that drive power response.
+
+## Resiliency
+
+Loss of connectivity between the operator, API server, NUT servers, PostgreSQL, or node agents is a
+degraded state, not a permission to assume success. Stale telemetry produces `Unknown` or degraded
+planner output, unreachable nodes are not treated as released or powered off, and node-local
+actuation only honors fresh structured signals for the receiving node.
+
+See [resiliency-and-partitions.md](design/resiliency-and-partitions.md) for the partition contract.

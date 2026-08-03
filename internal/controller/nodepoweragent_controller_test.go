@@ -246,9 +246,22 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Name).To(Equal("upsmon"))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/michaelzalud18/upsmon-agent:main"))
 			Expect(*daemonSet.Spec.Template.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(daemonSet.Spec.Template.Spec.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name:      "upsmon-run",
+				MountPath: "/run",
+			}))
+			Expect(daemonSet.Spec.Template.Spec.Volumes).To(ContainElement(WithTransform(func(volume corev1.Volume) string {
+				return volume.Name
+			}, Equal("upsmon-run"))))
 			Expect(daemonSet.Spec.Template.Spec.Containers[1].Name).To(Equal("actuator"))
 			Expect(daemonSet.Spec.Template.Spec.Containers[1].Image).To(Equal("ghcr.io/michaelzalud18/node-actuator:main"))
 			Expect(*daemonSet.Spec.Template.Spec.Containers[1].SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(daemonSet.Spec.Template.Spec.Containers[1].Env).To(ContainElement(corev1.EnvVar{
+				Name: "POWER_NODE_NAME",
+				ValueFrom: &corev1.EnvVarSource{
+					FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"},
+				},
+			}))
 		})
 	})
 })

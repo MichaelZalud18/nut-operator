@@ -30,6 +30,8 @@ spec:
     - name: application-workloads
       description: Scale ordinary applications before data and storage services.
       action: ScaleWorkload
+      params:
+        replicas: "0"
       target:
         namespaceSelector:
           matchLabels:
@@ -41,6 +43,8 @@ spec:
     - name: data-workloads
       description: Quiesce databases after clients stop.
       action: ScaleWorkload
+      params:
+        replicas: "0"
       target:
         workloadSelector:
           matchLabels:
@@ -52,6 +56,8 @@ spec:
     - name: storage-services
       description: Flush storage after data workloads stop.
       action: RunWorkflow
+      params:
+        workflow.templateRef: flush-storage
       target:
         namespaceSelector:
           matchLabels:

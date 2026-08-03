@@ -119,6 +119,13 @@ GOCACHE=/tmp/go-build-cache make setup-envtest
 GOCACHE=/tmp/go-build-cache make test
 ```
 
+Run the AWS Labs Automated Security Helper scan:
+
+```sh
+uv tool install 'git+https://github.com/awslabs/automated-security-helper.git@v3.5.8'
+make security-scan
+```
+
 Build and push the manager image:
 
 ```sh
@@ -165,6 +172,7 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [System architecture diagram](docs/diagrams/system-architecture.md)
 - [Security](docs/security.md)
 - [Image strategy](docs/images.md)
 - [Shutdown flow design](docs/shutdown-flow.md)
@@ -175,6 +183,7 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [Telemetry normalization](docs/design/telemetry-normalization.md)
 - [Trigger evaluation](docs/design/trigger-evaluation.md)
 - [Published planner artifacts](docs/design/published-planner-artifacts.md)
+- [Resiliency and partitions](docs/design/resiliency-and-partitions.md)
 - [Design decision index](docs/design/decision-index.md)
 - [Scope boundaries](docs/design/scope-boundaries.md)
 - [Planner requirements](docs/design/planner-requirements.md)

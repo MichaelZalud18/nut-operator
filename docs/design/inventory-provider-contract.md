@@ -210,7 +210,8 @@ supply the data this decision needed. The policy question — cluster-wide plan 
 subgraph — remains open, but is no longer blocked on missing structure.
 
 Carried unchanged: OD-4 (last-ditch phase taxonomy), OD-6 (audit durability), OD-8r (provider key
-validation), OD-10 (USB support), OD-15 (probe history persistence).
+validation), OD-10 (USB support).
 
-Closed elsewhere: OD-1 (recovery execution is external subscriber scope) and OD-5 (startup waves
-are advisory projections, not operator-executed recovery).
+Closed elsewhere: OD-1 (recovery execution is external subscriber scope), OD-5 (startup waves are
+advisory projections, not operator-executed recovery), and OD-15 (probe history persistence is an
+audit schema record).

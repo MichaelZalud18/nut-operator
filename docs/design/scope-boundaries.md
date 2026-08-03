@@ -316,7 +316,6 @@ for defense in depth.
 | OD-8r | Resolver behavior on malformed or missing model strings from the topology provider: reject, floor-match with warning, or configurable | Resolver design |
 | OD-9 | Degrade mechanics for trigger-capability mismatch — folded into capability schema doc | Capability schema doc |
 | OD-10 | USB and serial UPS support: version target and isolation model | v2 scoping |
-| OD-15 | Probe-history persistence — "last verified against firmware X" implies a PostgreSQL table in the audit schema that would not otherwise exist | Audit schema doc |
 | OD-16 | Missing `carries` coverage — node with no modeled communication path: hard failure or explicit exemption marker. Silent-assume excluded | Inventory validation |
 
 ## Closed Decisions
@@ -325,3 +324,4 @@ for defense in depth.
 | --- | --- |
 | OD-1 | Recovery and startup execution are outside project scope. Other systems consume published artifacts. |
 | OD-5 | Startup ordering is an advisory projection for subscribers, not an operator-executed graph. |
+| OD-15 | Probe-history persistence uses PostgreSQL `capability_profile_verifications` rows for "last verified against firmware X" and drift evidence. |

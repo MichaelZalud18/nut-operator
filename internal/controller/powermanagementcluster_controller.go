@@ -177,15 +177,16 @@ func (r *PowerManagementClusterReconciler) ensureAuditStore(ctx context.Context,
 		status.Message = fmt.Sprintf("%s is configured but audit store is not ready: %v", source, err)
 		return status, false, "AuditStoreNotReady", status.Message
 	}
+	retentionErr := store.EnforceRetention(ctx, r.now())
 	closeErr := store.Close()
-	if closeErr != nil {
+	if retentionErr != nil || closeErr != nil {
 		status.Ready = false
-		status.Message = fmt.Sprintf("%s audit store opened but close failed: %v", source, closeErr)
+		status.Message = fmt.Sprintf("%s audit store opened but retention or close failed: %v", source, errors.Join(retentionErr, closeErr))
 		return status, false, "AuditStoreNotReady", status.Message
 	}
 
 	status.Ready = true
-	status.Message = source + " is ready; audit schema migration applied"
+	status.Message = source + " is ready; audit schema migration applied and retention policy evaluated"
 	return status, true, "AuditStoreReady", status.Message
 }
 

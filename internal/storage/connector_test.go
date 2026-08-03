@@ -68,7 +68,7 @@ func TestKubernetesConnectorResolvesExternalPostgresDSN(t *testing.T) {
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "power-system", Name: "postgres-dsn"},
 			Data: map[string][]byte{
-				"dsn": []byte("postgres://power:example@postgres.example.net:5432/power?sslmode=verify-full"),
+				"dsn": []byte("postgres://power@postgres.example.net:5432/power?sslmode=verify-full"),
 			},
 		},
 	}, nil)
@@ -100,7 +100,7 @@ func TestKubernetesConnectorRejectsExternalPostgresDSNWithoutTLS(t *testing.T) {
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "power-system", Name: "postgres-dsn"},
 			Data: map[string][]byte{
-				"dsn": []byte("postgres://power:example@postgres.example.net:5432/power?sslmode=disable"),
+				"dsn": []byte("postgres://power@postgres.example.net:5432/power?sslmode=disable"),
 			},
 		},
 	}, nil)
@@ -129,8 +129,8 @@ func TestKubernetesConnectorResolvesCNPGFQDNURI(t *testing.T) {
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "power-system", Name: "power-audit-app"},
 			Data: map[string][]byte{
-				CNPGURIKey:     []byte("postgres://power:example@power-audit-rw:5432/power"),
-				CNPGFQDNURIKey: []byte("postgres://power:example@power-audit-rw.power-system.svc:5432/power"),
+				CNPGURIKey:     []byte("postgres://power@power-audit-rw:5432/power"),
+				CNPGFQDNURIKey: []byte("postgres://power@power-audit-rw.power-system.svc:5432/power"),
 			},
 		},
 	}, nil)
@@ -161,7 +161,7 @@ func TestKubernetesConnectorUsesExplicitCNPGCredentialSecret(t *testing.T) {
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "data", Name: "custom-power-app"},
 			Data: map[string][]byte{
-				CNPGURIKey: []byte("postgres://power:example@custom-rw:5432/power"),
+				CNPGURIKey: []byte("postgres://power@custom-rw:5432/power"),
 			},
 		},
 	}, nil)
@@ -245,7 +245,7 @@ func TestKubernetesConnectorClosesDBAfterPingFailure(t *testing.T) {
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "power-system", Name: "postgres-dsn"},
 			Data: map[string][]byte{
-				"dsn": []byte("postgres://power:example@postgres.example.net:5432/power?sslmode=require"),
+				"dsn": []byte("postgres://power@postgres.example.net:5432/power?sslmode=require"),
 			},
 		},
 	}, func(string, string) (Database, error) {

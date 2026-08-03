@@ -25,7 +25,10 @@ import (
 	"sort"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -183,6 +186,10 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 	if len(flow.Spec.Groups) > 0 {
 		groups := make([]executorpkg.Group, 0, len(flow.Spec.Groups))
 		for _, group := range flow.Spec.Groups {
+			targets, err := r.executorTargetsForAction(ctx, group.Action, group.Target)
+			if err != nil {
+				return nil, err
+			}
 			releases, err := r.nodeReleasesForTarget(ctx, group.Target)
 			if err != nil {
 				return nil, err
@@ -190,7 +197,8 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 			groups = append(groups, executorpkg.Group{
 				Name:            group.Name,
 				Action:          string(group.Action),
-				SelectedTargets: executorTargetsFromTarget(group.Target),
+				Params:          copyActionParams(group.Params),
+				SelectedTargets: targets,
 				NodeReleases:    releases,
 				Details: map[string]any{
 					"description": group.Description,
@@ -201,6 +209,10 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 	}
 	groups := make([]executorpkg.Group, 0, len(flow.Spec.Steps))
 	for _, step := range flow.Spec.Steps {
+		targets, err := r.executorTargetsForAction(ctx, step.Type, step.Target)
+		if err != nil {
+			return nil, err
+		}
 		releases, err := r.nodeReleasesForTarget(ctx, step.Target)
 		if err != nil {
 			return nil, err
@@ -208,7 +220,8 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 		groups = append(groups, executorpkg.Group{
 			Name:            step.ID,
 			Action:          string(step.Type),
-			SelectedTargets: executorTargetsFromTarget(step.Target),
+			Params:          copyActionParams(step.Params),
+			SelectedTargets: targets,
 			NodeReleases:    releases,
 			Details: map[string]any{
 				"description": step.Description,
@@ -236,6 +249,19 @@ func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, targ
 	return releases, nil
 }
 
+func (r *ShutdownFlowReconciler) executorTargetsForAction(ctx context.Context, action powerv1alpha1.ShutdownStepType, target powerv1alpha1.ShutdownStepTarget) ([]executorpkg.Target, error) {
+	switch action {
+	case powerv1alpha1.ShutdownStepScaleWorkload:
+		return r.scaleWorkloadTargets(ctx, target)
+	case powerv1alpha1.ShutdownStepCordonNodes, powerv1alpha1.ShutdownStepDrainNodes:
+		return r.nodeTargets(ctx, target)
+	case powerv1alpha1.ShutdownStepRunWorkflow:
+		return r.workflowTargets(ctx, target)
+	default:
+		return executorTargetsFromTarget(target), nil
+	}
+}
+
 func executorTargetsFromTarget(target powerv1alpha1.ShutdownStepTarget) []executorpkg.Target {
 	targets := make([]executorpkg.Target, 0, len(target.WorkloadRefs)+len(target.Namespaces)+len(target.AgentRefs)+3)
 	if target.NodeSelector != nil {
@@ -252,15 +278,193 @@ func executorTargetsFromTarget(target powerv1alpha1.ShutdownStepTarget) []execut
 	}
 	for _, ref := range target.WorkloadRefs {
 		targets = append(targets, executorpkg.Target{
-			Kind:      ref.Kind,
-			Namespace: ref.Namespace,
-			Name:      ref.Name,
+			APIVersion: ref.APIVersion,
+			Kind:       ref.Kind,
+			Namespace:  ref.Namespace,
+			Name:       ref.Name,
 		})
 	}
 	for _, ref := range target.AgentRefs {
 		targets = append(targets, executorpkg.Target{Kind: "NodePowerAgent", Name: ref.Name})
 	}
 	return targets
+}
+
+func (r *ShutdownFlowReconciler) scaleWorkloadTargets(ctx context.Context, target powerv1alpha1.ShutdownStepTarget) ([]executorpkg.Target, error) {
+	targets := make([]executorpkg.Target, 0, len(target.WorkloadRefs))
+	for _, ref := range target.WorkloadRefs {
+		targets = append(targets, executorpkg.Target{
+			APIVersion: ref.APIVersion,
+			Kind:       ref.Kind,
+			Namespace:  ref.Namespace,
+			Name:       ref.Name,
+		})
+	}
+
+	hasNamespaceConstraint := len(target.Namespaces) > 0 || target.NamespaceSelector != nil
+	if target.WorkloadSelector == nil && !hasNamespaceConstraint {
+		return dedupeExecutorTargets(targets), nil
+	}
+
+	selector, err := labelSelector(target.WorkloadSelector)
+	if err != nil {
+		return nil, fmt.Errorf("parse workload selector for shutdown execution: %w", err)
+	}
+	namespaces, err := r.selectedTargetNamespaces(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	if len(namespaces) == 0 {
+		workloadTargets, err := r.listScalableWorkloads(ctx, "", selector)
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, workloadTargets...)
+		return dedupeExecutorTargets(targets), nil
+	}
+	for _, namespace := range namespaces {
+		workloadTargets, err := r.listScalableWorkloads(ctx, namespace, selector)
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, workloadTargets...)
+	}
+	return dedupeExecutorTargets(targets), nil
+}
+
+func (r *ShutdownFlowReconciler) listScalableWorkloads(ctx context.Context, namespace string, selector labels.Selector) ([]executorpkg.Target, error) {
+	options := []client.ListOption{client.MatchingLabelsSelector{Selector: selector}}
+	if namespace != "" {
+		options = append(options, client.InNamespace(namespace))
+	}
+	targets := make([]executorpkg.Target, 0)
+
+	var deployments appsv1.DeploymentList
+	if err := r.List(ctx, &deployments, options...); err != nil {
+		return nil, fmt.Errorf("list Deployments for shutdown execution: %w", err)
+	}
+	for _, item := range deployments.Items {
+		targets = append(targets, executorpkg.Target{APIVersion: "apps/v1", Kind: "Deployment", Namespace: item.Namespace, Name: item.Name})
+	}
+
+	var statefulSets appsv1.StatefulSetList
+	if err := r.List(ctx, &statefulSets, options...); err != nil {
+		return nil, fmt.Errorf("list StatefulSets for shutdown execution: %w", err)
+	}
+	for _, item := range statefulSets.Items {
+		targets = append(targets, executorpkg.Target{APIVersion: "apps/v1", Kind: "StatefulSet", Namespace: item.Namespace, Name: item.Name})
+	}
+
+	var replicaSets appsv1.ReplicaSetList
+	if err := r.List(ctx, &replicaSets, options...); err != nil {
+		return nil, fmt.Errorf("list ReplicaSets for shutdown execution: %w", err)
+	}
+	for _, item := range replicaSets.Items {
+		targets = append(targets, executorpkg.Target{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: item.Namespace, Name: item.Name})
+	}
+
+	return targets, nil
+}
+
+func (r *ShutdownFlowReconciler) nodeTargets(ctx context.Context, target powerv1alpha1.ShutdownStepTarget) ([]executorpkg.Target, error) {
+	if target.NodeSelector == nil {
+		return nil, nil
+	}
+	selector, err := labelSelector(target.NodeSelector)
+	if err != nil {
+		return nil, fmt.Errorf("parse node selector for shutdown execution: %w", err)
+	}
+	var nodes corev1.NodeList
+	if err := r.List(ctx, &nodes, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		return nil, fmt.Errorf("list Nodes for shutdown execution: %w", err)
+	}
+	targets := make([]executorpkg.Target, 0, len(nodes.Items))
+	for _, node := range nodes.Items {
+		targets = append(targets, executorpkg.Target{APIVersion: "v1", Kind: "Node", Name: node.Name})
+	}
+	return dedupeExecutorTargets(targets), nil
+}
+
+func (r *ShutdownFlowReconciler) workflowTargets(ctx context.Context, target powerv1alpha1.ShutdownStepTarget) ([]executorpkg.Target, error) {
+	namespaces, err := r.selectedTargetNamespaces(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]executorpkg.Target, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		targets = append(targets, executorpkg.Target{APIVersion: "v1", Kind: "Namespace", Name: namespace})
+	}
+	return dedupeExecutorTargets(targets), nil
+}
+
+func (r *ShutdownFlowReconciler) selectedTargetNamespaces(ctx context.Context, target powerv1alpha1.ShutdownStepTarget) ([]string, error) {
+	namespaces := append([]string(nil), target.Namespaces...)
+	if target.NamespaceSelector != nil {
+		selector, err := labelSelector(target.NamespaceSelector)
+		if err != nil {
+			return nil, fmt.Errorf("parse namespace selector for shutdown execution: %w", err)
+		}
+		var namespaceList corev1.NamespaceList
+		if err := r.List(ctx, &namespaceList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+			return nil, fmt.Errorf("list Namespaces for shutdown execution: %w", err)
+		}
+		for _, namespace := range namespaceList.Items {
+			namespaces = append(namespaces, namespace.Name)
+		}
+	}
+	sort.Strings(namespaces)
+	deduped := namespaces[:0]
+	var previous string
+	for _, namespace := range namespaces {
+		if namespace == "" || namespace == previous {
+			continue
+		}
+		deduped = append(deduped, namespace)
+		previous = namespace
+	}
+	return deduped, nil
+}
+
+func labelSelector(selector *metav1.LabelSelector) (labels.Selector, error) {
+	if selector == nil {
+		return labels.Everything(), nil
+	}
+	return metav1.LabelSelectorAsSelector(selector)
+}
+
+func dedupeExecutorTargets(targets []executorpkg.Target) []executorpkg.Target {
+	sort.Slice(targets, func(i, j int) bool {
+		return executorTargetKey(targets[i]) < executorTargetKey(targets[j])
+	})
+	deduped := targets[:0]
+	var previous string
+	for _, target := range targets {
+		key := executorTargetKey(target)
+		if key == "" || key == previous {
+			continue
+		}
+		deduped = append(deduped, target)
+		previous = key
+	}
+	return deduped
+}
+
+func executorTargetKey(target executorpkg.Target) string {
+	if target.Kind == "" || target.Name == "" {
+		return ""
+	}
+	return target.APIVersion + "/" + target.Kind + "/" + target.Namespace + "/" + target.Name
+}
+
+func copyActionParams(params map[string]string) map[string]string {
+	if params == nil {
+		return nil
+	}
+	copied := make(map[string]string, len(params))
+	for key, value := range params {
+		copied[key] = value
+	}
+	return copied
 }
 
 func eligibleTriggerDecisionID(evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) string {

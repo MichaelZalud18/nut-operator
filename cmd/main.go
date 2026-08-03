@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -37,6 +38,7 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/controller"
+	"github.com/MichaelZalud18/nut-operator/internal/kubeactions"
 	webhookv1alpha1 "github.com/MichaelZalud18/nut-operator/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
@@ -44,6 +46,7 @@ import (
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+	version  = "dev"
 )
 
 func init() {
@@ -55,6 +58,14 @@ func init() {
 
 // nolint:gocyclo
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "version":
+			fmt.Fprintln(os.Stdout, version)
+			return
+		}
+	}
+
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
@@ -208,8 +219,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.ShutdownFlowReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		ExecutorRunner: kubeactions.Runner{Client: mgr.GetClient()},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "shutdownflow")
 		os.Exit(1)

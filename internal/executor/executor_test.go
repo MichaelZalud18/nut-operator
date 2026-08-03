@@ -30,6 +30,7 @@ type fakeAuditWriter struct {
 	powerEvents              []audit.PowerEvent
 	telemetrySnapshots       []audit.TelemetrySnapshot
 	capabilityProfileMatches []audit.CapabilityProfileMatch
+	capabilityVerifications  []audit.CapabilityProfileVerification
 	shutdownFlowCompilations []audit.ShutdownFlowCompilation
 	shutdownFlowDecisions    []audit.ShutdownFlowDecision
 	executions               []audit.ShutdownFlowExecution
@@ -53,6 +54,11 @@ func (w *fakeAuditWriter) RecordTelemetrySnapshot(_ context.Context, snapshot au
 
 func (w *fakeAuditWriter) RecordCapabilityProfileMatch(_ context.Context, match audit.CapabilityProfileMatch) error {
 	w.capabilityProfileMatches = append(w.capabilityProfileMatches, match)
+	return nil
+}
+
+func (w *fakeAuditWriter) RecordCapabilityProfileVerification(_ context.Context, verification audit.CapabilityProfileVerification) error {
+	w.capabilityVerifications = append(w.capabilityVerifications, verification)
 	return nil
 }
 

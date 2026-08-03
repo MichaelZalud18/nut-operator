@@ -1,0 +1,77 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/awslabs/automated-security-helper/refs/heads/main/automated_security_helper/schemas/AshConfig.json
+project_name: nut-operator
+fail_on_findings: true
+global_settings:
+  severity_threshold: MEDIUM
+  ignore_paths:
+    - path: ".ash/**"
+      reason: "Local ASH scratch, tool cache, and generated scan reports."
+    - path: "api/**/zz_generated.deepcopy.go"
+      reason: "Kubebuilder generated deepcopy code."
+  suppressions:
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "config/certmanager/certificate-metrics.yaml"
+      reason: "Kubernetes Certificate secretName field, not secret material."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "config/certmanager/certificate-webhook.yaml"
+      reason: "Kubernetes Certificate secretName field, not secret material."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "config/default/cert_metrics_manager_patch.yaml"
+      reason: "Kubernetes volume secretName field, not secret material."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "config/default/manager_webhook_patch.yaml"
+      reason: "Kubernetes volume secretName field, not secret material."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "dist/install.yaml"
+      reason: "Generated install bundle contains Kubernetes secretName fields, not secret material."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/controller/nodepoweragent_render.go"
+      reason: "Code references Kubernetes Secret refs; it does not contain secret values."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/controller/nutserver_render.go"
+      reason: "Code references Kubernetes Secret refs; it does not contain secret values."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/controller/validation.go"
+      reason: "Validation messages reference Secret ref fields; they do not contain secret values."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/storage/connector.go"
+      reason: "Code references Kubernetes Secret refs; it does not contain secret values."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/webhook/v1alpha1/nutserver_webhook.go"
+      reason: "Webhook validation references Secret ref fields; it does not contain secret values."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/webhook/v1alpha1/upsdevice_webhook.go"
+      reason: "Webhook validation references Secret ref fields; it does not contain secret values."
+    - rule_id: "CKV_K8S_43"
+      path: "config/manager/manager.yaml"
+      reason: "The base manager image is a Kustomize placeholder; release and GitOps overlays use immutable digests."
+    - rule_id: "CKV_K8S_38"
+      path: "config/manager/manager.yaml"
+      reason: "The controller manager requires Kubernetes API credentials to reconcile CRDs and owned resources."
+scanners:
+  checkov:
+    options:
+      additional_formats: []
+      skip_frameworks:
+        - kustomize
+      skip_path:
+        - path: "dist/install.yaml"
+          reason: "Generated release bundle; source manifests are scanned."
+reporters:
+  html:
+    enabled: true
+  flat-json:
+    enabled: true
+  github-ghas:
+    enabled: true
+  markdown:
+    enabled: true
+    options:
+      include_summary: true
+      include_findings_table: true
+      include_detailed_findings: true
+      max_detailed_findings: 50
+  sarif:
+    enabled: true
+  text:
+    enabled: true

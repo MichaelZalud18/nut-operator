@@ -55,6 +55,12 @@ type ShutdownFlowReconciler struct {
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows/finalizers,verbs=update
 // +kubebuilder:rbac:groups=power.zalud.io,resources=powerinfrastructures;powerinventoryedges;powerinventorynodes;upscapabilityprofiles;upsdevices,verbs=get;list;watch
+// +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=namespaces;nodes;pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=update;patch
+// +kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create
+// +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=argoproj.io,resources=workflows,verbs=create;get;list;watch
 
 // Reconcile validates shutdown flow safety and records compiled plan status
 // against the current declarative inventory and UPS capability profile bundle.
@@ -95,9 +101,10 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var compiledWaves []powerv1alpha1.CompiledShutdownWave
 	var estimatedDuration *metav1.Duration
 	var configHash string
+	var publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus
 	var triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus
 	if result.accepted {
-		compiled, compiledWaves, estimatedDuration, configHash = compileShutdownFlowWithResolvedInputs(&flow, bundle)
+		compiled, compiledWaves, estimatedDuration, configHash, publishedArtifact = compileShutdownFlowWithResolvedInputs(&flow, bundle)
 		if configHash == "" {
 			result = rejected("PlannerFailed", "shutdown flow planner failed after resolver inputs were attached")
 		}
@@ -114,6 +121,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseCompiled
 		flow.Status.CompiledSteps = compiled
 		flow.Status.CompiledWaves = compiledWaves
+		flow.Status.PublishedArtifact = publishedArtifact
 		flow.Status.EstimatedDuration = estimatedDuration
 		flow.Status.ConfigHash = configHash
 		flow.Status.ResolvedInputHash = bundle.Hash
@@ -127,6 +135,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseError
 		flow.Status.CompiledSteps = nil
 		flow.Status.CompiledWaves = nil
+		flow.Status.PublishedArtifact = nil
 		flow.Status.EstimatedDuration = nil
 		flow.Status.ConfigHash = ""
 		flow.Status.ResolvedInputHash = ""
@@ -197,7 +206,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		"shutdown flow execution has not started because no trigger is eligible",
 	)
 
-	if err := r.recordShutdownFlowAudit(ctx, &flow, result, resolverDiagnostics, bundle, compiledWaves, configHash, triggerEvaluation); err != nil {
+	if err := r.recordShutdownFlowAudit(ctx, &flow, result, resolverDiagnostics, bundle, compiledWaves, publishedArtifact, configHash, triggerEvaluation); err != nil {
 		log.Error(err, "failed to record ShutdownFlow audit records", "shutdownflow", flow.Name)
 	}
 
@@ -242,7 +251,7 @@ func (r *ShutdownFlowReconciler) shutdownFlowRequestsForInventoryChange(ctx cont
 	return requests
 }
 
-func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, result validationResult, diagnostics []resolver.Diagnostic, bundle resolver.StructuralBundle, compiledWaves []powerv1alpha1.CompiledShutdownWave, configHash string, triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
+func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, result validationResult, diagnostics []resolver.Diagnostic, bundle resolver.StructuralBundle, compiledWaves []powerv1alpha1.CompiledShutdownWave, publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus, configHash string, triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
 	if flow == nil {
 		return nil
 	}
@@ -276,6 +285,10 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 		Accepted:           result.accepted,
 		Diagnostics:        auditDiagnosticsForCompilation(result, diagnostics),
 		CompiledWaves:      compiledWaves,
+		DependencyGraph:    auditDependencyGraph(publishedArtifact),
+		StartupWaves:       auditStartupWaves(publishedArtifact),
+		Explanations:       auditExplanations(publishedArtifact),
+		DiagramExports:     auditDiagramExports(publishedArtifact),
 	})
 	if result.accepted {
 		for _, match := range bundle.CapabilityMatches {
@@ -419,6 +432,34 @@ func triggerEligibleMessage(evaluation *powerv1alpha1.ShutdownTriggerEvaluationS
 		return fmt.Sprintf("shutdown flow trigger evaluation is eligible on %d UPS device(s)", len(evaluation.SelectedUPSDevices))
 	}
 	return fmt.Sprintf("shutdown flow trigger evaluation is not eligible: %s", evaluation.Reason)
+}
+
+func auditDependencyGraph(artifact *powerv1alpha1.PublishedPlannerArtifactStatus) any {
+	if artifact == nil {
+		return powerv1alpha1.PlannerGraphStatus{}
+	}
+	return artifact.Graph
+}
+
+func auditStartupWaves(artifact *powerv1alpha1.PublishedPlannerArtifactStatus) any {
+	if artifact == nil {
+		return []powerv1alpha1.CompiledShutdownWave{}
+	}
+	return artifact.StartupWaves
+}
+
+func auditExplanations(artifact *powerv1alpha1.PublishedPlannerArtifactStatus) any {
+	if artifact == nil {
+		return []powerv1alpha1.PlannerExplanationStatus{}
+	}
+	return artifact.Explanations
+}
+
+func auditDiagramExports(artifact *powerv1alpha1.PublishedPlannerArtifactStatus) any {
+	if artifact == nil {
+		return powerv1alpha1.PlannerDiagramExportsStatus{}
+	}
+	return artifact.Diagrams
 }
 
 func recordShutdownFlowDecisions(ctx context.Context, store audit.Store, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {

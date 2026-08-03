@@ -66,14 +66,20 @@ func TestSQLStoreEnsuresSchema(t *testing.T) {
 		t.Fatalf("EnsureSchema returned error: %v", err)
 	}
 
-	if len(exec.calls) != 2 {
-		t.Fatalf("expected two migration calls, got %d", len(exec.calls))
+	if len(exec.calls) != CurrentSchemaVersion {
+		t.Fatalf("expected %d migration calls, got %d", CurrentSchemaVersion, len(exec.calls))
 	}
 	if !strings.Contains(exec.calls[0].query, `CREATE SCHEMA IF NOT EXISTS "power""audit";`) {
 		t.Fatalf("migration did not use quoted custom schema:\n%s", exec.calls[0].query)
 	}
 	if !strings.Contains(exec.calls[1].query, `"power""audit".shutdownflow_executions`) {
 		t.Fatalf("executor migration did not use quoted custom schema:\n%s", exec.calls[1].query)
+	}
+	if !strings.Contains(exec.calls[2].query, `"power""audit".capability_profile_verifications`) {
+		t.Fatalf("verification migration did not use quoted custom schema:\n%s", exec.calls[2].query)
+	}
+	if !strings.Contains(exec.calls[3].query, `ADD COLUMN IF NOT EXISTS dependency_graph jsonb`) {
+		t.Fatalf("planner artifact migration missing dependency graph column:\n%s", exec.calls[3].query)
 	}
 }
 
@@ -87,6 +93,93 @@ func TestSQLStoreWrapsMigrationErrors(t *testing.T) {
 	err = store.EnsureSchema(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "apply audit migration 1") {
 		t.Fatalf("expected wrapped migration error, got %v", err)
+	}
+}
+
+func TestSQLStoreEnforcesRetentionPolicy(t *testing.T) {
+	exec := &fakeExecutor{}
+	store, err := NewSQLStore(exec, SQLStoreOptions{
+		Retention: RetentionPolicy{
+			Events:    90 * 24 * time.Hour,
+			Telemetry: 14 * 24 * time.Hour,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewSQLStore returned error: %v", err)
+	}
+	now := time.Date(2026, 8, 2, 20, 0, 0, 0, time.UTC)
+
+	if err := store.EnforceRetention(context.Background(), now); err != nil {
+		t.Fatalf("EnforceRetention returned error: %v", err)
+	}
+
+	wantTables := append(append([]string{}, eventRetentionTables...), "ups_telemetry_snapshots")
+	if len(exec.calls) != len(wantTables) {
+		t.Fatalf("expected %d retention delete calls, got %d", len(wantTables), len(exec.calls))
+	}
+	for i, table := range wantTables {
+		call := exec.calls[i]
+		if !strings.Contains(call.query, `"power".`+table) {
+			t.Fatalf("retention query %d did not target %s:\n%s", i, table, call.query)
+		}
+		if !strings.Contains(call.query, "WHERE observed_at < $1") {
+			t.Fatalf("retention query %d missing cutoff predicate:\n%s", i, call.query)
+		}
+		cutoff, ok := call.args[0].(time.Time)
+		if !ok {
+			t.Fatalf("retention query %d cutoff was not time.Time: %#v", i, call.args[0])
+		}
+		wantCutoff := now.Add(-90 * 24 * time.Hour)
+		if table == "ups_telemetry_snapshots" {
+			wantCutoff = now.Add(-14 * 24 * time.Hour)
+		}
+		if !cutoff.Equal(wantCutoff) {
+			t.Fatalf("retention query %d cutoff = %s, want %s", i, cutoff, wantCutoff)
+		}
+	}
+}
+
+func TestSQLStoreSkipsDisabledRetentionPolicy(t *testing.T) {
+	exec := &fakeExecutor{}
+	store, err := NewSQLStore(exec, SQLStoreOptions{})
+	if err != nil {
+		t.Fatalf("NewSQLStore returned error: %v", err)
+	}
+
+	if err := store.EnforceRetention(context.Background(), time.Date(2026, 8, 2, 20, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("EnforceRetention returned error: %v", err)
+	}
+	if len(exec.calls) != 0 {
+		t.Fatalf("expected disabled retention to issue no SQL, got %d calls", len(exec.calls))
+	}
+}
+
+func TestSQLStoreRejectsInvalidRetentionPolicy(t *testing.T) {
+	store, err := NewSQLStore(&fakeExecutor{}, SQLStoreOptions{
+		Retention: RetentionPolicy{Events: -time.Second},
+	})
+	if err != nil {
+		t.Fatalf("NewSQLStore returned error: %v", err)
+	}
+
+	err = store.EnforceRetention(context.Background(), time.Date(2026, 8, 2, 20, 0, 0, 0, time.UTC))
+	if err == nil || !strings.Contains(err.Error(), "event retention duration") {
+		t.Fatalf("expected invalid retention error, got %v", err)
+	}
+}
+
+func TestSQLStoreWrapsRetentionErrors(t *testing.T) {
+	exec := &fakeExecutor{err: errors.New("delete failed")}
+	store, err := NewSQLStore(exec, SQLStoreOptions{
+		Retention: RetentionPolicy{Telemetry: time.Hour},
+	})
+	if err != nil {
+		t.Fatalf("NewSQLStore returned error: %v", err)
+	}
+
+	err = store.EnforceRetention(context.Background(), time.Date(2026, 8, 2, 20, 0, 0, 0, time.UTC))
+	if err == nil || !strings.Contains(err.Error(), "enforce audit retention for ups_telemetry_snapshots") {
+		t.Fatalf("expected wrapped retention error, got %v", err)
 	}
 }
 
@@ -168,6 +261,32 @@ func TestSQLStoreRecordsAllAuditPayloadTypes(t *testing.T) {
 			},
 		},
 		{
+			name:  "capability verification",
+			table: `"power".capability_profile_verifications`,
+			write: func() error {
+				return store.RecordCapabilityProfileVerification(context.Background(), CapabilityProfileVerification{
+					VerificationID:      "00000000-0000-4000-8000-00000000000c",
+					ObservedAt:          observedAt,
+					UPSDevice:           "rack-a-ups",
+					ProfileID:           "ubiquiti-unifi-ups-tower",
+					ProfileVersion:      "0.1.0",
+					ProfileSource:       "Bundled",
+					Model:               "UniFi UPS Tower",
+					Firmware:            "1.4.18",
+					NUTDriver:           "snmp-ups",
+					NUTServer:           "rack-a",
+					NUTName:             "ups",
+					Verified:            true,
+					DriftDetected:       false,
+					ProbeVariables:      map[string]string{"ups.model": "UniFi UPS Tower", "ups.firmware": "1.4.18"},
+					ExpectedVariables:   []string{"ups.status", "battery.charge"},
+					MissingVariables:    []string{},
+					UnexpectedVariables: []string{},
+					Details:             map[string]any{"probeAgeSeconds": float64(0)},
+				})
+			},
+		},
+		{
 			name:  "shutdown flow compilation",
 			table: `"power".shutdownflow_compilations`,
 			write: func() error {
@@ -180,6 +299,10 @@ func TestSQLStoreRecordsAllAuditPayloadTypes(t *testing.T) {
 					InputHash:          "input-a",
 					Accepted:           true,
 					CompiledWaves:      []map[string]any{{"index": 0}},
+					DependencyGraph:    map[string]any{"vertices": []any{"applications"}, "edges": []any{"applications-before-databases"}},
+					StartupWaves:       []map[string]any{{"index": 0}},
+					Explanations:       []map[string]any{{"reason": "PlanCompiled"}},
+					DiagramExports:     map[string]any{"mermaid": "flowchart TD"},
 				})
 			},
 		},
@@ -451,6 +574,71 @@ func TestSQLStoreRecordsJSONObjects(t *testing.T) {
 	}
 }
 
+func TestSQLStoreRecordsShutdownFlowCompilationArtifacts(t *testing.T) {
+	exec := &fakeExecutor{}
+	store, err := NewSQLStore(exec, SQLStoreOptions{})
+	if err != nil {
+		t.Fatalf("NewSQLStore returned error: %v", err)
+	}
+
+	err = store.RecordShutdownFlowCompilation(context.Background(), ShutdownFlowCompilation{
+		CompilationID:      "00000000-0000-4000-8000-000000000004",
+		ObservedAt:         time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC),
+		ShutdownFlow:       "conserve-power",
+		ResourceGeneration: 42,
+		ConfigHash:         "hash-a",
+		InputHash:          "input-a",
+		Accepted:           true,
+		CompiledWaves:      []map[string]any{{"index": float64(0)}},
+		DependencyGraph: map[string]any{
+			"vertices": []map[string]any{{"id": "applications"}},
+			"edges":    []map[string]any{{"from": "applications", "to": "databases"}},
+		},
+		StartupWaves:   []map[string]any{{"index": float64(0)}},
+		Explanations:   []map[string]any{{"reason": "PlanCompiled"}},
+		DiagramExports: map[string]any{"mermaid": "flowchart TD"},
+	})
+	if err != nil {
+		t.Fatalf("RecordShutdownFlowCompilation returned error: %v", err)
+	}
+	if len(exec.calls) != 1 {
+		t.Fatalf("expected one insert call, got %d", len(exec.calls))
+	}
+
+	call := exec.calls[0]
+	if len(call.args) != 13 {
+		t.Fatalf("expected 13 insert args, got %d", len(call.args))
+	}
+	var graph map[string][]map[string]string
+	if err := json.Unmarshal([]byte(call.args[9].(string)), &graph); err != nil {
+		t.Fatalf("dependency graph was not valid JSON: %v", err)
+	}
+	if graph["vertices"][0]["id"] != "applications" || graph["edges"][0]["to"] != "databases" {
+		t.Fatalf("unexpected dependency graph payload: %#v", graph)
+	}
+	var startupWaves []map[string]float64
+	if err := json.Unmarshal([]byte(call.args[10].(string)), &startupWaves); err != nil {
+		t.Fatalf("startup waves were not valid JSON: %v", err)
+	}
+	if startupWaves[0]["index"] != 0 {
+		t.Fatalf("unexpected startup waves payload: %#v", startupWaves)
+	}
+	var explanations []map[string]string
+	if err := json.Unmarshal([]byte(call.args[11].(string)), &explanations); err != nil {
+		t.Fatalf("explanations were not valid JSON: %v", err)
+	}
+	if explanations[0]["reason"] != "PlanCompiled" {
+		t.Fatalf("unexpected explanations payload: %#v", explanations)
+	}
+	var diagrams map[string]string
+	if err := json.Unmarshal([]byte(call.args[12].(string)), &diagrams); err != nil {
+		t.Fatalf("diagram exports were not valid JSON: %v", err)
+	}
+	if diagrams["mermaid"] != "flowchart TD" {
+		t.Fatalf("unexpected diagram exports payload: %#v", diagrams)
+	}
+}
+
 func TestSQLStoreRecordsRejectedCompilationWithoutConfigHash(t *testing.T) {
 	exec := &fakeExecutor{}
 	store, err := NewSQLStore(exec, SQLStoreOptions{})
@@ -494,6 +682,9 @@ func TestSQLStoreRejectsIncompleteRecords(t *testing.T) {
 
 	if err := store.RecordPowerEvent(context.Background(), PowerEvent{}); err == nil {
 		t.Fatal("expected incomplete power event to be rejected")
+	}
+	if err := store.RecordCapabilityProfileVerification(context.Background(), CapabilityProfileVerification{}); err == nil {
+		t.Fatal("expected incomplete capability profile verification to be rejected")
 	}
 	if err := store.RecordShutdownFlowCompilation(context.Background(), ShutdownFlowCompilation{
 		CompilationID: "00000000-0000-4000-8000-000000000004",

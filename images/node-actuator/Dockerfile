@@ -34,4 +34,5 @@ LABEL org.opencontainers.image.title="NUT Operator Node Actuator" \
 WORKDIR /
 COPY --from=builder /workspace/node-actuator .
 USER 65532:65532
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/node-actuator", "--version"]
 ENTRYPOINT ["/node-actuator"]

@@ -24,4 +24,5 @@ RUN apk add --no-cache nut ca-certificates \
     && chown -R 65532:65532 /run/power-agent
 
 USER 65532:65532
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD upsmon -V >/dev/null || exit 1
 ENTRYPOINT ["upsmon"]

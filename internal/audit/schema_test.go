@@ -26,13 +26,13 @@ func TestMigrationsRenderInitialPostgreSQLSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrations returned error: %v", err)
 	}
-	if len(migrations) != 2 {
-		t.Fatalf("expected two migrations, got %#v", migrations)
+	if len(migrations) != CurrentSchemaVersion {
+		t.Fatalf("expected %d migrations, got %#v", CurrentSchemaVersion, migrations)
 	}
 	if migrations[len(migrations)-1].Version != CurrentSchemaVersion {
 		t.Fatalf("expected current schema version %d, got %d", CurrentSchemaVersion, migrations[len(migrations)-1].Version)
 	}
-	combinedSQL := migrations[0].SQL + "\n" + migrations[1].SQL
+	combinedSQL := combinedMigrationSQL(migrations)
 	for _, want := range []string{
 		`CREATE SCHEMA IF NOT EXISTS "power";`,
 		`CREATE TABLE IF NOT EXISTS "power".power_events`,
@@ -49,6 +49,13 @@ func TestMigrationsRenderInitialPostgreSQLSchema(t *testing.T) {
 		`CREATE TABLE IF NOT EXISTS "power".node_release_records`,
 		`CREATE TABLE IF NOT EXISTS "power".node_signal_handoffs`,
 		`CREATE TABLE IF NOT EXISTS "power".executor_resume_states`,
+		`CREATE TABLE IF NOT EXISTS "power".capability_profile_verifications`,
+		`CREATE INDEX IF NOT EXISTS capability_profile_verifications_device_time_idx`,
+		`CREATE INDEX IF NOT EXISTS capability_profile_verifications_drift_time_idx`,
+		`ADD COLUMN IF NOT EXISTS dependency_graph jsonb`,
+		`ADD COLUMN IF NOT EXISTS startup_waves jsonb`,
+		`ADD COLUMN IF NOT EXISTS explanations jsonb`,
+		`ADD COLUMN IF NOT EXISTS diagram_exports jsonb`,
 	} {
 		if !strings.Contains(combinedSQL, want) {
 			t.Fatalf("migration SQL missing %q:\n%s", want, combinedSQL)
@@ -64,11 +71,21 @@ func TestMigrationsQuoteCustomSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrations returned error: %v", err)
 	}
-	combinedSQL := migrations[0].SQL + "\n" + migrations[1].SQL
+	combinedSQL := combinedMigrationSQL(migrations)
 	if !strings.Contains(combinedSQL, `CREATE SCHEMA IF NOT EXISTS "power""audit";`) ||
-		!strings.Contains(combinedSQL, `"power""audit".shutdownflow_executions`) {
+		!strings.Contains(combinedSQL, `"power""audit".shutdownflow_executions`) ||
+		!strings.Contains(combinedSQL, `"power""audit".capability_profile_verifications`) {
 		t.Fatalf("expected custom schema to be quoted safely:\n%s", combinedSQL)
 	}
+}
+
+func combinedMigrationSQL(migrations []Migration) string {
+	var builder strings.Builder
+	for _, migration := range migrations {
+		builder.WriteString(migration.SQL)
+		builder.WriteByte('\n')
+	}
+	return builder.String()
 }
 
 func TestMigrationsRejectEmptyQuotedIdentifier(t *testing.T) {

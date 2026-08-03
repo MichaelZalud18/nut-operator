@@ -87,6 +87,7 @@ type Wave struct {
 type Group struct {
 	Name            string
 	Action          string
+	Params          map[string]string
 	SelectedTargets []Target
 	NodeReleases    []NodeRelease
 	Details         map[string]any
@@ -94,9 +95,10 @@ type Group struct {
 
 // Target is an execution-time concrete object selected for an action.
 type Target struct {
-	Kind      string
-	Namespace string
-	Name      string
+	APIVersion string
+	Kind       string
+	Namespace  string
+	Name       string
 }
 
 // NodeRelease describes a terminal node-agent handoff candidate.
@@ -388,6 +390,7 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 		Details: mergeDetails(group.Details, map[string]any{
 			"dryRun":  dryRun,
 			"outcome": outcome.Outcome,
+			"params":  copyStringMap(group.Params),
 		}),
 	})
 	recordErr = errors.Join(recordErr, writer.RecordShutdownFlowActionAttempt(ctx, audit.ShutdownFlowActionAttempt{
@@ -519,10 +522,24 @@ func auditTargets(targets []Target) []map[string]string {
 			"kind": target.Kind,
 			"name": target.Name,
 		}
+		if target.APIVersion != "" {
+			entry["apiVersion"] = target.APIVersion
+		}
 		if target.Namespace != "" {
 			entry["namespace"] = target.Namespace
 		}
 		out = append(out, entry)
+	}
+	return out
+}
+
+func copyStringMap(value map[string]string) map[string]string {
+	if value == nil {
+		return nil
+	}
+	out := make(map[string]string, len(value))
+	for key, item := range value {
+		out[key] = item
 	}
 	return out
 }

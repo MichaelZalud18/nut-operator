@@ -531,6 +531,12 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 					EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: resource.NewQuantity(16*1024*1024, resource.BinarySI)},
 				},
 			},
+			{
+				Name: "upsmon-run",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: resource.NewQuantity(16*1024*1024, resource.BinarySI)},
+				},
+			},
 		}
 		daemonSet.Spec.Template.Spec.Containers = []corev1.Container{
 			{
@@ -544,6 +550,7 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "nut-client-config", MountPath: "/etc/nut/nut.conf", SubPath: nodePowerAgentConfigFile, ReadOnly: true},
 					{Name: "upsmon-config", MountPath: "/etc/nut/upsmon.conf", SubPath: upsmonConfigFile, ReadOnly: true},
+					{Name: "upsmon-run", MountPath: "/run"},
 					{Name: "power-agent-run", MountPath: "/run/power-agent"},
 				},
 			},
@@ -557,6 +564,12 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				Env: []corev1.EnvVar{
 					{Name: "POWER_AGENT_MODE", Value: string(nodePowerAgentMode(agent))},
 					{Name: "POWER_ACTUATOR_POLICY", Value: string(nodePowerAgentActuatorPolicy(agent))},
+					{
+						Name: "POWER_NODE_NAME",
+						ValueFrom: &corev1.EnvVarSource{
+							FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"},
+						},
+					},
 					{Name: "POWER_SIGNAL_PATH", Value: nodePowerAgentSignalPath(agent)},
 					{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
 				},

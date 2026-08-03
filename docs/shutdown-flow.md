@@ -42,6 +42,8 @@ spec:
   groups:
     - name: applications
       action: ScaleWorkload
+      params:
+        replicas: "0"
       target:
         namespaceSelector:
           matchLabels:
@@ -52,6 +54,8 @@ spec:
 
     - name: databases
       action: ScaleWorkload
+      params:
+        replicas: "0"
       target:
         workloadSelector:
           matchLabels:
@@ -62,6 +66,8 @@ spec:
 
     - name: storage
       action: RunWorkflow
+      params:
+        workflow.templateRef: flush-storage
       target:
         namespaces: [storage]
       before: [standard-nodes]

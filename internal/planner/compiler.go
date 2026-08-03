@@ -48,26 +48,35 @@ func Compile(structural StructuralInputs, telemetry TelemetryInputs) (Plan, []Di
 
 	var plan Plan
 	if len(normalized.Groups) > 0 {
-		steps, waves, duration := compileGroups(normalized.Groups)
+		plan.Graph = buildGroupGraph(normalized.Groups)
+		steps, waves, duration := compileGroups(normalized.Groups, plan.Graph)
 		plan.Steps = steps
 		plan.Waves = waves
+		plan.StartupWaves = advisoryStartupWaves(waves)
 		plan.EstimatedDuration = Duration{Duration: duration}
 	} else {
+		plan.Graph = buildStepGraph(normalized.Steps)
 		steps, duration := compileSteps(normalized.Steps)
 		plan.Steps = steps
 		plan.EstimatedDuration = Duration{Duration: duration}
 	}
+	plan.Explanations = graphExplanations(plan.Graph, len(plan.Waves), len(plan.StartupWaves))
+	plan.Diagrams = renderDiagramExports(plan.Graph)
 	plan.Feasibility = advisoryFeasibility(telemetry)
 	plan.StructuralHash = stableHash(normalized)
 	plan.Hash = stableHash(struct {
 		StructuralHash string         `json:"structuralHash"`
 		Steps          []CompiledStep `json:"steps,omitempty"`
 		Waves          []Wave         `json:"waves,omitempty"`
+		StartupWaves   []Wave         `json:"startupWaves,omitempty"`
+		Graph          Graph          `json:"graph,omitempty"`
 		Duration       Duration       `json:"estimatedDuration,omitempty"`
 	}{
 		StructuralHash: plan.StructuralHash,
 		Steps:          plan.Steps,
 		Waves:          plan.Waves,
+		StartupWaves:   plan.StartupWaves,
+		Graph:          plan.Graph,
 		Duration:       plan.EstimatedDuration,
 	})
 
@@ -162,10 +171,10 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 	return diagnostics
 }
 
-func compileGroups(groups []Group) ([]CompiledStep, []Wave, time.Duration) {
+func compileGroups(groups []Group, graph Graph) ([]CompiledStep, []Wave, time.Duration) {
 	byName := map[string]Group{}
 	indegree := map[string]int{}
-	edges := groupEdges(groups)
+	edges := graphSuccessors(graph)
 	for _, group := range groups {
 		byName[group.Name] = group
 		indegree[group.Name] = 0
@@ -272,18 +281,7 @@ func compileSteps(steps []Step) ([]CompiledStep, time.Duration) {
 }
 
 func groupEdges(groups []Group) map[string][]string {
-	edges := map[string][]string{}
-	for _, group := range groups {
-		edges[group.Name] = append(edges[group.Name], group.Requires...)
-		edges[group.Name] = append(edges[group.Name], group.Before...)
-		for _, after := range group.After {
-			edges[after] = append(edges[after], group.Name)
-		}
-	}
-	for key := range edges {
-		sort.Strings(edges[key])
-	}
-	return edges
+	return graphSuccessors(buildGroupGraph(groups))
 }
 
 func hasGroupCycle(groups []Group) bool {

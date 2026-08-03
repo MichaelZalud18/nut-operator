@@ -33,6 +33,14 @@ endif
 # scaffolded by default. However, you might want to replace it to use other
 # tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
+ASH ?= $(shell command -v ash 2>/dev/null || echo $(HOME)/.local/bin/ash)
+ASH_MODE ?= local
+ASH_OUTPUT_DIR ?= /tmp/nut-operator-ash-output
+ASH_OUTPUT_FORMATS ?= aggregated,markdown,sarif,flat-json,html,text
+UV_CACHE_DIR ?= /tmp/nut-operator-ash-uv-cache
+UV_TOOL_DIR ?= /tmp/nut-operator-ash-uv-tools
+export UV_CACHE_DIR
+export UV_TOOL_DIR
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -123,6 +131,10 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 .PHONY: lint-config
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
+
+.PHONY: security-scan
+security-scan: ## Run AWS Labs ASH security scan locally.
+	"$(ASH)" --mode "$(ASH_MODE)" --source-dir "$(CURDIR)" --output-dir "$(ASH_OUTPUT_DIR)" --output-formats "$(ASH_OUTPUT_FORMATS)" --no-progress
 
 ##@ Build
 

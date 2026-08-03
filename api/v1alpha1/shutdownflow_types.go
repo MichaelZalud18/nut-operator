@@ -77,6 +77,10 @@ type ShutdownFlowStatus struct {
 	// +optional
 	CompiledWaves []CompiledShutdownWave `json:"compiledWaves,omitempty"`
 
+	// publishedArtifact is the structured planner artifact published for subscribers.
+	// +optional
+	PublishedArtifact *PublishedPlannerArtifactStatus `json:"publishedArtifact,omitempty"`
+
 	// estimatedDuration is the cumulative expected duration of the compiled plan.
 	// +optional
 	EstimatedDuration *metav1.Duration `json:"estimatedDuration,omitempty"`
@@ -571,6 +575,137 @@ type CompiledShutdownWave struct {
 	// cumulativeDuration is the expected elapsed time through this wave.
 	// +optional
 	CumulativeDuration *metav1.Duration `json:"cumulativeDuration,omitempty"`
+}
+
+// PublishedPlannerArtifactStatus is the compact Kubernetes status view of the planner artifact.
+type PublishedPlannerArtifactStatus struct {
+	// graph is the normalized dependency graph.
+	// +optional
+	Graph PlannerGraphStatus `json:"graph,omitempty"`
+
+	// startupWaves is the advisory reverse-order projection for subscriber-owned recovery.
+	// +optional
+	StartupWaves []CompiledShutdownWave `json:"startupWaves,omitempty"`
+
+	// explanations record planner and edge-level "why" statements.
+	// +optional
+	Explanations []PlannerExplanationStatus `json:"explanations,omitempty"`
+
+	// diagrams are deterministic renderings generated from graph.
+	// +optional
+	Diagrams PlannerDiagramExportsStatus `json:"diagrams,omitempty"`
+}
+
+// PlannerGraphStatus is the normalized dependency graph status shape.
+type PlannerGraphStatus struct {
+	// vertices are graph nodes.
+	// +optional
+	Vertices []PlannerGraphVertexStatus `json:"vertices,omitempty"`
+
+	// edges are directed dependencies from from to to.
+	// +optional
+	Edges []PlannerGraphEdgeStatus `json:"edges,omitempty"`
+}
+
+// PlannerGraphVertexStatus is one normalized graph vertex.
+type PlannerGraphVertexStatus struct {
+	// id is the stable graph vertex id.
+	ID string `json:"id"`
+
+	// kind identifies the source vertex kind.
+	// +optional
+	Kind string `json:"kind,omitempty"`
+
+	// label is the human-readable vertex label.
+	// +optional
+	Label string `json:"label,omitempty"`
+
+	// action is the compiled shutdown action associated with the vertex.
+	// +optional
+	Action string `json:"action,omitempty"`
+
+	// phase is the shutdown phase hint, when present.
+	// +optional
+	Phase *int32 `json:"phase,omitempty"`
+
+	// targetSummary summarizes selected targets without storing bulky object lists.
+	// +optional
+	TargetSummary string `json:"targetSummary,omitempty"`
+}
+
+// PlannerGraphEdgeStatus is one normalized graph edge.
+type PlannerGraphEdgeStatus struct {
+	// id is the stable graph edge id.
+	ID string `json:"id"`
+
+	// from is the source graph vertex id.
+	From string `json:"from"`
+
+	// to is the destination graph vertex id.
+	To string `json:"to"`
+
+	// relation is the planner relation that produced this edge.
+	// +optional
+	Relation string `json:"relation,omitempty"`
+
+	// provenance records whether the edge was declared, derived, or policy-produced.
+	// +optional
+	Provenance string `json:"provenance,omitempty"`
+
+	// sources identify the declarative fields that produced this edge.
+	// +optional
+	Sources []PlannerGraphSourceRefStatus `json:"sources,omitempty"`
+
+	// explanation is the stable publishable reason for this edge.
+	// +optional
+	Explanation string `json:"explanation,omitempty"`
+}
+
+// PlannerGraphSourceRefStatus identifies a declarative source for a graph edge.
+type PlannerGraphSourceRefStatus struct {
+	// kind identifies the source input kind.
+	// +optional
+	Kind string `json:"kind,omitempty"`
+
+	// name identifies the source input object or item.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// field identifies the source input field.
+	// +optional
+	Field string `json:"field,omitempty"`
+}
+
+// PlannerExplanationStatus is a publishable planner "why" statement.
+type PlannerExplanationStatus struct {
+	// id is the stable explanation id.
+	ID string `json:"id"`
+
+	// subject identifies the graph edge, wave, or planner object explained.
+	// +optional
+	Subject string `json:"subject,omitempty"`
+
+	// reason is a machine-readable explanation reason.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// message is the human-readable explanation.
+	Message string `json:"message"`
+}
+
+// PlannerDiagramExportsStatus holds deterministic graph renderings.
+type PlannerDiagramExportsStatus struct {
+	// mermaid is the Mermaid flowchart rendering.
+	// +optional
+	Mermaid string `json:"mermaid,omitempty"`
+
+	// graphvizDOT is the Graphviz DOT rendering.
+	// +optional
+	GraphvizDOT string `json:"graphvizDOT,omitempty"`
+
+	// d2 is the D2 rendering.
+	// +optional
+	D2 string `json:"d2,omitempty"`
 }
 
 // ShutdownFlowPhase summarizes flow compilation and evaluation.

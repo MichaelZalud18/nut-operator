@@ -38,6 +38,8 @@ spec:
     - name: application-workloads
       action: ScaleWorkload
       description: Scale non-critical apps before node drain.
+      params:
+        replicas: "0"
       target:
         namespaceSelector:
           matchLabels:

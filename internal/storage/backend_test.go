@@ -18,6 +18,9 @@ package storage
 
 import (
 	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
@@ -70,6 +73,8 @@ func TestResolveExternalPostgresStorage(t *testing.T) {
 }
 
 func TestResolveCNPGStorage(t *testing.T) {
+	eventRetention := metav1.Duration{Duration: 90 * 24 * time.Hour}
+	telemetryRetention := metav1.Duration{Duration: 14 * 24 * time.Hour}
 	backend, err := Resolve(powerv1alpha1.PowerStorageSpec{
 		Mode: powerv1alpha1.PowerStorageCNPG,
 		CNPG: &powerv1alpha1.CNPGStorageSpec{
@@ -78,6 +83,10 @@ func TestResolveCNPGStorage(t *testing.T) {
 				Name:      "power-audit",
 			},
 			Schema: "audit",
+		},
+		Retention: &powerv1alpha1.AuditRetentionSpec{
+			Events:    &eventRetention,
+			Telemetry: &telemetryRetention,
 		},
 	})
 	if err != nil {
@@ -95,6 +104,9 @@ func TestResolveCNPGStorage(t *testing.T) {
 	if backend.CNPG == nil || backend.CNPG.Database != "power" {
 		t.Fatalf("expected CNPG backend with default database, got %#v", backend.CNPG)
 	}
+	if backend.Retention.Events != 90*24*time.Hour || backend.Retention.Telemetry != 14*24*time.Hour {
+		t.Fatalf("expected retention policy to resolve, got %#v", backend.Retention)
+	}
 }
 
 func TestResolveRejectsIncompleteStorage(t *testing.T) {
@@ -106,5 +118,14 @@ func TestResolveRejectsIncompleteStorage(t *testing.T) {
 	}
 	if _, err := Resolve(powerv1alpha1.PowerStorageSpec{Mode: powerv1alpha1.PowerStorageMode("SQLite")}); err == nil {
 		t.Fatal("expected unsupported storage mode to be rejected")
+	}
+	negative := metav1.Duration{Duration: -time.Minute}
+	if _, err := Resolve(powerv1alpha1.PowerStorageSpec{
+		Mode: powerv1alpha1.PowerStorageDisabled,
+		Retention: &powerv1alpha1.AuditRetentionSpec{
+			Events: &negative,
+		},
+	}); err == nil {
+		t.Fatal("expected negative retention to be rejected")
 	}
 }

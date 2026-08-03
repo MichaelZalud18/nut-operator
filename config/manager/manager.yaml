@@ -12,6 +12,9 @@ kind: Deployment
 metadata:
   name: controller-manager
   namespace: system
+  annotations:
+    checkov.io/skip1: CKV_K8S_43=Base manager image is replaced by Kustomize, release workflows, or GitOps overlays; production deployments use immutable digests.
+    checkov.io/skip2: CKV_K8S_38=The controller manager requires a Kubernetes API service account token to reconcile CRDs and owned resources.
   labels:
     control-plane: controller-manager
     app.kubernetes.io/name: nut-operator
@@ -30,6 +33,7 @@ spec:
         control-plane: controller-manager
         app.kubernetes.io/name: nut-operator
     spec:
+      automountServiceAccountToken: true
       # TODO(user): Uncomment the following code to configure the nodeAffinity expression
       # according to the platforms which are supported by your solution.
       # It is considered best practice to support multiple architectures. You can
@@ -63,7 +67,8 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
-        image: ghcr.io/michaelzalud18/nut-operator:main
+        image: controller:main
+        imagePullPolicy: Always
         name: manager
         ports:
         - containerPort: 8081

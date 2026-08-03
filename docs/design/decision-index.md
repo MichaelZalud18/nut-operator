@@ -49,7 +49,6 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | OD-10 | USB/serial support: version target and isolation model | — | v2 scoping |
 | OD-12 | Infeasible-plan policy field default and options | EX-3 | Planner design |
 | OD-14 | Partial-domain outage: cluster-wide vs domain-scoped plan (structure now available) | PL-16, PL-23, EX-10 | Planner design |
-| OD-15 | Probe-history table | — | Audit schema |
 | OD-16 | Missing `carries` coverage: error vs explicit exemption | Inventory validation | inventory contract |
 
 ### Closed
@@ -58,6 +57,7 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | --- | --- | --- |
 | OD-2 | Collapsed — one entity set, two edge relations; logical graph is compiled output | inventory contract |
 | OD-3 | Communication path modeled minimally as `carries` edges | IN-5 |
+| OD-15 | Capability profile probe history is persisted in PostgreSQL as `capability_profile_verifications` | Audit schema |
 | OD-1 | Recovery/startup execution is out of scope; external systems consume published artifacts | scope-boundaries |
 | OD-5 | Startup ordering is an advisory projection for subscribers, not operator-executed recovery | scope-boundaries |
 | OD-7 | Profiles are CRDs + bundled data; NetBox references at most | planner CR section |

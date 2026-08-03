@@ -105,6 +105,10 @@ type Plan struct {
 	StructuralHash    string         `json:"structuralHash,omitempty"`
 	Steps             []CompiledStep `json:"steps,omitempty"`
 	Waves             []Wave         `json:"waves,omitempty"`
+	StartupWaves      []Wave         `json:"startupWaves,omitempty"`
+	Graph             Graph          `json:"graph,omitempty"`
+	Explanations      []Explanation  `json:"explanations,omitempty"`
+	Diagrams          DiagramExports `json:"diagrams,omitempty"`
 	EstimatedDuration Duration       `json:"estimatedDuration,omitempty"`
 	Feasibility       Feasibility    `json:"feasibility,omitempty"`
 }
@@ -125,6 +129,56 @@ type Wave struct {
 	Groups             []string `json:"groups"`
 	Duration           Duration `json:"duration,omitempty"`
 	CumulativeDuration Duration `json:"cumulativeDuration,omitempty"`
+}
+
+// Graph is the normalized dependency graph artifact emitted by the planner.
+type Graph struct {
+	Vertices []GraphVertex `json:"vertices,omitempty"`
+	Edges    []GraphEdge   `json:"edges,omitempty"`
+}
+
+// GraphVertex is a normalized plan node. It is intentionally small enough to
+// publish through status and durable audit records.
+type GraphVertex struct {
+	ID            string `json:"id"`
+	Kind          string `json:"kind"`
+	Label         string `json:"label,omitempty"`
+	Action        string `json:"action,omitempty"`
+	Phase         *int32 `json:"phase,omitempty"`
+	TargetSummary string `json:"targetSummary,omitempty"`
+}
+
+// GraphEdge is a normalized directed dependency from From to To.
+type GraphEdge struct {
+	ID          string           `json:"id"`
+	From        string           `json:"from"`
+	To          string           `json:"to"`
+	Relation    string           `json:"relation"`
+	Provenance  string           `json:"provenance"`
+	Sources     []GraphSourceRef `json:"sources,omitempty"`
+	Explanation string           `json:"explanation"`
+}
+
+// GraphSourceRef points to the declarative input field that produced an edge.
+type GraphSourceRef struct {
+	Kind  string `json:"kind"`
+	Name  string `json:"name,omitempty"`
+	Field string `json:"field,omitempty"`
+}
+
+// Explanation is a publishable "why" statement for planner decisions.
+type Explanation struct {
+	ID      string `json:"id"`
+	Subject string `json:"subject,omitempty"`
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
+}
+
+// DiagramExports are deterministic renderings generated from Graph.
+type DiagramExports struct {
+	Mermaid     string `json:"mermaid,omitempty"`
+	GraphvizDOT string `json:"graphvizDOT,omitempty"`
+	D2          string `json:"d2,omitempty"`
 }
 
 // Diagnostic is a machine-readable warning or rejection from compilation.

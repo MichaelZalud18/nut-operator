@@ -348,9 +348,9 @@ excluded.
 **OD-8r · Provider key validation.** Resolver behavior when the topology provider supplies a
 malformed or missing model string: reject the device, floor-match with warning, or configurable.
 
-**OD-15 · Probe history persistence.** Profile drift detection implies a "last verified against
-firmware X" record. Per GP-3 that is a PostgreSQL record, not CR status — which adds a table to the
-audit schema that would not otherwise exist. Flag for the audit schema doc.
+**OD-15 · Probe history persistence is closed.** Profile drift detection writes "last verified
+against firmware X" and mismatch evidence to PostgreSQL capability profile verification records,
+not CR status.
 
 **OD-14 · Plan scope under partial-domain outage.** The design targets multiple UPS devices and
 multiple power domains, and triggers already reference `powerDomains`. If one domain loses power

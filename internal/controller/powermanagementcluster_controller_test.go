@@ -57,6 +57,7 @@ type fakeAuditStore struct {
 	powerEvents              []audit.PowerEvent
 	telemetrySnapshots       []audit.TelemetrySnapshot
 	capabilityProfileMatches []audit.CapabilityProfileMatch
+	capabilityVerifications  []audit.CapabilityProfileVerification
 	shutdownFlowCompilations []audit.ShutdownFlowCompilation
 	shutdownFlowDecisions    []audit.ShutdownFlowDecision
 	shutdownFlowExecutions   []audit.ShutdownFlowExecution
@@ -66,13 +67,20 @@ type fakeAuditStore struct {
 	nodeReleases             []audit.NodeReleaseRecord
 	nodeSignalHandoffs       []audit.NodeSignalHandoff
 	executorResumeStates     []audit.ExecutorResumeState
+	retentionRuns            []time.Time
 	closeCalls               int
 	eventErr                 error
+	retentionErr             error
 	closeErr                 error
 }
 
 func (s *fakeAuditStore) EnsureSchema(context.Context) error {
 	return nil
+}
+
+func (s *fakeAuditStore) EnforceRetention(_ context.Context, now time.Time) error {
+	s.retentionRuns = append(s.retentionRuns, now)
+	return s.retentionErr
 }
 
 func (s *fakeAuditStore) Close() error {
@@ -95,6 +103,11 @@ func (s *fakeAuditStore) RecordTelemetrySnapshot(_ context.Context, snapshot aud
 
 func (s *fakeAuditStore) RecordCapabilityProfileMatch(_ context.Context, match audit.CapabilityProfileMatch) error {
 	s.capabilityProfileMatches = append(s.capabilityProfileMatches, match)
+	return nil
+}
+
+func (s *fakeAuditStore) RecordCapabilityProfileVerification(_ context.Context, verification audit.CapabilityProfileVerification) error {
+	s.capabilityVerifications = append(s.capabilityVerifications, verification)
 	return nil
 }
 
@@ -253,6 +266,7 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 			Expect(status.Mode).To(Equal(powerv1alpha1.PowerStorageCNPG))
 			Expect(message).To(ContainSubstring("audit schema migration applied"))
 			Expect(auditConnector.opens).To(Equal(1))
+			Expect(auditConnector.store.retentionRuns).To(HaveLen(1))
 			Expect(auditConnector.store.closeCalls).To(Equal(1))
 		})
 
@@ -281,6 +295,39 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 			Expect(reason).To(Equal("AuditStoreNotReady"))
 			Expect(status.Ready).To(BeFalse())
 			Expect(message).To(ContainSubstring("audit store is not ready"))
+		})
+
+		It("reports retention failures as audit store readiness failures", func() {
+			store := &fakeAuditStore{retentionErr: errors.New("retention failed")}
+			reconciler := &PowerManagementClusterReconciler{
+				StorageConnector: &fakeAuditConnector{store: store},
+				Clock: func() time.Time {
+					return time.Date(2026, 8, 2, 20, 0, 0, 0, time.UTC)
+				},
+			}
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					Storage: powerv1alpha1.PowerStorageSpec{
+						Mode: powerv1alpha1.PowerStorageExternalPostgres,
+						ExternalPostgres: &powerv1alpha1.ExternalPostgresStorageSpec{
+							DSNSecretKeyRef: powerv1alpha1.SecretKeyReference{
+								Namespace: "power-data",
+								Name:      "power-postgres",
+								Key:       "uri",
+							},
+						},
+					},
+				},
+			}
+
+			status, ready, reason, message := reconciler.evaluateStorage(context.Background(), cluster, accepted("contract accepted"))
+
+			Expect(ready).To(BeFalse())
+			Expect(reason).To(Equal("AuditStoreNotReady"))
+			Expect(status.Ready).To(BeFalse())
+			Expect(message).To(ContainSubstring("retention failed"))
+			Expect(store.retentionRuns).To(HaveLen(1))
+			Expect(store.closeCalls).To(Equal(1))
 		})
 
 		It("records a PowerManagementCluster audit event when storage is ready", func() {

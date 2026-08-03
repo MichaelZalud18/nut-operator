@@ -93,6 +93,12 @@ executor makes no execution-time eligibility judgments.
 with PDB respect; withdraw traffic via Services; cordon before drain. Direct pod deletion only where
 the plan explicitly compiled an exceptional override.
 
+The Kubernetes action runner is the effectful boundary for these stock mechanisms. It scales
+`Deployment`, `StatefulSet`, and `ReplicaSet` targets, cordons `Node` targets, drains through the
+`pods/eviction` subresource, and creates provider-neutral workflow hook objects from explicit
+`RunWorkflow` parameters. The executor supplies concrete targets that were enumerated at execution
+time and records every action attempt.
+
 **EX-14 · Idempotent, resumable execution.** The executor may restart mid-flow (it is itself a
 workload in a cluster that is shutting down). Execution state sufficient to resume — current wave,
 group states, enumerated instances — is persisted such that a restarted executor continues rather

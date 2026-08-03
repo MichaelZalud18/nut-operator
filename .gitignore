@@ -37,3 +37,4 @@ go.work
 
 # Local scratch artifacts
 tmp/
+.ash/

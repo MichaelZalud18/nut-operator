@@ -67,6 +67,7 @@ Release artifacts include:
 
 - minimal non-root images
 - pinned base images
+- image healthchecks and Kubernetes liveness/readiness probes
 - SBOMs
 - vulnerability scans
 - signed images

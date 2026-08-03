@@ -28,6 +28,7 @@ Release images include:
 - checksum and signature verification for NUT source inputs, or pinned distro package provenance
 - OCI annotations such as `org.opencontainers.image.source`, `revision`, `version`, `licenses`, and `documentation`
 - non-root runtime users
+- image-level healthcheck instructions for container runtimes that honor OCI healthchecks
 - read-only root filesystem compatibility
 - `RuntimeDefault` seccomp compatibility
 - dropped Linux capabilities by default

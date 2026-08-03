@@ -65,8 +65,8 @@ substitution. The correction loop runs through a human profile edit, which arriv
 input change and triggers recompilation (PL-30).
 
 **RS-9 · Probe outcomes are audit records.** "Last verified against firmware X" and probe mismatch
-history persist to PostgreSQL per GP-3, not to CR status (OD-15). CR status carries at most the
-current drift condition.
+history persist to PostgreSQL per GP-3 in capability profile verification records, not to CR status.
+CR status carries at most the current drift condition.
 
 **RS-10 · Probe failure is not device failure.** An unreachable device at probe time raises a
 staleness condition on the drift check. It does not alter the device's profile, domain membership,
@@ -130,6 +130,5 @@ are strict.
 
 ## Open Decisions
 
-Owned or co-owned here: OD-8r (provider key policy — RS-6 carries the interim behavior), OD-15
-(probe history schema), OD-16 (missing `carries` coverage — validated at resolve time alongside
-PL-44 once decided).
+Owned or co-owned here: OD-8r (provider key policy — RS-6 carries the interim behavior) and OD-16
+(missing `carries` coverage — validated at resolve time alongside PL-44 once decided).

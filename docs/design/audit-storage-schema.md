@@ -11,6 +11,8 @@ PostgreSQL/CNPG credentials through the pgx `database/sql` driver.
 - `power_events`: operator decisions and power-domain events.
 - `ups_telemetry_snapshots`: raw UPS status snapshots and selected normalized fields.
 - `capability_profile_matches`: profile resolution outcomes and diagnostics.
+- `capability_profile_verifications`: probe-history records tying observed NUT variables, provider
+  identity, firmware, and drift diagnostics to one matched profile version.
 - `shutdownflow_compilations`: accepted or rejected planner compilations and compiled waves.
 - `shutdownflow_decisions`: dry-run or enforce decisions for power-event triggers.
 - `shutdownflow_executions`: executor runs tied to a compiled plan and trigger decision.
@@ -24,8 +26,8 @@ PostgreSQL/CNPG credentials through the pgx `database/sql` driver.
 ## Boundary
 
 CR status remains the current summary and review surface. PostgreSQL holds history, telemetry
-streams, profile-match records, accepted and rejected planner compilation records, shutdown
-decision records, and durable executor progress.
+streams, profile-match records, profile verification/probe-history records, accepted and rejected
+planner compilation records, shutdown decision records, and durable executor progress.
 
 The writer uses a narrow generic SQL executor interface, so CNPG and external PostgreSQL are
 connection-management choices rather than separate domain models. The storage resolver in
@@ -33,12 +35,28 @@ connection-management choices rather than separate domain models. The storage re
 domain validation and controller status.
 
 `PowerManagementCluster` reconciliation opens the configured audit store, pings PostgreSQL,
-applies bundled migrations, and records durable reconciliation events after status updates. Accepted
-`ShutdownFlow` reconciliations record planner compilation rows, capability profile match rows,
-trigger decisions, and eligible dry-run execution evidence through the referenced
-`PowerManagementCluster` storage backend. Rejected `ShutdownFlow` reconciliations record a
-compilation row with diagnostics and no accepted plan hash. Executor implementations use the
-execution, wave, group, action-attempt, release, handoff, and resume-state tables to make shutdown
-progress auditable and resumable without putting PostgreSQL on the host actuation boundary.
-External PostgreSQL requires TLS by default. CNPG mode reads the generated application credential
-Secret and prefers the FQDN URI when present.
+applies bundled migrations, evaluates configured retention, and records durable reconciliation
+events after status updates. Accepted `ShutdownFlow` reconciliations record planner compilation
+rows with the compiled waves, dependency graph, advisory startup waves, planner explanations, and
+diagram exports, plus capability profile match rows, capability profile verification rows, trigger
+decisions, and eligible dry-run execution evidence through the referenced `PowerManagementCluster`
+storage backend. Rejected `ShutdownFlow` reconciliations record a compilation row with diagnostics
+and no accepted plan hash. Executor implementations use the execution, wave, group,
+action-attempt, release, handoff, and resume-state tables to make shutdown progress auditable and
+resumable without putting PostgreSQL on the host actuation boundary. External PostgreSQL requires
+TLS by default. CNPG mode reads the generated application credential Secret and prefers the FQDN URI
+when present.
+
+## Retention
+
+Retention is configured on `PowerManagementCluster.spec.storage.retention`.
+
+- `events` prunes operator/audit event families: `power_events`, `capability_profile_matches`,
+  `capability_profile_verifications`, `shutdownflow_compilations`, `shutdownflow_decisions`, and
+  `shutdownflow_executions`.
+- `telemetry` prunes raw UPS telemetry snapshots in `ups_telemetry_snapshots`.
+
+Executor child tables use PostgreSQL `ON DELETE CASCADE` from `shutdownflow_executions`, so wave,
+group, action-attempt, node-release, signal-handoff, and resume-state rows expire with their parent
+execution. Unset or zero retention keeps that record family indefinitely. Negative retention values
+are rejected by storage resolution before a store is opened.
