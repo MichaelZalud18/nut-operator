@@ -22,10 +22,12 @@ import (
 )
 
 const (
-	ConditionAccepted    = "Accepted"
-	ConditionReady       = "Ready"
-	ConditionReconciling = "Reconciling"
-	ConditionDegraded    = "Degraded"
+	ConditionAccepted        = "Accepted"
+	ConditionReady           = "Ready"
+	ConditionReconciling     = "Reconciling"
+	ConditionDegraded        = "Degraded"
+	ConditionTriggerEligible = "TriggerEligible"
+	ConditionExecutionReady  = "ExecutionReady"
 )
 
 // ObjectNameReference references another cluster-scoped power.zalud.io object by name.

@@ -824,6 +824,90 @@ spec:
                 description: lastEvaluationTime is the most recent policy evaluation.
                 format: date-time
                 type: string
+              lastExecution:
+                description: lastExecution summarizes the most recent executor handoff
+                  and stores the active-trigger dedupe key.
+                properties:
+                  actionAttemptCount:
+                    description: actionAttemptCount records how many action attempts
+                      were recorded.
+                    format: int32
+                    type: integer
+                  completedAt:
+                    description: completedAt records when execution evidence recording
+                      finished.
+                    format: date-time
+                    type: string
+                  deduplicationKey:
+                    description: deduplicationKey identifies the active trigger episode
+                      and compiled plan this execution covers.
+                    type: string
+                  dryRun:
+                    description: dryRun is true when the executor suppressed all effectful
+                      actions.
+                    type: boolean
+                  executionID:
+                    description: executionID identifies the durable execution record.
+                    type: string
+                  groupCount:
+                    description: groupCount records how many groups produced execution
+                      evidence.
+                    format: int32
+                    type: integer
+                  message:
+                    description: message is a human-readable execution summary.
+                    type: string
+                  mode:
+                    description: mode is the flow mode observed at execution time.
+                    enum:
+                    - DryRun
+                    - Enforce
+                    type: string
+                  nodeReleaseCount:
+                    description: nodeReleaseCount records how many node release decisions
+                      were recorded.
+                    format: int32
+                    type: integer
+                  phase:
+                    description: phase summarizes the executor result.
+                    enum:
+                    - Running
+                    - Completed
+                    - Aborted
+                    - Failed
+                    - Skipped
+                    type: string
+                  planConfigHash:
+                    description: planConfigHash is the compiled plan hash executed.
+                    type: string
+                  reason:
+                    description: reason explains why the execution was started or
+                      skipped.
+                    type: string
+                  selectedUPSDevices:
+                    description: selectedUPSDevices is the sorted union of UPS devices
+                      that made the trigger eligible.
+                    items:
+                      type: string
+                    type: array
+                  startedAt:
+                    description: startedAt records when execution evidence recording
+                      began.
+                    format: date-time
+                    type: string
+                  triggerActive:
+                    description: triggerActive is true while the trigger episode represented
+                      by deduplicationKey remains eligible.
+                    type: boolean
+                  waveCount:
+                    description: waveCount records how many compiled waves were handed
+                      to the executor.
+                    format: int32
+                    type: integer
+                required:
+                - dryRun
+                - triggerActive
+                type: object
               observedGeneration:
                 description: observedGeneration is the last generation reconciled
                   by the controller.
@@ -848,6 +932,149 @@ spec:
                 description: topologyHash identifies the compiled declarative power
                   and communication topology.
                 type: string
+              triggerEvaluation:
+                description: triggerEvaluation is the most recent trigger evaluation
+                  against UPS telemetry status.
+                properties:
+                  decisions:
+                    description: decisions records one decision per configured trigger.
+                    items:
+                      description: ShutdownTriggerDecisionStatus records the evaluation
+                        result for one trigger.
+                      properties:
+                        eligible:
+                          description: eligible is true when the telemetry condition
+                            is true and hold-time gating has elapsed.
+                          type: boolean
+                        eligibleAt:
+                          description: eligibleAt records when the hold duration is
+                            satisfied.
+                          format: date-time
+                          type: string
+                        holdStartedAt:
+                          description: holdStartedAt records when this trigger/device
+                            condition first became true.
+                          format: date-time
+                          type: string
+                        matched:
+                          description: matched is true when the telemetry condition
+                            is currently true before hold-time gating.
+                          type: boolean
+                        reason:
+                          description: reason explains the decision.
+                          type: string
+                        selectedUPSDevices:
+                          description: selectedUPSDevices names UPS devices matched
+                            by this trigger.
+                          items:
+                            type: string
+                          type: array
+                        triggerID:
+                          description: triggerID is the controller-generated stable
+                            identifier for this trigger position.
+                          type: string
+                        type:
+                          description: type is the trigger kind.
+                          enum:
+                          - OnBattery
+                          - LowBattery
+                          - RuntimeBelow
+                          - ChargeBelow
+                          - TelemetryStale
+                          type: string
+                      required:
+                      - eligible
+                      - matched
+                      type: object
+                    type: array
+                  diagnostics:
+                    description: diagnostics records non-fatal warnings or trigger
+                      definition errors surfaced by evaluation.
+                    items:
+                      description: ShutdownTriggerDiagnosticStatus records a trigger-evaluation
+                        warning or error.
+                      properties:
+                        message:
+                          description: message is the human-readable diagnostic.
+                          type: string
+                        reason:
+                          description: reason is a machine-readable diagnostic reason.
+                          type: string
+                        severity:
+                          description: severity is Warning or Error.
+                          type: string
+                        subject:
+                          description: subject identifies the affected trigger or
+                            UPS device.
+                          type: string
+                      required:
+                      - message
+                      - reason
+                      - severity
+                      type: object
+                    type: array
+                  eligible:
+                    description: eligible is true when at least one trigger is eligible
+                      to proceed to the executor boundary.
+                    type: boolean
+                  matchedTriggerCount:
+                    description: matchedTriggerCount records how many triggers matched
+                      telemetry before hold-time gating.
+                    format: int32
+                    type: integer
+                  mode:
+                    description: mode is the flow mode at evaluation time.
+                    enum:
+                    - DryRun
+                    - Enforce
+                    type: string
+                  observedAt:
+                    description: observedAt is the controller-supplied time used for
+                      the evaluation.
+                    format: date-time
+                    type: string
+                  planConfigHash:
+                    description: planConfigHash is the compiled plan hash evaluated
+                      with this trigger tick.
+                    type: string
+                  reason:
+                    description: reason is the high-level evaluation reason.
+                    type: string
+                  selectedUPSDevices:
+                    description: selectedUPSDevices is the sorted union of UPS devices
+                      selected by eligible triggers.
+                    items:
+                      type: string
+                    type: array
+                required:
+                - eligible
+                type: object
+              triggerHoldStates:
+                description: triggerHoldStates persists compact hold timers for triggers
+                  with spec.triggers[].for.
+                items:
+                  description: ShutdownTriggerHoldStateStatus persists one active
+                    trigger hold timer.
+                  properties:
+                    startedAt:
+                      description: startedAt records when the condition first became
+                        true.
+                      format: date-time
+                      type: string
+                    triggerID:
+                      description: triggerID identifies the trigger whose condition
+                        is being held.
+                      type: string
+                    upsDevice:
+                      description: upsDevice is the UPSDevice name whose condition
+                        is being held.
+                      type: string
+                  required:
+                  - startedAt
+                  - triggerID
+                  - upsDevice
+                  type: object
+                type: array
             type: object
         required:
         - spec

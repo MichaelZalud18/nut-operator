@@ -109,6 +109,18 @@ type ShutdownFlowStatus struct {
 	// +optional
 	LastEvaluationTime *metav1.Time `json:"lastEvaluationTime,omitempty"`
 
+	// triggerEvaluation is the most recent trigger evaluation against UPS telemetry status.
+	// +optional
+	TriggerEvaluation *ShutdownTriggerEvaluationStatus `json:"triggerEvaluation,omitempty"`
+
+	// triggerHoldStates persists compact hold timers for triggers with spec.triggers[].for.
+	// +optional
+	TriggerHoldStates []ShutdownTriggerHoldStateStatus `json:"triggerHoldStates,omitempty"`
+
+	// lastExecution summarizes the most recent executor handoff and stores the active-trigger dedupe key.
+	// +optional
+	LastExecution *ShutdownExecutionStatus `json:"lastExecution,omitempty"`
+
 	// conditions represent the current state of the ShutdownFlow resource.
 	// +listType=map
 	// +listMapKey=type
@@ -165,6 +177,182 @@ type ShutdownTrigger struct {
 	// +optional
 	ChargeBelowPercent *int32 `json:"chargeBelowPercent,omitempty"`
 }
+
+// ShutdownTriggerEvaluationStatus summarizes one trigger evaluation tick.
+type ShutdownTriggerEvaluationStatus struct {
+	// observedAt is the controller-supplied time used for the evaluation.
+	// +optional
+	ObservedAt *metav1.Time `json:"observedAt,omitempty"`
+
+	// mode is the flow mode at evaluation time.
+	// +optional
+	Mode ShutdownFlowMode `json:"mode,omitempty"`
+
+	// eligible is true when at least one trigger is eligible to proceed to the executor boundary.
+	Eligible bool `json:"eligible"`
+
+	// reason is the high-level evaluation reason.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// matchedTriggerCount records how many triggers matched telemetry before hold-time gating.
+	// +optional
+	MatchedTriggerCount int32 `json:"matchedTriggerCount,omitempty"`
+
+	// selectedUPSDevices is the sorted union of UPS devices selected by eligible triggers.
+	// +optional
+	SelectedUPSDevices []string `json:"selectedUPSDevices,omitempty"`
+
+	// planConfigHash is the compiled plan hash evaluated with this trigger tick.
+	// +optional
+	PlanConfigHash string `json:"planConfigHash,omitempty"`
+
+	// decisions records one decision per configured trigger.
+	// +optional
+	Decisions []ShutdownTriggerDecisionStatus `json:"decisions,omitempty"`
+
+	// diagnostics records non-fatal warnings or trigger definition errors surfaced by evaluation.
+	// +optional
+	Diagnostics []ShutdownTriggerDiagnosticStatus `json:"diagnostics,omitempty"`
+}
+
+// ShutdownTriggerDecisionStatus records the evaluation result for one trigger.
+type ShutdownTriggerDecisionStatus struct {
+	// triggerID is the controller-generated stable identifier for this trigger position.
+	// +optional
+	TriggerID string `json:"triggerID,omitempty"`
+
+	// type is the trigger kind.
+	// +optional
+	Type ShutdownTriggerType `json:"type,omitempty"`
+
+	// matched is true when the telemetry condition is currently true before hold-time gating.
+	Matched bool `json:"matched"`
+
+	// eligible is true when the telemetry condition is true and hold-time gating has elapsed.
+	Eligible bool `json:"eligible"`
+
+	// reason explains the decision.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// selectedUPSDevices names UPS devices matched by this trigger.
+	// +optional
+	SelectedUPSDevices []string `json:"selectedUPSDevices,omitempty"`
+
+	// holdStartedAt records when this trigger/device condition first became true.
+	// +optional
+	HoldStartedAt *metav1.Time `json:"holdStartedAt,omitempty"`
+
+	// eligibleAt records when the hold duration is satisfied.
+	// +optional
+	EligibleAt *metav1.Time `json:"eligibleAt,omitempty"`
+}
+
+// ShutdownTriggerHoldStateStatus persists one active trigger hold timer.
+type ShutdownTriggerHoldStateStatus struct {
+	// triggerID identifies the trigger whose condition is being held.
+	TriggerID string `json:"triggerID"`
+
+	// upsDevice is the UPSDevice name whose condition is being held.
+	UPSDevice string `json:"upsDevice"`
+
+	// startedAt records when the condition first became true.
+	StartedAt metav1.Time `json:"startedAt"`
+}
+
+// ShutdownTriggerDiagnosticStatus records a trigger-evaluation warning or error.
+type ShutdownTriggerDiagnosticStatus struct {
+	// severity is Warning or Error.
+	Severity string `json:"severity"`
+
+	// reason is a machine-readable diagnostic reason.
+	Reason string `json:"reason"`
+
+	// subject identifies the affected trigger or UPS device.
+	// +optional
+	Subject string `json:"subject,omitempty"`
+
+	// message is the human-readable diagnostic.
+	Message string `json:"message"`
+}
+
+// ShutdownExecutionStatus summarizes the most recent executor run for a flow.
+type ShutdownExecutionStatus struct {
+	// executionID identifies the durable execution record.
+	// +optional
+	ExecutionID string `json:"executionID,omitempty"`
+
+	// deduplicationKey identifies the active trigger episode and compiled plan this execution covers.
+	// +optional
+	DeduplicationKey string `json:"deduplicationKey,omitempty"`
+
+	// triggerActive is true while the trigger episode represented by deduplicationKey remains eligible.
+	TriggerActive bool `json:"triggerActive"`
+
+	// phase summarizes the executor result.
+	// +optional
+	Phase ShutdownExecutionPhase `json:"phase,omitempty"`
+
+	// mode is the flow mode observed at execution time.
+	// +optional
+	Mode ShutdownFlowMode `json:"mode,omitempty"`
+
+	// dryRun is true when the executor suppressed all effectful actions.
+	DryRun bool `json:"dryRun"`
+
+	// planConfigHash is the compiled plan hash executed.
+	// +optional
+	PlanConfigHash string `json:"planConfigHash,omitempty"`
+
+	// selectedUPSDevices is the sorted union of UPS devices that made the trigger eligible.
+	// +optional
+	SelectedUPSDevices []string `json:"selectedUPSDevices,omitempty"`
+
+	// startedAt records when execution evidence recording began.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+
+	// completedAt records when execution evidence recording finished.
+	// +optional
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+
+	// waveCount records how many compiled waves were handed to the executor.
+	// +optional
+	WaveCount int32 `json:"waveCount,omitempty"`
+
+	// groupCount records how many groups produced execution evidence.
+	// +optional
+	GroupCount int32 `json:"groupCount,omitempty"`
+
+	// actionAttemptCount records how many action attempts were recorded.
+	// +optional
+	ActionAttemptCount int32 `json:"actionAttemptCount,omitempty"`
+
+	// nodeReleaseCount records how many node release decisions were recorded.
+	// +optional
+	NodeReleaseCount int32 `json:"nodeReleaseCount,omitempty"`
+
+	// reason explains why the execution was started or skipped.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// message is a human-readable execution summary.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// ShutdownExecutionPhase summarizes executor progress.
+// +kubebuilder:validation:Enum=Running;Completed;Aborted;Failed;Skipped
+type ShutdownExecutionPhase string
+
+const (
+	ShutdownExecutionPhaseRunning   ShutdownExecutionPhase = "Running"
+	ShutdownExecutionPhaseCompleted ShutdownExecutionPhase = "Completed"
+	ShutdownExecutionPhaseAborted   ShutdownExecutionPhase = "Aborted"
+	ShutdownExecutionPhaseFailed    ShutdownExecutionPhase = "Failed"
+	ShutdownExecutionPhaseSkipped   ShutdownExecutionPhase = "Skipped"
+)
 
 // ShutdownGroup defines a shutdown subject and its graph relationships.
 type ShutdownGroup struct {

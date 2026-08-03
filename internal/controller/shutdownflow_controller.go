@@ -37,6 +37,7 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
+	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 )
@@ -46,6 +47,7 @@ type ShutdownFlowReconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme
 	StorageConnector storageconfig.AuditStoreConnector
+	ExecutorRunner   executorpkg.ActionRunner
 	Clock            func() time.Time
 }
 
@@ -67,6 +69,8 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	observedAt := r.now()
+	reconcileResult := ctrl.Result{}
 	result := validateShutdownFlow(&flow)
 	var bundle resolver.StructuralBundle
 	var resolverDiagnostics []resolver.Diagnostic
@@ -85,11 +89,13 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	flow.Status.ObservedGeneration = flow.Generation
-	flow.Status.LastEvaluationTime = ptrNow()
+	evaluationTime := metav1.NewTime(observedAt)
+	flow.Status.LastEvaluationTime = &evaluationTime
 	var compiled []powerv1alpha1.CompiledShutdownStep
 	var compiledWaves []powerv1alpha1.CompiledShutdownWave
 	var estimatedDuration *metav1.Duration
 	var configHash string
+	var triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus
 	if result.accepted {
 		compiled, compiledWaves, estimatedDuration, configHash = compileShutdownFlowWithResolvedInputs(&flow, bundle)
 		if configHash == "" {
@@ -97,6 +103,14 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 	if result.accepted {
+		evaluation, status, holdStates, err := evaluateShutdownFlowTriggers(ctx, r.Client, &flow, observedAt, configHash)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("evaluate ShutdownFlow %q triggers: %w", flow.Name, err)
+		}
+		triggerEvaluation = status
+		if requeueAfter := triggerRequeueAfter(evaluation, observedAt); requeueAfter > 0 {
+			reconcileResult.RequeueAfter = requeueAfter
+		}
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseCompiled
 		flow.Status.CompiledSteps = compiled
 		flow.Status.CompiledWaves = compiledWaves
@@ -107,6 +121,8 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		flow.Status.InventoryEntityCount = int32(len(bundle.Topology.Entities))
 		flow.Status.InventoryEdgeCount = int32(len(bundle.Topology.Edges))
 		flow.Status.CapabilityMatchCount = int32(len(bundle.CapabilityMatches))
+		flow.Status.TriggerEvaluation = triggerEvaluation
+		flow.Status.TriggerHoldStates = holdStates
 	} else {
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseError
 		flow.Status.CompiledSteps = nil
@@ -118,6 +134,9 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		flow.Status.InventoryEntityCount = 0
 		flow.Status.InventoryEdgeCount = 0
 		flow.Status.CapabilityMatchCount = 0
+		flow.Status.TriggerEvaluation = nil
+		flow.Status.TriggerHoldStates = nil
+		deactivateLastExecution(&flow.Status.LastExecution)
 	}
 	setAcceptedCondition(&flow.Status.Conditions, flow.Generation, result)
 	degraded := !result.accepted
@@ -130,6 +149,16 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			degradedReason = warning.Reason
 			degradedMessage = warning.Message
 			readyMessage = "shutdown flow compiled with resolver warnings"
+		} else if diagnostic := firstTriggerDiagnostic(triggerEvaluation, "Error"); diagnostic != nil {
+			degraded = true
+			degradedReason = diagnostic.Reason
+			degradedMessage = diagnostic.Message
+			readyMessage = "shutdown flow compiled with trigger evaluation errors"
+		} else if diagnostic := firstTriggerDiagnostic(triggerEvaluation, "Warning"); diagnostic != nil {
+			degraded = true
+			degradedReason = diagnostic.Reason
+			degradedMessage = diagnostic.Message
+			readyMessage = "shutdown flow compiled with trigger evaluation warnings"
 		} else {
 			degradedReason = "NotDegraded"
 			degradedMessage = "shutdown flow compiled without resolver warnings"
@@ -143,30 +172,50 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		readyMessage,
 	)
 	setDegradedCondition(&flow.Status.Conditions, flow.Generation, degraded, degradedReason, degradedMessage)
+	if triggerEvaluation != nil {
+		setTriggerEligibleCondition(
+			&flow.Status.Conditions,
+			flow.Generation,
+			triggerEvaluation.Eligible,
+			triggerEvaluation.Reason,
+			triggerEligibleMessage(triggerEvaluation),
+		)
+	} else {
+		setTriggerEligibleCondition(
+			&flow.Status.Conditions,
+			flow.Generation,
+			false,
+			"FlowNotAccepted",
+			"shutdown flow triggers were not evaluated because the flow was not accepted",
+		)
+	}
+	setExecutionReadyCondition(
+		&flow.Status.Conditions,
+		flow.Generation,
+		false,
+		"TriggerNotEligible",
+		"shutdown flow execution has not started because no trigger is eligible",
+	)
+
+	if err := r.recordShutdownFlowAudit(ctx, &flow, result, resolverDiagnostics, bundle, compiledWaves, configHash, triggerEvaluation); err != nil {
+		log.Error(err, "failed to record ShutdownFlow audit records", "shutdownflow", flow.Name)
+	}
 
 	if err := r.Status().Update(ctx, &flow); err != nil {
 		log.Error(err, "failed to update ShutdownFlow status")
 		return ctrl.Result{}, err
 	}
 
-	if err := r.recordShutdownFlowAudit(ctx, &flow, result, resolverDiagnostics, bundle, compiledWaves, configHash); err != nil {
-		log.Error(err, "failed to record ShutdownFlow audit records", "shutdownflow", flow.Name)
-	}
-
-	return ctrl.Result{}, nil
-}
-
-func ptrNow() *metav1.Time {
-	now := metav1.Now()
-	return &now
+	return reconcileResult, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ShutdownFlowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	specChanged := builder.WithPredicates(predicate.GenerationChangedPredicate{})
+	flowChanged := builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{}, predicate.AnnotationChangedPredicate{}))
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&powerv1alpha1.ShutdownFlow{}, specChanged).
-		Watches(&powerv1alpha1.UPSDevice{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
+		For(&powerv1alpha1.ShutdownFlow{}, flowChanged).
+		Watches(&powerv1alpha1.UPSDevice{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange)).
 		Watches(&powerv1alpha1.PowerInfrastructure{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
 		Watches(&powerv1alpha1.PowerInventoryNode{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
 		Watches(&powerv1alpha1.PowerInventoryEdge{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
@@ -193,12 +242,21 @@ func (r *ShutdownFlowReconciler) shutdownFlowRequestsForInventoryChange(ctx cont
 	return requests
 }
 
-func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, result validationResult, diagnostics []resolver.Diagnostic, bundle resolver.StructuralBundle, compiledWaves []powerv1alpha1.CompiledShutdownWave, configHash string) error {
-	if flow == nil || !result.accepted || configHash == "" {
+func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, result validationResult, diagnostics []resolver.Diagnostic, bundle resolver.StructuralBundle, compiledWaves []powerv1alpha1.CompiledShutdownWave, configHash string, triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
+	if flow == nil {
 		return nil
 	}
 	cluster, err := r.getManagementCluster(ctx, flow)
 	if err != nil || cluster == nil || !managementClusterStorageReady(cluster) {
+		if result.accepted && triggerEvaluation != nil && triggerEvaluation.Eligible {
+			setExecutionReadyCondition(
+				&flow.Status.Conditions,
+				flow.Generation,
+				false,
+				"AuditStoreUnavailable",
+				"shutdown flow execution requires a ready PostgreSQL audit store",
+			)
+		}
 		return err
 	}
 
@@ -215,25 +273,29 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 		ResourceGeneration: flow.Generation,
 		ConfigHash:         configHash,
 		InputHash:          bundle.Hash,
-		Accepted:           true,
-		Diagnostics:        auditDiagnosticsFromResolver(diagnostics),
+		Accepted:           result.accepted,
+		Diagnostics:        auditDiagnosticsForCompilation(result, diagnostics),
 		CompiledWaves:      compiledWaves,
 	})
-	for _, match := range bundle.CapabilityMatches {
-		err := store.RecordCapabilityProfileMatch(ctx, audit.CapabilityProfileMatch{
-			MatchID:        uuid.NewString(),
-			ObservedAt:     observedAt,
-			UPSDevice:      match.DeviceID,
-			ProfileID:      match.ProfileID,
-			ProfileVersion: match.ProfileVersion,
-			ProfileSource:  string(match.ProfileSource),
-			MatchTier:      string(match.Tier),
-			Fallback:       match.Fallback,
-			Diagnostics:    auditDiagnosticsForCapabilityMatch(diagnostics, match.DeviceID),
-		})
-		if err != nil {
-			recordErr = errors.Join(recordErr, err)
+	if result.accepted {
+		for _, match := range bundle.CapabilityMatches {
+			err := store.RecordCapabilityProfileMatch(ctx, audit.CapabilityProfileMatch{
+				MatchID:        uuid.NewString(),
+				ObservedAt:     observedAt,
+				UPSDevice:      match.DeviceID,
+				ProfileID:      match.ProfileID,
+				ProfileVersion: match.ProfileVersion,
+				ProfileSource:  string(match.ProfileSource),
+				MatchTier:      string(match.Tier),
+				Fallback:       match.Fallback,
+				Diagnostics:    auditDiagnosticsForCapabilityMatch(diagnostics, match.DeviceID),
+			})
+			if err != nil {
+				recordErr = errors.Join(recordErr, err)
+			}
 		}
+		recordErr = errors.Join(recordErr, recordShutdownFlowDecisions(ctx, store, flow, observedAt, configHash, triggerEvaluation))
+		recordErr = errors.Join(recordErr, r.recordShutdownFlowExecution(ctx, store, flow, observedAt, bundle.Hash, configHash, triggerEvaluation))
 	}
 	closeErr := store.Close()
 	if recordErr != nil || closeErr != nil {
@@ -293,6 +355,24 @@ func auditDiagnosticsFromResolver(diagnostics []resolver.Diagnostic) []audit.Dia
 	return records
 }
 
+func auditDiagnosticsForCompilation(result validationResult, diagnostics []resolver.Diagnostic) []audit.DiagnosticRecord {
+	records := auditDiagnosticsFromResolver(diagnostics)
+	if result.accepted {
+		return records
+	}
+	for _, record := range records {
+		if record.Severity == resolver.DiagnosticError && record.Reason == result.reason {
+			return records
+		}
+	}
+	return append(records, audit.DiagnosticRecord{
+		Severity: resolver.DiagnosticError,
+		Source:   "Validation",
+		Reason:   result.reason,
+		Message:  result.message,
+	})
+}
+
 func auditDiagnosticsForCapabilityMatch(diagnostics []resolver.Diagnostic, deviceID string) []audit.DiagnosticRecord {
 	var filtered []resolver.Diagnostic
 	for _, diagnostic := range diagnostics {
@@ -317,4 +397,81 @@ func firstResolverDiagnostic(diagnostics []resolver.Diagnostic, severity string)
 		}
 	}
 	return nil
+}
+
+func firstTriggerDiagnostic(evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, severity string) *powerv1alpha1.ShutdownTriggerDiagnosticStatus {
+	if evaluation == nil {
+		return nil
+	}
+	for i := range evaluation.Diagnostics {
+		if evaluation.Diagnostics[i].Severity == severity {
+			return &evaluation.Diagnostics[i]
+		}
+	}
+	return nil
+}
+
+func triggerEligibleMessage(evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) string {
+	if evaluation == nil {
+		return "shutdown flow triggers were not evaluated"
+	}
+	if evaluation.Eligible {
+		return fmt.Sprintf("shutdown flow trigger evaluation is eligible on %d UPS device(s)", len(evaluation.SelectedUPSDevices))
+	}
+	return fmt.Sprintf("shutdown flow trigger evaluation is not eligible: %s", evaluation.Reason)
+}
+
+func recordShutdownFlowDecisions(ctx context.Context, store audit.Store, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
+	if store == nil || flow == nil || evaluation == nil {
+		return nil
+	}
+	var recordErr error
+	for _, decision := range evaluation.Decisions {
+		err := store.RecordShutdownFlowDecision(ctx, audit.ShutdownFlowDecision{
+			DecisionID:         uuid.NewString(),
+			ObservedAt:         observedAt,
+			ShutdownFlow:       flow.Name,
+			TriggerType:        string(decision.Type),
+			Mode:               string(evaluation.Mode),
+			Approved:           decision.Eligible,
+			Decision:           shutdownFlowDecisionName(decision),
+			Reason:             decision.Reason,
+			SelectedUPSDevices: decision.SelectedUPSDevices,
+			PlanConfigHash:     configHash,
+			Details:            shutdownFlowDecisionDetails(evaluation, decision),
+		})
+		if err != nil {
+			recordErr = errors.Join(recordErr, err)
+		}
+	}
+	return recordErr
+}
+
+func shutdownFlowDecisionName(decision powerv1alpha1.ShutdownTriggerDecisionStatus) string {
+	switch {
+	case decision.Eligible:
+		return "Eligible"
+	case decision.Matched:
+		return "HoldPending"
+	default:
+		return "NotMatched"
+	}
+}
+
+func shutdownFlowDecisionDetails(evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, decision powerv1alpha1.ShutdownTriggerDecisionStatus) map[string]any {
+	details := map[string]any{
+		"flowEligible":        evaluation.Eligible,
+		"evaluationReason":    evaluation.Reason,
+		"matchedTriggerCount": evaluation.MatchedTriggerCount,
+	}
+	if decision.HoldStartedAt != nil {
+		details["holdStartedAt"] = decision.HoldStartedAt.Time.UTC().Format(time.RFC3339Nano)
+	}
+	if decision.EligibleAt != nil {
+		details["eligibleAt"] = decision.EligibleAt.Time.UTC().Format(time.RFC3339Nano)
+	}
+	if len(evaluation.Diagnostics) > 0 {
+		details["diagnostics"] = evaluation.Diagnostics
+	}
+	return details
 }

@@ -67,3 +67,33 @@ func setDegradedCondition(conditions *[]metav1.Condition, generation int64, degr
 		Message:            message,
 	})
 }
+
+func setTriggerEligibleCondition(conditions *[]metav1.Condition, generation int64, eligible bool, reason, message string) {
+	status := metav1.ConditionFalse
+	if eligible {
+		status = metav1.ConditionTrue
+	}
+
+	meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               powerv1alpha1.ConditionTriggerEligible,
+		Status:             status,
+		ObservedGeneration: generation,
+		Reason:             reason,
+		Message:            message,
+	})
+}
+
+func setExecutionReadyCondition(conditions *[]metav1.Condition, generation int64, ready bool, reason, message string) {
+	status := metav1.ConditionFalse
+	if ready {
+		status = metav1.ConditionTrue
+	}
+
+	meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               powerv1alpha1.ConditionExecutionReady,
+		Status:             status,
+		ObservedGeneration: generation,
+		Reason:             reason,
+		Message:            message,
+	})
+}

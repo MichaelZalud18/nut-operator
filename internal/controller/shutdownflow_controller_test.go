@@ -39,6 +39,7 @@ const (
 	shutdownFlowTestResourceName         = "test-shutdownflow"
 	shutdownFlowTestUPSName              = "test-resolver-ups"
 	shutdownFlowTestSwitchName           = "test-resolver-switch"
+	shutdownFlowTestPowerClusterName     = "test-resolver-power-cluster"
 	shutdownFlowTestNodeInventoryName    = "test-resolver-node-inventory"
 	shutdownFlowTestNodeName             = "test-resolver-node"
 	shutdownFlowTestFeedsEdgeName        = "test-resolver-ups-feeds-node"
@@ -126,6 +127,169 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.InventoryEntityCount).To(Equal(int32(3)))
 			Expect(resource.Status.InventoryEdgeCount).To(Equal(int32(2)))
 			Expect(resource.Status.CapabilityMatchCount).To(Equal(int32(1)))
+		})
+
+		It("evaluates trigger eligibility from UPSDevice telemetry status", func() {
+			observedAt := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+			pollTime := metav1.NewTime(observedAt.Add(-10 * time.Second))
+			device := &powerv1alpha1.UPSDevice{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery
+			device.Status.LastPollTime = &pollTime
+			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+
+			controllerReconciler := &ShutdownFlowReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				Clock: func() time.Time {
+					return observedAt
+				},
+			}
+
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.TriggerEvaluation).NotTo(BeNil())
+			Expect(resource.Status.TriggerEvaluation.Eligible).To(BeTrue())
+			Expect(resource.Status.TriggerEvaluation.Reason).To(Equal("TriggerEligible"))
+			Expect(resource.Status.TriggerEvaluation.SelectedUPSDevices).To(ConsistOf(shutdownFlowTestUPSName))
+			Expect(resource.Status.TriggerEvaluation.PlanConfigHash).To(Equal(resource.Status.ConfigHash))
+			triggerEligible := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionTriggerEligible)
+			Expect(triggerEligible).NotTo(BeNil())
+			Expect(triggerEligible.Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("persists trigger hold state and requeues until the hold duration elapses", func() {
+			startedAt := time.Date(2026, 8, 2, 10, 30, 0, 0, time.UTC)
+			holdDuration := metav1.Duration{Duration: 5 * time.Minute}
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.Triggers[0].For = &holdDuration
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			pollTime := metav1.NewTime(startedAt.Add(-10 * time.Second))
+			device := &powerv1alpha1.UPSDevice{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery
+			device.Status.LastPollTime = &pollTime
+			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+
+			controllerReconciler := &ShutdownFlowReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				Clock: func() time.Time {
+					return startedAt
+				},
+			}
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(5 * time.Minute))
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.TriggerEvaluation).NotTo(BeNil())
+			Expect(resource.Status.TriggerEvaluation.Eligible).To(BeFalse())
+			Expect(resource.Status.TriggerEvaluation.Reason).To(Equal("TriggerHoldPending"))
+			Expect(resource.Status.TriggerHoldStates).To(HaveLen(1))
+			Expect(resource.Status.TriggerHoldStates[0].StartedAt.Time).To(BeTemporally("==", startedAt))
+
+			controllerReconciler.Clock = func() time.Time {
+				return startedAt.Add(6 * time.Minute)
+			}
+			result, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.TriggerEvaluation.Eligible).To(BeTrue())
+			Expect(resource.Status.TriggerEvaluation.Decisions[0].HoldStartedAt.Time).To(BeTemporally("==", startedAt))
+		})
+
+		It("records dry-run execution once per active trigger episode", func() {
+			observedAt := time.Date(2026, 8, 2, 11, 0, 0, 0, time.UTC)
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestPowerClusterName},
+			}
+			Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
+			cluster.Status.Storage = powerv1alpha1.StorageStatus{
+				Mode:  powerv1alpha1.PowerStorageExternalPostgres,
+				Ready: true,
+			}
+			Expect(k8sClient.Status().Update(ctx, cluster)).To(Succeed())
+
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.ManagementClusterRef = &powerv1alpha1.ObjectNameReference{Name: shutdownFlowTestPowerClusterName}
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			pollTime := metav1.NewTime(observedAt.Add(-10 * time.Second))
+			device := &powerv1alpha1.UPSDevice{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery
+			device.Status.LastPollTime = &pollTime
+			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+
+			store := &fakeAuditStore{}
+			controllerReconciler := &ShutdownFlowReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				StorageConnector: &fakeAuditConnector{store: store},
+				Clock: func() time.Time {
+					return observedAt
+				},
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.shutdownFlowExecutions).To(HaveLen(2))
+			Expect(store.executionWaves).To(HaveLen(4))
+			Expect(store.executionGroups).To(HaveLen(2))
+			Expect(store.actionAttempts).To(HaveLen(2))
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.LastExecution).NotTo(BeNil())
+			Expect(resource.Status.LastExecution.Phase).To(Equal(powerv1alpha1.ShutdownExecutionPhaseCompleted))
+			Expect(resource.Status.LastExecution.TriggerActive).To(BeTrue())
+			firstKey := resource.Status.LastExecution.DeduplicationKey
+			Expect(firstKey).NotTo(BeEmpty())
+			executionReady := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionExecutionReady)
+			Expect(executionReady).NotTo(BeNil())
+			Expect(executionReady.Status).To(Equal(metav1.ConditionTrue))
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.shutdownFlowExecutions).To(HaveLen(2))
+			Expect(store.actionAttempts).To(HaveLen(2))
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.Phase).To(Equal(powerv1alpha1.ShutdownFlowPhaseCompleted))
+			Expect(resource.Status.LastExecution.Reason).To(Equal("AlreadyExecuted"))
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnline
+			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.LastExecution.TriggerActive).To(BeFalse())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery
+			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.shutdownFlowExecutions).To(HaveLen(4))
+			Expect(store.actionAttempts).To(HaveLen(4))
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.LastExecution.DeduplicationKey).To(Equal(firstKey))
+			Expect(resource.Status.LastExecution.TriggerActive).To(BeTrue())
 		})
 
 		It("should change plan identity when capability profiles change", func() {
@@ -229,6 +393,16 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				},
 				Spec: powerv1alpha1.ShutdownFlowSpec{
 					ManagementClusterRef: &powerv1alpha1.ObjectNameReference{Name: "test-power"},
+					Groups: []powerv1alpha1.ShutdownGroup{{
+						Name:   "applications",
+						Action: powerv1alpha1.ShutdownStepScaleWorkload,
+					}},
+				},
+				Status: powerv1alpha1.ShutdownFlowStatus{
+					CompiledWaves: []powerv1alpha1.CompiledShutdownWave{{
+						Index:  0,
+						Groups: []string{"applications"},
+					}},
 				},
 			}
 			diagnostics := []resolver.Diagnostic{{
@@ -242,6 +416,24 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				Index:  0,
 				Groups: []string{"applications"},
 			}}
+			triggerObservedAt := metav1.NewTime(fixed)
+			triggerEvaluation := &powerv1alpha1.ShutdownTriggerEvaluationStatus{
+				ObservedAt:          &triggerObservedAt,
+				Mode:                powerv1alpha1.ShutdownFlowModeDryRun,
+				Eligible:            true,
+				Reason:              "TriggerEligible",
+				MatchedTriggerCount: 1,
+				SelectedUPSDevices:  []string{"ups-a"},
+				PlanConfigHash:      "plan-hash-a",
+				Decisions: []powerv1alpha1.ShutdownTriggerDecisionStatus{{
+					TriggerID:          "trigger-000-onbattery",
+					Type:               powerv1alpha1.ShutdownTriggerOnBattery,
+					Matched:            true,
+					Eligible:           true,
+					Reason:             "TriggerEligible",
+					SelectedUPSDevices: []string{"ups-a"},
+				}},
+			}
 			bundle := resolver.StructuralBundle{
 				Hash: "input-hash-a",
 				CapabilityMatches: []capability.MatchResult{{
@@ -261,6 +453,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				bundle,
 				waves,
 				"plan-hash-a",
+				triggerEvaluation,
 			)
 
 			Expect(err).NotTo(HaveOccurred())
@@ -278,6 +471,87 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(store.capabilityProfileMatches[0].UPSDevice).To(Equal("ups-a"))
 			Expect(store.capabilityProfileMatches[0].ProfileID).To(Equal("profile-a"))
 			Expect(store.capabilityProfileMatches[0].ProfileSource).To(Equal(string(capability.ProfileSourceBundled)))
+			Expect(store.shutdownFlowDecisions).To(HaveLen(1))
+			decision := store.shutdownFlowDecisions[0]
+			Expect(decision.ShutdownFlow).To(Equal("test-flow"))
+			Expect(decision.TriggerType).To(Equal(string(powerv1alpha1.ShutdownTriggerOnBattery)))
+			Expect(decision.Mode).To(Equal(string(powerv1alpha1.ShutdownFlowModeDryRun)))
+			Expect(decision.Approved).To(BeTrue())
+			Expect(decision.Decision).To(Equal("Eligible"))
+			Expect(decision.Reason).To(Equal("TriggerEligible"))
+			Expect(decision.SelectedUPSDevices).To(ConsistOf("ups-a"))
+			Expect(decision.PlanConfigHash).To(Equal("plan-hash-a"))
+			Expect(store.shutdownFlowExecutions).To(HaveLen(2))
+			Expect(store.shutdownFlowExecutions[0].Phase).To(Equal("Running"))
+			Expect(store.shutdownFlowExecutions[1].Phase).To(Equal("Completed"))
+			Expect(store.executionWaves).To(HaveLen(2))
+			Expect(store.executionGroups).To(HaveLen(1))
+			Expect(store.actionAttempts).To(HaveLen(1))
+			Expect(store.actionAttempts[0].Outcome).To(Equal("Simulated"))
+			Expect(store.executorResumeStates).NotTo(BeEmpty())
+			Expect(flow.Status.LastExecution).NotTo(BeNil())
+			Expect(flow.Status.LastExecution.Phase).To(Equal(powerv1alpha1.ShutdownExecutionPhaseCompleted))
+			Expect(flow.Status.LastExecution.TriggerActive).To(BeTrue())
+			Expect(store.closeCalls).To(Equal(1))
+		})
+
+		It("records rejected compilation audit without requiring a plan hash", func() {
+			scheme := runtime.NewScheme()
+			Expect(powerv1alpha1.AddToScheme(scheme)).To(Succeed())
+			store := &fakeAuditStore{}
+			fixed := time.Date(2026, 8, 2, 9, 30, 0, 0, time.UTC)
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-power"},
+				Status: powerv1alpha1.PowerManagementClusterStatus{
+					Storage: powerv1alpha1.StorageStatus{
+						Mode:  powerv1alpha1.PowerStorageExternalPostgres,
+						Ready: true,
+					},
+				},
+			}
+			reconciler := &ShutdownFlowReconciler{
+				Client:           fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build(),
+				StorageConnector: &fakeAuditConnector{store: store},
+				Clock: func() time.Time {
+					return fixed
+				},
+			}
+			flow := &powerv1alpha1.ShutdownFlow{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-flow",
+					Generation: 5,
+				},
+				Spec: powerv1alpha1.ShutdownFlowSpec{
+					ManagementClusterRef: &powerv1alpha1.ObjectNameReference{Name: "test-power"},
+				},
+			}
+
+			err := reconciler.recordShutdownFlowAudit(
+				context.Background(),
+				flow,
+				rejected("PlannerRejected", "cycle detected"),
+				nil,
+				resolver.StructuralBundle{},
+				nil,
+				"",
+				nil,
+			)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.shutdownFlowCompilations).To(HaveLen(1))
+			compilation := store.shutdownFlowCompilations[0]
+			Expect(compilation.ShutdownFlow).To(Equal("test-flow"))
+			Expect(compilation.ResourceGeneration).To(Equal(int64(5)))
+			Expect(compilation.Accepted).To(BeFalse())
+			Expect(compilation.ConfigHash).To(BeEmpty())
+			Expect(compilation.InputHash).To(BeEmpty())
+			Expect(compilation.ObservedAt).To(Equal(fixed))
+			Expect(compilation.CompiledWaves).To(BeNil())
+			Expect(compilation.Diagnostics).To(HaveLen(1))
+			Expect(compilation.Diagnostics[0].Severity).To(Equal(resolver.DiagnosticError))
+			Expect(compilation.Diagnostics[0].Reason).To(Equal("PlannerRejected"))
+			Expect(store.capabilityProfileMatches).To(BeEmpty())
+			Expect(store.shutdownFlowDecisions).To(BeEmpty())
 			Expect(store.closeCalls).To(Equal(1))
 		})
 
@@ -382,6 +656,7 @@ func cleanupShutdownFlowResolverFixture(ctx context.Context) {
 		&powerv1alpha1.UPSCapabilityProfile{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestUniversalProfileName}},
 		&powerv1alpha1.PowerInventoryNode{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestNodeInventoryName}},
 		&powerv1alpha1.PowerInfrastructure{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestSwitchName}},
+		&powerv1alpha1.PowerManagementCluster{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestPowerClusterName}},
 		&powerv1alpha1.UPSDevice{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestUPSName}},
 	}
 	for _, obj := range objects {
