@@ -1,7 +1,5 @@
 # Capability Profiles
 
-Status: working document.
-
 Capability profiles are versioned operator artifacts. They declare what the resolver may assume
 about a UPS after it has matched stable provider keys such as `ups.model`, optional firmware, and
 driver family. Runtime probes can detect drift, but they do not rewrite the matched profile during a
@@ -36,7 +34,7 @@ American variants like `TOWER_1000VA_120V`. The 2U profile targets observed mode
 
 These profiles intentionally declare no UPS actuation behaviors yet. Community reports have shown
 `upscmd` and protocol behavior changing across early UniFi UPS firmware, so outlet or UPS shutdown
-commands should not be treated as supported until they are verified against current firmware.
+commands are not treated as supported until they are verified against current firmware.
 
 They are not vendor-endorsed Ubiquiti artifacts. They are maintained by this project from public
 product documentation, public NUT observations, and field testing.
@@ -89,8 +87,8 @@ spec:
 ```
 
 That exercises profile matching, `dummy-ups` repeater rendering, NetworkPolicy egress rendering,
-and the bounded TCP upstream reachability status. Full NUT variable polling and durable telemetry
-writes are still separate work.
+bounded TCP upstream reachability status, read-only NUT variable polling, and durable telemetry
+audit writes.
 
 ## Public Research Inputs
 

@@ -1,22 +1,18 @@
 # Scope Boundaries
 
-Status: working document. Records what `nut-operator` is and is not responsible for.
-
-These boundaries were settled across a design session (2026-07) and reconciled against the
-repository at commit-time of writing. They are stable identifiers — `SB-n` values do not get
-reused or renumbered.
+This document records what `nut-operator` is and is not responsible for. These identifiers are
+stable: `SB-n` values do not get reused or renumbered.
 
 ## Sources of Truth and Precedence
 
 | Domain | Authority |
 | --- | --- |
-| What currently exists — CRD shapes, rendering behavior, implemented reconcilers | Repository |
+| CRD shapes, rendering behavior, reconcilers, and packaged manifests | Repository |
 | Physical and structural architecture | Repository |
 | Planner and application logic, orchestration semantics | This document and the design decisions it records |
 
 Where this document and the repository disagree on planner or orchestration logic, this document
-wins and the repository is what changes. Where they disagree on what is currently implemented,
-the repository wins.
+wins and the repository changes.
 
 ## Governing Principles
 
@@ -54,8 +50,8 @@ What varies by device is what returns over that path, not whether the path is us
 variation is capability-profile content (SB-9) and resolves in three tiers:
 
 1. **Transport** — does a reviewed network driver or upstream NUT relay path exist for this
-   device. Binary admission gate on `UPSDevice`, partly enforced today by the driver allowlist
-   and the `spec.upstreamNUT` contract.
+   device. Binary admission gate on `UPSDevice`, enforced by the driver allowlist and the
+   `spec.upstreamNUT` contract.
 2. **Telemetry richness** — which NUT variables the driver actually reports. Two devices both
    speaking `snmp-ups` may differ by an order of magnitude in exposed variables.
 3. **Actuation** — outlet control, delayed start, safe-shutdown handshake. See SB-2c.
@@ -67,8 +63,8 @@ never delegated to NUT.
 
 **SB-2c · NUT is a UPS control interface, not a read-only sensor.** Where the device supports it,
 NUT can command outlets off and on and perform the safe-shutdown handshake that lets the UPS cut
-power after the last client is down. Nothing in the implementation uses this today. It is an
-unclaimed capability surface, gated per-device by capability profile.
+power after the last client is down. The operator treats this as a gated capability surface,
+declared per device by capability profile.
 
 ## SB-3 · The node agent holds local flow; it holds no cluster authority
 
@@ -90,20 +86,20 @@ Out of scope for the node agent:
 - Kubernetes API credentials in the default posture.
 
 The `upsmon` container is unprivileged, runs a read-only root filesystem, drops capabilities, and
-carries no Kubernetes API token unless a future feature explicitly requires one. The `actuator`
+carries no Kubernetes API token unless a declared feature explicitly requires one. The `actuator`
 container carries no NUT credentials and no policy authority.
 
-## SB-4 · Two containers in the node agent for v1
+## SB-4 · Two containers in the node agent
 
 All decision logic lives in the unprivileged container. The privileged executor stays small,
 dumb, and fire-and-forget behind a minimal verb API. No third container, no second pod, no
 sidecar proliferation.
 
-**Deferred to v2 (OD-10):** a third container or separate DaemonSet enabling USB-attached UPS
-support. This is a deliberate future extension, not an oversight.
+**Outside the network-first baseline (OD-10):** a third container or separate DaemonSet enabling
+USB-attached UPS support. This is a deliberate extension point, not an oversight.
 
-Recorded so the future reversal is not mistaken for a contradiction: the current network-only
-posture is load-bearing for the security narrative. `docs/images.md` and `docs/architecture.md`
+Recorded so any later reversal is not mistaken for a contradiction: the network-only posture is
+load-bearing for the security narrative. `docs/images.md` and `docs/architecture.md`
 both justify the absence of host device mounts, host device access, and privileged mode on the
 grounds that UPS reachability is network-only. USB support must arrive with its own isolated
 actuation boundary and its own security rationale.
@@ -111,7 +107,7 @@ actuation boundary and its own security rationale.
 ## SB-5 · Kured is out of scope
 
 Kured's trigger is host and service health — OS patch reboots. That is not a power event, so
-GP-1 excludes it. The overlap that initially looked worth absorbing does not meaningfully exist.
+GP-1 excludes it. The overlap with power-event orchestration does not meaningfully exist.
 
 No dependency, no coordination shim, no feature parity commitment. `ActuatorPolicy` remains
 `Disabled | Stub | SystemdPoweroff` with no reboot verb.
@@ -120,7 +116,7 @@ If a reboot verb is ever added to the executor, the motivation is collision-avoi
 separately installed Kured, not feature value.
 
 **Coexistence caveat for documentation:** both projects cordon nodes. A Kured reboot interleaving
-with a power event is possible and should be documented as an operational note.
+with a power event is possible and is documented as an operational note.
 
 ## SB-6 · Health and hardware monitoring are out of scope
 
@@ -135,8 +131,9 @@ diagnose, or remediate node faults.
 Runtime remaining and load-shedding arithmetic — what shedding a given set of workloads buys in
 additional minutes — are in scope and were identified as the differentiating capability.
 
-Currently unbuilt and under-specified. It carries an unresolved dependency: shed-value arithmetic
-requires per-workload power attribution, which no component in the current design provides.
+Shed-value arithmetic requires per-workload power attribution. The architecture keeps that
+calculation separate from basic UPS threshold evaluation so ordinary shutdown safety does not
+depend on perfect power attribution.
 
 ## SB-8 · NetBox is a heavy design influence and a zero-weight runtime dependency
 
@@ -197,8 +194,8 @@ Mechanism constraints, already specified in `docs/shutdown-flow.md`:
 - Nodes are terminal graph vertices. A node cannot power off until every workload, storage
   operation, and cluster responsibility assigned to it has cleared.
 
-Third-party ecosystem integrations are deferred, not prohibited. One opt-in integration exists
-today: `ServiceMonitor` rendering when Prometheus Operator support is enabled.
+Third-party ecosystem integrations are opt-in. `ServiceMonitor` rendering is available when
+Prometheus Operator support is enabled.
 
 ## SB-11 · PostgreSQL is a required production component; the implementation is the user's choice
 
@@ -229,12 +226,12 @@ The compiled dependency graph is stored as structured data, never as formatted t
 stays queryable and renderable. "Show me the compiled graph" and "why was this node in wave four"
 must be answerable from stored structure, not from log parsing.
 
-## SB-13 · Planner implementation defaults (reversible)
+## SB-13 · Planner implementation defaults
 
-Not a boundary. A v1 default that can change without renegotiating scope.
+Not a boundary. This default can change without renegotiating scope.
 
 The planner is a Go package inside the operator repository, kept behind an interface so it stays
-substitutable. Any future decoupling happens at the interface level — a second implementation
+substitutable. Any decoupling happens at the interface level — a second implementation
 reachable over gRPC, for instance — not at the language level.
 
 ---
@@ -245,9 +242,9 @@ Constraints already encoded in the implementation. Listed here so the boundary s
 
 **RB-1 · Network-reachable UPS devices only.** Local USB and serial drivers are out of scope for
 the API so that generated NUT server pods require no host device mounts and no privileged access
-for UPS connectivity. See SB-4 for the deferred v2 path.
+for UPS connectivity. See SB-4 for the extension path.
 
-**RB-2 · Network driver allowlist.** Initial set: `snmp-ups`, `netxml-ups`, `powerman-pdu`,
+**RB-2 · Network driver allowlist.** The set is `snmp-ups`, `netxml-ups`, `powerman-pdu`,
 `apcupsd-ups`, and `dummy-ups` for tests. Drivers are added deliberately, not by discovery.
 
 **RB-3 · No third-party NUT image as default.** Four project-owned OCI images: `nut-server`,
@@ -261,24 +258,26 @@ separately approved. A production deployment requires both before host shutdown 
 test installations. It is not the production model because it cannot express dependency
 relationships or concurrent branches.
 
-**RB-6 · CRDs are cluster-scoped.** Five resources: `PowerManagementCluster`, `UPSDevice`,
-`NUTServer`, `NodePowerAgent`, `ShutdownFlow`.
+**RB-6 · CRDs are cluster-scoped.** The resource set is `PowerManagementCluster`, `UPSDevice`,
+`PowerInfrastructure`, `PowerInventoryNode`, `PowerInventoryEdge`, `UPSCapabilityProfile`,
+`NUTServer`, `NodePowerAgent`, and `ShutdownFlow`.
 
-**RB-7 · Admission webhooks are planned, not present.** Until they land, unsafe combinations are
-rejected during reconciliation rather than before persistence.
+**RB-7 · Admission webhooks mirror reconciler safety checks.** Unsafe combinations are rejected
+before persistence where admission is enabled and are still surfaced through reconciliation status
+for defense in depth.
 
 ---
 
 ## Consolidated Out of Scope
 
-- Bringing hosts and services back up — pending OD-1.
+- Bringing hosts and services back up — outside the shutdown path unless OD-1 changes.
 - Kured, and OS-patch reboot orchestration generally.
 - Node Problem Detector, MachineHealthCheck, descheduler, and node fault remediation.
 - General hardware monitoring.
 - General cluster health management.
 - Rebuilding any monitoring, alerting, or inventory capability that already exists in the
   operator's environment.
-- Local USB and serial UPS connectivity — deferred, see OD-10.
+- Local USB and serial UPS connectivity — outside the network-first baseline, see OD-10.
 - Delegating shutdown ordering to NUT.
 - Any UPS interaction path that bypasses NUT.
 
@@ -290,33 +289,10 @@ rejected during reconciliation rather than before persistence.
 | --- | --- | --- |
 | OD-1 | Recovery and startup scope: in-project or not, and in which version | OD-5 |
 | OD-4 | Last-ditch phase taxonomy — the actual enumeration behind "must stay until phase X" | Planner design |
-| OD-5 | `requires` edge inversion. Shutdown semantics compile `applications requires: [databases]` to `applications -> databases`; the required group shuts down later. Correct for shutdown, inverted for startup, and it will not invert symmetrically against `before` and `after` | Contingent on OD-1 |
+| OD-5 | `requires` edge inversion. Shutdown semantics compile `applications requires: [databases]` to `applications -> databases`; the required group shuts down later. Correct for shutdown, inverted for startup, and not symmetric against `before` and `after` | Contingent on OD-1 |
 | OD-6 | Audit durability during shutdown. The sample flow scales `databases` and `storage` down in early waves while later waves still have execution records to write. Options: local spool draining post-recovery, audit cluster exempted into the last-ditch set, or documented preference for `ExternalPostgres` | Audit writer |
 | OD-8r | Resolver behavior on malformed or missing model strings from the topology provider: reject, floor-match with warning, or configurable | Resolver design |
 | OD-9 | Degrade mechanics for trigger-capability mismatch — folded into capability schema doc | Capability schema doc |
 | OD-10 | USB and serial UPS support: version target and isolation model | v2 scoping |
 | OD-15 | Probe-history persistence — "last verified against firmware X" implies a PostgreSQL table in the audit schema that would not otherwise exist | Audit schema doc |
 | OD-16 | Missing `carries` coverage — node with no modeled communication path: hard failure or explicit exemption marker. Silent-assume excluded | Inventory validation |
-
----
-
-## Change Log
-
-**2026-07-31 — initial consolidation.** Extracted from the design session and reconciled against
-the repository. Four positions were corrected during reconciliation:
-
-- SB-3 was initially recorded as "the node agent holds no flow." The repository's signal-file
-  handoff protocol contradicts this. Corrected to a statement about authority.
-- SB-5 was initially recorded as "Kured absorbed, optional, non-central." Corrected to out of
-  scope, with GP-1 as the generalized rationale.
-- SB-8 was initially recorded as "NetBox is a first-class input." Corrected to optional provider.
-- SB-11 was initially recorded as "PostgreSQL is optional memory." The repository contradicts this
-  in four places. Corrected to required production component.
-
-**2026-07-31 — capability deconfliction.** SB-8 storage and merge questions resolved (OD-7 closed,
-OD-8 dissolved). SB-9 gains the two-section structure and the correction-is-MAJOR rule. OD-8r and
-OD-15 added. OD-9 narrowed to degrade mechanics and folded into the capability schema doc.
-
-**2026-07-31 — inventory contract.** GP-5 extracted. SB-8 gains the provider-contract reference.
-OD-2 collapsed (one entity set, two relations, logical graph is compiled output) and OD-3 closed
-(modeled minimally). OD-16 added.

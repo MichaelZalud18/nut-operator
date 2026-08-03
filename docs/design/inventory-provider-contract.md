@@ -1,7 +1,7 @@
 # Inventory Provider Contract
 
-Status: working document. Defines the normalized inventory shape that every topology provider must
-emit, and the rules the operator applies to it.
+This document defines the normalized inventory shape that every topology provider emits, and the
+rules the operator applies to it.
 
 Companion to `scope-boundaries.md` and `planner-requirements.md`. `IN-n` identifiers are stable and
 are not reused or renumbered.
@@ -181,7 +181,8 @@ authored and snapshotted, never live-queried), IN-12 (derived closure guarded by
 completeness rule).
 
 Recorded as a governing principle because it has now decided three separate design questions and
-will decide more. Belongs in `scope-boundaries.md` alongside GP-1 through GP-4.
+continues to govern new boundary decisions. It belongs in `scope-boundaries.md` alongside GP-1
+through GP-4.
 
 ---
 
@@ -212,14 +213,3 @@ subgraph — remains open, but is no longer blocked on missing structure.
 Carried unchanged: OD-1 (recovery scope), OD-4 (last-ditch phase taxonomy), OD-5 (`requires` edge
 inversion), OD-6 (audit durability), OD-8r (provider key validation), OD-10 (USB support), OD-15
 (probe history persistence).
-
----
-
-## Change Log
-
-**2026-07-31 — initial draft.** Five design forks resolved: entity set scoped to four kinds with an
-attribute admission rule; power domains derived rather than declared, guarded by an orphan rule; two
-distinct edge relations with an input qualifier on `feeds`; Kubernetes node name canonical with
-provider-owned mapping; inventory treated as structural snapshot input.
-
-Closed OD-2 and OD-3. Opened OD-16. Extracted GP-5.

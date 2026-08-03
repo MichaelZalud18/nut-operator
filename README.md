@@ -2,7 +2,7 @@
 
 Kubernetes-native power management built around Network UPS Tools (NUT), controller-runtime, and declarative APIs.
 
-> Status: early alpha and mostly AI-assisted/vibe-coded. Treat this repository as a design-heavy working prototype until the published images, RBAC, dependency, and shutdown-actuation paths have passed independent review and production-grade validation.
+> Disclosure: this project is mostly AI-assisted/vibe-coded. Treat the implementation as requiring normal independent review, security validation, and production qualification before relying on it for real power events.
 
 This project is intentionally designed as a reusable operator rather than a homelab-only manifest set. It models UPS devices, NUT server instances, node power agents, and shutdown flows as Kubernetes resources. Durable audit and execution state belongs in PostgreSQL, with CloudNativePG as the preferred Kubernetes-native backing store.
 
@@ -20,7 +20,7 @@ This project is intentionally designed as a reusable operator rather than a home
 The API group is `power.zalud.io/v1alpha1`.
 
 - `PowerManagementCluster` configures global defaults, operand namespace, images, security posture, observability, and PostgreSQL/CNPG storage.
-- `UPSDevice` describes a physical or simulated network-reachable UPS, its NUT driver or upstream NUT relay endpoint, credentials, power domains, thresholds, and telemetry behavior. Local USB and serial UPS modes are intentionally unsupported. The initial driver allowlist is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests and upstream relays.
+- `UPSDevice` describes a physical or simulated network-reachable UPS, its NUT driver or upstream NUT relay endpoint, credentials, power domains, thresholds, and telemetry behavior. Local USB and serial UPS modes are intentionally unsupported. The driver allowlist is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests and upstream relays.
 - `PowerInfrastructure` describes non-node, non-UPS power or communication path entities such as PDUs, switches, routers, panels, and transfer equipment.
 - `PowerInventoryNode` attaches planner-relevant power metadata to Kubernetes node names without replacing the Kubernetes `Node` as the canonical identity.
 - `PowerInventoryEdge` declares provider-neutral `Feeds` and `Carries` topology relations between UPS devices, nodes, and infrastructure entities.
@@ -40,10 +40,10 @@ Real host shutdown is not the default.
 
 `ShutdownFlow` follows the same pattern for `mode: Enforce`. This keeps dangerous behavior reviewable in Git and visible in `/status` before it can affect nodes.
 
-The intended node-agent pod split is:
+The node-agent pod split is:
 
 - `upsmon` container: unprivileged NUT client, no Kubernetes API credentials required for ordinary monitoring.
-- `actuator` container: omitted or stubbed by default; when future host shutdown is enabled, it becomes the isolated host-action boundary using only the minimum host access that the target runtime proves necessary.
+- `actuator` container: omitted or stubbed by default; real host shutdown is the isolated host-action boundary using only the minimum host access that the target runtime proves necessary.
 
 ## Storage
 
@@ -63,37 +63,28 @@ spec:
 
 External PostgreSQL is also modeled for non-CNPG clusters. `Disabled` exists for local development only.
 
-## Current Implementation
+## Architecture
 
-Implemented now:
+```mermaid
+flowchart TD
+  UPS[Network UPS / upstream NUT appliance] -->|NUT protocol| Server[NUTServer operands]
+  Server -->|LIST VAR telemetry| Operator[nut-operator controller]
+  Inventory[Inventory CRDs / provider adapters] --> Operator
+  Profiles[UPSCapabilityProfile catalog] --> Operator
+  Operator -->|status summaries| CRDs[power.zalud.io CRDs]
+  Operator -->|audit and telemetry| Postgres[(PostgreSQL / CNPG)]
+  Operator -->|compiled waves and decisions| Flow[ShutdownFlow]
+  Flow -->|approved handoff| Agents[NodePowerAgent DaemonSets]
+  Agents -->|local signal| Actuator[Host actuator boundary]
+```
 
-- Kubebuilder/controller-runtime scaffold.
-- Nine cluster-scoped CRDs with status subresources.
-- Validation/status reconcilers for all nine resources.
-- Pure planner package for `ShutdownFlow` graph validation, compiled-wave status, and plan config hashes.
-- Pure inventory, capability matching, bundled profile catalog, and resolver assembly packages for provider-neutral topology, profile precedence, and planner input identity.
-- `ShutdownFlow` reconciliation against cluster-scoped declarative inventory and UPS capability profiles, with resolved input hashes in status.
-- Admission webhooks for all nine v1alpha1 resources, including storage/backend validation, NUT auth/TLS coupling, explicit actuation gates, and planner-backed `ShutdownFlow` validation.
-- `NUTServer` operand rendering for Namespace, ConfigMap, operator-managed Secret, Service, NetworkPolicy, and Deployment.
-- Upstream NUT-server relay rendering through `dummy-ups` repeater mode, including Secret-projected `authconf`, egress policy rules, and TCP reachability status.
-- `NodePowerAgent` operand rendering for Namespace, ServiceAccount, ConfigMap, Secret-backed `upsmon.conf`, egress NetworkPolicy, and non-privileged DaemonSet in monitor/dry-run/stub modes.
-- PostgreSQL audit schema migration package for power events, telemetry snapshots, capability matches, planner compilations, and shutdown decisions.
-- PostgreSQL-shaped audit writer boundary with generic SQL executor interfaces and no CNPG-only coupling.
-- Provider-neutral storage backend resolver for `Disabled`, `ExternalPostgres`, and `CNPG` modes.
-- PostgreSQL audit-store connector with Secret-backed DSN resolution, CNPG application credential URI support, TLS-required external PostgreSQL checks, pgx-backed connection opening, ping, schema migration, and owned connection lifecycle.
-- `PowerManagementCluster` storage readiness now verifies the configured PostgreSQL audit store and records durable reconciliation audit events when storage is ready.
-- `ShutdownFlow` reconciliation records accepted planner compilation and capability profile match audit records through the referenced `PowerManagementCluster` storage backend.
-- Pure telemetry normalization, read-only NUT protocol client, target-oriented polling package, and `UPSDevice` status/audit reconciliation for `LIST VAR` telemetry.
-- Installable project-maintained capability profile catalog under `config/catalog/`, including real first-party project profiles for supported UPS product families.
-- Manager and project-owned development operand image builds and GHCR tag conventions.
-- Production-shaped example resources under `config/samples/`.
+The control plane separates detect, decide, and act:
 
-Not implemented yet:
+- Detect: NUT polling, UPS status normalization, declarative inventory resolution, capability-profile matching, and topology assembly.
+- Decide: pure trigger evaluation and `ShutdownFlow` graph planning into deterministic ordered waves.
+- Act: dry-run execution, Kubernetes workload coordination, node-agent handoff, and explicitly approved local host shutdown.
 
-- Advanced NUT config rendering, credential rotation, and production-grade operand image release hardening.
-- Telemetry-driven shutdown trigger evaluation and executor handoff.
-- Rejected planner compilation audit records; the current audit schema requires an accepted plan hash.
-- Release-grade image smoke tests, SBOMs, signing, scanning policy, provenance, and immutable digest examples.
+Durable records are written to PostgreSQL. Kubernetes status remains a current-state review surface, not an event log.
 
 ## Development
 
@@ -161,10 +152,12 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [Security](docs/security.md)
 - [Image strategy](docs/images.md)
 - [Shutdown flow design](docs/shutdown-flow.md)
+- [Project tasks and current build state](docs/tasks.md)
 - [Capability profiles](docs/design/capability-profiles.md)
 - [Upstream NUT relay](docs/design/upstream-nut-relay.md)
 - [Audit storage schema](docs/design/audit-storage-schema.md)
 - [Telemetry normalization](docs/design/telemetry-normalization.md)
+- [Trigger evaluation](docs/design/trigger-evaluation.md)
 - [Design decision index](docs/design/decision-index.md)
 - [Scope boundaries](docs/design/scope-boundaries.md)
 - [Planner requirements](docs/design/planner-requirements.md)

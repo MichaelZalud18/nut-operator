@@ -91,6 +91,14 @@ The controller compiles this graph into status:
 applications -> databases -> storage -> standard-nodes -> controller-node
 ```
 
+```mermaid
+flowchart LR
+  applications --> databases
+  databases --> storage
+  storage --> standardNodes[standard-nodes]
+  standardNodes --> controllerNode[controller-node]
+```
+
 Groups with no dependency path between them can appear in the same compiled wave and execute concurrently.
 
 ## Relationship Semantics
@@ -160,26 +168,26 @@ status:
 
 ## Execution Semantics
 
-Execution will use the compiled waves, not raw YAML order.
+Execution uses the compiled waves, not raw YAML order.
 
 - Every group in a wave is eligible to run concurrently.
 - The next wave cannot start until all required completion conditions in the current wave are satisfied.
 - A failed group aborts the flow by default.
 - `abortPolicy.behavior: ContinueSafeSteps` can allow explicitly safe follow-up actions, such as notification.
-- Node poweroff groups are terminal vertices and should be last for their power domain.
-- Control-plane or controller nodes should have explicit late dependencies, not just a high phase number.
+- Node poweroff groups are terminal vertices and stay last for their power domain.
+- Control-plane or controller nodes carry explicit late dependencies, not just a high phase number.
 
 Execution records, action attempts, telemetry snapshots, and approval evidence belong in PostgreSQL. CR status remains a current summary and review surface.
 
 ## Resource Semantics
 
-Workload controllers such as Deployments and StatefulSets should normally be scaled, suspended, or quiesced. Deleting their Pods directly is only appropriate for exceptional overrides because controllers may recreate Pods.
+Workload controllers such as Deployments and StatefulSets are normally scaled, suspended, or quiesced. Deleting their Pods directly is only appropriate for exceptional overrides because controllers may recreate Pods.
 
 Pods are concrete execution instances. They are useful for eviction, wait conditions, and diagnostics, but they are not the main long-lived policy unit.
 
-Namespaces are grouping and policy boundaries. A normal shutdown flow should not delete namespaces.
+Namespaces are grouping and policy boundaries. A normal shutdown flow does not delete namespaces.
 
-Services should be used for traffic withdrawal and readiness boundaries. Backing workloads remain responsible for graceful shutdown.
+Services are used for traffic withdrawal and readiness boundaries. Backing workloads remain responsible for graceful shutdown.
 
 Nodes are terminal graph vertices. A node cannot power off until every workload, storage operation, and cluster responsibility assigned to that node has cleared.
 
@@ -197,7 +205,7 @@ spec:
     approvalAnnotation: power.zalud.io/approved-for-enforce
 ```
 
-This gate is separate from `NodePowerAgent` actuation approval. A production deployment should require both a flow approval and a node-agent actuation approval before host shutdown is rendered.
+This gate is separate from `NodePowerAgent` actuation approval. A production deployment requires both a flow approval and a node-agent actuation approval before host shutdown is rendered.
 
 ## Linear Fallback
 

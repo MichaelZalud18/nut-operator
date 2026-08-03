@@ -6,7 +6,7 @@ The important design shape is:
 
 - `orion-controller`: the controller or control-plane node group, shut down last.
 - `orion-standard`: the steady-state worker group, drained and powered down during conservation.
-- `orion-burst`: optional future burst capacity, shed first when present.
+- `orion-burst`: optional burst capacity, shed first when present.
 - `orion-core`: the physical power domain covered by a network-reachable UPS and NUT server.
 
 Expected node labels:

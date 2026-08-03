@@ -2,6 +2,45 @@
 
 `nut-operator` is split into a control plane, NUT server operands, node power agents, and durable state.
 
+```mermaid
+flowchart LR
+  subgraph Sources[Detect]
+    UPS[Network UPS devices]
+    Upstream[Upstream NUT appliances]
+    Inventory[Inventory CRDs / providers]
+    Profiles[Capability profile catalog]
+  end
+
+  subgraph Control[Controller manager]
+    Polling[NUT polling and normalization]
+    Resolver[Topology and capability resolver]
+    Trigger[Trigger evaluator]
+    Planner[ShutdownFlow planner]
+  end
+
+  subgraph Runtime[Act]
+    NUTServer[NUTServer deployments]
+    Agent[NodePowerAgent daemonsets]
+    Actuator[Host actuator boundary]
+  end
+
+  Postgres[(PostgreSQL / CNPG audit store)]
+
+  UPS --> NUTServer
+  Upstream --> NUTServer
+  NUTServer --> Polling
+  Inventory --> Resolver
+  Profiles --> Resolver
+  Polling --> Trigger
+  Resolver --> Planner
+  Trigger --> Planner
+  Planner --> Agent
+  Agent --> Actuator
+  Polling --> Postgres
+  Planner --> Postgres
+  Agent --> Postgres
+```
+
 ## Control Plane
 
 The operator runs as a controller-runtime manager and reconciles cluster-scoped CRDs in `power.zalud.io/v1alpha1`.
@@ -15,7 +54,7 @@ The operator runs as a controller-runtime manager and reconciles cluster-scoped 
 
 `PowerManagementCluster` is the root configuration object. It owns global security defaults, image defaults, observability, operand namespace policy, and storage.
 
-`UPSDevice` represents one physical or simulated network-reachable UPS. It supports either a reviewed NUT network driver or an explicit upstream NUT relay endpoint for appliances that already expose `upsd`. Local USB and serial drivers are out of scope for this API so generated NUT server pods do not need host device mounts or privileged access for UPS connectivity. New direct drivers must be added to the network-driver allowlist deliberately; the initial set is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests and upstream relays.
+`UPSDevice` represents one physical or simulated network-reachable UPS. It supports either a reviewed NUT network driver or an explicit upstream NUT relay endpoint for appliances that already expose `upsd`. Local USB and serial drivers are out of scope for this API so generated NUT server pods do not need host device mounts or privileged access for UPS connectivity. New direct drivers are added to the network-driver allowlist deliberately; the set is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests and upstream relays.
 
 `NUTServer` represents one logical `upsd` instance. It selects one or more `UPSDevice` objects and renders server-side NUT configuration, credentials, TLS material references, and service exposure.
 
@@ -23,13 +62,13 @@ For built-in NUT appliances, `NUTServer` renders `dummy-ups` repeater mode rathe
 
 `NodePowerAgent` represents one DaemonSet fleet. It references one or more `NUTServer` objects, selects nodes, and declares whether the fleet is monitoring, dry-running, or allowed to actuate.
 
-`ShutdownFlow` is the ordered policy layer. Its primary model is a dependency graph of shutdown groups compiled into deterministic execution waves. Linear steps remain available for small test installs, but production flows should use graph relationships so independent groups can run concurrently while dependent groups stay protected.
+`ShutdownFlow` is the ordered policy layer. Its primary model is a dependency graph of shutdown groups compiled into deterministic execution waves. Linear steps remain available for small test installs, but production flows use graph relationships so independent groups can run concurrently while dependent groups stay protected.
 
 See [shutdown-flow.md](shutdown-flow.md) for the underlying flow design.
 
 ## Operand Model
 
-The intended generated resources are:
+The generated resources are:
 
 - `Deployment` for each `NUTServer`.
 - `Service` for each `NUTServer`.
@@ -43,8 +82,8 @@ The intended generated resources are:
 
 The default node agent pod is a network-only, non-privileged monitor. A host-action sidecar is rendered only for explicit actuation modes.
 
-- `upsmon`: unprivileged NUT client, read-only root filesystem, no capabilities, no Kubernetes API token unless a later feature explicitly needs it.
-- `actuator`: omitted or stubbed by default. When approved host actuation is implemented, it watches a shared in-pod signal file and performs the host shutdown path without NUT credentials or policy authority.
+- `upsmon`: unprivileged NUT client, read-only root filesystem, no capabilities, no Kubernetes API token unless a declared feature explicitly needs it.
+- `actuator`: omitted or stubbed by default. In approved host-actuation mode, it watches a shared in-pod signal file and performs the host shutdown path without NUT credentials or policy authority.
 
 The handoff file must contain structured content, including timestamp, reason, UPS identity, and flow identity. Actuator implementations must reject stale files.
 
@@ -66,12 +105,23 @@ Do not store event history, telemetry streams, or execution logs in CR status. C
 
 This keeps the CRD declarative while giving operators a reviewable plan before `Enforce` mode is allowed.
 
-## Implementation Order
+## Decision Flow
 
-1. Keep API validation and status reconciliation passing.
-2. Maintain pure renderers for NUT server config and node agent config.
-3. Extend `NUTServer` and `NodePowerAgent` operand rendering beyond the current monitor/dry-run/stub baseline.
-4. Add transport-backed NUT polling, UPS status updates, telemetry audit writes, rejected planner attempts, and execution paths.
-5. Add in-cluster soak tests for admission/defaulting behavior and rendered operands.
-6. Add release image builds, SBOM, signing, scanning, and image smoke tests.
-7. Only then add real host actuation behind explicit approvals.
+```mermaid
+sequenceDiagram
+  participant UPS as UPS telemetry
+  participant Op as Operator
+  participant DB as PostgreSQL
+  participant Flow as ShutdownFlow
+  participant Agent as NodePowerAgent
+
+  UPS->>Op: NUT LIST VAR snapshot
+  Op->>Op: Normalize status and evaluate triggers
+  Op->>DB: Record telemetry snapshot
+  Op->>Flow: Compile and evaluate shutdown waves
+  Op->>DB: Record planner and decision evidence
+  Flow->>Agent: Approved dry-run or enforce handoff
+  Agent->>Agent: Validate local signal and mode gates
+```
+
+The operator treats PostgreSQL as the durable record path, not as the critical decision path. A storage outage degrades auditability but does not erase the current CR specs or compiled status surfaces that drive power response.

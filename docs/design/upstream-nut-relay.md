@@ -9,7 +9,7 @@ Official NUT behavior used by this design:
 - The repeated target is rendered as `<upsname>@<hostname>[:<port>]`.
 - `authconf` may be `none`, `default`, or an explicit file path.
 - Strict startup is the NUT default; `repeater_disable_strict_start` makes startup tolerate an
-  initially unavailable upstream.
+  upstream that is unavailable at process start.
 
 Reference: <https://networkupstools.org/docs/man/dummy-ups.html>
 
@@ -58,8 +58,8 @@ in the rendered NUTServer operand namespace. The operator projects it under
 
 `NUTServer.status.upstreamNUT` reports each selected upstream device, the local NUT name, upstream
 host/port, auth mode, strict-start mode, and the most recent bounded TCP reachability probe. This
-is a transport probe only; full NUT variable polling and durable telemetry writes are separate
-work.
+is a transport probe only; read-only NUT variable polling and durable telemetry writes run through
+the normal telemetry path.
 
 ## Network Policy
 

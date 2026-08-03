@@ -2,27 +2,27 @@
 
 `nut-operator` does not default to a third-party NUT container image.
 
-The preferred release shape is project-owned OCI images built from pinned, verified inputs:
+The release shape is project-owned OCI images built from pinned, verified inputs:
 
 - `nut-server`: `upsd` plus network-capable NUT drivers required by the selected `UPSDevice` resources.
 - `upsmon-agent`: unprivileged NUT client used by the `NodePowerAgent` DaemonSet.
-- `node-actuator`: small host-action process. Stub mode must run without host privileges; real host shutdown is a future explicitly approved boundary.
+- `node-actuator`: small host-action process. Stub mode runs without host privileges; real host shutdown is an explicitly approved boundary.
 - `operator`: controller-manager image built from this repository.
 
 ## Rationale
 
-The NUT project publishes source releases and distribution packages, not a single upstream, security-supported container image. Community images are useful for local experiments, but many are designed around direct USB UPS access and document privileged container usage. This operator intentionally targets network-reachable UPS devices, so the production images should not need USB device mounts, host device access, or privileged mode.
+The NUT project publishes source releases and distribution packages, not a single upstream, security-supported container image. Community images are useful for local experiments, but many are designed around direct USB UPS access and document privileged container usage. This operator intentionally targets network-reachable UPS devices, so production images do not require USB device mounts, host device access, or privileged mode.
 
-The current operand Dockerfiles package real Network UPS Tools binaries from Alpine packages:
+The operand Dockerfiles package real Network UPS Tools binaries from pinned distribution packages:
 
 - `nut-server` installs `nut`, including `upsd`, `upsdrvctl`, `upsc`, and network-capable drivers such as `dummy-ups`.
 - `upsmon-agent` installs `nut`, including `upsmon` and `upsc`.
 
-The operator validates `UPSDevice` drivers against a network-driver allowlist before rendering operands. The initial allowlist is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests.
+The operator validates `UPSDevice` drivers against a network-driver allowlist before rendering operands. The allowlist is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests.
 
 ## Build Requirements
 
-Release images should include:
+Release images include:
 
 - pinned NUT version and base image digest
 - checksum and signature verification for NUT source inputs, or pinned distro package provenance
@@ -57,15 +57,11 @@ Project-owned images are:
 
 Images include OCI source, documentation, license, revision, version, creation time, and vendor labels so GHCR can associate package metadata with this repository.
 
-## Interim Development
+## Deployment Guidance
 
-The operand images are still development images built from Alpine packages. Local
-testing may use community NUT images only as development scaffolding; they are
-not the recommended production baseline for this project.
+Local testing may use community NUT images as development scaffolding. They are not the recommended production baseline for this project.
 
-Before production use, replace mutable tags in deployment examples with the
-immutable digest returned by the image workflow and add keyless Sigstore signing
-as a release gate.
+Production deployments use immutable digests returned by the image workflow and keyless Sigstore signing as a release gate.
 
 Local image smoke tests verify the expected NUT tooling is present:
 

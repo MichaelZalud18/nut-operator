@@ -1,6 +1,6 @@
 # Planner Requirements
 
-Status: working document. Defines the requirements for the planner package — the "decide" stage of
+This document defines the requirements for the planner package, the "decide" stage of
 `nut-operator`.
 
 Companion to `scope-boundaries.md`. `PL-n` identifiers are stable and are not reused or renumbered.
@@ -88,7 +88,7 @@ the revalidation check in PL-31 can never pass.
 **PL-12** · Compiled waves: ordered, each carrying its concurrent group set, per-group timeout, wave
 duration, and cumulative duration. Extends the existing `status.compiledWaves`.
 
-**PL-13** · Flattened review view, as `status.compiledSteps` provides today.
+**PL-13** · Flattened review view, parallel to `status.compiledSteps`.
 
 **PL-14** · Plan identity: a deterministic hash over the **structural** input bundle plus the emitted
 plan. Required for audit correlation across restarts and for the revalidation check in PL-31. The
@@ -291,11 +291,10 @@ behavior is configured, not hardcoded: reject, emit with warning, or emit a trun
 plan. Rejecting during an actual outage is the worst available outcome, so the default must not be
 rejection.
 
-**OD-13 · Load-shedding granularity — node-level in v1.** "What does shedding X buy me" requires
-per-workload power draw. Nothing in the system measures that. v1 therefore reasons at whole-node
-granularity — "power off this node early, gain N minutes" — and the limitation is stated up front
-rather than discovered. Per-workload attribution is a later capability with an unresolved data
-source.
+**OD-13 · Load-shedding granularity — node-level baseline.** "What does shedding X buy me" requires
+per-workload power draw. The baseline therefore reasons at whole-node granularity — "power off this
+node early, gain N minutes" — and treats per-workload attribution as a separate data-source
+extension.
 
 ---
 
@@ -331,37 +330,11 @@ audit schema that would not otherwise exist. Flag for the audit schema doc.
 
 **OD-14 · Plan scope under partial-domain outage.** The design targets multiple UPS devices and
 multiple power domains, and triggers already reference `powerDomains`. If one domain loses power
-while another does not, nothing currently defines whether the compiled plan is cluster-wide or a
+while another does not, the plan scope policy defines whether execution is cluster-wide or a
 domain-scoped subgraph. Partial-domain outage is a realistic scenario for the multi-UPS design and
-has no defined behavior. Blocks PL-16 semantics and PL-23 quorum enforcement, since a domain-scoped
-plan may need to reason about control-plane members outside its own domain.
+is handled explicitly rather than inferred from topology alone. This policy shapes PL-16 semantics
+and PL-23 quorum enforcement, since a domain-scoped plan may need to reason about control-plane
+members outside its own domain.
 
 No longer blocked on missing structure: derived domains (IN-7) plus input-qualified `feeds` edges
 (IN-4) supply the data this decision needed. Only the policy choice remains.
-
----
-
-## Change Log
-
-**2026-07-31 — initial draft, revised after review.** Five corrections applied before publication:
-
-- **Inputs partitioned** (PL-42). Telemetry in the hashed bundle would have made PL-14 plan identity
-  change on every tick, PL-27 determinism untestable, and PL-31 revalidation permanently failing.
-- **PL-16 split into advisory and authoritative verdicts** as a consequence of the partition.
-- **PL-31 rewritten.** Original text could block shutdown during an outage by refusing a stale plan.
-  Now: bounded recompile, then policy decision, with refusal explicitly not the default.
-- **PL-19/PL-33 collision resolved.** The fallback profile path and trigger validation previously
-  contradicted each other. Rules now stated in PL-19.
-- **PL-25 given a consequence.** Detection without defined resolution moved the problem to the
-  executor.
-
-Also added: PL-43 (node-clearance revalidation), OD-14 (partial-domain plan scope).
-
-**2026-07-31 — capability deconfliction pass.** Added CR-1 through CR-3. PL-7 rewritten from merge
-to deterministic matching. PL-33 redefined as the universal-floor tier of the matching algorithm.
-PL-19 degrade mechanics delegated to the capability schema doc. OD-7 closed, OD-8 dissolved (OD-8r
-residue), OD-9 folded into the capability schema. OD-15 added.
-
-**2026-07-31 — inventory contract pass.** PL-6 rewritten for derived power domains. PL-44 added
-(orphan rule). PL-21 unblocked by OD-3 closure. OD-2 and OD-3 removed from carried decisions; OD-16
-added. OD-14 marked unblocked on structure.

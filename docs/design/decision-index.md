@@ -1,7 +1,7 @@
 # Decision Index and Glossary
 
-Status: living index. The map across the design document set. When a namespace gains or retires an
-identifier, this file updates in the same change.
+This is the map across the design document set. When a namespace gains or retires an identifier,
+this file updates in the same change.
 
 ## Document Set
 
@@ -13,9 +13,10 @@ identifier, this file updates in the same change.
 | `executor-requirements.md` | Act | EX |
 | `inventory-provider-contract.md` | Topology input contract | IN |
 | `faq.md` | User-facing answers | — |
-| Capability schema *(planned)* | Profile format | TBD |
+| `capability-profiles.md` | Profile catalog and SKU capability records | CR |
 | `telemetry-normalization.md` | NUT variable normalization boundary | Runtime telemetry facts |
-| Plan schema *(planned)* | Compiled plan format | Internal |
+| `trigger-evaluation.md` | Telemetry-to-flow trigger decisions | Runtime decision facts |
+| `shutdown-flow.md` | Public shutdown-flow model | Compiled plan format |
 | `audit-storage-schema.md` | PostgreSQL durable-state schema and writer boundary | Migration-bound |
 
 ## Identifier Namespaces
@@ -51,7 +52,6 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | OD-14 | Partial-domain outage: cluster-wide vs domain-scoped plan (structure now available) | PL-16, PL-23, EX-10 | Planner design |
 | OD-15 | Probe-history table | — | Audit schema |
 | OD-16 | Missing `carries` coverage: error vs explicit exemption | Inventory validation | inventory contract |
-| OD-17 | Executor mid-flow state persistence for resume | EX-14 | Executor / resolve with OD-6 |
 
 ### Closed
 
@@ -62,7 +62,8 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | OD-7 | Profiles are CRDs + bundled data; NetBox references at most | planner CR section |
 | OD-8 | Dissolved — lookup, not merge; residue → OD-8r | planner CR section |
 | OD-11 | Hybrid selector resolution: compile graph, enumerate at execution | planner Resolved |
-| OD-13 | Load shedding node-granular in v1 | planner Resolved |
+| OD-13 | Load shedding node-granular baseline | planner Resolved |
+| OD-17 | Executor mid-flow state persists to PostgreSQL execution and resume-state tables | executor EX-14 |
 
 ## Glossary
 
@@ -94,7 +95,7 @@ advisory (SB-9, CR-1, CR-2).
 to match. The terminal tier of the matching chain, not a special case (PL-33).
 
 **Last-ditch** — the role marking services and nodes that must survive until a given shutdown
-phase; under HA, the minimum viable control plane. Taxonomy pending OD-4.
+phase; under HA, the minimum viable control plane. The detailed taxonomy is tracked by OD-4.
 
 **Signal file** — the structured in-pod handoff from executor authority to host actuation:
 timestamp, reason, UPS identity, flow identity, plan hash. The actuator rejects stale files
@@ -111,8 +112,3 @@ detect, pure computation in decide, all effects and evidence in act.
 
 **Provider contract** — the normalized inventory shape all topology providers emit; owned by the
 operator, informed by NetBox, transcribing neither (inventory-provider-contract.md).
-
-## Change Log
-
-**2026-07-31 — initial index.** Nine namespaces, twelve open decisions, six closed, glossary of
-fifteen terms.

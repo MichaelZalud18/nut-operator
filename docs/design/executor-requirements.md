@@ -1,7 +1,6 @@
 # Executor Requirements
 
-Status: working document. Defines the requirements for the executor — the "act" stage of
-`nut-operator`.
+This document defines the requirements for the executor, the "act" stage of `nut-operator`.
 
 Companion to `scope-boundaries.md`, `planner-requirements.md`, `resolver-requirements.md`, and
 `inventory-provider-contract.md`. `EX-n` identifiers are stable and are not reused or renumbered.
@@ -23,7 +22,7 @@ compiles one — recompilation requests go to the planner.
 ## Trigger Evaluation
 
 **EX-1 · The executor's controller evaluates trigger conditions.** The planner validates trigger
-*definitions* (PL-19, PL-36); the executor evaluates whether a defined trigger is currently *firing*
+*definitions* (PL-19, PL-36); the executor evaluates whether a defined trigger is *firing*
 against live telemetry from the resolver. This is the previously unassigned half of PL-36 and it is
 assigned here.
 
@@ -79,6 +78,10 @@ plan; execution-time clearance is the proof.
 completes only when every group has met its completion condition or exhausted its timeout. The
 executor never reorders, merges, or skips waves.
 
+One active trigger episode maps to one execution deduplication key. While that episode remains
+eligible, repeated reconciliations update status and audit decisions but do not create duplicate
+execution runs. After the trigger clears, the same plan may execute again for a later episode.
+
 **EX-11 · Per-group timeouts are enforced as written.** Timeout expiry is a group failure, which
 engages abort policy — it is not an implicit success.
 
@@ -93,8 +96,9 @@ the plan explicitly compiled an exceptional override.
 **EX-14 · Idempotent, resumable execution.** The executor may restart mid-flow (it is itself a
 workload in a cluster that is shutting down). Execution state sufficient to resume — current wave,
 group states, enumerated instances — is persisted such that a restarted executor continues rather
-than re-running completed actions or abandoning the flow. Where that state survives is bound to
-OD-6.
+than re-running completed actions or abandoning the flow. PostgreSQL stores compact resume state in
+`executor_resume_states` and durable progress in the execution, wave, group, and action-attempt
+tables.
 
 ---
 
@@ -136,23 +140,12 @@ effects marked simulated. Rehearsals that leave no trace are not rehearsals.
 
 ---
 
-## Open Decisions
+## Bound Decisions
 
-**OD-17 · Executor state persistence for resume.** EX-14 requires durable mid-flow state, and the
-obvious stores are compromised: PostgreSQL is subject to OD-6, and CR status is size-bounded and
-GP-3-constrained. Candidates: a dedicated compact CR status field for wave-position only, a local
-spool shared with the OD-6 mechanism, or accepting restart-from-wave-boundary semantics. Couples
-tightly to OD-6 and should be resolved with it.
+**OD-17 · Executor state persistence for resume — closed.** The executor persists wave position and
+compact state in PostgreSQL `executor_resume_states`. Detailed progress remains in the execution,
+wave, group, action-attempt, node-release, and signal-handoff tables.
 
 Bound from elsewhere: OD-6 (audit durability — EX-14, EX-20), OD-12 (infeasibility policy —
 consumed at EX-3), OD-14 (partial-domain scope — determines what EX-10 executes when one domain
 fires).
-
----
-
-## Change Log
-
-**2026-07-31 — initial draft.** Consolidates act-stage obligations previously scattered across
-`planner-requirements.md` (PL-16, PL-18, PL-31, PL-36, PL-43, OD-11), `scope-boundaries.md` (SB-3,
-SB-10, SB-11, RB-4, GP-2, GP-3), and the repository's shutdown-flow and node-agent designs.
-Assigns trigger condition evaluation (EX-1). Opens OD-17.

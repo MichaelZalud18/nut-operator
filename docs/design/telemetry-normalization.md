@@ -27,7 +27,7 @@ Outputs are stable policy/audit facts:
 
 NUT exposes `ups.status` as space-separated status symbols. The normalizer treats the standard NUT
 symbols as meaningful, preserves unknown symbols, and emits a warning instead of rejecting the
-snapshot. That keeps future/vendor-specific statuses from breaking reconciliation.
+snapshot. That keeps vendor-specific statuses from breaking reconciliation.
 
 ## Polling
 
@@ -45,11 +45,10 @@ endpoint, updates `UPSDevice.status`, and records successful snapshots through t
 `PowerManagementCluster` audit store when storage is ready. Audit write failures are logged but do
 not block status updates.
 
-## Next Work
+## Runtime Integration
 
-The next layer should evaluate telemetry against shutdown triggers, emit Kubernetes Events/metrics,
-and move durable telemetry recording behind a long-lived writer/cache suitable for high polling
-volume.
+Runtime integration evaluates telemetry against shutdown triggers, emits Kubernetes Events and
+metrics, and records durable telemetry through a writer path suitable for high polling volume.
 
 ## References
 

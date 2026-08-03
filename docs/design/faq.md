@@ -25,9 +25,8 @@ containers. Network drivers (`snmp-ups`, `netxml-ups`, and the rest of the allow
 neither, which is why the NUT server pods run non-privileged with read-only roots and no host
 access (RB-1, RB-3).
 
-USB support is a deliberate deferral, not a rejection — it is on the v2 candidate list, and it will
-arrive with its own isolated actuation boundary rather than by weakening the current one (SB-4,
-OD-10).
+USB and serial support live outside the network-first baseline. If added, they use their own
+isolated boundary rather than weakening the unprivileged network path (SB-4, OD-10).
 
 ## Do I need NetBox?
 
@@ -59,7 +58,7 @@ help. NUT's own scope ends at clean shutdown for the same reason.
 Whether a recovery story joins the project later is an open decision (SB-1, OD-1). It is not an
 oversight.
 
-## Will this shut my nodes down by accident?
+## Can this shut my nodes down by accident?
 
 It is designed so that it cannot shut anything down until you have said so twice.
 
@@ -76,9 +75,8 @@ ordered late in shutdown precisely so the event pipeline stays alive until the e
 raises an explicit condition, and stale power data can never produce an optimistic feasibility
 verdict (PL-32, RS-17).
 
-## Why is the actuator a stub? When does real shutdown land?
+## Why is host shutdown isolated in an actuator?
 
-Deliberately last. The implementation order puts real host actuation after audit, admission
-webhooks, and release hardening — dangerous behavior ships only once everything needed to review,
-gate, and record it already works. Until then the actuator renders as a stub and the rest of the
-system is fully exercisable in dry-run.
+Host shutdown is the dangerous boundary, so it is kept out of the NUT client and out of the planner.
+The `upsmon` container observes power state without host authority. The actuator receives only the
+approved, fresh signal file and performs the local host action under the selected actuator policy.

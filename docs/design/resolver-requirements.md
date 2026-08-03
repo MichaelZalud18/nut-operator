@@ -1,7 +1,6 @@
 # Resolver Requirements
 
-Status: working document. Defines the requirements for the resolver — the "detect" stage of
-`nut-operator`.
+This document defines the requirements for the resolver, the "detect" stage of `nut-operator`.
 
 Companion to `scope-boundaries.md`, `planner-requirements.md`, and
 `inventory-provider-contract.md`. `RS-n` identifiers are stable and are not reused or renumbered.
@@ -134,12 +133,3 @@ are strict.
 Owned or co-owned here: OD-8r (provider key policy — RS-6 carries the interim behavior), OD-15
 (probe history schema), OD-16 (missing `carries` coverage — validated at resolve time alongside
 PL-44 once decided).
-
----
-
-## Change Log
-
-**2026-07-31 — initial draft.** Consolidates resolver obligations previously scattered across
-`planner-requirements.md` (PL-4, PL-7, PL-11, PL-42, PL-44), `inventory-provider-contract.md`
-(IN-9, IN-13 through IN-16), and the capability resolution model (CR-1). Interim OD-8r behavior
-set to floor-match-with-warning.
