@@ -27,6 +27,10 @@ type PowerManagementClusterSpec struct {
 	// +optional
 	OperandNamespace *OperandNamespaceSpec `json:"operandNamespace,omitempty"`
 
+	// shutdownTiers configures numbered shutdown-tier policy for planner ordering.
+	// +optional
+	ShutdownTiers PowerShutdownTierPolicySpec `json:"shutdownTiers,omitempty"`
+
 	// storage configures durable audit, telemetry, and flow execution state.
 	// +optional
 	Storage PowerStorageSpec `json:"storage,omitempty"`
@@ -42,6 +46,79 @@ type PowerManagementClusterSpec struct {
 	// observability configures metrics, events, and telemetry export defaults.
 	// +optional
 	Observability PowerObservabilitySpec `json:"observability,omitempty"`
+}
+
+const (
+	// DefaultShutdownTierLabelKey is the default label key used to read numeric shutdown tiers.
+	DefaultShutdownTierLabelKey = "power.zalud.io/shutdown-tier"
+)
+
+// PowerShutdownTierPolicySpec configures central numbered shutdown-tier policy.
+type PowerShutdownTierPolicySpec struct {
+	// labelKey is the Kubernetes label key whose numeric value declares an object's shutdown tier.
+	// +optional
+	LabelKey string `json:"labelKey,omitempty"`
+
+	// defaultTier is assigned to targets that match no explicit tier. Tiers 0 and 1 are reserved and cannot be the default.
+	// +kubebuilder:validation:Minimum=2
+	// +optional
+	DefaultTier *int32 `json:"defaultTier,omitempty"`
+
+	// tiers documents the known tier numbers and their operator-facing meanings.
+	// +listType=map
+	// +listMapKey=tier
+	// +optional
+	Tiers []PowerShutdownTierDefinition `json:"tiers,omitempty"`
+
+	// selectorRules assign tiers by selector before falling back to defaultTier.
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	SelectorRules []PowerShutdownTierSelectorRule `json:"selectorRules,omitempty"`
+}
+
+// PowerShutdownTierDefinition names a shutdown tier.
+type PowerShutdownTierDefinition struct {
+	// tier is the numeric shutdown tier. Higher tiers stop earlier; lower tiers stop later.
+	// +kubebuilder:validation:Minimum=0
+	Tier int32 `json:"tier"`
+
+	// name is a stable human-readable tier name.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// description explains the tier's purpose.
+	// +optional
+	Description string `json:"description,omitempty"`
+}
+
+// PowerShutdownTierSubjectKind scopes a selector rule.
+// +kubebuilder:validation:Enum=Any;Namespace;Workload;Node
+type PowerShutdownTierSubjectKind string
+
+const (
+	PowerShutdownTierSubjectAny       PowerShutdownTierSubjectKind = "Any"
+	PowerShutdownTierSubjectNamespace PowerShutdownTierSubjectKind = "Namespace"
+	PowerShutdownTierSubjectWorkload  PowerShutdownTierSubjectKind = "Workload"
+	PowerShutdownTierSubjectNode      PowerShutdownTierSubjectKind = "Node"
+)
+
+// PowerShutdownTierSelectorRule assigns a tier to objects matched by labels.
+type PowerShutdownTierSelectorRule struct {
+	// name is unique within the policy.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// subject limits which target kind this rule applies to. Empty means Any.
+	// +optional
+	Subject PowerShutdownTierSubjectKind `json:"subject,omitempty"`
+
+	// tier is assigned to matching objects. Tier 0 is workload-only and cannot be assigned to nodes.
+	// +kubebuilder:validation:Minimum=0
+	Tier int32 `json:"tier"`
+
+	// selector matches object labels.
+	Selector metav1.LabelSelector `json:"selector"`
 }
 
 // PowerManagementClusterStatus defines the observed state of PowerManagementCluster.

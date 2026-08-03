@@ -38,18 +38,20 @@ spec:
     - name: application-workloads
       action: ScaleWorkload
       description: Scale non-critical apps before node drain.
+      shutdownTier: 4
       params:
         replicas: "0"
       target:
         namespaceSelector:
           matchLabels:
-            power.zalud.io/shutdown-tier: application
+            power.zalud.io/shutdown-tier: "4"
       before:
         - cordon-standard-workers
       phase: 10
       timeout: 5m
     - name: cordon-standard-workers
       action: CordonNodes
+      shutdownTier: 2
       target:
         nodeSelector:
           matchLabels:
@@ -60,6 +62,7 @@ spec:
       timeout: 1m
     - name: drain-standard-workers
       action: DrainNodes
+      shutdownTier: 2
       target:
         nodeSelector:
           matchLabels:
@@ -70,6 +73,7 @@ spec:
       timeout: 10m
     - name: request-agent-shutdown
       action: AgentShutdown
+      shutdownTier: 1
       target:
         agentRefs:
           - name: rack-a-workers

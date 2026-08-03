@@ -101,6 +101,24 @@ func validateSnapshot(snapshot Snapshot) []Diagnostic {
 				Message:  fmt.Sprintf("inventory entity %q declares power domains, but domain membership is derived from UPS roots", entity.ID),
 			})
 		}
+		if entity.ShutdownTier != nil {
+			switch tier := *entity.ShutdownTier; {
+			case tier < 0:
+				diagnostics = append(diagnostics, Diagnostic{
+					Severity: DiagnosticError,
+					Reason:   "ShutdownTierInvalid",
+					Subject:  entity.ID,
+					Message:  fmt.Sprintf("inventory entity %q declares invalid shutdown tier %d", entity.ID, tier),
+				})
+			case entity.Kind == EntityKindNode && tier == 0:
+				diagnostics = append(diagnostics, Diagnostic{
+					Severity: DiagnosticError,
+					Reason:   "ShutdownTierZeroNode",
+					Subject:  entity.ID,
+					Message:  fmt.Sprintf("node %q cannot be assigned shutdown tier 0", entity.ID),
+				})
+			}
+		}
 		entities[entity.ID] = entity
 	}
 

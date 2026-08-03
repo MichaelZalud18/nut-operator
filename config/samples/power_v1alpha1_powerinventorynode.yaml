@@ -10,3 +10,4 @@ spec:
   roles:
     controlPlane: false
     controlPlaneQuorumMember: false
+    shutdownTier: 2

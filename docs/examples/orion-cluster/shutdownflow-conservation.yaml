@@ -20,6 +20,7 @@ spec:
     - name: burst-capacity
       description: Shed optional burst capacity first.
       action: AgentShutdown
+      shutdownTier: 5
       target:
         agentRefs:
           - name: orion-burst
@@ -30,12 +31,13 @@ spec:
     - name: application-workloads
       description: Scale ordinary applications before data and storage services.
       action: ScaleWorkload
+      shutdownTier: 4
       params:
         replicas: "0"
       target:
         namespaceSelector:
           matchLabels:
-            power.example.com/shutdown-tier: application
+            power.example.com/shutdown-tier: "4"
       before:
         - data-workloads
       phase: 10
@@ -43,12 +45,13 @@ spec:
     - name: data-workloads
       description: Quiesce databases after clients stop.
       action: ScaleWorkload
+      shutdownTier: 3
       params:
         replicas: "0"
       target:
         workloadSelector:
           matchLabels:
-            power.example.com/shutdown-tier: data
+            power.example.com/shutdown-tier: "3"
       before:
         - storage-services
       phase: 20
@@ -56,12 +59,13 @@ spec:
     - name: storage-services
       description: Flush storage after data workloads stop.
       action: RunWorkflow
+      shutdownTier: 2
       params:
         workflow.templateRef: flush-storage
       target:
         namespaceSelector:
           matchLabels:
-            power.example.com/shutdown-tier: storage
+            power.example.com/shutdown-tier: "2"
       before:
         - standard-nodes
       phase: 30
@@ -69,6 +73,7 @@ spec:
     - name: standard-nodes
       description: Power down standard workers before the controller.
       action: AgentShutdown
+      shutdownTier: 2
       target:
         agentRefs:
           - name: orion-standard
@@ -79,6 +84,7 @@ spec:
     - name: controller-node
       description: Shut down the controller group last for the power domain.
       action: AgentShutdown
+      shutdownTier: 1
       target:
         agentRefs:
           - name: orion-controller

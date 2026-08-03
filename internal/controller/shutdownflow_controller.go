@@ -54,7 +54,7 @@ type ShutdownFlowReconciler struct {
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows/finalizers,verbs=update
-// +kubebuilder:rbac:groups=power.zalud.io,resources=powerinfrastructures;powerinventoryedges;powerinventorynodes;upscapabilityprofiles;upsdevices,verbs=get;list;watch
+// +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters;powerinfrastructures;powerinventoryedges;powerinventorynodes;upscapabilityprofiles;upsdevices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces;nodes;pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=update;patch
@@ -80,6 +80,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	result := validateShutdownFlow(&flow)
 	var bundle resolver.StructuralBundle
 	var resolverDiagnostics []resolver.Diagnostic
+	var managementCluster *powerv1alpha1.PowerManagementCluster
 	if result.accepted {
 		resolvedBundle, diagnostics, err := resolveDeclarativeStructuralBundle(ctx, r.Client)
 		resolverDiagnostics = diagnostics
@@ -93,6 +94,17 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			bundle = resolvedBundle
 		}
 	}
+	if result.accepted {
+		cluster, err := r.getManagementCluster(ctx, &flow)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				result = rejected("ManagementClusterNotFound", "referenced PowerManagementCluster could not be found")
+			} else {
+				return ctrl.Result{}, err
+			}
+		}
+		managementCluster = cluster
+	}
 
 	flow.Status.ObservedGeneration = flow.Generation
 	evaluationTime := metav1.NewTime(observedAt)
@@ -104,7 +116,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus
 	var triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus
 	if result.accepted {
-		compiled, compiledWaves, estimatedDuration, configHash, publishedArtifact = compileShutdownFlowWithResolvedInputs(&flow, bundle)
+		compiled, compiledWaves, estimatedDuration, configHash, publishedArtifact = compileShutdownFlowWithResolvedInputsAndTierPolicy(&flow, bundle, shutdownFlowTierPolicy(managementCluster))
 		if configHash == "" {
 			result = rejected("PlannerFailed", "shutdown flow planner failed after resolver inputs were attached")
 		}
@@ -225,6 +237,7 @@ func (r *ShutdownFlowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&powerv1alpha1.ShutdownFlow{}, flowChanged).
 		Watches(&powerv1alpha1.UPSDevice{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange)).
+		Watches(&powerv1alpha1.PowerManagementCluster{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
 		Watches(&powerv1alpha1.PowerInfrastructure{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
 		Watches(&powerv1alpha1.PowerInventoryNode{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
 		Watches(&powerv1alpha1.PowerInventoryEdge{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
@@ -352,6 +365,13 @@ func managementClusterStorageReady(cluster *powerv1alpha1.PowerManagementCluster
 		mode = storageconfig.EffectiveMode(cluster.Spec.Storage)
 	}
 	return mode != powerv1alpha1.PowerStorageDisabled && cluster.Status.Storage.Ready
+}
+
+func shutdownFlowTierPolicy(cluster *powerv1alpha1.PowerManagementCluster) powerv1alpha1.PowerShutdownTierPolicySpec {
+	if cluster == nil {
+		return powerv1alpha1.PowerShutdownTierPolicySpec{}
+	}
+	return cluster.Spec.ShutdownTiers
 }
 
 func auditDiagnosticsFromResolver(diagnostics []resolver.Diagnostic) []audit.DiagnosticRecord {

@@ -345,6 +345,124 @@ func TestCompileLinearStepsPublishesPolicyGraph(t *testing.T) {
 	}
 }
 
+func TestCompileExpandsShutdownTiersIntoDerivedEdges(t *testing.T) {
+	appTier := int32(3)
+	dbTier := int32(2)
+	nodeTier := int32(1)
+	input := StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{
+				Name:         "nodes",
+				Action:       "AgentShutdown",
+				ShutdownTier: &nodeTier,
+				Target:       Target{AgentRefCount: 1},
+			},
+			{
+				Name:         "applications",
+				Action:       "ScaleWorkload",
+				ShutdownTier: &appTier,
+				Target:       Target{NamespaceSelector: true},
+			},
+			{
+				Name:         "databases",
+				Action:       "ScaleWorkload",
+				ShutdownTier: &dbTier,
+				Target:       Target{WorkloadSelector: true},
+			},
+		},
+	}
+
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	if got, want := waveGroups(plan.Waves), [][]string{{"applications"}, {"databases"}, {"nodes"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected shutdown waves %#v, got %#v", want, got)
+	}
+	if got, want := *plan.Waves[0].ShutdownTier, appTier; got != want {
+		t.Fatalf("expected first wave tier %d, got %d", want, got)
+	}
+	edge := findGraphEdge(plan.Graph.Edges, "applications", "databases", GraphEdgeRelationShutdownTier)
+	if edge == nil {
+		t.Fatalf("expected applications->databases tier edge, got %#v", plan.Graph.Edges)
+	}
+	if edge.Provenance != GraphEdgeProvenanceDerived {
+		t.Fatalf("expected derived tier edge provenance, got %q", edge.Provenance)
+	}
+	if !strings.Contains(edge.Explanation, "tier 3 stops before tier 2") {
+		t.Fatalf("expected tier explanation, got %q", edge.Explanation)
+	}
+	if findGraphEdge(plan.Graph.Edges, "applications", "nodes", GraphEdgeRelationShutdownTier) != nil {
+		t.Fatalf("expected tier edges only between adjacent occupied tiers, got %#v", plan.Graph.Edges)
+	}
+	if got := plan.Steps[0].ShutdownTier; got == nil || *got != appTier {
+		t.Fatalf("expected compiled step shutdown tier %d, got %#v", appTier, got)
+	}
+	if got := findGraphVertex(plan.Graph.Vertices, "nodes").ShutdownTier; got == nil || *got != nodeTier {
+		t.Fatalf("expected graph vertex shutdown tier %d, got %#v", nodeTier, got)
+	}
+}
+
+func TestCompileAppliesDefaultShutdownTier(t *testing.T) {
+	defaultTier := int32(4)
+	nodeTier := int32(1)
+	input := StructuralInputs{
+		TierPolicy: TierPolicy{DefaultTier: &defaultTier},
+		Triggers:   []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{
+				Name:   "applications",
+				Action: "ScaleWorkload",
+				Target: Target{NamespaceSelector: true},
+			},
+			{
+				Name:         "nodes",
+				Action:       "AgentShutdown",
+				ShutdownTier: &nodeTier,
+				Target:       Target{AgentRefCount: 1},
+			},
+		},
+	}
+
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	if got, want := waveGroups(plan.Waves), [][]string{{"applications"}, {"nodes"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected shutdown waves %#v, got %#v", want, got)
+	}
+	if edge := findGraphEdge(plan.Graph.Edges, "applications", "nodes", GraphEdgeRelationShutdownTier); edge == nil {
+		t.Fatalf("expected default-tier applications->nodes edge, got %#v", plan.Graph.Edges)
+	}
+	if got := findGraphVertex(plan.Graph.Vertices, "applications").ShutdownTier; got == nil || *got != defaultTier {
+		t.Fatalf("expected applications to inherit default tier %d, got %#v", defaultTier, got)
+	}
+}
+
+func TestCompileRejectsTargetedTierZero(t *testing.T) {
+	tierZero := int32(0)
+	input := StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{{
+			Name:         "last-ditch",
+			Action:       "ScaleWorkload",
+			ShutdownTier: &tierZero,
+			Target:       Target{NamespaceSelector: true},
+		}},
+	}
+
+	_, diagnostics, err := Compile(input, TelemetryInputs{})
+	if !errors.Is(err, ErrRejected) {
+		t.Fatalf("expected ErrRejected, got %v", err)
+	}
+	if !hasDiagnosticReason(diagnostics, "ShutdownTierZeroTargeted") {
+		t.Fatalf("expected ShutdownTierZeroTargeted diagnostic, got %#v", diagnostics)
+	}
+}
+
 func TestCompileRejectsUnknownDependency(t *testing.T) {
 	input := StructuralInputs{
 		Triggers: []Trigger{{Type: "OnBattery"}},
@@ -422,6 +540,15 @@ func findGraphEdge(edges []GraphEdge, from, to, relation string) *GraphEdge {
 		}
 	}
 	return nil
+}
+
+func findGraphVertex(vertices []GraphVertex, id string) GraphVertex {
+	for _, vertex := range vertices {
+		if vertex.ID == id {
+			return vertex
+		}
+	}
+	return GraphVertex{}
 }
 
 func hasExplanationReason(explanations []Explanation, reason string) bool {

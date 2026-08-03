@@ -28,6 +28,6 @@ func compileShutdownFlow(obj *powerv1alpha1.ShutdownFlow) ([]powerv1alpha1.Compi
 	return shutdownflowadapter.Compile(obj)
 }
 
-func compileShutdownFlowWithResolvedInputs(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string, *powerv1alpha1.PublishedPlannerArtifactStatus) {
-	return shutdownflowadapter.CompileArtifactWithResolvedInputs(obj, bundle)
+func compileShutdownFlowWithResolvedInputsAndTierPolicy(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, policy powerv1alpha1.PowerShutdownTierPolicySpec) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string, *powerv1alpha1.PublishedPlannerArtifactStatus) {
+	return shutdownflowadapter.CompileArtifactWithResolvedInputsAndTierPolicy(obj, bundle, policy)
 }

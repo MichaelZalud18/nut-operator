@@ -52,10 +52,26 @@ func inventoryEntityFromPowerInventoryNode(obj *powerv1alpha1.PowerInventoryNode
 		Kind:                     inventory.EntityKindNode,
 		PowerPlanningExempt:      boolPointerValue(obj.Spec.PowerPlanningExempt),
 		CommunicationPathExempt:  boolPointerValue(obj.Spec.CommunicationPathExempt),
+		ShutdownTier:             powerInventoryNodeShutdownTier(obj),
 		LastDitchRole:            obj.Spec.Roles.LastDitchRole,
 		ControlPlane:             boolPointerValue(obj.Spec.Roles.ControlPlane),
 		ControlPlaneQuorumMember: boolPointerValue(obj.Spec.Roles.ControlPlaneQuorumMember),
 	}
+}
+
+func powerInventoryNodeShutdownTier(obj *powerv1alpha1.PowerInventoryNode) *int32 {
+	if obj == nil {
+		return nil
+	}
+	if obj.Spec.Roles.ShutdownTier != nil {
+		tier := *obj.Spec.Roles.ShutdownTier
+		return &tier
+	}
+	if obj.Spec.Roles.LastDitchRole != "" {
+		tier := int32(1)
+		return &tier
+	}
+	return nil
 }
 
 func inventoryEdgeFromPowerInventoryEdge(obj *powerv1alpha1.PowerInventoryEdge) inventory.Edge {

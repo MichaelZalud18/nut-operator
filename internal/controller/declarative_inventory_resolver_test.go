@@ -88,6 +88,40 @@ func TestResolveDeclarativeStructuralBundleUsesBundledProfiles(t *testing.T) {
 	}
 }
 
+func TestResolveDeclarativeStructuralBundleMapsLastDitchRoleToTierOne(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add power API to scheme: %v", err)
+	}
+	trueValue := true
+	reader := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&powerv1alpha1.PowerInventoryNode{
+			ObjectMeta: objectMeta("control-plane-a"),
+			Spec: powerv1alpha1.PowerInventoryNodeSpec{
+				NodeName:                "control-plane-a",
+				PowerPlanningExempt:     &trueValue,
+				CommunicationPathExempt: &trueValue,
+				Roles: powerv1alpha1.PowerInventoryNodeRoles{
+					LastDitchRole: "control-plane",
+				},
+			},
+		}).
+		Build()
+
+	bundle, diagnostics, err := resolveDeclarativeStructuralBundle(context.Background(), reader)
+	if err != nil {
+		t.Fatalf("expected inventory resolution to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+	if len(bundle.Topology.Entities) != 1 {
+		t.Fatalf("expected one entity, got %#v", bundle.Topology.Entities)
+	}
+	tier := bundle.Topology.Entities[0].ShutdownTier
+	if tier == nil || *tier != 1 {
+		t.Fatalf("expected lastDitchRole to map to shutdown tier 1, got %#v", tier)
+	}
+}
+
 func objectMeta(name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{Name: name}
 }

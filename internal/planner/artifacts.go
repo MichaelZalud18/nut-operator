@@ -26,19 +26,22 @@ const (
 	GraphVertexKindGroup = "ShutdownGroup"
 	GraphVertexKindStep  = "ShutdownStep"
 
-	GraphEdgeRelationRequires    = "Requires"
-	GraphEdgeRelationBefore      = "Before"
-	GraphEdgeRelationAfter       = "After"
-	GraphEdgeRelationLinearOrder = "LinearOrder"
+	GraphEdgeRelationRequires     = "Requires"
+	GraphEdgeRelationBefore       = "Before"
+	GraphEdgeRelationAfter        = "After"
+	GraphEdgeRelationLinearOrder  = "LinearOrder"
+	GraphEdgeRelationShutdownTier = "ShutdownTier"
 
 	GraphEdgeProvenanceDeclared = "Declared"
+	GraphEdgeProvenanceDerived  = "Derived"
 	GraphEdgeProvenancePolicy   = "Policy"
 )
 
-func buildGroupGraph(groups []Group) Graph {
+func buildGroupGraph(groups []Group, policy TierPolicy) Graph {
+	tiers := effectiveShutdownTiers(groups, policy)
 	graph := Graph{
 		Vertices: make([]GraphVertex, 0, len(groups)),
-		Edges:    collectGroupGraphEdges(groups),
+		Edges:    collectGroupGraphEdges(groups, policy),
 	}
 	for _, group := range groups {
 		graph.Vertices = append(graph.Vertices, GraphVertex{
@@ -47,6 +50,7 @@ func buildGroupGraph(groups []Group) Graph {
 			Label:         group.Name,
 			Action:        group.Action,
 			Phase:         copyPhase(group.Phase),
+			ShutdownTier:  shutdownTierPtr(group.Name, tiers),
 			TargetSummary: summarizeTarget(group.Target),
 		})
 	}
@@ -54,7 +58,7 @@ func buildGroupGraph(groups []Group) Graph {
 	return graph
 }
 
-func collectGroupGraphEdges(groups []Group) []GraphEdge {
+func collectGroupGraphEdges(groups []Group, policy TierPolicy) []GraphEdge {
 	var edges []GraphEdge
 	for _, group := range groups {
 		for _, dependency := range group.Requires {
@@ -103,6 +107,7 @@ func collectGroupGraphEdges(groups []Group) []GraphEdge {
 			})
 		}
 	}
+	edges = append(edges, collectShutdownTierGraphEdges(groups, policy)...)
 	return dedupeGraphEdges(edges)
 }
 
@@ -154,6 +159,7 @@ func advisoryStartupWaves(shutdownWaves []Wave) []Wave {
 		wave := Wave{
 			Index:              int32(len(startup)),
 			Phase:              copyPhase(source.Phase),
+			ShutdownTier:       copyInt32Ptr(source.ShutdownTier),
 			Groups:             groups,
 			Duration:           source.Duration,
 			CumulativeDuration: cumulative,

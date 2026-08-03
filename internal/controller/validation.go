@@ -45,6 +45,9 @@ func rejected(reason, format string, args ...any) validationResult {
 }
 
 func validatePowerManagementCluster(obj *powerv1alpha1.PowerManagementCluster) validationResult {
+	if result := validatePowerShutdownTiers(obj.Spec.ShutdownTiers); !result.accepted {
+		return result
+	}
 	switch obj.Spec.Storage.Mode {
 	case "", powerv1alpha1.PowerStorageCNPG:
 		if obj.Spec.Storage.CNPG == nil {
@@ -61,6 +64,39 @@ func validatePowerManagementCluster(obj *powerv1alpha1.PowerManagementCluster) v
 	}
 
 	return accepted("power management cluster contract accepted")
+}
+
+func validatePowerShutdownTiers(policy powerv1alpha1.PowerShutdownTierPolicySpec) validationResult {
+	if policy.DefaultTier != nil && *policy.DefaultTier < 2 {
+		return rejected("ShutdownTierDefaultReserved", "spec.shutdownTiers.defaultTier must be 2 or greater; tiers 0 and 1 are reserved")
+	}
+	tiers := map[int32]struct{}{}
+	for _, tier := range policy.Tiers {
+		if tier.Tier < 0 {
+			return rejected("ShutdownTierInvalid", "spec.shutdownTiers.tiers cannot contain negative tier %d", tier.Tier)
+		}
+		if _, exists := tiers[tier.Tier]; exists {
+			return rejected("DuplicateShutdownTier", "spec.shutdownTiers.tiers defines tier %d more than once", tier.Tier)
+		}
+		tiers[tier.Tier] = struct{}{}
+	}
+	rules := map[string]struct{}{}
+	for _, rule := range policy.SelectorRules {
+		if rule.Name == "" {
+			return rejected("ShutdownTierRuleNameRequired", "spec.shutdownTiers.selectorRules requires every rule to have a name")
+		}
+		if _, exists := rules[rule.Name]; exists {
+			return rejected("DuplicateShutdownTierRule", "spec.shutdownTiers.selectorRules contains duplicate rule %q", rule.Name)
+		}
+		rules[rule.Name] = struct{}{}
+		if rule.Tier < 0 {
+			return rejected("ShutdownTierInvalid", "spec.shutdownTiers.selectorRules[%q] assigns negative tier %d", rule.Name, rule.Tier)
+		}
+		if rule.Subject == powerv1alpha1.PowerShutdownTierSubjectNode && rule.Tier == 0 {
+			return rejected("ShutdownTierZeroNode", "spec.shutdownTiers.selectorRules[%q] cannot assign tier 0 to nodes", rule.Name)
+		}
+	}
+	return accepted("shutdown tier policy accepted")
 }
 
 func validateUPSDevice(obj *powerv1alpha1.UPSDevice) validationResult {
@@ -251,6 +287,9 @@ func validatePowerInfrastructure(obj *powerv1alpha1.PowerInfrastructure) validat
 func validatePowerInventoryNode(obj *powerv1alpha1.PowerInventoryNode) validationResult {
 	if obj.Spec.NodeName == "" {
 		return rejected("NodeNameRequired", "spec.nodeName is required")
+	}
+	if obj.Spec.Roles.ShutdownTier != nil && *obj.Spec.Roles.ShutdownTier < 1 {
+		return rejected("ShutdownTierZeroNode", "spec.roles.shutdownTier must be 1 or greater because tier 0 is workload-only")
 	}
 	return accepted("power inventory node contract accepted")
 }

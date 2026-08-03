@@ -71,7 +71,13 @@ type PowerInventoryNodeRoles struct {
 	// +optional
 	ControlPlaneQuorumMember *bool `json:"controlPlaneQuorumMember,omitempty"`
 
+	// shutdownTier explicitly assigns this node to a numbered shutdown tier. Nodes cannot use tier 0.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	ShutdownTier *int32 `json:"shutdownTier,omitempty"`
+
 	// lastDitchRole is an explicit late-shutdown role interpreted by planner policy.
+	// When shutdownTier is omitted, any non-empty lastDitchRole maps this node to tier 1.
 	// +optional
 	LastDitchRole string `json:"lastDitchRole,omitempty"`
 }

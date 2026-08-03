@@ -47,6 +47,7 @@ type Entity struct {
 	Model                    string     `json:"model,omitempty"`
 	Firmware                 string     `json:"firmware,omitempty"`
 	DriverFamily             string     `json:"driverFamily,omitempty"`
+	ShutdownTier             *int32     `json:"shutdownTier,omitempty"`
 	LastDitchRole            string     `json:"lastDitchRole,omitempty"`
 	ControlPlane             bool       `json:"controlPlane,omitempty"`
 	ControlPlaneQuorumMember bool       `json:"controlPlaneQuorumMember,omitempty"`

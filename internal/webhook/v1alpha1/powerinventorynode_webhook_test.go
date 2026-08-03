@@ -86,6 +86,16 @@ var _ = Describe("PowerInventoryNode Webhook", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("spec.roles.lastDitchRole"))
 		})
+
+		It("Should reject node shutdown tier zero", func() {
+			tierZero := int32(0)
+			obj.Spec.NodeName = "worker-a"
+			obj.Spec.Roles.ShutdownTier = &tierZero
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.roles.shutdownTier"))
+		})
 	})
 
 })

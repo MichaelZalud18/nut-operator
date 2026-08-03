@@ -113,5 +113,8 @@ func validatePowerInventoryNodeAdmission(obj *powerv1alpha1.PowerInventoryNode) 
 	if obj.Spec.Roles.LastDitchRole != "" && containsControlCharacter(obj.Spec.Roles.LastDitchRole) {
 		errs = append(errs, field.Invalid(specPath.Child("roles").Child("lastDitchRole"), obj.Spec.Roles.LastDitchRole, "must not contain control characters"))
 	}
+	if obj.Spec.Roles.ShutdownTier != nil && *obj.Spec.Roles.ShutdownTier < 1 {
+		errs = append(errs, field.Invalid(specPath.Child("roles").Child("shutdownTier"), *obj.Spec.Roles.ShutdownTier, "nodes must use tier 1 or greater; tier 0 is workload-only"))
+	}
 	return newInvalidAdmissionError("PowerInventoryNode", obj, errs)
 }

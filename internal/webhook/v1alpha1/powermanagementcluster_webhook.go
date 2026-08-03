@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -122,6 +123,9 @@ func defaultPowerManagementCluster(obj *powerv1alpha1.PowerManagementCluster) {
 			obj.Spec.Storage.ExternalPostgres.RequireTLS = ptrBool(true)
 		}
 	}
+	if obj.Spec.ShutdownTiers.LabelKey == "" {
+		obj.Spec.ShutdownTiers.LabelKey = powerv1alpha1.DefaultShutdownTierLabelKey
+	}
 	if obj.Spec.Security.Profile == "" {
 		obj.Spec.Security.Profile = powerv1alpha1.PowerSecurityRestricted
 	}
@@ -145,6 +149,7 @@ func validatePowerManagementClusterAdmission(obj *powerv1alpha1.PowerManagementC
 		errs = append(errs, validateOptionalNamespace(specPath.Child("operandNamespace").Child("name"), obj.Spec.OperandNamespace.Name)...)
 	}
 	errs = append(errs, validatePowerStorage(specPath.Child("storage"), obj.Spec.Storage)...)
+	errs = append(errs, validatePowerShutdownTiers(specPath.Child("shutdownTiers"), obj.Spec.ShutdownTiers)...)
 	errs = append(errs, validatePowerSecurity(specPath.Child("security"), obj.Spec.Security)...)
 	errs = append(errs, validatePowerObservability(specPath.Child("observability"), obj.Spec.Observability)...)
 
@@ -193,6 +198,70 @@ func validatePowerStorage(path *field.Path, storage powerv1alpha1.PowerStorageSp
 	if storage.Retention != nil {
 		errs = append(errs, validatePositiveDuration(path.Child("retention").Child("events"), storage.Retention.Events)...)
 		errs = append(errs, validatePositiveDuration(path.Child("retention").Child("telemetry"), storage.Retention.Telemetry)...)
+	}
+	return errs
+}
+
+func validatePowerShutdownTiers(path *field.Path, policy powerv1alpha1.PowerShutdownTierPolicySpec) field.ErrorList {
+	var errs field.ErrorList
+	labelKey := policy.LabelKey
+	if labelKey == "" {
+		labelKey = powerv1alpha1.DefaultShutdownTierLabelKey
+	}
+	errs = append(errs, validateAnnotationKey(path.Child("labelKey"), labelKey)...)
+	if policy.DefaultTier != nil && *policy.DefaultTier < 2 {
+		errs = append(errs, field.Invalid(path.Child("defaultTier"), *policy.DefaultTier, "must be 2 or greater; tiers 0 and 1 are reserved"))
+	}
+
+	seenTiers := map[int32]struct{}{}
+	for i, tier := range policy.Tiers {
+		tierPath := path.Child("tiers").Index(i)
+		if tier.Tier < 0 {
+			errs = append(errs, field.Invalid(tierPath.Child("tier"), tier.Tier, "must be zero or greater"))
+		}
+		if _, exists := seenTiers[tier.Tier]; exists {
+			errs = append(errs, field.Duplicate(tierPath.Child("tier"), tier.Tier))
+		}
+		seenTiers[tier.Tier] = struct{}{}
+		if containsControlCharacter(tier.Name) {
+			errs = append(errs, field.Invalid(tierPath.Child("name"), tier.Name, "must not contain control characters"))
+		}
+		if containsControlCharacter(tier.Description) {
+			errs = append(errs, field.Invalid(tierPath.Child("description"), tier.Description, "must not contain control characters"))
+		}
+	}
+
+	seenRules := map[string]struct{}{}
+	for i, rule := range policy.SelectorRules {
+		rulePath := path.Child("selectorRules").Index(i)
+		if rule.Name == "" {
+			errs = append(errs, field.Required(rulePath.Child("name"), "required as the selector rule name"))
+		} else if containsControlCharacter(rule.Name) {
+			errs = append(errs, field.Invalid(rulePath.Child("name"), rule.Name, "must not contain control characters"))
+		}
+		if _, exists := seenRules[rule.Name]; rule.Name != "" && exists {
+			errs = append(errs, field.Duplicate(rulePath.Child("name"), rule.Name))
+		}
+		seenRules[rule.Name] = struct{}{}
+		switch rule.Subject {
+		case "", powerv1alpha1.PowerShutdownTierSubjectAny, powerv1alpha1.PowerShutdownTierSubjectNamespace, powerv1alpha1.PowerShutdownTierSubjectWorkload, powerv1alpha1.PowerShutdownTierSubjectNode:
+		default:
+			errs = append(errs, field.NotSupported(rulePath.Child("subject"), rule.Subject, []string{
+				string(powerv1alpha1.PowerShutdownTierSubjectAny),
+				string(powerv1alpha1.PowerShutdownTierSubjectNamespace),
+				string(powerv1alpha1.PowerShutdownTierSubjectWorkload),
+				string(powerv1alpha1.PowerShutdownTierSubjectNode),
+			}))
+		}
+		if rule.Tier < 0 {
+			errs = append(errs, field.Invalid(rulePath.Child("tier"), rule.Tier, "must be zero or greater"))
+		}
+		if rule.Subject == powerv1alpha1.PowerShutdownTierSubjectNode && rule.Tier == 0 {
+			errs = append(errs, field.Invalid(rulePath.Child("tier"), rule.Tier, "node selector rules cannot assign workload-only tier 0"))
+		}
+		if _, err := metav1.LabelSelectorAsSelector(&rule.Selector); err != nil {
+			errs = append(errs, field.Invalid(rulePath.Child("selector"), rule.Selector, err.Error()))
+		}
 	}
 	return errs
 }

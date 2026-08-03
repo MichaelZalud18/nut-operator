@@ -48,7 +48,7 @@ func Compile(structural StructuralInputs, telemetry TelemetryInputs) (Plan, []Di
 
 	var plan Plan
 	if len(normalized.Groups) > 0 {
-		plan.Graph = buildGroupGraph(normalized.Groups)
+		plan.Graph = buildGroupGraph(normalized.Groups, normalized.TierPolicy)
 		steps, waves, duration := compileGroups(normalized.Groups, plan.Graph)
 		plan.Steps = steps
 		plan.Waves = waves
@@ -85,6 +85,7 @@ func Compile(structural StructuralInputs, telemetry TelemetryInputs) (Plan, []Di
 
 func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 	var diagnostics []Diagnostic
+	diagnostics = append(diagnostics, validateTierPolicy(input.TierPolicy)...)
 	if len(input.Triggers) == 0 {
 		diagnostics = append(diagnostics, Diagnostic{
 			Severity: DiagnosticError,
@@ -148,6 +149,7 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 		}
 		groupNames[group.Name] = struct{}{}
 	}
+	diagnostics = append(diagnostics, validateGroupShutdownTiers(input.Groups)...)
 	for _, group := range input.Groups {
 		for _, dependency := range append(append([]string{}, group.Requires...), append(group.Before, group.After...)...) {
 			if _, exists := groupNames[dependency]; !exists {
@@ -160,7 +162,7 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 			}
 		}
 	}
-	if hasGroupCycle(input.Groups) {
+	if hasGroupCycle(input.Groups, input.TierPolicy) {
 		diagnostics = append(diagnostics, Diagnostic{
 			Severity: DiagnosticError,
 			Reason:   "DependencyCycle",
@@ -175,6 +177,7 @@ func compileGroups(groups []Group, graph Graph) ([]CompiledStep, []Wave, time.Du
 	byName := map[string]Group{}
 	indegree := map[string]int{}
 	edges := graphSuccessors(graph)
+	tiers := graphShutdownTiers(graph)
 	for _, group := range groups {
 		byName[group.Name] = group
 		indegree[group.Name] = 0
@@ -228,6 +231,7 @@ func compileGroups(groups []Group, graph Graph) ([]CompiledStep, []Wave, time.Du
 				ID:                 group.Name,
 				Index:              stepIndex,
 				Action:             group.Action,
+				ShutdownTier:       shutdownTierPtr(group.Name, tiers),
 				TargetSummary:      summarizeTarget(group.Target),
 				CumulativeDuration: Duration{Duration: cumulative + waveDuration},
 			})
@@ -245,6 +249,7 @@ func compileGroups(groups []Group, graph Graph) ([]CompiledStep, []Wave, time.Du
 			phaseCopy := phase
 			wave.Phase = &phaseCopy
 		}
+		wave.ShutdownTier = sharedShutdownTier(groupNames, tiers)
 		waves = append(waves, wave)
 		waveIndex++
 
@@ -280,12 +285,12 @@ func compileSteps(steps []Step) ([]CompiledStep, time.Duration) {
 	return compiled, cumulative
 }
 
-func groupEdges(groups []Group) map[string][]string {
-	return graphSuccessors(buildGroupGraph(groups))
+func groupEdges(groups []Group, policy TierPolicy) map[string][]string {
+	return graphSuccessors(buildGroupGraph(groups, policy))
 }
 
-func hasGroupCycle(groups []Group) bool {
-	edges := groupEdges(groups)
+func hasGroupCycle(groups []Group, policy TierPolicy) bool {
+	edges := groupEdges(groups, policy)
 	visiting := map[string]bool{}
 	visited := map[string]bool{}
 
@@ -359,6 +364,7 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 		SourceID:          input.SourceID,
 		ObservedAt:        input.ObservedAt,
 		ResolvedInputHash: input.ResolvedInputHash,
+		TierPolicy:        normalizeTierPolicy(input.TierPolicy),
 		AbortBehavior:     input.AbortBehavior,
 		Triggers:          append([]Trigger(nil), input.Triggers...),
 		Groups:            append([]Group(nil), input.Groups...),
@@ -374,6 +380,8 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 		normalized.Groups[i].Requires = append([]string(nil), normalized.Groups[i].Requires...)
 		normalized.Groups[i].Before = append([]string(nil), normalized.Groups[i].Before...)
 		normalized.Groups[i].After = append([]string(nil), normalized.Groups[i].After...)
+		normalized.Groups[i].Phase = copyInt32Ptr(normalized.Groups[i].Phase)
+		normalized.Groups[i].ShutdownTier = copyInt32Ptr(normalized.Groups[i].ShutdownTier)
 		normalized.Groups[i].Params = copyStringMap(normalized.Groups[i].Params)
 		sort.Strings(normalized.Groups[i].Requires)
 		sort.Strings(normalized.Groups[i].Before)

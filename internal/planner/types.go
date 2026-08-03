@@ -24,13 +24,40 @@ import "time"
 // Telemetry must not be added here; plan identity is computed from this bundle
 // plus the emitted plan.
 type StructuralInputs struct {
-	SourceID          string    `json:"sourceID,omitempty"`
-	ObservedAt        string    `json:"observedAt,omitempty"`
-	ResolvedInputHash string    `json:"resolvedInputHash,omitempty"`
-	Triggers          []Trigger `json:"triggers,omitempty"`
-	Groups            []Group   `json:"groups,omitempty"`
-	Steps             []Step    `json:"steps,omitempty"`
-	AbortBehavior     string    `json:"abortBehavior,omitempty"`
+	SourceID          string     `json:"sourceID,omitempty"`
+	ObservedAt        string     `json:"observedAt,omitempty"`
+	ResolvedInputHash string     `json:"resolvedInputHash,omitempty"`
+	TierPolicy        TierPolicy `json:"tierPolicy,omitempty"`
+	Triggers          []Trigger  `json:"triggers,omitempty"`
+	Groups            []Group    `json:"groups,omitempty"`
+	Steps             []Step     `json:"steps,omitempty"`
+	AbortBehavior     string     `json:"abortBehavior,omitempty"`
+}
+
+// TierPolicy assigns default shutdown tiers for groups that do not carry an
+// explicit tier. Higher tiers stop earlier. Tier 0 is last-ditch and cannot be
+// targeted by a flow.
+type TierPolicy struct {
+	LabelKey      string           `json:"labelKey,omitempty"`
+	DefaultTier   *int32           `json:"defaultTier,omitempty"`
+	Definitions   []TierDefinition `json:"definitions,omitempty"`
+	SelectorRules []TierSelector   `json:"selectorRules,omitempty"`
+}
+
+// TierDefinition names a numbered shutdown tier.
+type TierDefinition struct {
+	Tier        int32  `json:"tier"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// TierSelector is carried in structural identity for central tier policy. The
+// Kubernetes adapter owns selector evaluation before planner input assembly.
+type TierSelector struct {
+	Name    string `json:"name"`
+	Subject string `json:"subject,omitempty"`
+	Tier    int32  `json:"tier"`
+	Hash    string `json:"hash,omitempty"`
 }
 
 // TelemetryInputs are intentionally separate from StructuralInputs so changing
@@ -61,16 +88,17 @@ type Trigger struct {
 
 // Group is a graph vertex in a compiled shutdown flow.
 type Group struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	Action      string            `json:"action"`
-	Target      Target            `json:"target,omitempty"`
-	Requires    []string          `json:"requires,omitempty"`
-	Before      []string          `json:"before,omitempty"`
-	After       []string          `json:"after,omitempty"`
-	Phase       *int32            `json:"phase,omitempty"`
-	Timeout     Duration          `json:"timeout,omitempty"`
-	Params      map[string]string `json:"params,omitempty"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	Action       string            `json:"action"`
+	Target       Target            `json:"target,omitempty"`
+	Requires     []string          `json:"requires,omitempty"`
+	Before       []string          `json:"before,omitempty"`
+	After        []string          `json:"after,omitempty"`
+	Phase        *int32            `json:"phase,omitempty"`
+	ShutdownTier *int32            `json:"shutdownTier,omitempty"`
+	Timeout      Duration          `json:"timeout,omitempty"`
+	Params       map[string]string `json:"params,omitempty"`
 }
 
 // Step is a linear fallback action for simple installs.
@@ -118,6 +146,7 @@ type CompiledStep struct {
 	ID                 string   `json:"id"`
 	Index              int32    `json:"index"`
 	Action             string   `json:"action"`
+	ShutdownTier       *int32   `json:"shutdownTier,omitempty"`
 	TargetSummary      string   `json:"targetSummary,omitempty"`
 	CumulativeDuration Duration `json:"cumulativeDuration,omitempty"`
 }
@@ -126,6 +155,7 @@ type CompiledStep struct {
 type Wave struct {
 	Index              int32    `json:"index"`
 	Phase              *int32   `json:"phase,omitempty"`
+	ShutdownTier       *int32   `json:"shutdownTier,omitempty"`
 	Groups             []string `json:"groups"`
 	Duration           Duration `json:"duration,omitempty"`
 	CumulativeDuration Duration `json:"cumulativeDuration,omitempty"`
@@ -145,6 +175,7 @@ type GraphVertex struct {
 	Label         string `json:"label,omitempty"`
 	Action        string `json:"action,omitempty"`
 	Phase         *int32 `json:"phase,omitempty"`
+	ShutdownTier  *int32 `json:"shutdownTier,omitempty"`
 	TargetSummary string `json:"targetSummary,omitempty"`
 }
 

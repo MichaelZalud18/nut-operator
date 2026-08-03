@@ -10,6 +10,25 @@ spec:
   operandNamespace:
     name: power-system
     create: true
+  shutdownTiers:
+    labelKey: power.zalud.io/shutdown-tier
+    defaultTier: 4
+    tiers:
+      - tier: 0
+        name: last-ditch
+        description: Workloads that stop only when their node powers off.
+      - tier: 1
+        name: final-node-release
+        description: Final orchestrated node shutdown.
+      - tier: 2
+        name: infrastructure
+        description: Storage and infrastructure actions that run late.
+      - tier: 3
+        name: data
+        description: Databases and stateful application backends.
+      - tier: 4
+        name: applications
+        description: Ordinary application workloads.
   storage:
     mode: CNPG
     cnpg:

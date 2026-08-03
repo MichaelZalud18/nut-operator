@@ -2,7 +2,9 @@
 
 `ShutdownFlow` is the policy layer that turns UPS events into a safe, reviewable shutdown plan. Its foundation is a declarative dependency graph compiled into ordered shutdown waves.
 
-The graph model is the primary design. Numeric phases are only a convenience for simple ordering and for keeping generated plans readable.
+The graph model is the primary design. Numbered shutdown tiers add coarse ordering that compiles
+into ordinary graph edges. Numeric phases remain only a convenience for simple tie-breaking and for
+keeping generated plans readable.
 
 ## Design Goals
 
@@ -42,30 +44,33 @@ spec:
   groups:
     - name: applications
       action: ScaleWorkload
+      shutdownTier: 4
       params:
         replicas: "0"
       target:
         namespaceSelector:
           matchLabels:
-            power.example.com/shutdown-tier: application
+            power.example.com/shutdown-tier: "4"
       before: [databases]
       phase: 10
       timeout: 5m
 
     - name: databases
       action: ScaleWorkload
+      shutdownTier: 3
       params:
         replicas: "0"
       target:
         workloadSelector:
           matchLabels:
-            power.example.com/shutdown-tier: data
+            power.example.com/shutdown-tier: "3"
       before: [storage]
       phase: 20
       timeout: 10m
 
     - name: storage
       action: RunWorkflow
+      shutdownTier: 2
       params:
         workflow.templateRef: flush-storage
       target:
@@ -76,6 +81,7 @@ spec:
 
     - name: standard-nodes
       action: AgentShutdown
+      shutdownTier: 2
       target:
         agentRefs:
           - name: orion-standard
@@ -85,6 +91,7 @@ spec:
 
     - name: controller-node
       action: AgentShutdown
+      shutdownTier: 1
       target:
         agentRefs:
           - name: orion-controller
@@ -139,7 +146,13 @@ This compiles as `databases -> storage`.
 
 This also compiles as `databases -> storage`.
 
-`phase` is an ordering hint. Lower phases are selected first when multiple groups are ready at the same time. Explicit dependency edges always take precedence over phases.
+`shutdownTier` is a coarse ordering label. Higher tiers stop earlier; tier 1 is the final valid node
+release tier; tier 0 is last-ditch workload-only and is rejected when directly targeted by a flow.
+Tier N+1 to tier N compiles into derived graph edges, so tier ordering and authored dependencies use
+one dependency engine underneath.
+
+`phase` is a fallback ordering hint. Lower phases are selected first when multiple groups are ready
+at the same time. Explicit dependency and tier-derived edges take precedence over phases.
 
 ## Compilation
 
@@ -148,14 +161,15 @@ Reconciliation performs a deterministic compile before any enforcement behavior:
 1. Validate triggers.
 2. Validate group names are unique.
 3. Validate every dependency reference points to another group in the same flow.
-4. Build directed edges from `requires`, `before`, and `after`.
-5. Reject dependency cycles.
-6. Topologically sort the graph.
-7. Emit the dependency graph with edge provenance and explanations.
-8. Emit ordered shutdown waves in `status.compiledWaves`.
-9. Emit advisory startup wave projections for external consumers.
-10. Emit a flattened operator review view in `status.compiledSteps`.
-11. Estimate total duration from each wave's longest timeout.
+4. Resolve shutdown tiers from group fields, target labels, and central tier policy.
+5. Build directed edges from `requires`, `before`, `after`, and derived tier ordering.
+6. Reject dependency cycles.
+7. Topologically sort the graph.
+8. Emit the dependency graph with edge provenance and explanations.
+9. Emit ordered shutdown waves in `status.compiledWaves`.
+10. Emit advisory startup wave projections for external consumers.
+11. Emit a flattened operator review view in `status.compiledSteps`.
+12. Estimate total duration from each wave's longest timeout.
 
 Example compiled status shape:
 
@@ -164,12 +178,12 @@ status:
   phase: Compiled
   compiledWaves:
     - index: 0
-      phase: 10
+      shutdownTier: 4
       groups: [applications]
       duration: 5m
       cumulativeDuration: 5m
     - index: 1
-      phase: 20
+      shutdownTier: 3
       groups: [databases]
       duration: 10m
       cumulativeDuration: 15m

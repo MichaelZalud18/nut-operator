@@ -121,6 +121,12 @@ spec:
                       items:
                         type: string
                       type: array
+                    shutdownTier:
+                      description: shutdownTier assigns this group to a numbered shutdown
+                        tier. Higher tiers stop earlier; tier 0 cannot be targeted.
+                      format: int32
+                      minimum: 0
+                      type: integer
                     target:
                       description: target selects the resources affected by this group.
                       properties:
@@ -686,6 +692,11 @@ spec:
                       description: index is the zero-based compiled order.
                       format: int32
                       type: integer
+                    shutdownTier:
+                      description: shutdownTier is the effective numbered shutdown
+                        tier, when present.
+                      format: int32
+                      type: integer
                     targetSummary:
                       description: targetSummary summarizes selected targets without
                         storing bulky object lists.
@@ -735,6 +746,11 @@ spec:
                     phase:
                       description: phase is the phase hint shared by this wave, when
                         one was present.
+                      format: int32
+                      type: integer
+                    shutdownTier:
+                      description: shutdownTier is the numbered tier shared by this
+                        wave, when tier policy assigned one.
                       format: int32
                       type: integer
                   required:
@@ -1049,6 +1065,11 @@ spec:
                                 present.
                               format: int32
                               type: integer
+                            shutdownTier:
+                              description: shutdownTier is the effective numbered
+                                shutdown tier, when present.
+                              format: int32
+                              type: integer
                             targetSummary:
                               description: targetSummary summarizes selected targets
                                 without storing bulky object lists.
@@ -1086,6 +1107,11 @@ spec:
                         phase:
                           description: phase is the phase hint shared by this wave,
                             when one was present.
+                          format: int32
+                          type: integer
+                        shutdownTier:
+                          description: shutdownTier is the numbered tier shared by
+                            this wave, when tier policy assigned one.
                           format: int32
                           type: integer
                       required:

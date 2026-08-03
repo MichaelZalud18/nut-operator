@@ -22,9 +22,9 @@ power.example.com/power-domain: orion-core
 Expected namespace or workload labels:
 
 ```yaml
-power.example.com/shutdown-tier: application
-power.example.com/shutdown-tier: data
-power.example.com/shutdown-tier: storage
+power.example.com/shutdown-tier: "4" # ordinary applications
+power.example.com/shutdown-tier: "3" # data workloads
+power.example.com/shutdown-tier: "2" # storage and late infrastructure
 ```
 
 The conservation flow uses dependency edges as the source of truth:

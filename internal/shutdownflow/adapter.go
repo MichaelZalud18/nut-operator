@@ -17,9 +17,14 @@ limitations under the License.
 package shutdownflow
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"strconv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
@@ -50,7 +55,12 @@ func CompileWithResolvedInputs(obj *powerv1alpha1.ShutdownFlow, bundle resolver.
 
 // CompileArtifactWithResolvedInputs includes resolved inventory and capability identity in the plan hash and artifact.
 func CompileArtifactWithResolvedInputs(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string, *powerv1alpha1.PublishedPlannerArtifactStatus) {
-	inputs := resolver.AttachResolvedInputHash(PlannerInputs(obj), bundle)
+	return CompileArtifactWithResolvedInputsAndTierPolicy(obj, bundle, powerv1alpha1.PowerShutdownTierPolicySpec{})
+}
+
+// CompileArtifactWithResolvedInputsAndTierPolicy includes resolved inventory, capability identity, and central tier policy.
+func CompileArtifactWithResolvedInputsAndTierPolicy(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string, *powerv1alpha1.PublishedPlannerArtifactStatus) {
+	inputs := resolver.AttachResolvedInputHash(PlannerInputsWithTierPolicy(obj, tierPolicy), bundle)
 	plan, _, err := planner.Compile(inputs, planner.TelemetryInputs{})
 	if err != nil {
 		return nil, nil, nil, "", nil
@@ -61,8 +71,15 @@ func CompileArtifactWithResolvedInputs(obj *powerv1alpha1.ShutdownFlow, bundle r
 
 // PlannerInputs converts the Kubernetes API object into pure planner inputs.
 func PlannerInputs(obj *powerv1alpha1.ShutdownFlow) planner.StructuralInputs {
+	return PlannerInputsWithTierPolicy(obj, powerv1alpha1.PowerShutdownTierPolicySpec{})
+}
+
+// PlannerInputsWithTierPolicy converts the Kubernetes API object into pure planner inputs with central tier policy.
+func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec) planner.StructuralInputs {
+	plannerTierPolicy := PlannerTierPolicy(tierPolicy)
 	inputs := planner.StructuralInputs{
 		SourceID:      fmt.Sprintf("%s/ShutdownFlow/%s", powerv1alpha1.GroupVersion.String(), obj.Name),
+		TierPolicy:    plannerTierPolicy,
 		AbortBehavior: string(obj.Spec.AbortPolicy.Behavior),
 		Triggers:      make([]planner.Trigger, 0, len(obj.Spec.Triggers)),
 		Groups:        make([]planner.Group, 0, len(obj.Spec.Groups)),
@@ -81,16 +98,17 @@ func PlannerInputs(obj *powerv1alpha1.ShutdownFlow) planner.StructuralInputs {
 	}
 	for _, group := range obj.Spec.Groups {
 		inputs.Groups = append(inputs.Groups, planner.Group{
-			Name:        group.Name,
-			Description: group.Description,
-			Action:      string(group.Action),
-			Target:      PlannerTarget(group.Target),
-			Requires:    append([]string(nil), group.Requires...),
-			Before:      append([]string(nil), group.Before...),
-			After:       append([]string(nil), group.After...),
-			Phase:       group.Phase,
-			Timeout:     PlannerDuration(group.Timeout),
-			Params:      copyParams(group.Params),
+			Name:         group.Name,
+			Description:  group.Description,
+			Action:       string(group.Action),
+			Target:       PlannerTarget(group.Target),
+			Requires:     append([]string(nil), group.Requires...),
+			Before:       append([]string(nil), group.Before...),
+			After:        append([]string(nil), group.After...),
+			Phase:        group.Phase,
+			ShutdownTier: PlannerShutdownTier(group, tierPolicy),
+			Timeout:      PlannerDuration(group.Timeout),
+			Params:       copyParams(group.Params),
 		})
 	}
 	for _, step := range obj.Spec.Steps {
@@ -106,6 +124,53 @@ func PlannerInputs(obj *powerv1alpha1.ShutdownFlow) planner.StructuralInputs {
 	}
 
 	return inputs
+}
+
+// PlannerTierPolicy converts API tier policy into the pure planner shape.
+func PlannerTierPolicy(policy powerv1alpha1.PowerShutdownTierPolicySpec) planner.TierPolicy {
+	converted := planner.TierPolicy{
+		LabelKey:      effectiveShutdownTierLabelKey(policy),
+		DefaultTier:   copyInt32(policy.DefaultTier),
+		Definitions:   make([]planner.TierDefinition, 0, len(policy.Tiers)),
+		SelectorRules: make([]planner.TierSelector, 0, len(policy.SelectorRules)),
+	}
+	for _, definition := range policy.Tiers {
+		converted.Definitions = append(converted.Definitions, planner.TierDefinition{
+			Tier:        definition.Tier,
+			Name:        definition.Name,
+			Description: definition.Description,
+		})
+	}
+	for _, rule := range policy.SelectorRules {
+		converted.SelectorRules = append(converted.SelectorRules, planner.TierSelector{
+			Name:    rule.Name,
+			Subject: string(rule.Subject),
+			Tier:    rule.Tier,
+			Hash:    stableHash(rule.Selector),
+		})
+	}
+	return converted
+}
+
+// PlannerShutdownTier resolves a group's explicit tier or numeric tier label.
+func PlannerShutdownTier(group powerv1alpha1.ShutdownGroup, policy powerv1alpha1.PowerShutdownTierPolicySpec) *int32 {
+	if group.ShutdownTier != nil {
+		return copyInt32(group.ShutdownTier)
+	}
+	if tier := shutdownTierFromSelectorRules(group.Target, policy); tier != nil {
+		return tier
+	}
+	labelKey := effectiveShutdownTierLabelKey(policy)
+	for _, selector := range []*metav1.LabelSelector{
+		group.Target.NodeSelector,
+		group.Target.NamespaceSelector,
+		group.Target.WorkloadSelector,
+	} {
+		if tier := shutdownTierFromSelector(selector, labelKey); tier != nil {
+			return tier
+		}
+	}
+	return nil
 }
 
 // PlannerDuration converts API durations into planner durations.
@@ -136,6 +201,7 @@ func APICompiledSteps(steps []planner.CompiledStep) []powerv1alpha1.CompiledShut
 			ID:                 step.ID,
 			Index:              step.Index,
 			Type:               powerv1alpha1.ShutdownStepType(step.Action),
+			ShutdownTier:       step.ShutdownTier,
 			TargetSummary:      step.TargetSummary,
 			CumulativeDuration: APIDuration(step.CumulativeDuration),
 		})
@@ -150,6 +216,7 @@ func APICompiledWaves(waves []planner.Wave) []powerv1alpha1.CompiledShutdownWave
 		compiled = append(compiled, powerv1alpha1.CompiledShutdownWave{
 			Index:              wave.Index,
 			Phase:              wave.Phase,
+			ShutdownTier:       wave.ShutdownTier,
 			Groups:             append([]string(nil), wave.Groups...),
 			Duration:           APIDuration(wave.Duration),
 			CumulativeDuration: APIDuration(wave.CumulativeDuration),
@@ -185,6 +252,7 @@ func APIPlannerGraph(graph planner.Graph) powerv1alpha1.PlannerGraphStatus {
 			Label:         vertex.Label,
 			Action:        vertex.Action,
 			Phase:         vertex.Phase,
+			ShutdownTier:  vertex.ShutdownTier,
 			TargetSummary: vertex.TargetSummary,
 		})
 	}
@@ -257,4 +325,103 @@ func copyParams(params map[string]string) map[string]string {
 		copied[key] = value
 	}
 	return copied
+}
+
+func effectiveShutdownTierLabelKey(policy powerv1alpha1.PowerShutdownTierPolicySpec) string {
+	if policy.LabelKey != "" {
+		return policy.LabelKey
+	}
+	return powerv1alpha1.DefaultShutdownTierLabelKey
+}
+
+func shutdownTierFromSelector(selector *metav1.LabelSelector, labelKey string) *int32 {
+	if selector == nil || selector.MatchLabels == nil {
+		return nil
+	}
+	raw := selector.MatchLabels[labelKey]
+	if raw == "" {
+		return nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil {
+		return nil
+	}
+	tier := int32(value)
+	return &tier
+}
+
+func shutdownTierFromSelectorRules(target powerv1alpha1.ShutdownStepTarget, policy powerv1alpha1.PowerShutdownTierPolicySpec) *int32 {
+	for _, rule := range policy.SelectorRules {
+		if !tierRuleSubjectCanMatchTarget(rule.Subject, target) {
+			continue
+		}
+		if tierRuleMatchesTarget(rule, target) {
+			tier := rule.Tier
+			return &tier
+		}
+	}
+	return nil
+}
+
+func tierRuleSubjectCanMatchTarget(subject powerv1alpha1.PowerShutdownTierSubjectKind, target powerv1alpha1.ShutdownStepTarget) bool {
+	switch subject {
+	case powerv1alpha1.PowerShutdownTierSubjectNode:
+		return target.NodeSelector != nil || len(target.AgentRefs) > 0
+	case powerv1alpha1.PowerShutdownTierSubjectNamespace:
+		return target.NamespaceSelector != nil || len(target.Namespaces) > 0
+	case powerv1alpha1.PowerShutdownTierSubjectWorkload:
+		return target.WorkloadSelector != nil || len(target.WorkloadRefs) > 0
+	default:
+		return target.NodeSelector != nil || target.NamespaceSelector != nil || target.WorkloadSelector != nil || len(target.AgentRefs) > 0 || len(target.Namespaces) > 0 || len(target.WorkloadRefs) > 0
+	}
+}
+
+func tierRuleMatchesTarget(rule powerv1alpha1.PowerShutdownTierSelectorRule, target powerv1alpha1.ShutdownStepTarget) bool {
+	for _, selector := range targetSelectorsForTierRule(rule.Subject, target) {
+		if labelSelectorMatchesTargetSelector(rule.Selector, selector) {
+			return true
+		}
+	}
+	return false
+}
+
+func targetSelectorsForTierRule(subject powerv1alpha1.PowerShutdownTierSubjectKind, target powerv1alpha1.ShutdownStepTarget) []*metav1.LabelSelector {
+	switch subject {
+	case powerv1alpha1.PowerShutdownTierSubjectNode:
+		return []*metav1.LabelSelector{target.NodeSelector}
+	case powerv1alpha1.PowerShutdownTierSubjectNamespace:
+		return []*metav1.LabelSelector{target.NamespaceSelector}
+	case powerv1alpha1.PowerShutdownTierSubjectWorkload:
+		return []*metav1.LabelSelector{target.WorkloadSelector}
+	default:
+		return []*metav1.LabelSelector{target.NodeSelector, target.NamespaceSelector, target.WorkloadSelector}
+	}
+}
+
+func labelSelectorMatchesTargetSelector(ruleSelector metav1.LabelSelector, targetSelector *metav1.LabelSelector) bool {
+	if targetSelector == nil {
+		return false
+	}
+	selector, err := metav1.LabelSelectorAsSelector(&ruleSelector)
+	if err != nil {
+		return false
+	}
+	return selector.Matches(labels.Set(targetSelector.MatchLabels))
+}
+
+func copyInt32(value *int32) *int32 {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+func stableHash(value any) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(fmt.Sprintf("shutdownflow adapter value could not be encoded for hashing: %v", err))
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
 }

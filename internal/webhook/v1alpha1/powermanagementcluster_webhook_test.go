@@ -47,6 +47,7 @@ var _ = Describe("PowerManagementCluster Webhook", func() {
 			Expect(obj.Spec.OperandNamespace.Create).NotTo(BeNil())
 			Expect(*obj.Spec.OperandNamespace.Create).To(BeTrue())
 			Expect(obj.Spec.Storage.Mode).To(Equal(powerv1alpha1.PowerStorageCNPG))
+			Expect(obj.Spec.ShutdownTiers.LabelKey).To(Equal(powerv1alpha1.DefaultShutdownTierLabelKey))
 			Expect(obj.Spec.Security.Profile).To(Equal(powerv1alpha1.PowerSecurityRestricted))
 			Expect(*obj.Spec.Security.RequireExplicitActuation).To(BeTrue())
 			Expect(*obj.Spec.Security.DefaultPodHardening.ReadOnlyRootFilesystem).To(BeTrue())
@@ -118,6 +119,51 @@ var _ = Describe("PowerManagementCluster Webhook", func() {
 			warnings, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(warnings).To(ContainElement(ContainSubstring("Disabled")))
+		})
+
+		It("Should admit numbered shutdown tier policy", func() {
+			defaultTier := int32(4)
+			obj.Spec.Storage.Mode = powerv1alpha1.PowerStorageDisabled
+			obj.Spec.ShutdownTiers = powerv1alpha1.PowerShutdownTierPolicySpec{
+				LabelKey:    powerv1alpha1.DefaultShutdownTierLabelKey,
+				DefaultTier: &defaultTier,
+				Tiers: []powerv1alpha1.PowerShutdownTierDefinition{
+					{Tier: 0, Name: "last-ditch"},
+					{Tier: 1, Name: "nodes"},
+					{Tier: 4, Name: "default"},
+				},
+				SelectorRules: []powerv1alpha1.PowerShutdownTierSelectorRule{{
+					Name:    "workloads",
+					Subject: powerv1alpha1.PowerShutdownTierSubjectWorkload,
+					Tier:    4,
+				}},
+			}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should reject reserved default shutdown tiers", func() {
+			defaultTier := int32(1)
+			obj.Spec.Storage.Mode = powerv1alpha1.PowerStorageDisabled
+			obj.Spec.ShutdownTiers.DefaultTier = &defaultTier
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.shutdownTiers.defaultTier"))
+		})
+
+		It("Should reject node selector rules that assign tier zero", func() {
+			obj.Spec.Storage.Mode = powerv1alpha1.PowerStorageDisabled
+			obj.Spec.ShutdownTiers.SelectorRules = []powerv1alpha1.PowerShutdownTierSelectorRule{{
+				Name:    "nodes",
+				Subject: powerv1alpha1.PowerShutdownTierSubjectNode,
+				Tier:    0,
+			}}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.shutdownTiers.selectorRules[0].tier"))
 		})
 	})
 })

@@ -69,9 +69,16 @@ spec:
                       toward control-plane quorum.
                     type: boolean
                   lastDitchRole:
-                    description: lastDitchRole is an explicit late-shutdown role interpreted
-                      by planner policy.
+                    description: |-
+                      lastDitchRole is an explicit late-shutdown role interpreted by planner policy.
+                      When shutdownTier is omitted, any non-empty lastDitchRole maps this node to tier 1.
                     type: string
+                  shutdownTier:
+                    description: shutdownTier explicitly assigns this node to a numbered
+                      shutdown tier. Nodes cannot use tier 0.
+                    format: int32
+                    minimum: 1
+                    type: integer
                 type: object
             required:
             - nodeName
