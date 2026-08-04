@@ -266,6 +266,14 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   instead of the per-node tier). `ensureNUTServerPodDisruptionBudget` renders a PDB with
   `minAvailable: 1`, which — paired with the `F-15` replica pin — blocks voluntary eviction of the
   sole `upsd` pod entirely.
+- **`F-21` `upssched` non-use is a recorded decision**, not an omission — see the resolution note in
+  `docs/audits/nut-usage-audit.md`. Follows from `SB-2b` and `GP-4`: `upssched` is a per-node
+  sequencer, and sequencing is reserved for the operator's deterministic planner.
+- **`F-24` confirmed no credential leak path.** The `upsd.users` Secret has no `Hash` set in
+  `ManagedResourceStatus` (only the ConfigMap does — `configHash` is computed from `configData`
+  alone, never from Secret contents), no log statement in the render or controller path touches
+  `secret.Data` or a password value, and `NUTServerReconciler` has no Event Recorder wired in at all,
+  so there is no Events leak path to check.
 
 #### Open Work
 
@@ -276,16 +284,11 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   the original `F-17` finding didn't specify.
 - `F-19` `topologySpreadConstraints`/anti-affinity — deferred until an HA `upsd` topology is actually
   designed; not urgent at one replica.
-- `OD-19` FSD usage — if adopted as the final release signal, this is where it's implemented.
-- `OD-20` instant command / writable variable scope, starting with the `shutdown.return` handshake
-  and `test.battery.start` exposure (`F-22`).
-- `F-21` write down the decision to decline `upssched` explicitly in the design docs — it's already
-  effectively decided (the operator centralizes scheduling for cluster-wide correlation), just not
-  recorded as a decision.
-- `F-24` confirm the operator-managed `upsd.users` Secret is never logged or echoed into Events on
-  render failure, and that the config hash in `ManagedResourceStatus` can't leak the password value.
-  (The node-agent side of this same finding, the `upsmon.conf` Secret, is tracked under Node Agent /
-  DaemonSet.)
+- `OD-19` FSD usage — a real design decision (adopt NUT's forced-shutdown broadcast as the release
+  signal, or keep the signal file as sole mechanism), not implemented pending that call.
+- `OD-20` instant command / writable variable scope — a real design decision (which of
+  `shutdown.return`, `load.off`/`on`, `test.battery.start` enter scope and how they're gated, since
+  they can cut power to equipment), not implemented pending that call.
 - Credential rotation and advanced driver-specific config for the NUT operand render path.
 
 ---

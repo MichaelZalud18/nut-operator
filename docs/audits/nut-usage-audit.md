@@ -67,6 +67,16 @@ cannot provide, and centralizing decisions serves planner determinism. But it sh
 a decision rather than left as an omission — "we use NUT fully" and "we decline NUT's scheduler"
 need reconciling in the same document.
 
+*Resolved 2026-08-03: `upssched` is deliberately declined, not an omission.* `upssched` fires
+per-node, per-`upsmon`, off local NUT events only — it has no view of the cluster, other nodes, or
+`ShutdownFlow` dependency state, so it structurally cannot produce a cluster-wide plan. The
+planner's determinism guarantee (`PL-27`, `PL-28`: identical structural input produces a
+byte-identical plan) also requires escalation logic to run through one deterministic, testable
+package rather than N independent per-node `upssched` instances reacting to local timing. This
+decision does not need its own `OD` entry — it follows directly from `SB-2b` (NUT's threshold model
+is an input, never the sequencer) and `GP-4` (consume signals, do not rebuild them): `upssched` is a
+sequencer, and sequencing is reserved for the operator.
+
 **F-22 · Instant commands and writable variables are entirely unused.** No `upscmd`, `upsrw`, or
 `INSTCMD` anywhere in the codebase. This is the whole SB-2c capability surface: `load.off`,
 `load.on`, `shutdown.return`, `shutdown.stayoff`, `beeper.mute`, `test.battery.start`, and writable
