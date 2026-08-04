@@ -306,6 +306,14 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 
 #### Open Work
 
+- **`NUTServer` reconciler doesn't watch `UPSDevice` or unowned credential `Secret`s.**
+  `SetupWithManager` (`nutserver_controller.go`) only watches `NUTServer` itself plus resources it
+  owns (`Owns(&corev1.Secret{})` only matches secrets with an owner reference back to it — not a
+  user-supplied `credentialSecretRef` target, which has none). A `UPSDevice.spec.credentialSecretRef`
+  change, a `driverOptions` change, or the referenced Secret's contents changing all silently do
+  nothing until some unrelated reconcile happens to fire. `ShutdownFlow` has the opposite problem
+  (watches `UPSDevice` with no predicate, reconciling far too often — see Planning & Execution
+  Logic); `NUTServer` needs the predicate-scoped version of that same watch, not zero watch at all.
 - `OD-20` instant command scope, narrowed and deprioritized (2026-08-03): the operator's actuator
   already owns real shutdown (nodes and workloads). The only remaining use case for NUT instant
   commands is the tail end after the operator has already finished — `shutdown.return` stops the UPS
