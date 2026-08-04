@@ -325,17 +325,28 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 - Partition-aware coverage status: per-node agent-pod readiness feeds `AgentShutdown` executor
   release evidence; enforce-mode blocks releases against nodes without a ready agent, dry-run records
   the same degraded facts without acting.
+- **`F-14` self-exclusion is enforced in the executor.** `internal/kubeactions.Runner` resolves every
+  `NodePowerAgent`'s operand namespace (`protectedNamespaces`) and skips it structurally: `ScaleWorkload`
+  targets in a protected namespace are excluded rather than scaled (`selfExcluded` in the action
+  outcome), and `DrainNodes` eviction skips pods in a protected namespace regardless of owner kind
+  (`selfExcludedNamespaces`) — belt-and-suspenders on top of the pre-existing DaemonSet-ownership
+  skip in `evictablePod`, which only covered eviction and only for DaemonSet-owned pods. Not just a
+  PDB question: DaemonSet pods were already undrainable; the gap was that nothing was *structurally*
+  protected against a future non-DaemonSet resource landing in that namespace, or against a
+  `ScaleWorkload` group whose selector happened to sweep it in.
+- **`F-24` confirmed no credential leak path, with one caveat.** No log statement in the render or
+  controller path touches `secret.Data` or the monitor password, and there's no Event Recorder wired
+  into `NodePowerAgentReconciler`. Unlike the NUT Server side, the `upsmon.conf` Secret's
+  `ManagedResourceStatus` entry *does* carry a `Hash` (`hashByteMap(secretData)`) — this is a
+  one-way SHA-256 hash of a 32-byte random value (`randomPassword()`), used for the standard
+  config-hash-triggers-rollout pattern, not a partial leak: recovering the password from the hash is
+  computationally infeasible. Confirmed safe, not just assumed.
 
 #### Open Work
 
-- **`F-14` self-exclusion.** Nothing currently stops a `ShutdownFlow` from targeting the power
-  agent's own namespace during a drain wave. The tier 0 self-exclusion rule exists in design, not in
-  code — this is a real correctness gap, not just hardening.
 - In-cluster smoke test proving projected Secret signal updates reach DaemonSet pods within the
-  configured TTL on common runtimes (kind, at minimum).
-- `F-24` confirm the `upsmon.conf` Secret's monitor password is never logged, echoed into Events on
-  render failure, or leaked through the config hash in `ManagedResourceStatus` (shared finding with
-  NUT Server / upsd's `upsd.users` Secret — same confirmation, two render paths).
+  configured TTL on common runtimes. Blocked on tooling: `kind` isn't installed in this environment
+  (docker is); this needs a real kubelet, not envtest, so it can't be faked with the existing suite.
 
 ---
 

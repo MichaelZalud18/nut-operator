@@ -18,6 +18,7 @@ package kubeactions
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/executor"
 )
 
@@ -39,10 +41,18 @@ func TestRunnerScalesWorkloads(t *testing.T) {
 	if err := appsv1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme returned error: %v", err)
 	}
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
 	replicas := int32(3)
 	runner := Runner{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		&appsv1.Deployment{ObjectMeta: objectMeta("apps", "web"), Spec: appsv1.DeploymentSpec{Replicas: &replicas}},
 		&appsv1.StatefulSet{ObjectMeta: objectMeta("data", "postgres"), Spec: appsv1.StatefulSetSpec{Replicas: &replicas}},
+		&appsv1.Deployment{ObjectMeta: objectMeta("power-agents", "sidecar"), Spec: appsv1.DeploymentSpec{Replicas: &replicas}},
+		&powerv1alpha1.NodePowerAgent{
+			ObjectMeta: metav1.ObjectMeta{Name: "fleet-a"},
+			Spec:       powerv1alpha1.NodePowerAgentSpec{Namespace: "power-agents"},
+		},
 	).Build()}
 
 	outcome, err := runner.RunAction(context.Background(), executor.Action{
@@ -56,6 +66,7 @@ func TestRunnerScalesWorkloads(t *testing.T) {
 			SelectedTargets: []executor.Target{
 				{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "apps", Name: "web"},
 				{APIVersion: "apps/v1", Kind: "StatefulSet", Namespace: "data", Name: "postgres"},
+				{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "power-agents", Name: "sidecar"},
 			},
 		},
 	})
@@ -79,6 +90,73 @@ func TestRunnerScalesWorkloads(t *testing.T) {
 	}
 	if statefulSet.Spec.Replicas == nil || *statefulSet.Spec.Replicas != 1 {
 		t.Fatalf("expected StatefulSet replicas to be 1, got %#v", statefulSet.Spec.Replicas)
+	}
+
+	// F-14: the node-agent's own operand namespace must never be scaled by a flow.
+	var sidecar appsv1.Deployment
+	if err := runner.Client.Get(context.Background(), client.ObjectKey{Namespace: "power-agents", Name: "sidecar"}, &sidecar); err != nil {
+		t.Fatalf("get Deployment returned error: %v", err)
+	}
+	if sidecar.Spec.Replicas == nil || *sidecar.Spec.Replicas != 3 {
+		t.Fatalf("expected node-agent namespace Deployment to be excluded from scaling, got replicas %#v", sidecar.Spec.Replicas)
+	}
+	excluded, ok := outcome.Details["selfExcluded"].([]string)
+	if !ok || len(excluded) != 1 || excluded[0] != "power-agents/sidecar" {
+		t.Fatalf("expected selfExcluded to report power-agents/sidecar, got %#v", outcome.Details["selfExcluded"])
+	}
+}
+
+func TestRunnerDrainNodesExcludesNodePowerAgentNamespace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	runner := Runner{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&corev1.Node{ObjectMeta: objectMeta("", "node-a")},
+		&corev1.Pod{
+			ObjectMeta: objectMeta("apps", "web-1"),
+			Spec:       corev1.PodSpec{NodeName: "node-a"},
+		},
+		&corev1.Pod{
+			ObjectMeta: objectMeta("power-agents", "upsmon-node-a"),
+			Spec:       corev1.PodSpec{NodeName: "node-a"},
+		},
+		&powerv1alpha1.NodePowerAgent{
+			ObjectMeta: metav1.ObjectMeta{Name: "fleet-a"},
+			Spec:       powerv1alpha1.NodePowerAgentSpec{Namespace: "power-agents"},
+		},
+	).Build()}
+
+	outcome, err := runner.RunAction(context.Background(), executor.Action{
+		Group: executor.Group{
+			Name:            "nodes",
+			Action:          ActionDrainNodes,
+			SelectedTargets: []executor.Target{{APIVersion: "v1", Kind: "Node", Name: "node-a"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunAction returned error: %v", err)
+	}
+	if outcome.Outcome != executor.OutcomeSucceeded {
+		t.Fatalf("expected succeeded outcome, got %#v", outcome)
+	}
+
+	evictedCount, ok := outcome.Details["evictedPods"].(int)
+	if !ok || evictedCount != 1 {
+		t.Fatalf("expected exactly 1 evicted pod (the non-protected one), got %#v", outcome.Details["evictedPods"])
+	}
+
+	// F-14: the pod in the node-agent's own operand namespace must survive the drain.
+	var agentPod corev1.Pod
+	if err := runner.Client.Get(context.Background(), client.ObjectKey{Namespace: "power-agents", Name: "upsmon-node-a"}, &agentPod); err != nil {
+		t.Fatalf("expected node-agent pod to survive drain, get returned error: %v", err)
+	}
+	excluded, ok := outcome.Details["selfExcludedNamespaces"].([]string)
+	if !ok || len(excluded) != 1 || excluded[0] != "power-agents" {
+		t.Fatalf("expected selfExcludedNamespaces to report power-agents, got %#v", outcome.Details["selfExcludedNamespaces"])
 	}
 }
 
@@ -165,7 +243,11 @@ func TestRunnerCreatesWorkflowHook(t *testing.T) {
 }
 
 func TestRunnerRequiresAgentShutdownReleases(t *testing.T) {
-	runner := Runner{Client: fake.NewClientBuilder().Build()}
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	runner := Runner{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
 	outcome, err := runner.RunAction(context.Background(), executor.Action{
 		Group: executor.Group{Name: "node-a", Action: executor.ActionAgentShutdown},
 	})
@@ -177,12 +259,18 @@ func TestRunnerRequiresAgentShutdownReleases(t *testing.T) {
 	}
 
 	outcome, err = runner.RunAction(context.Background(), executor.Action{
+		ExecutionID:    "execution-a",
+		ShutdownFlow:   "flow-a",
+		PlanConfigHash: "hash-a",
 		Group: executor.Group{
 			Name:   "node-a",
 			Action: executor.ActionAgentShutdown,
 			NodeReleases: []executor.NodeRelease{{
-				NodeName:       "node-a",
-				NodePowerAgent: "agent-a",
+				NodeName:              "node-a",
+				NodePowerAgent:        "agent-a",
+				SignalSecretNamespace: "power-system",
+				SignalSecretName:      "agent-a-node-signals",
+				SignalSecretKey:       "node-a.json",
 			}},
 		},
 	})
@@ -191,6 +279,57 @@ func TestRunnerRequiresAgentShutdownReleases(t *testing.T) {
 	}
 	if outcome.Outcome != executor.OutcomeSucceeded {
 		t.Fatalf("expected succeeded outcome, got %#v", outcome)
+	}
+}
+
+func TestRunnerWritesAgentShutdownSignalSecret(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	fixed := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	runner := Runner{
+		Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+		Clock:  func() time.Time { return fixed },
+	}
+
+	outcome, err := runner.RunAction(context.Background(), executor.Action{
+		ExecutionID:        "execution-a",
+		ShutdownFlow:       "flow-a",
+		PlanConfigHash:     "hash-a",
+		SelectedUPSDevices: []string{"ups-a"},
+		Group: executor.Group{
+			Name:   "node-a",
+			Action: executor.ActionAgentShutdown,
+			NodeReleases: []executor.NodeRelease{{
+				NodeName:              "node-a",
+				NodePowerAgent:        "agent-a",
+				SignalSecretNamespace: "power-system",
+				SignalSecretName:      "agent-a-node-signals",
+				SignalSecretKey:       "node-a.json",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunAction returned error: %v", err)
+	}
+	if outcome.Outcome != executor.OutcomeSucceeded {
+		t.Fatalf("expected succeeded outcome, got %#v", outcome)
+	}
+
+	var secret corev1.Secret
+	if err := runner.Client.Get(context.Background(), client.ObjectKey{Namespace: "power-system", Name: "agent-a-node-signals"}, &secret); err != nil {
+		t.Fatalf("get signal Secret returned error: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(secret.Data["node-a.json"], &payload); err != nil {
+		t.Fatalf("unmarshal signal payload: %v", err)
+	}
+	if payload["executionID"] != "execution-a" || payload["nodeName"] != "node-a" || payload["dryRun"] != false {
+		t.Fatalf("unexpected signal payload: %#v", payload)
+	}
+	if payload["timestamp"] != fixed.Format(time.RFC3339Nano) {
+		t.Fatalf("unexpected timestamp: %#v", payload["timestamp"])
 	}
 }
 

@@ -20,6 +20,7 @@ package kubeactions
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -32,10 +33,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/executor"
+	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
+
+const defaultOperandNamespace = "power-system"
 
 const (
 	ActionNotify      = "Notify"
@@ -94,11 +100,54 @@ func (r Runner) RunAction(ctx context.Context, action executor.Action) (executor
 	case ActionWorkflow:
 		return r.runWorkflow(ctx, action)
 	case executor.ActionAgentShutdown:
-		return r.agentShutdownHandoff(action)
+		return r.agentShutdownHandoff(ctx, action)
 	default:
 		err := fmt.Errorf("unsupported Kubernetes shutdown action %q", action.Group.Action)
 		return blocked(err), err
 	}
+}
+
+// protectedNamespaces resolves the operand namespace of every NodePowerAgent in the cluster
+// (F-14). Tier 0 excludes the power agent's own namespace from orchestrated flow targeting per
+// OD-4/PL-22; this is the executor-side enforcement of that rule, structural rather than relying
+// on incidental protections like DaemonSet-skip-on-drain.
+func (r Runner) protectedNamespaces(ctx context.Context) (map[string]struct{}, error) {
+	var agents powerv1alpha1.NodePowerAgentList
+	if err := r.Client.List(ctx, &agents); err != nil {
+		return nil, fmt.Errorf("list NodePowerAgents for self-exclusion: %w", err)
+	}
+	clusters := map[string]*powerv1alpha1.PowerManagementCluster{}
+	protected := make(map[string]struct{}, len(agents.Items))
+	for _, agent := range agents.Items {
+		namespace, err := r.nodePowerAgentOperandNamespace(ctx, agent, clusters)
+		if err != nil {
+			return nil, err
+		}
+		protected[namespace] = struct{}{}
+	}
+	return protected, nil
+}
+
+func (r Runner) nodePowerAgentOperandNamespace(ctx context.Context, agent powerv1alpha1.NodePowerAgent, clusters map[string]*powerv1alpha1.PowerManagementCluster) (string, error) {
+	if agent.Spec.Namespace != "" {
+		return agent.Spec.Namespace, nil
+	}
+	if agent.Spec.ManagementClusterRef != nil && agent.Spec.ManagementClusterRef.Name != "" {
+		name := agent.Spec.ManagementClusterRef.Name
+		cluster, cached := clusters[name]
+		if !cached {
+			var fetched powerv1alpha1.PowerManagementCluster
+			if err := r.Client.Get(ctx, types.NamespacedName{Name: name}, &fetched); err != nil {
+				return "", fmt.Errorf("get PowerManagementCluster %q for self-exclusion: %w", name, err)
+			}
+			cluster = &fetched
+			clusters[name] = cluster
+		}
+		if cluster.Spec.OperandNamespace != nil && cluster.Spec.OperandNamespace.Name != "" {
+			return cluster.Spec.OperandNamespace.Name, nil
+		}
+	}
+	return defaultOperandNamespace, nil
 }
 
 func (r Runner) scaleWorkloads(ctx context.Context, action executor.Action) (executor.ActionOutcome, error) {
@@ -106,9 +155,18 @@ func (r Runner) scaleWorkloads(ctx context.Context, action executor.Action) (exe
 	if err != nil {
 		return blocked(err), err
 	}
+	protected, err := r.protectedNamespaces(ctx)
+	if err != nil {
+		return blocked(err), err
+	}
 	var changed int
 	var visited int
+	var excluded []string
 	for _, target := range action.Group.SelectedTargets {
+		if _, isProtected := protected[target.Namespace]; isProtected {
+			excluded = append(excluded, target.Namespace+"/"+target.Name)
+			continue
+		}
 		switch target.Kind {
 		case "Deployment":
 			updated, err := r.scaleDeployment(ctx, target, replicas)
@@ -139,17 +197,22 @@ func (r Runner) scaleWorkloads(ctx context.Context, action executor.Action) (exe
 			}
 		}
 	}
-	if visited == 0 {
+	if visited == 0 && len(excluded) == 0 {
 		err := fmt.Errorf("ScaleWorkload selected no scalable targets")
 		return blocked(err), err
 	}
+	details := map[string]any{
+		"changed":           changed,
+		"desiredReplicas":   replicas,
+		"selectedWorkloads": visited,
+	}
+	if len(excluded) > 0 {
+		sortStrings(excluded)
+		details["selfExcluded"] = excluded
+	}
 	return executor.ActionOutcome{
 		Outcome: executor.OutcomeSucceeded,
-		Details: map[string]any{
-			"changed":           changed,
-			"desiredReplicas":   replicas,
-			"selectedWorkloads": visited,
-		},
+		Details: details,
 	}, nil
 }
 
@@ -216,24 +279,35 @@ func (r Runner) drainNodes(ctx context.Context, action executor.Action) (executo
 		err := fmt.Errorf("DrainNodes selected no Node targets")
 		return blocked(err), err
 	}
+	protected, err := r.protectedNamespaces(ctx)
+	if err != nil {
+		return blocked(err), err
+	}
 	evicted := 0
+	var excludedNamespaces []string
 	for _, target := range action.Group.SelectedTargets {
 		if target.Kind != "Node" || target.Name == "" {
 			continue
 		}
-		count, err := r.evictPodsOnNode(ctx, target.Name)
+		count, skipped, err := r.evictPodsOnNode(ctx, target.Name, protected)
 		if err != nil {
 			return blocked(err), err
 		}
 		evicted += count
+		excludedNamespaces = append(excludedNamespaces, skipped...)
+	}
+	details := map[string]any{
+		"cordoned":      cordoned,
+		"evictedPods":   evicted,
+		"selectedNodes": visited,
+	}
+	if len(excludedNamespaces) > 0 {
+		sortStrings(excludedNamespaces)
+		details["selfExcludedNamespaces"] = dedupeStrings(excludedNamespaces)
 	}
 	return executor.ActionOutcome{
 		Outcome: executor.OutcomeSucceeded,
-		Details: map[string]any{
-			"cordoned":      cordoned,
-			"evictedPods":   evicted,
-			"selectedNodes": visited,
-		},
+		Details: details,
 	}, nil
 }
 
@@ -259,14 +333,19 @@ func (r Runner) cordonSelectedNodes(ctx context.Context, targets []executor.Targ
 	return visited, changed, nil
 }
 
-func (r Runner) evictPodsOnNode(ctx context.Context, nodeName string) (int, error) {
+func (r Runner) evictPodsOnNode(ctx context.Context, nodeName string, protected map[string]struct{}) (int, []string, error) {
 	var pods corev1.PodList
 	if err := r.Client.List(ctx, &pods); err != nil {
-		return 0, fmt.Errorf("list Pods for drain on Node %q: %w", nodeName, err)
+		return 0, nil, fmt.Errorf("list Pods for drain on Node %q: %w", nodeName, err)
 	}
 	evicted := 0
+	var skippedNamespaces []string
 	for _, pod := range pods.Items {
 		if pod.Spec.NodeName != nodeName || !evictablePod(pod) {
+			continue
+		}
+		if _, isProtected := protected[pod.Namespace]; isProtected {
+			skippedNamespaces = append(skippedNamespaces, pod.Namespace)
 			continue
 		}
 		eviction := &policyv1.Eviction{
@@ -279,11 +358,11 @@ func (r Runner) evictPodsOnNode(ctx context.Context, nodeName string) (int, erro
 			if apierrors.IsNotFound(err) {
 				continue
 			}
-			return evicted, fmt.Errorf("evict Pod %s/%s: %w", pod.Namespace, pod.Name, err)
+			return evicted, skippedNamespaces, fmt.Errorf("evict Pod %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 		evicted++
 	}
-	return evicted, nil
+	return evicted, skippedNamespaces, nil
 }
 
 func evictablePod(pod corev1.Pod) bool {
@@ -424,18 +503,97 @@ func workflowParameters(params map[string]string) []any {
 	return parameters
 }
 
-func (r Runner) agentShutdownHandoff(action executor.Action) (executor.ActionOutcome, error) {
+func (r Runner) agentShutdownHandoff(ctx context.Context, action executor.Action) (executor.ActionOutcome, error) {
 	if len(action.Group.NodeReleases) == 0 {
 		err := fmt.Errorf("AgentShutdown requires at least one selected node release")
 		return blocked(err), err
 	}
+	if action.ExecutionID == "" || action.ShutdownFlow == "" || action.PlanConfigHash == "" {
+		err := fmt.Errorf("AgentShutdown requires execution ID, shutdown flow, and plan config hash")
+		return blocked(err), err
+	}
+	observedAt := r.now()
+	updatedSecrets := map[string]struct{}{}
+	for _, release := range action.Group.NodeReleases {
+		if release.NodeName == "" || release.SignalSecretNamespace == "" || release.SignalSecretName == "" || release.SignalSecretKey == "" {
+			err := fmt.Errorf("AgentShutdown release for node %q requires signal Secret namespace, name, and key", release.NodeName)
+			return blocked(err), err
+		}
+		payload := nodeagent.ShutdownSignal{
+			DryRun:             false,
+			ExecutionID:        action.ExecutionID,
+			NodeName:           release.NodeName,
+			PlanConfigHash:     action.PlanConfigHash,
+			Reason:             "ReleaseApproved",
+			SelectedUPSDevices: append([]string(nil), action.SelectedUPSDevices...),
+			ShutdownFlow:       action.ShutdownFlow,
+			Timestamp:          observedAt.UTC().Format(time.RFC3339Nano),
+		}
+		encoded, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return blocked(err), fmt.Errorf("encode AgentShutdown signal for node %q: %w", release.NodeName, err)
+		}
+		encoded = append(encoded, '\n')
+		if err := r.upsertSignalSecret(ctx, action, release, encoded); err != nil {
+			return blocked(err), err
+		}
+		updatedSecrets[release.SignalSecretNamespace+"/"+release.SignalSecretName] = struct{}{}
+	}
 	return executor.ActionOutcome{
 		Outcome: executor.OutcomeSucceeded,
 		Details: map[string]any{
-			"handoff":      "NodeReleaseAuditSignal",
-			"nodeReleases": len(action.Group.NodeReleases),
+			"handoff":       "ProjectedSecretSignal",
+			"nodeReleases":  len(action.Group.NodeReleases),
+			"signalSecrets": len(updatedSecrets),
 		},
 	}, nil
+}
+
+func (r Runner) upsertSignalSecret(ctx context.Context, action executor.Action, release executor.NodeRelease, payload []byte) error {
+	key := client.ObjectKey{Namespace: release.SignalSecretNamespace, Name: release.SignalSecretName}
+	var secret corev1.Secret
+	if err := r.Client.Get(ctx, key, &secret); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("get signal Secret %s/%s: %w", key.Namespace, key.Name, err)
+		}
+		secret = corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: key.Namespace,
+				Name:      key.Name,
+				Labels:    signalSecretLabels(action, release),
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: map[string][]byte{release.SignalSecretKey: payload},
+		}
+		if err := r.Client.Create(ctx, &secret); err != nil {
+			return fmt.Errorf("create signal Secret %s/%s: %w", key.Namespace, key.Name, err)
+		}
+		return nil
+	}
+	if secret.Data == nil {
+		secret.Data = map[string][]byte{}
+	}
+	if secret.Labels == nil {
+		secret.Labels = map[string]string{}
+	}
+	for label, value := range signalSecretLabels(action, release) {
+		secret.Labels[label] = value
+	}
+	secret.Type = corev1.SecretTypeOpaque
+	secret.Data[release.SignalSecretKey] = payload
+	if err := r.Client.Update(ctx, &secret); err != nil {
+		return fmt.Errorf("update signal Secret %s/%s key %q: %w", key.Namespace, key.Name, release.SignalSecretKey, err)
+	}
+	return nil
+}
+
+func signalSecretLabels(action executor.Action, release executor.NodeRelease) map[string]string {
+	return map[string]string{
+		labelManagedBy:                  "nut-operator",
+		labelShutdownFlow:               labelValue(action.ShutdownFlow),
+		labelShutdownFlowExecution:      labelValue(action.ExecutionID),
+		"power.zalud.io/nodepoweragent": labelValue(release.NodePowerAgent),
+	}
 }
 
 func desiredReplicas(params map[string]string) (int32, error) {
@@ -533,4 +691,15 @@ func sortStrings(values []string) {
 		}
 		values[j+1] = value
 	}
+}
+
+// dedupeStrings assumes values is already sorted.
+func dedupeStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for i, value := range values {
+		if i == 0 || value != values[i-1] {
+			out = append(out, value)
+		}
+	}
+	return out
 }
