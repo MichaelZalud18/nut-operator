@@ -55,6 +55,15 @@ var _ = Describe("NUTServer Webhook", func() {
 			Expect(obj.Spec.TLS.Mode).To(Equal(powerv1alpha1.NUTTLSRequired))
 			Expect(*obj.Spec.TLS.VerifyClientCertificates).To(BeTrue())
 			Expect(obj.Spec.Config.ListenAddress).To(Equal("0.0.0.0"))
+			Expect(obj.Spec.Placement.PriorityClassName).To(Equal("system-cluster-critical"))
+		})
+
+		It("Should not override an explicitly set priority class", func() {
+			obj.Spec.Placement.PriorityClassName = "custom-priority"
+
+			Expect(defaulter.Default(ctx, obj)).To(Succeed())
+
+			Expect(obj.Spec.Placement.PriorityClassName).To(Equal("custom-priority"))
 		})
 	})
 
@@ -92,6 +101,25 @@ var _ = Describe("NUTServer Webhook", func() {
 			_, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("spec.tls.clientCARef"))
+		})
+
+		It("Should reject a replica count other than 1", func() {
+			obj.Spec = secureNUTServerSpec()
+			replicas := int32(2)
+			obj.Spec.Replicas = &replicas
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.replicas"))
+		})
+
+		It("Should admit an explicit replica count of 1", func() {
+			obj.Spec = secureNUTServerSpec()
+			replicas := int32(1)
+			obj.Spec.Replicas = &replicas
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 })

@@ -13,7 +13,6 @@ spec:
   deviceSelector:
     matchLabels:
       power.zalud.io/domain: rack-a
-  replicas: 2
   image:
     repository: ghcr.io/michaelzalud18/nut-server
     tag: main

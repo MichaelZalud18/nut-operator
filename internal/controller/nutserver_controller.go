@@ -48,6 +48,7 @@ type NUTServerReconciler struct {
 // +kubebuilder:rbac:groups="",resources=configmaps;secrets;services,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch
 
 // Reconcile validates NUT server configuration and records rendering status.
 func (r *NUTServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

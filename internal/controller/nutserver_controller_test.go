@@ -24,6 +24,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -72,7 +73,7 @@ var _ = Describe("NUTServer Controller", func() {
 			By("creating the custom resource for the Kind NUTServer")
 			err = k8sClient.Get(ctx, typeNamespacedName, nutserver)
 			if err != nil && errors.IsNotFound(err) {
-				replicas := int32(2)
+				replicas := int32(1)
 				resource := &powerv1alpha1.NUTServer{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: resourceName,
@@ -165,7 +166,13 @@ var _ = Describe("NUTServer Controller", func() {
 			deployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-server"}, deployment)).To(Succeed())
 			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/michaelzalud18/nut-server:main"))
-			Expect(*deployment.Spec.Replicas).To(Equal(int32(2)))
+			Expect(*deployment.Spec.Replicas).To(Equal(int32(1)))
+			Expect(deployment.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
+			Expect(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe).NotTo(BeNil())
+			Expect(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Exec).NotTo(BeNil())
+			Expect(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Exec.Command).To(Equal(
+				[]string{"upsc", "-l", "localhost:3493"},
+			))
 			Expect(deployment.Spec.Template.Spec.Volumes).To(ContainElement(
 				WithTransform(func(volume corev1.Volume) string { return volume.Name }, Equal("nut-config")),
 			))
@@ -181,6 +188,12 @@ var _ = Describe("NUTServer Controller", func() {
 				MountPath: "/etc/nut",
 				ReadOnly:  true,
 			}))
+
+			pdb := &policyv1.PodDisruptionBudget{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-server"}, pdb)).To(Succeed())
+			Expect(pdb.Spec.MinAvailable).NotTo(BeNil())
+			Expect(pdb.Spec.MinAvailable.IntValue()).To(Equal(1))
+			Expect(pdb.Spec.Selector.MatchLabels).To(Equal(deployment.Spec.Selector.MatchLabels))
 		})
 	})
 })

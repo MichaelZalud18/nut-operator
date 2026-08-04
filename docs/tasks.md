@@ -251,21 +251,31 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   (`nodepoweragent_render.go`) only ever reads `monitor-password` — the admin credential structurally
   never reaches a node agent. This closes the credential-separation half of `F-23`; the design
   question it was gating (which instant commands actually get exposed) is still `OD-20`.
+- **`F-15` `spec.replicas` is pinned to 1.** CRD schema (`+kubebuilder:validation:Maximum=1`) and
+  the admission webhook (`validateNUTServerAdmission`) both reject any value other than 1 — defense
+  in depth per the policy-gate pattern in `docs/security.md`.
+- **`F-16` Deployment strategy is explicit `Recreate`.** Set in `ensureNUTServerDeployment`, so an
+  upgrade never briefly runs two `upsd` instances and splits NUT's client-login accounting.
+- **`F-17` readiness probe reflects driver registration**, not just TCP listen: an exec probe runs
+  `upsc -l localhost:<port>` against the local `upsd` socket. This proves the driver registered at
+  least one UPS with `upsd`; it does not yet prove any single device's telemetry is fresh — see Open
+  Work below.
+- **`F-18` priority class and PodDisruptionBudget are in place.** The webhook defaults
+  `spec.placement.priorityClassName` to `system-cluster-critical` when unset (mirrors the
+  `system-node-critical` pattern already used for `NodePowerAgent`, at the cluster-singleton tier
+  instead of the per-node tier). `ensureNUTServerPodDisruptionBudget` renders a PDB with
+  `minAvailable: 1`, which — paired with the `F-15` replica pin — blocks voluntary eviction of the
+  sole `upsd` pod entirely.
 
 #### Open Work
 
-- **`F-15` pin `spec.replicas` to 1 at admission.** Currently user-settable; more than one replica
-  behind one Service silently breaks NUT's client-login accounting. Highest-severity open item for
-  this component — it's a currently-possible silently-broken topology.
-- `F-16` set Deployment strategy to `Recreate` — currently defaults to `RollingUpdate`, which briefly
-  runs two `upsd` instances and splits the same accounting `F-15` protects.
-- `F-17` readiness probe reflecting actual driver poll success (a local `upsc` query), not just TCP
-  listen.
-- `F-18` default priority class plus a `PodDisruptionBudget` with `minAvailable: 1`.
+- `F-17` follow-on: the current readiness probe (`upsc -l`) proves driver registration, not
+  per-device telemetry freshness. A `NUTServer` selecting multiple `UPSDevice` resources could be
+  ready while one selected device's driver is silently failing. Tightening this to check a specific
+  device's `ups.status` freshness needs a policy decision first (which device, or all of them) that
+  the original `F-17` finding didn't specify.
 - `F-19` `topologySpreadConstraints`/anti-affinity — deferred until an HA `upsd` topology is actually
   designed; not urgent at one replica.
-- `F-23` design a separate, more-privileged `upsd` user before any instant-command work lands
-  (`F-22`/`OD-20`) — that credential must never reach node agents.
 - `OD-19` FSD usage — if adopted as the final release signal, this is where it's implemented.
 - `OD-20` instant command / writable variable scope, starting with the `shutdown.return` handshake
   and `test.battery.start` exposure (`F-22`).

@@ -1153,10 +1153,12 @@ spec:
                 type: object
               replicas:
                 default: 1
-                description: replicas is the number of upsd pods for network-backed
-                  UPS devices.
+                description: |-
+                  replicas is the number of upsd pods for network-backed UPS devices. Pinned to 1: multiple
+                  replicas behind one Service split NUT client-login accounting across independent driver
+                  instances, which breaks upsd's own tracking of when all clients have disconnected.
                 format: int32
-                maximum: 5
+                maximum: 1
                 minimum: 1
                 type: integer
               resources:

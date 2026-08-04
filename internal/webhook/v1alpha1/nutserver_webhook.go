@@ -32,6 +32,12 @@ import (
 // log is for logging in this package.
 var nutserverlog = logf.Log.WithName("nutserver-resource")
 
+// defaultNUTServerPriorityClassName matches the priority class convention used for other
+// cluster-wide singleton control-plane-adjacent services (e.g. CoreDNS). upsd is on the
+// observability path for every NodePowerAgent, so preempting or evicting it degrades every
+// agent's telemetry simultaneously (F-18).
+const defaultNUTServerPriorityClassName = "system-cluster-critical"
+
 // SetupNUTServerWebhookWithManager registers the webhook for NUTServer in the manager.
 func SetupNUTServerWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr, &powerv1alpha1.NUTServer{}).
@@ -115,6 +121,9 @@ func defaultNUTServer(obj *powerv1alpha1.NUTServer) {
 	if obj.Spec.Config.ListenAddress == "" {
 		obj.Spec.Config.ListenAddress = "0.0.0.0"
 	}
+	if obj.Spec.Placement.PriorityClassName == "" {
+		obj.Spec.Placement.PriorityClassName = defaultNUTServerPriorityClassName
+	}
 }
 
 func validateNUTServerAdmission(obj *powerv1alpha1.NUTServer) error {
@@ -123,8 +132,9 @@ func validateNUTServerAdmission(obj *powerv1alpha1.NUTServer) error {
 
 	errs = append(errs, validateOptionalObjectNameReference(specPath.Child("managementClusterRef"), obj.Spec.ManagementClusterRef)...)
 	errs = append(errs, validateOptionalNamespace(specPath.Child("namespace"), obj.Spec.Namespace)...)
-	if obj.Spec.Replicas != nil && (*obj.Spec.Replicas < 1 || *obj.Spec.Replicas > 5) {
-		errs = append(errs, field.Invalid(specPath.Child("replicas"), *obj.Spec.Replicas, "must be between 1 and 5"))
+	if obj.Spec.Replicas != nil && *obj.Spec.Replicas != 1 {
+		errs = append(errs, field.Invalid(specPath.Child("replicas"), *obj.Spec.Replicas,
+			"must be 1: multiple upsd replicas behind one Service split NUT client-login accounting (F-15)"))
 	}
 	if len(obj.Spec.DeviceRefs) == 0 && obj.Spec.DeviceSelector == nil {
 		errs = append(errs, field.Required(specPath.Child("deviceRefs"), "spec.deviceRefs or spec.deviceSelector is required"))

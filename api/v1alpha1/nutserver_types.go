@@ -40,9 +40,11 @@ type NUTServerSpec struct {
 	// +optional
 	DeviceSelector *metav1.LabelSelector `json:"deviceSelector,omitempty"`
 
-	// replicas is the number of upsd pods for network-backed UPS devices.
+	// replicas is the number of upsd pods for network-backed UPS devices. Pinned to 1: multiple
+	// replicas behind one Service split NUT client-login accounting across independent driver
+	// instances, which breaks upsd's own tracking of when all clients have disconnected.
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=5
+	// +kubebuilder:validation:Maximum=1
 	// +kubebuilder:default=1
 	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`

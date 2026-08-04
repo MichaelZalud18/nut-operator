@@ -29,6 +29,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -43,6 +44,13 @@ import (
 const (
 	defaultOperandNamespace = "power-system"
 	nutServerPortName       = "upsd"
+
+	// upsdReadinessProbe timing (F-17): a local upsc query proves the driver has registered with
+	// upsd, not merely that the TCP port is accepting connections.
+	upsdReadinessInitialDelaySeconds = 5
+	upsdReadinessPeriodSeconds       = 10
+	upsdReadinessTimeoutSeconds      = 5
+	upsdReadinessFailureThreshold    = 3
 )
 
 type renderedNUTServer struct {
@@ -101,6 +109,10 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
+	pdb, err := r.ensureNUTServerPodDisruptionBudget(ctx, server, namespace)
+	if err != nil {
+		return renderedNUTServer{}, err
+	}
 	upstreamStatus := r.probeUpstreamNUTDevices(ctx, devices)
 
 	selected := make([]string, 0, len(devices))
@@ -120,6 +132,7 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 		{APIVersion: "v1", Kind: "Service", Namespace: namespace, Name: service.Name},
 		{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: namespace, Name: networkPolicy.Name},
 		{APIVersion: "apps/v1", Kind: "Deployment", Namespace: namespace, Name: deployment.Name},
+		{APIVersion: "policy/v1", Kind: "PodDisruptionBudget", Namespace: namespace, Name: pdb.Name},
 	}
 	if managedSecret != "" {
 		managed = append(managed, powerv1alpha1.ManagedResourceStatus{
@@ -562,6 +575,10 @@ func networkPolicyName(server *powerv1alpha1.NUTServer) string {
 	return server.Name + "-nut-server"
 }
 
+func podDisruptionBudgetName(server *powerv1alpha1.NUTServer) string {
+	return server.Name + "-nut-server"
+}
+
 func (r *NUTServerReconciler) ensureOperandNamespace(ctx context.Context, name string) error {
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, namespace, func() error {
@@ -717,6 +734,13 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
 		deployment.Labels = labels
 		deployment.Spec.Replicas = &replicas
+		// Recreate (F-16): upsd is a singleton with long-lived client TCP sessions and NUT's own
+		// login accounting. RollingUpdate would briefly run two instances and split that
+		// accounting, the same failure mode F-15 pins replicas to 1 to avoid. A short outage
+		// window on upgrade is the accepted trade-off.
+		deployment.Spec.Strategy = appsv1.DeploymentStrategy{
+			Type: appsv1.RecreateDeploymentStrategyType,
+		}
 		deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		deployment.Spec.Template.Labels = labels
 		deployment.Spec.Template.Annotations = map[string]string{
@@ -794,6 +818,17 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 					{Name: "nut-config", MountPath: "/etc/nut", ReadOnly: true},
 					{Name: "nut-run", MountPath: "/run/nut"},
 				},
+				ReadinessProbe: &corev1.Probe{
+					ProbeHandler: corev1.ProbeHandler{
+						Exec: &corev1.ExecAction{
+							Command: []string{"upsc", "-l", fmt.Sprintf("localhost:%d", servicePort(server))},
+						},
+					},
+					InitialDelaySeconds: upsdReadinessInitialDelaySeconds,
+					PeriodSeconds:       upsdReadinessPeriodSeconds,
+					TimeoutSeconds:      upsdReadinessTimeoutSeconds,
+					FailureThreshold:    upsdReadinessFailureThreshold,
+				},
 			},
 		}
 		if server.Spec.TLS.Mode != "" && server.Spec.TLS.Mode != powerv1alpha1.NUTTLSDisabled && server.Spec.TLS.ServerCertificateRef != nil {
@@ -815,6 +850,23 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 		return controllerutil.SetControllerReference(server, deployment, r.Scheme)
 	})
 	return deployment, err
+}
+
+// ensureNUTServerPodDisruptionBudget renders a PDB with minAvailable 1 (F-18). Paired with the
+// F-15 replica pin, this blocks voluntary eviction of the sole upsd pod entirely, which is the
+// desired behavior: upsd is on the observability path for every NodePowerAgent, and draining it
+// mid-event puts every agent into DEADTIME simultaneously.
+func (r *NUTServerReconciler) ensureNUTServerPodDisruptionBudget(ctx context.Context, server *powerv1alpha1.NUTServer, namespace string) (*policyv1.PodDisruptionBudget, error) {
+	minAvailable := intstr.FromInt32(1)
+	labels := labelsForNUTServer(server)
+	pdb := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Name: podDisruptionBudgetName(server), Namespace: namespace}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, pdb, func() error {
+		pdb.Labels = labels
+		pdb.Spec.MinAvailable = &minAvailable
+		pdb.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+		return controllerutil.SetControllerReference(server, pdb, r.Scheme)
+	})
+	return pdb, err
 }
 
 func ptrBool(value bool) *bool {
