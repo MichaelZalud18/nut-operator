@@ -6,98 +6,471 @@ Architecture, security, API, and design documents describe the system in its fin
 build state, open implementation work, and validation gates live here so the architecture docs do
 not become a progress diary.
 
+Work is organized by component so it can be picked up independently. Each component section lists
+what is built and what remains open, with design-doc identifiers (`OD-n`, `PL-n`, etc.) and audit
+findings (`F-n`) cited so the reasoning behind an item is one click away rather than re-litigated.
+Items that genuinely span two components are listed under their primary owner with a cross-reference.
+
 Last reviewed: 2026-08-03
 
-## Built
+---
 
-- Kubebuilder/controller-runtime scaffold with Apache-2.0 licensing and public project metadata.
-- Nine cluster-scoped `power.zalud.io/v1alpha1` CRDs with status subresources:
-  `PowerManagementCluster`, `UPSDevice`, `PowerInfrastructure`, `PowerInventoryNode`,
-  `PowerInventoryEdge`, `UPSCapabilityProfile`, `NUTServer`, `NodePowerAgent`, and `ShutdownFlow`.
-- Validation/status reconcilers for the CRD set, plus admission webhook code for the core safety
-  combinations.
-- `NUTServer` operand rendering for Namespace, ConfigMap, operator-managed Secret, Service,
-  NetworkPolicy, Deployment, and upstream NUT relay mode through `dummy-ups`.
-- `NodePowerAgent` operand rendering for Namespace, ServiceAccount, ConfigMap, Secret-backed
-  `upsmon.conf`, egress NetworkPolicy, and non-privileged monitor/dry-run/stub DaemonSet modes.
-- Pure packages for planner graph compilation, declarative inventory, capability matching, resolver
-  assembly, telemetry normalization, NUT polling, and trigger evaluation.
-- Planner artifact publication for `ShutdownFlow` status: normalized dependency graph,
-  edge/source explanations, advisory startup wave projection, and deterministic Mermaid,
-  Graphviz/DOT, and D2 exports.
-- `ShutdownFlow` trigger evaluation wired into reconciliation from `UPSDevice` telemetry status,
-  including compact hold-state persistence, `TriggerEligible` status condition, status-visible
-  per-trigger decisions, UPS status-change watches, approval-annotation watches, and
-  `shutdownflow_decisions` audit writes.
-- `ShutdownFlow` dry-run execution dispatch wired from eligible trigger decisions to
-  `internal/executor`, with `status.lastExecution`, active-trigger deduplication, durable execution
-  evidence, and `ExecutionReady` condition updates.
-- Kubernetes-first interface decision: no dedicated v1 UI; CRDs, status, Events, logs, GitOps, and
-  PostgreSQL records are the project interface.
-- Resiliency contract for API, PostgreSQL, NUT, telemetry, and node-agent partitions documented as
-  planned behavior: lost connectivity degrades certainty rather than granting optimistic action.
-- PostgreSQL audit schema and storage boundary for power events, telemetry snapshots, capability
-  matches, capability profile verification/probe history, accepted and rejected planner
-  compilations, shutdown decisions, executor runs, wave/group progress, action attempts, node
-  release records, signal-file handoff evidence, and executor resume state.
-- Planner compilation audit records persist compiled waves, dependency graph, advisory startup
-  waves, explanations, and diagram exports as structured PostgreSQL JSONB payloads.
-- PostgreSQL retention enforcement for audit/event records and telemetry snapshots from
-  `spec.storage.retention`, evaluated by the `PowerManagementCluster` storage readiness path.
-- Standalone `internal/executor` package for ordered wave execution evidence, dry-run action
-  attempts, node release records, signal-file handoff records, and resume-state updates.
-- Kubernetes action runner boundary for enforce-mode `ScaleWorkload`, `CordonNodes`, `DrainNodes`,
-  provider-neutral `RunWorkflow` hooks, and `AgentShutdown` release validation. The
-  `ShutdownFlow` controller enumerates concrete workloads, nodes, and namespaces at execution time.
-- Partition-aware `NodePowerAgent` coverage status records selected-node readiness from agent pod
-  readiness, publishes per-node heartbeat facts in CR status, and feeds those facts into
-  `AgentShutdown` executor release evidence. Enforce-mode releases block when a target node lacks a
-  ready agent pod; dry-run records the same degraded facts without acting.
-- Numbered shutdown tiers from OD-4 are implemented across the central
-  `PowerManagementCluster.spec.shutdownTiers` policy shape, `ShutdownFlow` group tier inputs,
-  target-label and selector-rule tier resolution, derived planner tier edges, published step/wave
-  and graph tier status, `PowerInventoryNode.spec.roles.shutdownTier`, `lastDitchRole` to tier 1
-  aliasing, and tier 0 rejection for orchestrated groups and nodes.
-- Node actuator signal handling validates structured shutdown JSON, enforces signal TTL and
-  node-name matching, skips dry-run `SystemdPoweroff` signals, and supports command-backed
-  poweroff execution behind the still-blocked host actuation rendering gate.
-- Node-agent rendering gives `upsmon` a writable runtime mount at `/run` while keeping the root
-  filesystem read-only and preserving the shared `/run/power-agent` handoff directory.
-- Storage backend resolution for `Disabled`, `ExternalPostgres`, and `CNPG` modes without locking
-  callers to a CNPG-only database path.
-- Project-maintained capability profile catalog under `config/catalog/`, including Ubiquiti UniFi
-  UPS Tower and UPS 2U product-family profiles.
-- Project-owned operand Dockerfiles for `nut-server`, `upsmon-agent`, and `node-actuator`.
-- Source hardening pass for ASH/Checkov-authored findings: explicit helper admin RBAC verbs,
-  non-default base namespaces for leader-election RBAC, manager pull policy, documented manager
-  service-account token/digest exceptions, Kustomize image placeholder repair, and Dockerfile
-  healthcheck instructions.
+## Components
+
+### Inventory System
+
+Owns: the topology and power-domain data model — `UPSDevice`, `PowerInfrastructure`,
+`PowerInventoryNode`, `PowerInventoryEdge`, the `internal/inventory` compiler, and the declarative
+resolver/adapter that feeds it into reconciliation. Design contract: `docs/design/inventory-provider-contract.md` (`IN-n`).
+
+#### Built
+
+- `internal/inventory`: a pure compiler (no I/O, no Kubernetes imports) that validates a `Snapshot`
+  of entities and edges, then derives power domains by transitive closure over `feeds` edges
+  (`IN-7`/`IN-9`), derives communication-carrier ordering from `carries` edges (`IN-3`/`IN-5`), and
+  enforces the orphan rule with an explicit exemption escape hatch (`IN-12`). Deterministic and
+  hash-stable; a node reachable from two UPS roots lands in both domains with no special-casing
+  (`IN-11`).
+- `PowerInventoryNode` and `PowerInventoryEdge` CRDs. `PowerInfrastructure` and
+  `UPSDevice.spec.powerDomains` round out the four entity kinds/domain label from `IN-1`/`IN-10`.
+  `PowerInventoryEdge` is the only place topology (`feeds`/`carries`) is authored.
+- Admission webhooks and controller-level validators for all four inventory CRDs: DNS-subdomain node
+  name checks, tier-0 rejection, `feeds`-requires-input/`carries`-forbids-input, self-edge rejection,
+  entity-kind and relation enum checks.
+- `declarative_inventory_resolver.go`/`declarative_inventory_adapter.go` wire the compiler into
+  reconciliation. This is load-bearing, not decorative: `ShutdownFlowReconciler` calls it on every
+  reconcile, so an invalid inventory graph (an orphaned node, a malformed edge) genuinely blocks or
+  degrades `ShutdownFlow` acceptance today.
+- The compiled topology's hash folds into the planner's structural plan-identity hash (`IN-14`).
+- Numbered shutdown tiers (`OD-4`) land on `PowerInventoryNode.spec.roles.shutdownTier`, with
+  `lastDitchRole` aliased to tier 1.
+- Test coverage: compiler determinism/domain-derivation/orphan/communication-path tests, end-to-end
+  resolver tests against a fake client, and webhook validation tests per CRD.
+
+#### Open Work
+
+- **Wire the derived topology into the planner.** `Topology.Domains` and `Topology.CommunicationOrders`
+  are computed and validated but nothing downstream consumes them — trigger domain matching still
+  runs off live telemetry snapshots, not this derived closure, and `carries`-based ordering
+  (`PL-21`) has no consumer yet either. This is the single highest-value remaining item in this
+  component; see the matching entry under Planning & Execution Logic.
+- No cross-check that a `PowerInventoryNode`/edge reference names a real `corev1.Node` — identity is
+  trusted by convention (`IN-13`), never verified against the cluster.
+- `IN-16` snapshot age ceiling has no implementation (no config field, no staleness condition).
+- NetBox as a second topology provider (`SB-8`) is docs-only — zero code exists. Decide whether and
+  when to build it, or drop it from the design docs if it's not actually planned.
+- `OD-16` (missing `carries` coverage) is effectively resolved in code as warning + exemption, but
+  `scope-boundaries.md` still lists it open — close the registry entry to match the implementation.
+- `OD-18` tier inversion (lower-tier workload on a higher-tier node) has no compile-time validation,
+  opt-in migration, or blocking behavior implemented.
+- Controller-level regression tests for multi-object graph failures (orphan rejection, duplicate
+  edges) end-to-end through `ShutdownFlowReconciler` — today this is only tested at the
+  compiler/resolver layer, not proven through the actual reconcile path.
+- `isSupportedInventoryEntityKind` is implemented twice (`internal/controller/validation.go` and the
+  edge webhook) — worth factoring into one shared helper.
+
+---
+
+### Capability Profiles
+
+Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundled catalog under
+`config/catalog/`, and the device-quirk/aliasing/provenance design surface. Design docs:
+`docs/design/capability-profiles.md`, `capability-profiles-and-upsd-config.md`,
+`device-profile-scope-and-provenance.md`.
+
+#### Built
+
+- `UPSCapabilityProfile` CRD with declared telemetry (NUT variables) and actuation
+  (behaviors/quirks) sections, matched via a deterministic precedence chain: exact model+firmware →
+  exact model → model glob → driver family → universal floor, with CRD-over-bundled and
+  highest-semver tiebreaks within a tier.
+- Bundled catalog (`config/catalog/upscapabilityprofiles.yaml`): Ubiquiti UniFi UPS Tower and 2U
+  profiles, with recorded quirks and actuation intentionally left undeclared pending firmware
+  verification.
+- Capability matching feeds the resolver's structural bundle and folds into the plan-identity hash.
+- Sizing/configuration boundary is settled and documented: profiles influence `upsd` config
+  (driver selection, poll behavior) but never pod sizing, replica count, or scheduling.
+- Device-class scope is settled: queried devices (UPS, NUT-managed PDU) get profiles; topological
+  devices (switches, panels, non-NUT power devices like UniFi RPS) do not.
+- Provenance field design (`ProjectVerified`/`Community`/`UserLocal`) and the upgrade-safety
+  guarantee (CRD profiles outrank bundled data, upgrades never touch user CRs) are drafted and in
+  the FAQ.
+
+#### Open Work
+
+- **`F-25` telemetry variable aliasing** — no mechanism exists. A device reporting `battery.low`
+  instead of the standard `battery.charge.low` is silently invisible to the normalizer; the value
+  survives in the raw variable map but no derived field or trigger sees it. Highest-priority item in
+  this component — it's a recorded, real quirk with no path to act on it. Implementation lands in
+  the resolver (see Telemetry & Triggers), but the schema change (`UPSCapabilityTelemetrySpec` alias
+  map) is owned here.
+- **`F-26` firmware-gated quirks can't expire.** `Quirks` is a flat `[]string` with no firmware
+  constraint, so a device on current firmware inherits every historical quirk of its model family
+  permanently. Decide between structured quirk objects and firmware-ranged selectors (`OD-22`).
+- **`F-27` verification lifecycle is undefined** for actuation commands: what counts as verified,
+  where the result is recorded, how a verified result becomes a profile change, and whether a
+  locally-verified user profile can declare support without a catalog release.
+- `OD-19` FSD usage decision (declare non-use explicitly, or adopt as the release signal) —
+  implementation would live in NUT Server / upsd, but the decision belongs to the capability/actuation
+  design.
+- `OD-20` instant-command scope and gating (`upscmd`/`upsrw` surface), starting with the
+  `shutdown.return` handshake and `test.battery.start`.
+- `OD-21` driver configuration ownership — profile vs. `UPSDevice` spec. A hybrid (profile default,
+  spec override) matches the existing `RS-5` precedence pattern and is the likely shape.
+- `OD-23` alias collision/precedence rules (two device names mapping to one canonical name, or a
+  name both aliased and natively present).
+- `OD-24` non-NUT power device actuation (UniFi RPS-class devices) — currently topological-only by
+  design; revisit alongside `OD-10` (USB support), since both concern control surfaces outside the
+  NUT-network-only posture.
+- `OD-25` PDU capability profile kind — scaffolding only, not started.
+- `OD-26` provenance field semantics — advisory metadata today; decide whether it should ever gate
+  resolution (e.g. `Community` profiles requiring opt-in).
+
+---
+
+### Telemetry & Triggers
+
+Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`), poll composition
+(`internal/polling`), and trigger evaluation (`internal/trigger`). Design docs:
+`telemetry-normalization.md`, `trigger-evaluation.md`, `resiliency-and-partitions.md`.
+
+#### Built
+
+- `internal/nut`: a real NUT protocol client — `LIST VAR` with `BEGIN`/`END LIST VAR` framing and
+  `ERR` handling — not a wrapper around `upsc`.
+- `internal/telemetry`: pure normalization from raw NUT variable maps to stable policy/audit facts —
+  phase classification (`Online`/`OnBattery`/`LowBattery`/`Stale`/`Unavailable`/`Unknown`), parsed
+  charge/runtime/load, non-fatal diagnostics for unknown status symbols and bad numeric values.
+- `internal/polling` composes the transport and normalizer into a per-target poll with an audit
+  adapter for `ups_telemetry_snapshots`.
+- `internal/trigger`: pure evaluator. Given trigger definitions, normalized UPS state, and prior hold
+  state, it returns eligibility, selected devices, next hold state, and diagnostics — no Kubernetes
+  reads, no NUT polling, no wall-clock access.
+- `UPSDevice` reconciliation resolves its `NUTServer`, polls the in-cluster Service, updates status,
+  and records durable snapshots when the audit store is ready.
+- `ShutdownFlow` trigger evaluation is wired end-to-end: `internal/shutdownflow` adapts
+  `spec.triggers`/`UPSDevice.status` into the evaluator, persists hold state, records
+  `shutdownflow_decisions`, and dispatches eligible episodes to the executor, deduplicated by
+  `status.lastExecution.deduplicationKey`.
+- `dummy-ups` repeater/relay mode for upstream NUT appliances (`UPSDevice.spec.upstreamNUT`) is
+  implemented and upstream-loyal — this corrects the original `F-22` finding, which overstated NUT
+  feature non-use.
+
+#### Open Work
+
+- `F-25` alias resolution belongs here at runtime — once Capability Profiles adds the alias map to
+  the schema, this component applies it when building the telemetry snapshot, and records that a
+  value arrived under a non-standard name in the snapshot's diagnostics.
+- `PL-19` trigger-capability degrade mechanics (`OD-9`): the reject-vs-degrade split (some devices
+  vs. all devices in a domain) is decided in principle, but the actual coarser-trigger substitution
+  table isn't built.
+- `OD-14` partial-domain outage plan scope (cluster-wide vs. domain-scoped) — blocks how trigger
+  firing should interact with multi-domain topology once inventory-derived domains are wired into
+  the planner (shared with Inventory System and Planning & Execution Logic).
+- `AE-6` capability gating for mid-flow adaptive execution needs a declared "firmware recomputes
+  runtime against present load" capability check before the tier-pointer/timing-mode work in
+  Planning & Execution Logic can safely turn adaptation on for a given device.
+
+---
+
+### Planning & Execution Logic
+
+Owns: `internal/planner` (pure compile), `internal/executor` (wave execution/evidence),
+`internal/kubeactions` (action runner), and `internal/shutdownflow` plus the `ShutdownFlow`
+controller wiring that connects them. Design docs: `planner-requirements.md`,
+`executor-requirements.md`, `shutdown-flow.md`, `adaptive-execution-tier-pointer.md`.
+
+#### Built
+
+- `internal/planner`: pure graph compilation — `requires`/`before`/`after` edges, cycle detection,
+  wave compilation, deterministic plan-hash identity, structured diagnostics (no bare "cycle
+  detected"), degradation handling (`Unknown` feasibility on stale/missing telemetry, universal-floor
+  warnings that don't fail the compile).
+- Numbered shutdown tiers (`OD-4`, closed) fully implemented: central
+  `PowerManagementCluster.spec.shutdownTiers` policy, per-group tier inputs, label/selector/default
+  tier resolution with total deterministic precedence, derived tier-to-tier edges (`internal/planner/tiers.go`),
+  tier-0 rejection for orchestrated groups and nodes, and tier status published on steps, waves, and
+  the graph.
+- Planner artifact publication (`internal/planner/artifacts.go`): normalized dependency graph,
+  edge/source explanations with provenance (`Declared`/`Derived`/`Policy`), advisory startup wave
+  projection, deterministic Mermaid/Graphviz/D2 exports (consumer side lives in Outputs &
+  Publishing).
+- `ShutdownFlow` dry-run execution dispatch from eligible trigger decisions into `internal/executor`,
+  with `status.lastExecution`, active-trigger deduplication, durable execution evidence, and
+  `ExecutionReady` condition updates.
+- `internal/executor`: ordered wave execution evidence, dry-run action attempts, node release
+  records, signal-file handoff records, resume-state updates — restart-safe by design (`EX-14`).
+- `internal/kubeactions`: enforce-mode `ScaleWorkload`, `CordonNodes`, `DrainNodes`, provider-neutral
+  `RunWorkflow` hooks (the `argoproj.io/workflows` RBAC noted in `F-5` is this — a real, used
+  integration, not scaffolding), and projected-Secret `AgentShutdown` signal handoff.
+- Node-agent coverage gating: enforce-mode releases block when a target node lacks a ready agent pod;
+  dry-run records the same degraded facts without acting.
+
+#### Open Work
+
+- **Consume the inventory-derived topology.** The planner still doesn't read
+  `Topology.Domains`/`Topology.CommunicationOrders` from the inventory compiler — this is the
+  execution-side half of the Inventory System's top open item.
+- **Fold the provisional adaptive-execution design into real identifiers.** Tier-pointer
+  descent/ascent, the three timing modes (`Relaxed`/`Nominal`/`Urgent`), and asymmetric hysteresis
+  are fully specified in `adaptive-execution-tier-pointer.md` (`AE-1`–`AE-6`) but **none of it is
+  implemented**. Folding into real `PL`/`EX` numbers is a documentation step; building the pointer,
+  mode selection, and hysteresis logic is the actual engineering work.
+- `OD-27`–`OD-30`: hysteresis count/margin, relationship to `OD-12`, tier-ascent trigger condition,
+  and cadence intervals — all open parameters the adaptive-execution build needs decided first.
+- `OD-12` infeasible-plan policy field default and options (reject/warn/truncate), referenced by
+  `EX-3`, not yet decided or implemented.
+- `OD-18` tier inversion validation (shared with Inventory System — this is the planner
+  tier-compilation half).
+- `OD-14` partial-domain outage plan scope (shared with Telemetry & Triggers).
+- Controller/envtest coverage for executor resume behavior (restart mid-flow) — asserted by design
+  (`EX-14`) but not covered by an actual restart test yet.
+
+---
+
+### NUT Server / upsd
+
+Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_probe.go`, and the
+`nut-server` operand image. Audit: `docs/audits/nutserver-pod-audit.md` (`F-15`–`F-19`, `F-23`);
+relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`).
+
+#### Built
+
+- `NUTServer` operand rendering: Namespace, ConfigMap, operator-managed Secret, Service,
+  NetworkPolicy, Deployment, and upstream NUT relay mode via `dummy-ups`.
+- `upsd.conf`/`upsd.users` rendering with injection-validated config values.
+- Container security context: non-root UID 65532, read-only root filesystem, all capabilities
+  dropped, no privilege escalation, consistent across the render path.
+- Project-owned `nut-server` Dockerfile with pinned NUT packages and healthcheck instructions.
+- Protocol fidelity confirmed by audit: real `LIST VAR` framing (not `upsc` shelling), standard NUT
+  variable names throughout, `MODE=netclient`, every agent connects as `secondary`,
+  `SHUTDOWNCMD "/bin/true"` as the stub actuator expressed in NUT-native terms.
+
+#### Open Work
+
+- **`F-15` pin `spec.replicas` to 1 at admission.** Currently user-settable; more than one replica
+  behind one Service silently breaks NUT's client-login accounting. Highest-severity open item for
+  this component — it's a currently-possible silently-broken topology.
+- `F-16` set Deployment strategy to `Recreate` — currently defaults to `RollingUpdate`, which briefly
+  runs two `upsd` instances and splits the same accounting `F-15` protects.
+- `F-17` readiness probe reflecting actual driver poll success (a local `upsc` query), not just TCP
+  listen.
+- `F-18` default priority class plus a `PodDisruptionBudget` with `minAvailable: 1`.
+- `F-19` `topologySpreadConstraints`/anti-affinity — deferred until an HA `upsd` topology is actually
+  designed; not urgent at one replica.
+- `F-23` design a separate, more-privileged `upsd` user before any instant-command work lands
+  (`F-22`/`OD-20`) — that credential must never reach node agents.
+- `OD-19` FSD usage — if adopted as the final release signal, this is where it's implemented.
+- `OD-20` instant command / writable variable scope, starting with the `shutdown.return` handshake
+  and `test.battery.start` exposure (`F-22`).
+- `F-21` write down the decision to decline `upssched` explicitly in the design docs — it's already
+  effectively decided (the operator centralizes scheduling for cluster-wide correlation), just not
+  recorded as a decision.
+- `F-24` confirm the operator-managed `upsd.users` Secret is never logged or echoed into Events on
+  render failure, and that the config hash in `ManagedResourceStatus` can't leak the password value.
+  (The node-agent side of this same finding, the `upsmon.conf` Secret, is tracked under Node Agent /
+  DaemonSet.)
+- Credential rotation and advanced driver-specific config for the NUT operand render path.
+
+---
+
+### Node Agent / DaemonSet
+
+Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_render.go`, the `upsmon-agent`
+and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
+`internal/nodeagent`. Audit: `docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`).
+
+#### Built
+
+- `NodePowerAgent` DaemonSet rendering: Namespace, ServiceAccount, ConfigMap, Secret-backed
+  `upsmon.conf`, egress NetworkPolicy, `MonitorOnly`/`DryRun`/`Actuate` modes.
+- Explicit rollout strategy, `system-node-critical` priority default, baseline toleration set, and
+  readiness probes — closes `F-8`, `F-9`, `F-10`, `F-12` from the DaemonSet audit.
+- `power-signal-writer` (`cmd/power-signal-writer`): project-owned `SHUTDOWNCMD` binary, writing to a
+  projected signal Secret; `upsmon` gets a writable `/run` mount while the root filesystem stays
+  read-only.
+- `internal/nodeagent` (`signal.go`): node actuator signal handling — structured shutdown JSON
+  validation, signal TTL and node-name matching enforcement, dry-run `SystemdPoweroff` skip, watches
+  both the local `upsmon` handoff file and the executor-projected Secret path.
+- `cmd/node-actuator`: syscall-backed host poweroff (`poweroff_linux.go`, with
+  `poweroff_unsupported.go` for other GOOS) with command override support.
+- Approved `SystemdPoweroff` isolation uses `hostPID` + `CAP_SYS_BOOT` only — the narrow-privilege
+  model `F-13` called for, not blanket `privileged: true`. Non-root, all other capabilities dropped,
+  read-only root filesystem, no Kubernetes service-account token.
+- Partition-aware coverage status: per-node agent-pod readiness feeds `AgentShutdown` executor
+  release evidence; enforce-mode blocks releases against nodes without a ready agent, dry-run records
+  the same degraded facts without acting.
+
+#### Open Work
+
+- **`F-14` self-exclusion.** Nothing currently stops a `ShutdownFlow` from targeting the power
+  agent's own namespace during a drain wave. The tier 0 self-exclusion rule exists in design, not in
+  code — this is a real correctness gap, not just hardening.
+- In-cluster smoke test proving projected Secret signal updates reach DaemonSet pods within the
+  configured TTL on common runtimes (kind, at minimum).
+- `F-24` confirm the `upsmon.conf` Secret's monitor password is never logged, echoed into Events on
+  render failure, or leaked through the config hash in `ManagedResourceStatus` (shared finding with
+  NUT Server / upsd's `upsd.users` Secret — same confirmation, two render paths).
+
+---
+
+### Outputs & Publishing
+
+Owns: the published planner artifact contract (compiled plan, dependency graph, waves, explanations,
+diagram exports) and the CR-status-as-interface model — the "what gets exported and how" surface.
+Design doc: `docs/design/published-planner-artifacts.md` (`GP-6`/`GP-7`).
+
+#### Built
+
+- Single structured planner artifact (`PL-45`–`PL-48`): compiled plan, dependency graph, waves,
+  advisory startup projection, diagnostics, feasibility verdicts, plan hash, duration estimates.
+- Dependency graph emitted as normalized vertices/edges, not text — every edge carries relation type,
+  source object references, provenance (`Declared`/`Derived`/`Policy`), and a stable explanation
+  string, so "why was this node in wave four" is answerable from structure, not log archaeology.
+- Deterministic Mermaid, Graphviz/DOT, and D2 diagram exports generated from the structured graph —
+  renderers, never independent sources of truth.
+- Kubernetes-first interface fully in place: CRDs + `/status` + Events + logs + PostgreSQL audit
+  records as the whole v1 interface, no dedicated UI. The operator publishes facts; subscribers
+  (dashboards, docs generators, monitoring, recovery orchestration) own what they do with them
+  (`GP-7`).
+- Advisory startup wave projections published for recovery-system subscribers without the operator
+  executing recovery itself (`OD-1`/`OD-5`, closed).
+
+#### Open Work
+
+- Once the planner consumes inventory-derived domains and communication ordering (see Planning &
+  Execution Logic), the published graph/domain artifacts should reflect that richer structure — right
+  now the published graph is only as complete as the planner's current inputs.
+- **`F-3` metrics.** No Prometheus registrations exist at all — this is the entire "publish facts as
+  metrics" gap. Highest-value candidates per the maturity audit: compile duration, compile failures
+  by diagnostic class, plan hash changes, trigger evaluations, wave execution duration, actuation
+  attempts, degraded-dependency conditions. The `ServiceMonitor` scaffolding already exists
+  (`SB-10`); there's currently nothing project-specific for it to scrape.
+- No worked example showing how an external subscriber (dashboard, recovery orchestrator) actually
+  consumes the published artifacts in practice — the contract is documented, but there's no sample
+  integration.
+- `F-6`: document `ExecutionReady`/`TriggerEligible` as part of the public condition-type API
+  surface, since users will alert on them and they're bespoke (not standard Kubernetes condition
+  types).
+
+---
+
+### Storage & Audit
+
+Owns: the PostgreSQL audit schema, storage backend resolution, retention, and the shutdown-time
+spool. Design doc: `docs/design/audit-storage-schema.md`.
+
+#### Built
+
+- Storage backend resolution (`internal/storage`) for `Disabled`/`ExternalPostgres`/`CNPG` modes,
+  connection-management concerns kept separate from domain validation and controller status.
+- Full PostgreSQL audit schema (`internal/audit`): power events, telemetry snapshots, capability
+  profile matches and verification/probe history, accepted/rejected planner compilations, shutdown
+  decisions, executor runs, wave/group progress, action attempts, node release records, signal-handoff
+  evidence, executor resume state. Executor child tables cascade-delete from their parent execution.
+- Planner compilation audit records persist compiled waves, dependency graph, advisory startup waves,
+  explanations, and diagram exports as structured JSONB payloads.
+- Retention enforcement (`spec.storage.retention`, two families: `events` and `telemetry`) evaluated
+  by `PowerManagementCluster` storage readiness; negative retention values rejected before a store
+  opens.
+- **`OD-6` closed:** shutdown-time audit spool (`internal/audit/spool.go`). When enabled, a
+  PostgreSQL write failure during execution falls back to a durable local JSONL journal
+  (`audit-spool.jsonl`) keyed by a stable replay key (`executionID`/`executionID/waveIndex`), sets
+  `AuditSpoolFallback` on `Degraded`/`ExecutionReady`, and never creates a second execution identity.
+  Requires CNPG or `ExternalPostgres` plus an explicit durable volume — not a database replacement.
+
+#### Open Work
+
+- **Spool replay tooling.** The spool writes records; nothing reads them back into PostgreSQL once
+  connectivity returns. This is explicitly called out in `resiliency-and-partitions.md` as a needed
+  implementation hook and is the clearest actionable gap in this component.
+- Controller/envtest coverage for PostgreSQL degradation (writes failing mid-reconcile), beyond the
+  spool's own unit tests.
+- Confirm the `capability_profile_verifications` schema (`OD-15`, closed in design) is actually
+  populated end-to-end once the Capability Profiles drift-detection path (`RS-7`–`RS-10`) exists —
+  right now the table exists ahead of its writer.
+
+---
+
+## Cross-Cutting
+
+Work that doesn't belong to one component — either because it spans several, or because it's about
+the operator as a whole.
+
+### Operator Maturity & Hardening
+
+Owns: reconciler correctness, RBAC scope, leader election, metrics infrastructure, and
+image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.md` (`F-1`–`F-7`).
+
+#### Built
+
+- `observedGeneration` tracking across all nine CRDs and every controller; enum validation on
+  constrained fields; single storage version per CRD; spec/status separation.
+- Source hardening pass for ASH/Checkov findings: explicit helper admin RBAC verbs, non-default
+  leader-election RBAC namespaces, manager pull policy, documented service-account token/digest
+  exceptions, Kustomize image placeholder repair, Dockerfile healthchecks.
 - Local AWS Labs ASH security scan configuration and `make security-scan` target.
+- Project-owned OCI images for all four operands (`nut-server`, `upsmon-agent`, `node-actuator`,
+  `operator`), multi-arch, with SBOM/provenance attestation and vulnerability scanning via the
+  `Images` GitHub Actions workflow.
+
+#### Open Work
+
+- **`F-2` leader election defaults to `false`.** Confirmed still the case
+  (`cmd/main.go`: `flag.BoolVar(&enableLeaderElection, "leader-elect", false, ...)`). One-line fix,
+  worst failure mode in the whole audit — two operator instances compiling/executing competing
+  shutdown flows. Highest priority item in this section.
+- **`F-1` zero finalizers on any controller.** Confirmed — no `Finalizer` references outside tests.
+  Operand teardown relies entirely on owner references, which don't cover cross-namespace operands or
+  external side effects.
+- **`F-4` RBAC breadth.** Confirmed present: `nodepoweragent_controller.go` and
+  `nutserver_controller.go` both hold `namespaces` `create`, which is hard to justify for a shutdown
+  operator; narrow to what's actually needed or document why cluster-wide namespace creation is
+  required.
+- `F-5` **re-scoped after checking source**: the `argoproj.io/workflows` RBAC is not leftover
+  scaffolding — it's the real `RunWorkflow` hook mechanism in `internal/kubeactions`, already listed
+  as built under Planning & Execution Logic. Remaining work here is narrower than the original
+  finding suggested: document this integration in `docs/security.md`'s network/RBAC sections so it
+  isn't mistaken for scope creep again.
+- `F-7` idempotency test: reconcile from a partial-failure state and assert convergence — no such
+  test exists across the four operand render paths.
+- Release image signing policy, cosign verification docs, and immutable digest production examples
+  (`docs/images.md` describes the target state; keyless Sigstore signing as a release gate isn't
+  confirmed wired into CI yet).
+- Re-run ASH after each hardening pass; triage every unsuppressed medium-or-higher finding.
+- Decide container-mode vs. locally-installed `grype`/`syft`/`opengrep`/`cfn-nag`/`cdk-nag` for full
+  ASH coverage.
+
+---
+
+### Foundation & Documentation
+
+Owns: scaffold, docs upkeep, examples, and decision-registry maintenance — glue work not owned by one
+component.
+
+#### Built
+
+- Kubebuilder/controller-runtime scaffold, Apache-2.0 licensing, public project metadata.
+- Resiliency contract documented for API/PostgreSQL/NUT/telemetry/node-agent partitions: lost
+  connectivity degrades certainty, never grants optimistic action (`docs/design/resiliency-and-partitions.md`).
 - Public-safe sample manifests and the Orion example topology.
+- 2026-08-03 documentation migration: audit records, adaptive-execution design, capability/
+  device-profile docs, decision-index update, `OD-4` tier closure applied to `scope-boundaries.md`/
+  `planner-requirements.md`.
 
-## Open Build Items
+#### Open Work
 
-- Work the 2026-08-03 audit findings (F-1 – F-27) recorded under `docs/audits/`, following each
-  audit's recommended order. Leading items: leader-election default (F-2), finalizers (F-1), RBAC
-  narrowing (F-4, F-5), replica pinning for `upsd` (F-15), node-agent priority class and toleration
-  defaults (F-9, F-10), and the telemetry alias mechanism (F-25).
-- Fold the provisional adaptive-execution identifiers (AE-1 – AE-6 in
-  `docs/design/adaptive-execution-tier-pointer.md`) into the planner and executor requirement docs
-  with real PL/EX numbers once the design settles.
-- Refresh the example pod placement diagram and add it to `docs/diagrams/`. It is intentionally not
-  in the repo yet; node naming is undecided (tree names versus the Orion example's `orion-*`
-  convention).
-- Resolve shutdown-time audit durability: local spool, audit-store last-ditch placement, or
-  documented preference and test coverage for `ExternalPostgres`.
-- Complete real host-actuation deployment: cluster-to-node signal delivery, approved
-  `SystemdPoweroff` rendering, and the minimal host access profile for real poweroff.
-- Harden release images with signing policy, cosign verification docs, and immutable digest
-  production examples.
-- Re-run ASH after each hardening pass and triage every unsuppressed medium-or-higher finding.
-- Decide whether full ASH coverage runs through container mode or locally installed `grype`, `syft`,
-  `opengrep`, `cfn-nag`, and `cdk-nag` dependencies.
-- Expand NUT operand rendering for credential rotation and advanced driver-specific config.
-- Add controller/envtest coverage for PostgreSQL degradation and executor resume behavior.
+- Refresh the example pod placement diagram and add it to `docs/diagrams/` — currently held back in
+  the private planning folder pending a redraw; node naming (tree names vs. the Orion example's
+  `orion-*` convention) is still undecided.
+- Reconcile the Orion example's string shutdown-tier labels (`application`/`data`/`storage`) with the
+  numbered tier scheme closed under `OD-4`. Numbered tiers take precedence, but named tags like
+  `storage`/`data` may still occur in practice and need a defined mapping or coexistence rule rather
+  than silently colliding.
+- `OD-16` registry cleanup: mark closed in `scope-boundaries.md` to match what `internal/inventory`
+  already implements (see Inventory System).
+
+---
 
 ## Validation Gates
 
