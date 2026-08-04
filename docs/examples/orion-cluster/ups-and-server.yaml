@@ -78,7 +78,8 @@ spec:
   deviceSelector:
     matchLabels:
       power.zalud.io/domain: orion-core
-  replicas: 2
+  # replicas is pinned to 1 by the NUTServer CRD schema (maximum: 1): multiple upsd replicas
+  # behind one Service would split NUT client-login accounting across independent drivers.
   image:
     repository: ghcr.io/michaelzalud18/nut-server
     tag: main
