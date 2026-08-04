@@ -245,6 +245,12 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 - Protocol fidelity confirmed by audit: real `LIST VAR` framing (not `upsc` shelling), standard NUT
   variable names throughout, `MODE=netclient`, every agent connects as `secondary`,
   `SHUTDOWNCMD "/bin/true"` as the stub actuator expressed in NUT-native terms.
+- **`F-23` privileged-user separation is done**, ahead of the original audit's expectation:
+  `renderUPSDUsers` already renders a separate `[admin]` user (`actions = SET`, `instcmds = ALL`,
+  its own `admin-password`) distinct from the `[monitor]` secondary user. Node-agent rendering
+  (`nodepoweragent_render.go`) only ever reads `monitor-password` — the admin credential structurally
+  never reaches a node agent. This closes the credential-separation half of `F-23`; the design
+  question it was gating (which instant commands actually get exposed) is still `OD-20`.
 
 #### Open Work
 
