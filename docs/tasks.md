@@ -277,19 +277,25 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 
 #### Open Work
 
-- `F-17` follow-on: the current readiness probe (`upsc -l`) proves driver registration, not
-  per-device telemetry freshness. A `NUTServer` selecting multiple `UPSDevice` resources could be
-  ready while one selected device's driver is silently failing. Tightening this to check a specific
-  device's `ups.status` freshness needs a policy decision first (which device, or all of them) that
-  the original `F-17` finding didn't specify.
-- `F-19` `topologySpreadConstraints`/anti-affinity — deferred until an HA `upsd` topology is actually
-  designed; not urgent at one replica.
-- `OD-19` FSD usage — a real design decision (adopt NUT's forced-shutdown broadcast as the release
-  signal, or keep the signal file as sole mechanism), not implemented pending that call.
-- `OD-20` instant command / writable variable scope — a real design decision (which of
-  `shutdown.return`, `load.off`/`on`, `test.battery.start` enter scope and how they're gated, since
-  they can cut power to equipment), not implemented pending that call.
+- `OD-20` instant command scope, narrowed and deprioritized (2026-08-03): the operator's actuator
+  already owns real shutdown (nodes and workloads). The only remaining use case for NUT instant
+  commands is the tail end after the operator has already finished — `shutdown.return` stops the UPS
+  discharging into a dead load and auto-restores power when line power returns. Redundant with the
+  actuator for anything actually running in the cluster; only matters for non-cluster hardware on
+  the same UPS or battery-waste cleanup. Not pursued unless that narrow case becomes a real need.
 - Credential rotation and advanced driver-specific config for the NUT operand render path.
+
+#### Deferred / Declined (2026-08-03)
+
+- `OD-19` FSD usage — deferred. Staying on the executor's own signal file; no plan to also wire up
+  NUT's native forced-shutdown broadcast.
+- `F-17` follow-on (per-device telemetry-freshness readiness) — declined. The built `upsc -l` check
+  (structural: did the driver register) is the right stopping point. Tying pod readiness to live
+  telemetry values would drop every connected node agent into DEADTIME on a single flaky poll —
+  worse than the gap it would close.
+- `F-19` `topologySpreadConstraints`/anti-affinity — confirmed low value at current scale. Only
+  matters with multiple `upsd` instances spread thin across nodes, and a colocated failure just
+  degrades the affected domain to `Unknown` feasibility rather than doing anything unsafe.
 
 ---
 
