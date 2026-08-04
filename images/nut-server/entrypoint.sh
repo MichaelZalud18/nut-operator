@@ -22,5 +22,12 @@ fi
 
 mkdir -p /run/nut
 
-upsdrvctl start
+# A driver that fails to start (bad/missing credentials, unreachable UPS, etc.) must not take
+# upsd down with it. upsd should come up regardless so devices that did register stay queryable,
+# and so credentials can be wired in / corrected without restarting the server. The readiness
+# probe (upsc -l) already reports "not ready" correctly when no driver has registered.
+if ! upsdrvctl start; then
+  echo "one or more NUT drivers failed to start; continuing so upsd still serves any devices that did register" >&2
+fi
+
 exec upsd -D

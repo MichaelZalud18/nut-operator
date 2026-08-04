@@ -598,6 +598,20 @@ func servicePort(server *powerv1alpha1.NUTServer) int32 {
 	return 3493
 }
 
+// upsdReadinessProbeScript proves at least one configured device has a live, connected driver.
+// `upsc -l` alone is not sufficient (verified empirically): it lists every UPS name defined in
+// ups.conf regardless of whether the driver ever actually connected, so a fully-disconnected
+// driver (bad credentials, unreachable device) still reports as "ready". Querying a real
+// variable for each listed name is what actually distinguishes a connected driver
+// ("Driver not connected" on the disconnected ones) from a registered one.
+func upsdReadinessProbeScript(port int32) string {
+	target := fmt.Sprintf("localhost:%d", port)
+	return fmt.Sprintf(
+		`for u in $(upsc -l %s 2>/dev/null); do upsc "$u@%s" ups.status >/dev/null 2>&1 && exit 0; done; exit 1`,
+		target, target,
+	)
+}
+
 func serviceType(server *powerv1alpha1.NUTServer) corev1.ServiceType {
 	if server.Spec.Service.Type != "" {
 		return server.Spec.Service.Type
@@ -901,7 +915,7 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				ReadinessProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
 						Exec: &corev1.ExecAction{
-							Command: []string{"upsc", "-l", fmt.Sprintf("localhost:%d", servicePort(server))},
+							Command: []string{"sh", "-c", upsdReadinessProbeScript(servicePort(server))},
 						},
 					},
 					InitialDelaySeconds: upsdReadinessInitialDelaySeconds,

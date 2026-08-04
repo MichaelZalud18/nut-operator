@@ -98,6 +98,18 @@ func TestRenderUPSConfRendersUpstreamNUTSecretAuthPath(t *testing.T) {
 	}
 }
 
+func TestUpsdReadinessProbeScriptQueriesRealData(t *testing.T) {
+	script := upsdReadinessProbeScript(3493)
+	for _, want := range []string{
+		"upsc -l localhost:3493",
+		`upsc "$u@localhost:3493" ups.status`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("readiness probe script missing %q:\n%s", want, script)
+		}
+	}
+}
+
 func TestRenderUPSConfMergesCredentialSecretOverDriverOptions(t *testing.T) {
 	conf, err := renderUPSConf([]powerv1alpha1.UPSDevice{
 		{
