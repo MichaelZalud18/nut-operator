@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -28,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -499,3 +501,20 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 		})
 	})
 })
+
+func TestCnpgClusterCRDPresentReflectsRESTMapperContents(t *testing.T) {
+	t.Run("absent when the RESTMapper has no CNPG Cluster mapping", func(t *testing.T) {
+		mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Group: "power.zalud.io", Version: "v1alpha1"}})
+		if cnpgClusterCRDPresent(mapper) {
+			t.Fatal("expected cnpgClusterCRDPresent to be false when the CNPG Cluster GVK isn't registered")
+		}
+	})
+
+	t.Run("present once the RESTMapper has a CNPG Cluster mapping", func(t *testing.T) {
+		mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Group: cnpgClusterGVK.Group, Version: cnpgClusterGVK.Version}})
+		mapper.Add(cnpgClusterGVK, meta.RESTScopeNamespace)
+		if !cnpgClusterCRDPresent(mapper) {
+			t.Fatal("expected cnpgClusterCRDPresent to be true once the CNPG Cluster GVK is registered")
+		}
+	})
+}

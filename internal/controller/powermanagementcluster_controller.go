@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -114,14 +115,38 @@ func (r *PowerManagementClusterReconciler) SetupWithManager(mgr ctrl.Manager) er
 		return err
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&powerv1alpha1.PowerManagementCluster{}).
-		Watches(
+	builder := ctrl.NewControllerManagedBy(mgr).
+		For(&powerv1alpha1.PowerManagementCluster{})
+
+	if cnpgClusterCRDPresent(mgr.GetRESTMapper()) {
+		builder = builder.Watches(
 			newCNPGClusterObject(),
 			handler.EnqueueRequestsFromMapFunc(r.mapCNPGClusterToPowerManagementClusters),
-		).
+		)
+	} else {
+		logf.Log.WithName("powermanagementcluster").Info(
+			"CNPG Cluster CRD not found; skipping CNPG watch registration. CNPG is an optional " +
+				"storage backend, and watching a GVK the API server can't resolve never syncs, which " +
+				"trips controller-runtime's CacheSyncTimeout and crash-loops the whole manager. " +
+				"PowerManagementCluster resources using CNPG storage still reconcile via their " +
+				"periodic requeue; restart the manager after installing CNPG's CRDs to re-enable " +
+				"live watch updates.",
+		)
+	}
+
+	return builder.
 		Named("powermanagementcluster").
 		Complete(r)
+}
+
+// cnpgClusterCRDPresent reports whether the CNPG Cluster CRD is resolvable via API discovery.
+// Registering a Watches() against a GVK the API server doesn't recognize never completes its
+// initial cache sync; controller-runtime's default 2-minute CacheSyncTimeout then treats that as a
+// fatal controller-start error, which is fatal to the whole manager (see cmd/main.go's
+// mgr.Start() handling) and repeats forever under CrashLoopBackOff.
+func cnpgClusterCRDPresent(mapper meta.RESTMapper) bool {
+	_, err := mapper.RESTMapping(cnpgClusterGVK.GroupKind(), cnpgClusterGVK.Version)
+	return err == nil
 }
 
 func newCNPGClusterObject() *unstructured.Unstructured {

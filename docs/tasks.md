@@ -506,6 +506,34 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 - Project-owned OCI images for all four operands (`nut-server`, `upsmon-agent`, `node-actuator`,
   `operator`), multi-arch, with SBOM/provenance attestation and vulnerability scanning via the
   `Images` GitHub Actions workflow.
+- **`F-28` fixed: manager no longer crash-loops forever when the CNPG CRD isn't installed
+  in-cluster.** Root-caused via a real E2E failure log (`test/e2e/e2e_test.go:304`, "metrics
+  endpoint" spec) after the `imagePullPolicy` fix above eliminated the prior `ImagePullBackOff` and
+  let the suite run far enough to hit this. `powermanagementcluster_controller.go`'s
+  `SetupWithManager` unconditionally registered `Watches(newCNPGClusterObject(), ...)` against the
+  unstructured `Cluster.postgresql.cnpg.io` GVK; when that CRD isn't installed, the underlying
+  `source.Kind` REST-mapping lookup retries forever inside its own poll loop, and
+  controller-runtime's default 2-minute `CacheSyncTimeout`
+  (`sigs.k8s.io/controller-runtime@v0.24.1/pkg/controller/controller.go:249`) then treats the
+  never-syncing watch as a fatal controller-start error — confirmed by reading
+  `pkg/internal/controller/controller.go` — which kills the whole manager process (`mgr.Start()`
+  returns the error, `cmd/main.go` logs "problem running manager" and calls `os.Exit(1)`). The
+  captured pod description matched exactly: container instances ran for ~2m18s before
+  `Exit Code: 1`, restarting into the identical failure via `CrashLoopBackOff`. (An earlier
+  hypothesis blamed a cert-manager/webhook-Secret startup race for this — ruled out by the same log:
+  the `webhook-server-cert` Secret was issued within ~1s of pod scheduling, long before either
+  crash.) Since CNPG is one of several optional storage backends
+  (`Disabled`/`ExternalPostgres`/`CNPG`, see Storage & Audit above), this meant *any* install of this
+  operator into a cluster without CNPG's CRDs present — regardless of whether CNPG storage was
+  actually configured — could never start. Fixed by adding `cnpgClusterCRDPresent`, a
+  `meta.RESTMapper.RESTMapping` discovery check run once in `SetupWithManager`: the CNPG `Watches()`
+  is now only registered when the CRD actually resolves; otherwise a one-line log explains the watch
+  was skipped. `PowerManagementCluster` resources using CNPG storage still reconcile via their
+  existing periodic 5-minute requeue and per-reconcile `Get`-based degradation (both already
+  resilient to a missing CRD); the tradeoff is that live watch-triggered reconciliation on CNPG
+  status changes only resumes after the manager restarts post-CRD-install, which is an acceptable
+  degradation given the alternative was total unavailability. Covered by
+  `TestCnpgClusterCRDPresentReflectsRESTMapperContents`.
 
 #### Open Work
 
