@@ -534,6 +534,22 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
   status changes only resumes after the manager restarts post-CRD-install, which is an acceptable
   degradation given the alternative was total unavailability. Covered by
   `TestCnpgClusterCRDPresentReflectsRESTMapperContents`.
+- **`F-29` fixed: E2E "metrics endpoint" spec timed out because the test's own namespace never
+  satisfied the metrics NetworkPolicy it deploys.** Surfaced immediately after the `F-28` fix above
+  eliminated the crash-loop and let the same spec run far enough to hit a different, unrelated
+  failure: the `curl-metrics` pod's connection to the metrics Service timed out
+  (`curl: (28) ... Operation timed out`, not refused) even though the manager's own log confirmed
+  `Serving metrics server {bindAddress: :8443, secure: true}` and the Service selector/port matched
+  the pod exactly — ruling out a startup or config-mismatch cause. The remaining explanation:
+  `config/network-policy/allow-metrics-traffic.yaml` (enabled via `config/default/kustomization.yaml`
+  as part of an earlier hardening pass) only admits ingress to the metrics port from namespaces
+  labeled `metrics: enabled`; `test/e2e/e2e_test.go`'s `BeforeAll` labeled the test namespace
+  `pod-security.kubernetes.io/enforce=restricted` but never `metrics: enabled`, so the curl-metrics
+  pod's own namespace never matched the policy's `namespaceSelector` and its traffic was dropped.
+  Fixed by adding the missing `kubectl label ns ... metrics=enabled` step alongside the existing
+  pod-security label. `allow-webhook-traffic.yaml` was checked and needs no equivalent fix — it
+  restricts by port only, not source namespace, by design (kube-apiserver's source identity is
+  CNI-specific).
 
 #### Open Work
 
