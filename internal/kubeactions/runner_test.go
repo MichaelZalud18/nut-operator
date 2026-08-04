@@ -160,6 +160,100 @@ func TestRunnerDrainNodesExcludesNodePowerAgentNamespace(t *testing.T) {
 	}
 }
 
+func TestRunnerScaleWorkloadsExcludesManagerNamespace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := appsv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	replicas := int32(3)
+	runner := Runner{
+		ManagerNamespace: "nut-operator-system",
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			&appsv1.Deployment{ObjectMeta: objectMeta("nut-operator-system", "controller-manager"), Spec: appsv1.DeploymentSpec{Replicas: &replicas}},
+		).Build(),
+	}
+
+	outcome, err := runner.RunAction(context.Background(), executor.Action{
+		Group: executor.Group{
+			Name:   "applications",
+			Action: ActionScale,
+			Params: map[string]string{paramReplicas: "0"},
+			SelectedTargets: []executor.Target{
+				{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "nut-operator-system", Name: "controller-manager"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunAction returned error: %v", err)
+	}
+
+	// F-30: a ShutdownFlow must never scale down the controller-manager that is executing it.
+	var manager appsv1.Deployment
+	if err := runner.Client.Get(context.Background(), client.ObjectKey{Namespace: "nut-operator-system", Name: "controller-manager"}, &manager); err != nil {
+		t.Fatalf("get Deployment returned error: %v", err)
+	}
+	if manager.Spec.Replicas == nil || *manager.Spec.Replicas != 3 {
+		t.Fatalf("expected controller-manager Deployment to be excluded from scaling, got replicas %#v", manager.Spec.Replicas)
+	}
+	excluded, ok := outcome.Details["selfExcluded"].([]string)
+	if !ok || len(excluded) != 1 || excluded[0] != "nut-operator-system/controller-manager" {
+		t.Fatalf("expected selfExcluded to report nut-operator-system/controller-manager, got %#v", outcome.Details["selfExcluded"])
+	}
+}
+
+func TestRunnerDrainNodesExcludesManagerNamespace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	runner := Runner{
+		ManagerNamespace: "nut-operator-system",
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			&corev1.Node{ObjectMeta: objectMeta("", "node-a")},
+			&corev1.Pod{
+				ObjectMeta: objectMeta("apps", "web-1"),
+				Spec:       corev1.PodSpec{NodeName: "node-a"},
+			},
+			&corev1.Pod{
+				ObjectMeta: objectMeta("nut-operator-system", "controller-manager-abc"),
+				Spec:       corev1.PodSpec{NodeName: "node-a"},
+			},
+		).Build(),
+	}
+
+	outcome, err := runner.RunAction(context.Background(), executor.Action{
+		Group: executor.Group{
+			Name:            "nodes",
+			Action:          ActionDrainNodes,
+			SelectedTargets: []executor.Target{{APIVersion: "v1", Kind: "Node", Name: "node-a"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunAction returned error: %v", err)
+	}
+
+	evictedCount, ok := outcome.Details["evictedPods"].(int)
+	if !ok || evictedCount != 1 {
+		t.Fatalf("expected exactly 1 evicted pod (the non-protected one), got %#v", outcome.Details["evictedPods"])
+	}
+
+	// F-30: the manager's own pod must survive a drain of the node it happens to be scheduled on.
+	var managerPod corev1.Pod
+	if err := runner.Client.Get(context.Background(), client.ObjectKey{Namespace: "nut-operator-system", Name: "controller-manager-abc"}, &managerPod); err != nil {
+		t.Fatalf("expected controller-manager pod to survive drain, get returned error: %v", err)
+	}
+	excluded, ok := outcome.Details["selfExcludedNamespaces"].([]string)
+	if !ok || len(excluded) != 1 || excluded[0] != "nut-operator-system" {
+		t.Fatalf("expected selfExcludedNamespaces to report nut-operator-system, got %#v", outcome.Details["selfExcludedNamespaces"])
+	}
+}
+
 func TestRunnerCordonsNodes(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {

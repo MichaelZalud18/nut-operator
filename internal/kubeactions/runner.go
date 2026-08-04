@@ -74,6 +74,13 @@ const (
 type Runner struct {
 	Client client.Client
 	Clock  func() time.Time
+
+	// ManagerNamespace is the controller-manager's own install namespace (POD_NAMESPACE via the
+	// downward API in config/manager/manager.yaml). Included in protectedNamespaces so a
+	// ShutdownFlow's DrainNodes/ScaleWorkload actions can never evict or scale down the operator that
+	// is executing them (F-30). Empty in envtest/unit tests, where there is no real manager pod to
+	// protect.
+	ManagerNamespace string
 }
 
 // RunAction implements executor.ActionRunner.
@@ -107,17 +114,23 @@ func (r Runner) RunAction(ctx context.Context, action executor.Action) (executor
 	}
 }
 
-// protectedNamespaces resolves the operand namespace of every NodePowerAgent in the cluster
-// (F-14). Tier 0 excludes the power agent's own namespace from orchestrated flow targeting per
-// OD-4/PL-22; this is the executor-side enforcement of that rule, structural rather than relying
-// on incidental protections like DaemonSet-skip-on-drain.
+// protectedNamespaces resolves the operand namespace of every NodePowerAgent in the cluster (F-14),
+// plus the controller-manager's own namespace (F-30). Tier 0 excludes the power agent's own namespace
+// from orchestrated flow targeting per OD-4/PL-22; this is the executor-side enforcement of that rule,
+// structural rather than relying on incidental protections like DaemonSet-skip-on-drain. F-30 extends
+// the same structural protection to the manager itself: without it, a ShutdownFlow group whose
+// selector happens to match the manager's own node or namespace could evict or scale down the very
+// process executing the flow.
 func (r Runner) protectedNamespaces(ctx context.Context) (map[string]struct{}, error) {
 	var agents powerv1alpha1.NodePowerAgentList
 	if err := r.Client.List(ctx, &agents); err != nil {
 		return nil, fmt.Errorf("list NodePowerAgents for self-exclusion: %w", err)
 	}
+	protected := make(map[string]struct{}, len(agents.Items)+1)
+	if r.ManagerNamespace != "" {
+		protected[r.ManagerNamespace] = struct{}{}
+	}
 	clusters := map[string]*powerv1alpha1.PowerManagementCluster{}
-	protected := make(map[string]struct{}, len(agents.Items))
 	for _, agent := range agents.Items {
 		namespace, err := r.nodePowerAgentOperandNamespace(ctx, agent, clusters)
 		if err != nil {
