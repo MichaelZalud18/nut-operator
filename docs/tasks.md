@@ -272,10 +272,21 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   in depth per the policy-gate pattern in `docs/security.md`.
 - **`F-16` Deployment strategy is explicit `Recreate`.** Set in `ensureNUTServerDeployment`, so an
   upgrade never briefly runs two `upsd` instances and splits NUT's client-login accounting.
-- **`F-17` readiness probe reflects driver registration**, not just TCP listen: an exec probe runs
-  `upsc -l localhost:<port>` against the local `upsd` socket. This proves the driver registered at
-  least one UPS with `upsd`; it does not yet prove any single device's telemetry is fresh — see Open
-  Work below.
+- **`F-17` readiness probe now proves live driver connectivity, not just structural registration
+  (2026-08-04).** `upsc -l` alone was wrong: verified empirically (real container, real
+  `snmp-ups` failure) that it lists every device *defined in `ups.conf`* regardless of whether the
+  driver ever actually connected — a fully-disconnected driver still passed it. The probe
+  (`upsdReadinessProbeScript`) now lists devices via `upsc -l`, then queries a real variable
+  (`ups.status`) per device, passing if any one has a genuinely connected driver — same "at least
+  one UPS" intent as originally documented, just actually true now. Does not yet prove any single
+  device's telemetry is *fresh* — see Open Work below.
+- **Driver-startup/container-lifecycle coupling fixed (2026-08-04).** `images/nut-server/entrypoint.sh`
+  ran `upsdrvctl start` under `set -eu` with no failure handling — any single driver failing to
+  start (bad credentials, unreachable device) killed the whole container before `upsd` ever ran, so
+  a broken UPS took down telemetry for every *other* device on that server too, and made it
+  impossible to reach the server at all to fix credentials. Now `upsdrvctl start` failures are
+  logged and non-fatal; `upsd` always starts, and the (now-correct) `F-17` readiness probe reports
+  the real per-driver state instead of the whole pod crash-looping.
 - **`F-18` priority class and PodDisruptionBudget are in place.** The webhook defaults
   `spec.placement.priorityClassName` to `system-cluster-critical` when unset (mirrors the
   `system-node-critical` pattern already used for `NodePowerAgent`, at the cluster-singleton tier
@@ -326,10 +337,10 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 
 - `OD-19` FSD usage — deferred. Staying on the executor's own signal file; no plan to also wire up
   NUT's native forced-shutdown broadcast.
-- `F-17` follow-on (per-device telemetry-freshness readiness) — declined. The built `upsc -l` check
-  (structural: did the driver register) is the right stopping point. Tying pod readiness to live
-  telemetry values would drop every connected node agent into DEADTIME on a single flaky poll —
-  worse than the gap it would close.
+- `F-17` follow-on (per-device telemetry-freshness readiness) — declined. Proving the driver
+  connected (2026-08-04: `upsdReadinessProbeScript`, a real `ups.status` query) is the right
+  stopping point. Tying pod readiness to live telemetry *freshness* on top of that would drop every
+  connected node agent into DEADTIME on a single flaky poll — worse than the gap it would close.
 - `F-19` `topologySpreadConstraints`/anti-affinity — confirmed low value at current scale. Only
   matters with multiple `upsd` instances spread thin across nodes, and a colocated failure just
   degrades the affected domain to `Unknown` feasibility rather than doing anything unsafe.
@@ -480,8 +491,17 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 - `observedGeneration` tracking across all nine CRDs and every controller; enum validation on
   constrained fields; single storage version per CRD; spec/status separation.
 - Source hardening pass for ASH/Checkov findings: explicit helper admin RBAC verbs, non-default
-  leader-election RBAC namespaces, manager pull policy, documented service-account token/digest
-  exceptions, Kustomize image placeholder repair, Dockerfile healthchecks.
+  leader-election RBAC namespaces, documented service-account token/digest exceptions, Kustomize
+  image placeholder repair, Dockerfile healthchecks.
+- **Manager `imagePullPolicy` changed `Always` → `IfNotPresent` (2026-08-04), reversing the prior
+  hardening pass's choice.** Root-caused the `E2E Tests` workflow failing on every run since before
+  this session: the suite builds and `kind load`s the manager image locally (no registry involved),
+  but `Always` still forced a pull attempt against the placeholder `example.com` tag, which doesn't
+  exist — guaranteed `ImagePullBackOff`. `Always` vs `IfNotPresent` makes no real freshness/safety
+  difference in this project specifically because every real deployment overrides the base image
+  with an explicit digest via Kustomize (`CKV_K8S_43`, already suppressed on this same file) — a
+  pinned digest is content-verified regardless of pull policy. Added the matching `CKV_K8S_15`
+  suppression.
 - Local AWS Labs ASH security scan configuration and `make security-scan` target.
 - Project-owned OCI images for all four operands (`nut-server`, `upsmon-agent`, `node-actuator`,
   `operator`), multi-arch, with SBOM/provenance attestation and vulnerability scanning via the
@@ -489,10 +509,14 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 
 #### Open Work
 
-- **`F-2` leader election defaults to `false`.** Confirmed still the case
-  (`cmd/main.go`: `flag.BoolVar(&enableLeaderElection, "leader-elect", false, ...)`). One-line fix,
-  worst failure mode in the whole audit — two operator instances compiling/executing competing
-  shutdown flows. Highest priority item in this section.
+- **`F-2` leader election: code default is `false`, but every real deployment overrides it.**
+  Corrected 2026-08-04 — the flag default is `false` (`cmd/main.go`:
+  `flag.BoolVar(&enableLeaderElection, "leader-elect", false, ...)`), but
+  `config/manager/manager.yaml` passes `--leader-elect` as a bare arg, and Go's `flag` package
+  treats a bare bool flag as `true`. So leader election *is* active wherever this manifest is used
+  (every deployment observed so far). Still worth flipping the code default to `true` for
+  defense-in-depth — a future manifest change that drops the arg would silently regress — but this
+  is not the live, active risk the original wording implied.
 - **`F-1` zero finalizers on any controller.** Confirmed — no `Finalizer` references outside tests.
   Operand teardown relies entirely on owner references, which don't cover cross-namespace operands or
   external side effects.
