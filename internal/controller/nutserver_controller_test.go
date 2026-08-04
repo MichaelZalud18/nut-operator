@@ -145,14 +145,18 @@ var _ = Describe("NUTServer Controller", func() {
 			configMap := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-config"}, configMap)).To(Succeed())
 			Expect(configMap.Data["upsd.conf"]).To(Equal("LISTEN 0.0.0.0 3493\n"))
-			Expect(configMap.Data["ups.conf"]).To(ContainSubstring("[rack-a-ups]"))
-			Expect(configMap.Data["ups.conf"]).To(ContainSubstring("port = rack-a-ups.dev"))
+			Expect(configMap.Data).NotTo(HaveKey("ups.conf"))
 			Expect(configMap.Data["rack-a-ups.dev"]).To(ContainSubstring("ups.status: OL"))
 
 			secret := &corev1.Secret{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-users"}, secret)).To(Succeed())
 			Expect(secret.Data).To(HaveKey("upsd.users"))
 			Expect(secret.Data).To(HaveKey("monitor-password"))
+
+			driverConfigSecret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-driver-config"}, driverConfigSecret)).To(Succeed())
+			Expect(string(driverConfigSecret.Data["ups.conf"])).To(ContainSubstring("[rack-a-ups]"))
+			Expect(string(driverConfigSecret.Data["ups.conf"])).To(ContainSubstring("port = rack-a-ups.dev"))
 
 			service := &corev1.Service{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: resourceName}, service)).To(Succeed())
@@ -179,10 +183,12 @@ var _ = Describe("NUTServer Controller", func() {
 			configVolume := deployment.Spec.Template.Spec.Volumes[0]
 			Expect(configVolume.Name).To(Equal("nut-config"))
 			Expect(configVolume.Projected).NotTo(BeNil())
-			Expect(configVolume.Projected.Sources).To(HaveLen(2))
+			Expect(configVolume.Projected.Sources).To(HaveLen(3))
 			Expect(configVolume.Projected.Sources[0].ConfigMap.Name).To(Equal("test-resource-nut-config"))
 			Expect(configVolume.Projected.Sources[1].Secret.Name).To(Equal("test-resource-nut-users"))
 			Expect(configVolume.Projected.Sources[1].Secret.Items).To(ContainElement(corev1.KeyToPath{Key: "upsd.users", Path: "upsd.users"}))
+			Expect(configVolume.Projected.Sources[2].Secret.Name).To(Equal("test-resource-nut-driver-config"))
+			Expect(configVolume.Projected.Sources[2].Secret.Items).To(ContainElement(corev1.KeyToPath{Key: "ups.conf", Path: "ups.conf"}))
 			Expect(deployment.Spec.Template.Spec.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{
 				Name:      "nut-config",
 				MountPath: "/etc/nut",

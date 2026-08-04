@@ -92,6 +92,42 @@ That exercises profile matching, `dummy-ups` repeater rendering, NetworkPolicy e
 bounded TCP upstream reachability status, read-only NUT variable polling, and durable telemetry
 audit writes.
 
+## Field Verification (2026-08-04)
+
+Real hardware, homelab UniFi UPS fleet (firmware `1.6.1`, models `UPS 2U` x2 and `UPS Tower` x1,
+confirmed via the UniFi Network Integration API device inventory):
+
+- TCP 3493 (NUT's default port) is closed/refused on all three units. The "devices expose a
+  built-in NUT server rather than SNMP" quirk recorded above does not hold on this firmware —
+  either it was never accurate, applied only to older/different hardware, or the feature exists
+  but isn't enabled. This is exactly the scenario `F-26` (firmware-gated quirks can't expire)
+  describes: the quirk has no firmware scoping and nothing flags it as needing re-verification.
+  Needs a decision: correct the bundled quirk, or add firmware-scoping before trusting it further.
+- SNMP is reachable and is the working telemetry path on this firmware, but only SNMPv3
+  (`secLevel=authPriv`) is offered — no v1/v2c community-string option was present in the UI for
+  these devices.
+- Enable path (verified working, this app version): UniFi Network app → **Settings → CyberSecure →
+  Traffic Logging → SNMP**. Per-version menu location is not guaranteed — if this doesn't match,
+  use the in-app search for "SNMP" rather than guessing.
+- `ups.conf` keys for SNMPv3 (verified against NUT's own docs, not guessed):
+
+  ```ini
+  snmp_version = v3
+  secLevel = authPriv
+  secName = <username>
+  authPassword = <auth password>
+  authProtocol = MD5|SHA|SHA256|SHA384|SHA512
+  privPassword = <priv password>
+  privProtocol = DES|AES|AES192|AES256
+  ```
+
+  Source: [snmp-ups(8) — networkupstools.org](https://networkupstools.org/docs/man/snmp-ups.html).
+  These are driver credential fields, not profile-level data — they belong on
+  `UPSDevice.spec.credentialSecretRef` (wired into the render path as of this date; see NUT
+  Server / upsd in `docs/tasks.md`), not hardcoded into the bundled profile. A per-site SNMP
+  community/credential is a cluster/site config value, not a fixed vendor default, so it doesn't
+  belong in the profile catalog even when it happens to be the same across every unit on one site.
+
 ## Public Research Inputs
 
 - Ubiquiti Store: UPS Tower and UPS 2U product pages list NUT compatibility for third-party devices.

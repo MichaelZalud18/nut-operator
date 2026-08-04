@@ -21,6 +21,11 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 )
 
@@ -44,7 +49,7 @@ func TestRenderUPSConfRendersUpstreamNUTRepeater(t *testing.T) {
 				NUTName: "tower-ups",
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("renderUPSConf returned error: %v", err)
 	}
@@ -83,13 +88,113 @@ func TestRenderUPSConfRendersUpstreamNUTSecretAuthPath(t *testing.T) {
 				},
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("renderUPSConf returned error: %v", err)
 	}
 
 	if !strings.Contains(conf, "  authconf = /etc/nut/upstream-auth/rack-a-ups.nutauth.conf") {
 		t.Fatalf("rendered upstream NUT config missing Secret authconf path:\n%s", conf)
+	}
+}
+
+func TestRenderUPSConfMergesCredentialSecretOverDriverOptions(t *testing.T) {
+	conf, err := renderUPSConf([]powerv1alpha1.UPSDevice{
+		{
+			ObjectMeta: objectMeta("rack-a-ups"),
+			Spec: powerv1alpha1.UPSDeviceSpec{
+				Driver: "snmp-ups",
+				Endpoint: &powerv1alpha1.UPSEndpointSpec{
+					Host: "192.168.1.209",
+				},
+				DriverOptions: map[string]string{
+					"snmp_version": "v3",
+					"secName":      "placeholder-overridden-by-secret",
+				},
+			},
+		},
+	}, map[string]map[string]string{
+		"rack-a-ups": {
+			"secName":      "real-username",
+			"authPassword": "real-auth-pass",
+			"privPassword": "real-priv-pass",
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderUPSConf returned error: %v", err)
+	}
+
+	for _, want := range []string{
+		"  snmp_version = v3",
+		"  secName = real-username",
+		"  authPassword = real-auth-pass",
+		"  privPassword = real-priv-pass",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("rendered ups.conf missing %q:\n%s", want, conf)
+		}
+	}
+	if strings.Contains(conf, "placeholder-overridden-by-secret") {
+		t.Fatalf("credentialSecretRef value did not override driverOptions collision:\n%s", conf)
+	}
+}
+
+func TestResolveUPSDeviceCredentialsFetchesReferencedSecret(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add corev1 to scheme: %v", err)
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ups-1-snmp", Namespace: "power-system"},
+		Data: map[string][]byte{
+			"secName":      []byte("real-username"),
+			"authPassword": []byte("real-auth-pass"),
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+
+	credentials, err := resolveUPSDeviceCredentials(context.Background(), fakeClient, "power-system", []powerv1alpha1.UPSDevice{
+		{
+			ObjectMeta: objectMeta("ups-1"),
+			Spec: powerv1alpha1.UPSDeviceSpec{
+				CredentialSecretRef: &powerv1alpha1.NamespacedNameReference{
+					Namespace: "power-system",
+					Name:      "ups-1-snmp",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolveUPSDeviceCredentials returned error: %v", err)
+	}
+	if got := credentials["ups-1"]["secName"]; got != "real-username" {
+		t.Fatalf("secName = %q, want %q", got, "real-username")
+	}
+	if got := credentials["ups-1"]["authPassword"]; got != "real-auth-pass" {
+		t.Fatalf("authPassword = %q, want %q", got, "real-auth-pass")
+	}
+}
+
+func TestResolveUPSDeviceCredentialsRejectsCrossNamespaceRef(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add corev1 to scheme: %v", err)
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	_, err := resolveUPSDeviceCredentials(context.Background(), fakeClient, "power-system", []powerv1alpha1.UPSDevice{
+		{
+			ObjectMeta: objectMeta("ups-1"),
+			Spec: powerv1alpha1.UPSDeviceSpec{
+				CredentialSecretRef: &powerv1alpha1.NamespacedNameReference{
+					Namespace: "other-system",
+					Name:      "ups-1-snmp",
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected cross-namespace credentialSecretRef to be rejected")
 	}
 }
 

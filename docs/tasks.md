@@ -107,6 +107,10 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 - **`F-26` firmware-gated quirks can't expire.** `Quirks` is a flat `[]string` with no firmware
   constraint, so a device on current firmware inherits every historical quirk of its model family
   permanently. Decide between structured quirk objects and firmware-ranged selectors (`OD-22`).
+  Concrete case found (2026-08-04, see `docs/design/capability-profiles.md` Field Verification):
+  the bundled Ubiquiti quirk `built-in-nut-server` does not hold against real `UPS 2U`/`UPS Tower`
+  hardware on firmware `1.6.1` — TCP 3493 is closed, SNMPv3 is the only working telemetry path.
+  Needs a decision, not just a code fix.
 - **`F-27` verification lifecycle is undefined** for actuation commands: what counts as verified,
   where the result is recorded, how a verified result becomes a profile change, and whether a
   locally-verified user profile can declare support without a catalog release.
@@ -225,6 +229,17 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 - `OD-14` partial-domain outage plan scope (shared with Telemetry & Triggers).
 - Controller/envtest coverage for executor resume behavior (restart mid-flow) — asserted by design
   (`EX-14`) but not covered by an actual restart test yet.
+- **`ShutdownFlow` reconciler hits continuous status-update conflicts.** Confirmed via a 10h log pull
+  against the alpha deployment (2026-08-04): 1,516 `"the object has been modified"` errors spread
+  evenly across the whole window (~1/48s), not just a post-deploy burst — 744 against `ShutdownFlow`
+  specifically. Root cause: `SetupWithManager` watches `UPSDevice` with no predicate, so every
+  telemetry tick (5–15s per device) re-enqueues a reconcile; `Reconcile` does a single `r.Get` +
+  `r.Status().Update` (not `Patch`), and back-to-back reconciles race the informer cache, so the
+  final write frequently uses a stale `resourceVersion`. Self-heals via controller-runtime's built-in
+  requeue-on-error, but it's constant reconcile churn — each attempt also does a Postgres audit-store
+  round trip via `recordShutdownFlowAudit`. Fix candidates: switch the status write to `Status().Patch`
+  (sidesteps the resourceVersion race entirely), and/or scope the `UPSDevice` watch predicate to the
+  fields the trigger logic actually reads (phase, charge %, runtime seconds).
 
 ---
 
@@ -274,6 +289,19 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   alone, never from Secret contents), no log statement in the render or controller path touches
   `secret.Data` or a password value, and `NUTServerReconciler` has no Event Recorder wired in at all,
   so there is no Events leak path to check.
+
+- **`UPSDevice.spec.credentialSecretRef` is wired (2026-08-04).** Found unwired while pointing real
+  `snmp-ups` `UPSDevice` resources at the homelab's UniFi UPS fleet (needed SNMPv3 `secName`/
+  `authPassword`/`privPassword`, not just a community string) — fixed same day.
+  `resolveUPSDeviceCredentials` (`nutserver_render.go`) fetches the referenced Secret (same
+  operand-namespace only, matching the existing `upstreamNUTAuthProjections` convention) and merges
+  its keys into the device's driver options, winning over any `driverOptions` collision. `ups.conf`
+  itself moved out of the plain `ConfigMap` into a new dedicated Secret
+  (`<name>-nut-driver-config`) projected into the same `/etc/nut` volume — the container mount path
+  is unchanged, no image changes needed. The Deployment's rollout-trigger hash still covers the full
+  rendered config (including credentials) so a rotation still rolls the pod; that hash is a one-way
+  SHA-256 digest, doesn't leak the plaintext. Matches the `F-24` precedent of not putting a content
+  hash on credential-bearing `Secret`s in `ManagedResourceStatus`.
 
 #### Open Work
 

@@ -79,10 +79,21 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
-	configData, err := renderNUTServerConfig(server, devices)
+	credentials, err := resolveUPSDeviceCredentials(ctx, r.Client, namespace, devices)
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
+	configData, err := renderNUTServerConfig(server, devices, credentials)
+	if err != nil {
+		return renderedNUTServer{}, err
+	}
+	// rolloutHash covers the full rendered config, including ups.conf, so a credential rotation or
+	// driverOptions change still rolls the Deployment via the pod-template annotation below even
+	// though ups.conf itself moves into a separate Secret. A SHA-256 digest in that annotation
+	// cannot be reversed to recover the plaintext credential.
+	rolloutHash := hashStringMap(configData)
+	upsConf := configData["ups.conf"]
+	delete(configData, "ups.conf")
 	configHash := hashStringMap(configData)
 
 	if err := r.ensureOperandNamespace(ctx, namespace); err != nil {
@@ -90,6 +101,10 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	}
 
 	configMap, err := r.ensureNUTServerConfigMap(ctx, server, namespace, configData)
+	if err != nil {
+		return renderedNUTServer{}, err
+	}
+	driverConfigSecret, err := r.ensureNUTServerDriverConfigSecret(ctx, server, namespace, upsConf)
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
@@ -105,7 +120,7 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
-	deployment, err := r.ensureNUTServerDeployment(ctx, server, namespace, image, configMap.Name, secretRef, configHash, devices)
+	deployment, err := r.ensureNUTServerDeployment(ctx, server, namespace, image, configMap.Name, driverConfigSecret.Name, secretRef, rolloutHash, devices)
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
@@ -129,6 +144,9 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	managed := []powerv1alpha1.ManagedResourceStatus{
 		{APIVersion: "v1", Kind: "Namespace", Name: namespace},
 		{APIVersion: "v1", Kind: "ConfigMap", Namespace: namespace, Name: configMap.Name, Hash: configHash},
+		// No Hash here, matching the F-24 precedent for the upsd.users Secret: this Secret can carry
+		// real driver credentials (SNMP community/SNMPv3 passwords), and status is broadly readable.
+		{APIVersion: "v1", Kind: "Secret", Namespace: namespace, Name: driverConfigSecret.Name},
 		{APIVersion: "v1", Kind: "Service", Namespace: namespace, Name: service.Name},
 		{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: namespace, Name: networkPolicy.Name},
 		{APIVersion: "apps/v1", Kind: "Deployment", Namespace: namespace, Name: deployment.Name},
@@ -246,8 +264,8 @@ func selectUPSDevices(ctx context.Context, c client.Client, server *powerv1alpha
 	return devices, nil
 }
 
-func renderNUTServerConfig(server *powerv1alpha1.NUTServer, devices []powerv1alpha1.UPSDevice) (map[string]string, error) {
-	upsConf, err := renderUPSConf(devices)
+func renderNUTServerConfig(server *powerv1alpha1.NUTServer, devices []powerv1alpha1.UPSDevice, credentials map[string]map[string]string) (map[string]string, error) {
+	upsConf, err := renderUPSConf(devices, credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +291,7 @@ func renderNUTServerConfig(server *powerv1alpha1.NUTServer, devices []powerv1alp
 	return config, nil
 }
 
-func renderUPSConf(devices []powerv1alpha1.UPSDevice) (string, error) {
+func renderUPSConf(devices []powerv1alpha1.UPSDevice, credentials map[string]map[string]string) (string, error) {
 	var out strings.Builder
 	for _, device := range devices {
 		if result := validateUPSDevice(&device); !result.accepted {
@@ -321,13 +339,23 @@ func renderUPSConf(devices []powerv1alpha1.UPSDevice) (string, error) {
 			}
 		}
 
-		keys := make([]string, 0, len(device.Spec.DriverOptions))
-		for key := range device.Spec.DriverOptions {
+		options := make(map[string]string, len(device.Spec.DriverOptions))
+		for key, value := range device.Spec.DriverOptions {
+			options[key] = value
+		}
+		// Credential-Secret-sourced values win on key collision: they are the operator-verified
+		// source of truth for driver auth fields, whereas driverOptions is user-authored plaintext.
+		for key, value := range credentials[device.Name] {
+			options[key] = value
+		}
+
+		keys := make([]string, 0, len(options))
+		for key := range options {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			value := device.Spec.DriverOptions[key]
+			value := options[key]
 			if err := validateNUTConfigToken(key); err != nil {
 				return "", fmt.Errorf("invalid driver option key for UPSDevice %q: %w", device.Name, err)
 			}
@@ -398,6 +426,33 @@ func upstreamNUTAuthConf(device powerv1alpha1.UPSDevice) string {
 	default:
 		return "none"
 	}
+}
+
+// resolveUPSDeviceCredentials fetches spec.credentialSecretRef for each selected device (SNMP
+// community, SNMPv3 secName/authPassword/privPassword, etc.) so renderUPSConf can merge real
+// driver auth fields into ups.conf instead of leaving them unwired. Same-namespace-only, matching
+// the existing upstreamNUTAuthProjections convention.
+func resolveUPSDeviceCredentials(ctx context.Context, c client.Client, namespace string, devices []powerv1alpha1.UPSDevice) (map[string]map[string]string, error) {
+	credentials := make(map[string]map[string]string)
+	for _, device := range devices {
+		ref := device.Spec.CredentialSecretRef
+		if ref == nil {
+			continue
+		}
+		if ref.Namespace != namespace {
+			return nil, fmt.Errorf("UPSDevice %q credentialSecretRef must be in operand namespace %q", device.Name, namespace)
+		}
+		var secret corev1.Secret
+		if err := c.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, &secret); err != nil {
+			return nil, fmt.Errorf("get credentialSecretRef Secret for UPSDevice %q: %w", device.Name, err)
+		}
+		values := make(map[string]string, len(secret.Data))
+		for key, value := range secret.Data {
+			values[key] = string(value)
+		}
+		credentials[device.Name] = values
+	}
+	return credentials, nil
 }
 
 func upstreamNUTEgressRules(devices []powerv1alpha1.UPSDevice) []networkingv1.NetworkPolicyEgressRule {
@@ -571,6 +626,12 @@ func operatorManagedUsersSecretName(server *powerv1alpha1.NUTServer) string {
 	return server.Name + "-nut-users"
 }
 
+// driverConfigSecretName holds the ups.conf keys that carry real driver credentials
+// (spec.credentialSecretRef contents merged in), kept out of the plain ConfigMap.
+func driverConfigSecretName(server *powerv1alpha1.NUTServer) string {
+	return server.Name + "-nut-driver-config"
+}
+
 func networkPolicyName(server *powerv1alpha1.NUTServer) string {
 	return server.Name + "-nut-server"
 }
@@ -600,6 +661,17 @@ func (r *NUTServerReconciler) ensureNUTServerConfigMap(ctx context.Context, serv
 		return controllerutil.SetControllerReference(server, cm, r.Scheme)
 	})
 	return cm, err
+}
+
+func (r *NUTServerReconciler) ensureNUTServerDriverConfigSecret(ctx context.Context, server *powerv1alpha1.NUTServer, namespace, upsConf string) (*corev1.Secret, error) {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: driverConfigSecretName(server), Namespace: namespace}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		secret.Labels = labelsForNUTServer(server)
+		secret.Type = corev1.SecretTypeOpaque
+		secret.Data = map[string][]byte{"ups.conf": []byte(upsConf)}
+		return controllerutil.SetControllerReference(server, secret, r.Scheme)
+	})
+	return secret, err
 }
 
 func (r *NUTServerReconciler) ensureNUTUsersSecret(ctx context.Context, server *powerv1alpha1.NUTServer, namespace string) (powerv1alpha1.NamespacedNameReference, string, error) {
@@ -716,7 +788,7 @@ func (r *NUTServerReconciler) ensureNUTServerNetworkPolicy(ctx context.Context, 
 	return policy, err
 }
 
-func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, server *powerv1alpha1.NUTServer, namespace, image, configName string, secretRef powerv1alpha1.NamespacedNameReference, configHash string, devices []powerv1alpha1.UPSDevice) (*appsv1.Deployment, error) {
+func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, server *powerv1alpha1.NUTServer, namespace, image, configName, driverConfigSecretName string, secretRef powerv1alpha1.NamespacedNameReference, configHash string, devices []powerv1alpha1.UPSDevice) (*appsv1.Deployment, error) {
 	upstreamAuthProjections, err := upstreamNUTAuthProjections(devices, namespace)
 	if err != nil {
 		return nil, err
@@ -776,6 +848,14 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 									LocalObjectReference: corev1.LocalObjectReference{Name: secretRef.Name},
 									Items: []corev1.KeyToPath{
 										{Key: "upsd.users", Path: "upsd.users"},
+									},
+								},
+							},
+							{
+								Secret: &corev1.SecretProjection{
+									LocalObjectReference: corev1.LocalObjectReference{Name: driverConfigSecretName},
+									Items: []corev1.KeyToPath{
+										{Key: "ups.conf", Path: "ups.conf"},
 									},
 								},
 							},
