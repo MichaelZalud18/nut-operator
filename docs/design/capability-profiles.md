@@ -1,5 +1,7 @@
 # Capability Profiles
 
+Components: Capability Profiles.
+
 Capability profiles are versioned operator artifacts. They declare what the resolver may assume
 about a UPS after it has matched stable provider keys such as `ups.model`, optional firmware, and
 driver family. Runtime probes can detect drift, but they do not rewrite the matched profile during a

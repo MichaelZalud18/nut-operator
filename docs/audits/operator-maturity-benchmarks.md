@@ -3,6 +3,8 @@
 Status: living reference. External standards this project measures itself against, and the current
 audit position.
 
+Components: Operator Maturity & Hardening.
+
 Re-run this audit at each architecture stage. Benchmark position is a release gate input, not a
 retrospective note.
 
@@ -15,7 +17,7 @@ this operator," so the project is graded against it whether or not it opts in.
 | --- | --- | --- |
 | L1 Basic Install | Provision operands, configuration via CR | Met |
 | L2 Seamless Upgrades | Operator and operand version upgrades handled | Partial — no upgrade path exercised, no conversion webhooks |
-| L3 Full Lifecycle | Backup, restore, failure recovery | Not met — OD-1 recovery scope still open; audit durability OD-6 open |
+| L3 Full Lifecycle | Backup, restore, failure recovery | Partial — recovery execution is external subscriber scope; audit durability OD-6 is closed with local spool fallback |
 | L4 Deep Insights | Metrics, alerts, log processing, workload analysis | Not met — no custom metrics registered |
 | L5 Auto Pilot | Auto-scaling, auto-config tuning, auto-remediation | Out of scope by design (GP-1: non-power triggers excluded) |
 

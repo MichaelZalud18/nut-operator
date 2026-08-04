@@ -1,5 +1,7 @@
 # Architecture
 
+Components: Cross-cutting.
+
 `nut-operator` is split into a control plane, NUT server operands, node power agents, and durable state.
 
 ```mermaid
@@ -95,15 +97,24 @@ The generated resources are:
 - `DaemonSet` for each `NodePowerAgent`.
 - `NetworkPolicy` for server, agent, metrics, and database traffic.
 - `ServiceMonitor` when Prometheus Operator integration is enabled.
+- A per-agent projected signal `Secret` used by the executor to release individual nodes without
+  giving the actuator Kubernetes API credentials.
 
 ## Node Agent Pod
 
-The default node agent pod is a network-only, non-privileged monitor. A host-action sidecar is rendered only for explicit actuation modes.
+The default node agent pod is a network-only, non-privileged monitor. A host-action sidecar is
+rendered only when monitoring is not explicitly disabled.
 
-- `upsmon`: unprivileged NUT client, read-only root filesystem, no capabilities, no Kubernetes API token unless a declared feature explicitly needs it.
-- `actuator`: omitted or stubbed by default. In approved host-actuation mode, it watches a shared in-pod signal file and performs the host shutdown path without NUT credentials or policy authority.
+- `upsmon`: unprivileged NUT client, read-only root filesystem, no capabilities, no Kubernetes API
+  token, and a packaged `power-signal-writer` used by NUT `SHUTDOWNCMD`.
+- `actuator`: omitted in `MonitorOnly` or stubbed by default. In approved host-actuation mode, it
+  watches local and projected signal files and performs the host shutdown path without NUT
+  credentials or policy authority.
 
-The handoff file must contain structured content, including timestamp, reason, UPS identity, and flow identity. Actuator implementations must reject stale files.
+The handoff file contains structured content including execution ID, node name, timestamp, reason,
+UPS identity, flow identity, and plan hash. The actuator rejects stale, malformed, or wrong-node
+signals. The executor writes projected per-node Secret keys for orchestrated releases; `upsmon`
+writes the same JSON shape locally for NUT FSD events.
 
 ## Storage Model
 
@@ -158,7 +169,10 @@ sequenceDiagram
   Agent->>Agent: Validate local signal and mode gates
 ```
 
-The operator treats PostgreSQL as the durable record path, not as the critical decision path. A storage outage degrades auditability but does not erase the current CR specs or compiled status surfaces that drive power response.
+The operator treats PostgreSQL as the durable record path, not as the critical decision path. A
+storage outage degrades auditability but does not erase the current CR specs or compiled status
+surfaces that drive power response. During shutdown execution, an explicitly configured local audit
+spool preserves replayable JSONL records when PostgreSQL stops accepting writes.
 
 ## Resiliency
 

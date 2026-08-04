@@ -1,12 +1,16 @@
 # Image Strategy
 
+Components: NUT Server / upsd, Node Agent / DaemonSet, Operator Maturity & Hardening.
+
 `nut-operator` does not default to a third-party NUT container image.
 
 The release shape is project-owned OCI images built from pinned, verified inputs:
 
 - `nut-server`: `upsd` plus network-capable NUT drivers required by the selected `UPSDevice` resources.
-- `upsmon-agent`: unprivileged NUT client used by the `NodePowerAgent` DaemonSet.
-- `node-actuator`: small host-action process. Stub mode runs without host privileges; real host shutdown is an explicitly approved boundary.
+- `upsmon-agent`: unprivileged NUT client plus the project-owned `power-signal-writer` used by the
+  `NodePowerAgent` DaemonSet.
+- `node-actuator`: small host-action process. Stub mode runs without host privileges; approved
+  real host shutdown uses the direct Linux poweroff syscall.
 - `operator`: controller-manager image built from this repository.
 
 ## Rationale
@@ -16,7 +20,8 @@ The NUT project publishes source releases and distribution packages, not a singl
 The operand Dockerfiles package real Network UPS Tools binaries from pinned distribution packages:
 
 - `nut-server` installs `nut`, including `upsd`, `upsdrvctl`, `upsc`, and network-capable drivers such as `dummy-ups`.
-- `upsmon-agent` installs `nut`, including `upsmon` and `upsc`.
+- `upsmon-agent` installs `nut`, including `upsmon` and `upsc`, and includes the Go
+  `power-signal-writer` binary from this repository.
 
 The operator validates `UPSDevice` drivers against a network-driver allowlist before rendering operands. The allowlist is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests.
 

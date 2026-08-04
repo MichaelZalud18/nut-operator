@@ -1,5 +1,7 @@
 # FAQ
 
+Components: Cross-cutting.
+
 Answers to the questions the design most often prompts. Internal identifiers (SB-n, GP-n, etc.)
 reference the design documents; users can ignore them.
 

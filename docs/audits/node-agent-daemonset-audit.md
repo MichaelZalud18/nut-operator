@@ -2,8 +2,13 @@
 
 Status: audit record, 2026-08-03, against commit `00eb3c0`. Static reading only.
 
+Components: Node Agent / DaemonSet.
+
 Supplements `operator-maturity-benchmarks.md`. Findings use the same `F-n` namespace, continuing
 from F-7.
+
+Remediation note: F-8 through F-13 are implemented in the node-agent hard-infra pass. F-14 remains
+open as the next node-agent-specific audit item.
 
 ## Benchmark basis
 

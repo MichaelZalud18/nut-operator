@@ -1,5 +1,7 @@
 # Audit Storage Schema
 
+Components: Storage & Audit.
+
 Production durable state is PostgreSQL, with CloudNativePG as the preferred in-cluster provider.
 The project packages PostgreSQL migrations and the PostgreSQL-shaped writer boundary in
 `internal/audit`. `internal/storage` connects controller reconciliation to Secret-backed
@@ -32,7 +34,11 @@ planner compilation records, shutdown decision records, and durable executor pro
 The writer uses a narrow generic SQL executor interface, so CNPG and external PostgreSQL are
 connection-management choices rather than separate domain models. The storage resolver in
 `internal/storage` keeps `Disabled`, `ExternalPostgres`, and `CNPG` selection separate from
-domain validation and controller status.
+domain validation and controller status. `spec.storage.auditSpool` adds a local JSONL fallback
+journal for shutdown-time audit records generated after PostgreSQL has already been opened but then
+stops accepting writes. The spool is not a replacement database: it requires CNPG or
+ExternalPostgres storage, an explicit absolute in-container path, and a deployment-supplied durable
+volume at that path.
 
 `PowerManagementCluster` reconciliation opens the configured audit store, pings PostgreSQL,
 applies bundled migrations, evaluates configured retention, and records durable reconciliation
@@ -46,6 +52,19 @@ action-attempt, release, handoff, and resume-state tables to make shutdown progr
 resumable without putting PostgreSQL on the host actuation boundary. External PostgreSQL requires
 TLS by default. CNPG mode reads the generated application credential Secret and prefers the FQDN URI
 when present.
+
+## Shutdown-Time Spool
+
+When `spec.storage.auditSpool.enabled` is true, the `ShutdownFlow` audit writer first attempts the
+normal PostgreSQL write. If that write fails, it appends one JSON line to
+`<spec.storage.auditSpool.path>/audit-spool.jsonl` and lets execution continue. Each spool record
+contains the audit record kind, a stable replay key such as `executionID` or
+`executionID/waveIndex`, the spool timestamp, the primary PostgreSQL error, and the original audit
+payload. A successful fallback sets the `Degraded` and `ExecutionReady` conditions to
+`AuditSpoolFallback` on the `ShutdownFlow`.
+
+Replay into PostgreSQL is a recovery/subscriber concern. The spool preserves the original IDs so a
+future replayer can use the same upsert and insert semantics as the primary audit writer.
 
 ## Retention
 

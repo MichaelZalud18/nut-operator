@@ -1,5 +1,7 @@
 # System Architecture Diagram
 
+Components: Cross-cutting.
+
 This diagram shows the finalized service shape for `nut-operator`: Kubernetes resources are the
 interface, the operator compiles and publishes planning facts, PostgreSQL stores durable history,
 and node-local agents own the final host boundary.

@@ -3,6 +3,8 @@
 Status: audit record, 2026-08-03, against commit `00eb3c0`. Static reading only; no live NUT
 session tested.
 
+Components: NUT Server / upsd, Node Agent / DaemonSet, Telemetry & Triggers.
+
 Scope: cross-component. Which NUT mechanisms the system uses, which it declines, and whether the
 layering stays upstream-loyal with enhancements stacked on top rather than replacing NUT's own
 machinery.
@@ -35,10 +37,10 @@ schema.
 **Every agent connects as `secondary`.** This is the SB-3 authority boundary expressed in NUT's own
 vocabulary rather than bolted alongside it — no agent believes it owns the shutdown decision.
 
-**`SHUTDOWNCMD "/bin/true"`** is the stub actuator expressed in NUT-native terms. NUT still runs its
-complete state machine and still invokes the shutdown command; the command is simply inert.
-Enabling real actuation becomes a config change rather than a control-flow change. This is the
-clearest example in the codebase of the intended layering.
+**`SHUTDOWNCMD "/usr/local/bin/power-signal-writer"`** is the local handoff from NUT into the
+project-owned actuator protocol. NUT still runs its complete state machine and invokes the shutdown
+command; the command writes a structured, TTL-bound signal that remains dry-run unless the
+`NodePowerAgent` is explicitly approved for actuation.
 
 **`upsmon.conf` keyword set is correct and exposed as CR fields** rather than hardcoded:
 `MINSUPPLIES`, `POLLFREQ` (15s), `POLLFREQALERT` (5s), `HOSTSYNC` (15s), `DEADTIME` (45s),

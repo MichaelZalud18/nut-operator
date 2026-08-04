@@ -3,6 +3,8 @@
 Status: working document, 2026-08-03. Records what capability profiles do and do not influence in
 the `upsd` operand.
 
+Components: Capability Profiles, NUT Server / upsd.
+
 Written to close a recurring question before it recurs: if profiles describe the device, should
 `upsd` be sized or shaped to match the device? The answer is no for sizing and yes for
 configuration, and the reasons differ enough to be worth stating separately.

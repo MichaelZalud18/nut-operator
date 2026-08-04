@@ -1,5 +1,7 @@
 # Executor Requirements
 
+Components: Planning & Execution Logic.
+
 This document defines the requirements for the executor, the "act" stage of `nut-operator`.
 
 Companion to `scope-boundaries.md`, `planner-requirements.md`, `resolver-requirements.md`, and
@@ -114,10 +116,10 @@ tables.
 boundary of SB-3: the executor completes clearance, then signals; all cluster authority ends at the
 signal.
 
-**EX-16 · The signal file is the interface.** Structured content — timestamp, reason, UPS identity,
-flow identity, and the plan hash (PL-14) — per the repository's handoff design. The actuator's
-staleness rejection is the last safety check in the chain, and the executor must produce signals
-that pass it only when genuinely current.
+**EX-16 · The signal file is the interface.** Structured content — execution ID, node name,
+timestamp, reason, UPS identity, flow identity, and the plan hash (PL-14) — per the repository's
+handoff design. The executor writes per-node projected Secret keys using this shape, and the
+actuator's staleness and node-binding checks are the last safety checks in the chain.
 
 **EX-17 · The executor holds no host credentials and no NUT credentials.** Its authority is the
 Kubernetes API and the signal handoff, nothing else. Host action isolation stays entirely in the
@@ -137,9 +139,11 @@ enumerated instances, revalidation results, approval evidence, and telemetry sna
 points — all to PostgreSQL per GP-3 and SB-12, keyed by plan hash (PL-14).
 
 **EX-20 · Audit failure does not halt power response** (SB-11). PostgreSQL unavailability during
-execution degrades evidence, raises a condition, and the flow continues. The durability mechanism
-for records generated while the audit store is itself shutting down is OD-6, unresolved; until then
-the executor buffers best-effort in memory and flushes on availability.
+execution degrades evidence, raises a condition, and the flow continues when the shutdown-time
+audit spool is enabled. The spool appends replayable JSONL records with the same execution IDs,
+wave keys, action-attempt IDs, release IDs, handoff IDs, and resume-state keys that the primary
+PostgreSQL writer uses. If both PostgreSQL and the configured spool path fail, the audit failure is
+returned and the flow records the failed evidence path.
 
 **EX-21 · Dry-run produces full evidence.** A dry-run flow writes the same record shape with
 effects marked simulated. Rehearsals that leave no trace are not rehearsals.
@@ -148,10 +152,13 @@ effects marked simulated. Rehearsals that leave no trace are not rehearsals.
 
 ## Bound Decisions
 
+**OD-6 · Shutdown-time audit durability — closed.** PostgreSQL remains the production record store;
+the explicit local audit spool is the fallback for records generated while PostgreSQL is unavailable
+during execution. Replay/drain automation is a recovery-subscriber concern.
+
 **OD-17 · Executor state persistence for resume — closed.** The executor persists wave position and
 compact state in PostgreSQL `executor_resume_states`. Detailed progress remains in the execution,
 wave, group, action-attempt, node-release, and signal-handoff tables.
 
-Bound from elsewhere: OD-6 (audit durability — EX-14, EX-20), OD-12 (infeasibility policy —
-consumed at EX-3), OD-14 (partial-domain scope — determines what EX-10 executes when one domain
-fires).
+Bound from elsewhere: OD-12 (infeasibility policy — consumed at EX-3), OD-14 (partial-domain scope
+— determines what EX-10 executes when one domain fires).

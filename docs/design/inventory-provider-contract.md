@@ -1,5 +1,7 @@
 # Inventory Provider Contract
 
+Components: Inventory System.
+
 This document defines the normalized inventory shape that every topology provider emits, and the
 rules the operator applies to it.
 
@@ -209,9 +211,10 @@ Carried and now unblocked by this contract:
 supply the data this decision needed. The policy question — cluster-wide plan versus domain-scoped
 subgraph — remains open, but is no longer blocked on missing structure.
 
-Carried unchanged: OD-4 (last-ditch phase taxonomy), OD-6 (audit durability), OD-8r (provider key
-validation), OD-10 (USB support).
+Carried unchanged: OD-4 (last-ditch phase taxonomy), OD-8r (provider key validation), OD-10 (USB
+support).
 
 Closed elsewhere: OD-1 (recovery execution is external subscriber scope), OD-5 (startup waves are
-advisory projections, not operator-executed recovery), and OD-15 (probe history persistence is an
+advisory projections, not operator-executed recovery), OD-6 (audit durability is local spool
+fallback over PostgreSQL), and OD-15 (probe history persistence is an
 audit schema record).

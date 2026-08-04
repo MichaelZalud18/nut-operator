@@ -1,5 +1,7 @@
 # Trigger Evaluation
 
+Components: Telemetry & Triggers, Planning & Execution Logic.
+
 `internal/trigger` evaluates `ShutdownFlow` trigger conditions against normalized UPS state. It is
 pure logic: callers provide the observation time, current UPS states, trigger definitions, and any
 prior hold state.

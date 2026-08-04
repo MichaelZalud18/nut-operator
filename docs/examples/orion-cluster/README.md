@@ -1,5 +1,7 @@
 # Orion Cluster Example
 
+Components: Foundation & Documentation.
+
 This example mirrors a controller, standard, and burst node topology without embedding private addresses, hostnames, or credentials.
 
 The important design shape is:

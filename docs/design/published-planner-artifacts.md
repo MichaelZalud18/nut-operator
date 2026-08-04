@@ -1,5 +1,7 @@
 # Published Planner Artifacts
 
+Components: Outputs & Publishing.
+
 `nut-operator` is a planner and executor that publishes rich planning artifacts. It is not a
 dashboard product.
 

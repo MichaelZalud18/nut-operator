@@ -3,6 +3,8 @@
 Status: working document, 2026-08-03. Records which device classes get capability profiles, how
 user-contributed profiles survive upgrades, and how non-NUT power devices are handled.
 
+Components: Capability Profiles.
+
 Companion to `capability-profiles-and-upsd-config.md` and
 `docs/audits/quirks-aliasing-firmware.md`.
 

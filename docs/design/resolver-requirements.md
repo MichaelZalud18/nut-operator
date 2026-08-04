@@ -1,5 +1,7 @@
 # Resolver Requirements
 
+Components: Inventory System, Capability Profiles, Telemetry & Triggers.
+
 This document defines the requirements for the resolver, the "detect" stage of `nut-operator`.
 
 Companion to `scope-boundaries.md`, `planner-requirements.md`, and
@@ -21,6 +23,8 @@ The planner's purity (PL-1 through PL-4) is purchased entirely by the resolver d
 
 ## Responsibilities
 
+*Components: Cross-cutting (resolver-wide).*
+
 **RS-1 · The resolver owns all input-side I/O.** Kubernetes reads, NUT telemetry collection,
 topology provider queries, capability profile loading, and probe operations. Nothing downstream
 performs input I/O. (Counterpart of PL-4.)
@@ -37,6 +41,8 @@ resolver is where attribution originates; nothing downstream can reconstruct it.
 ---
 
 ## Capability Resolution
+
+*Components: Capability Profiles.*
 
 **RS-4 · The resolver invokes matching; it does not implement it.** Profile matching is pure logic
 in its own package under planner-grade determinism discipline (PL-7). The resolver supplies
@@ -55,6 +61,8 @@ conservative reading consistent with PL-33.
 ---
 
 ## Probing and Drift Detection
+
+*Components: Capability Profiles.*
 
 **RS-7 · Probing is a reconciliation-time activity, never a failure-path one** (CR-1, GP-5). The
 resolver may enumerate NUT variables on a device during normal reconciliation, compare against the
@@ -75,6 +83,8 @@ or plan participation.
 ---
 
 ## Topology and Inventory
+
+*Components: Inventory System.*
 
 **RS-11 · The resolver consumes the provider contract**, never a provider's native model. NetBox
 specifics stop at the provider boundary (IN-1, IN-2).
@@ -100,6 +110,8 @@ inventory, not during compilation.
 
 ## Telemetry Collection
 
+*Components: Telemetry & Triggers.*
+
 **RS-16 · Telemetry is collected continuously and marked honestly.** Each power state snapshot
 carries confidence and staleness markers (PL-8). The resolver never fabricates freshness — a stale
 reading is emitted as stale, and PL-32 turns that into `Unknown` feasibility downstream.
@@ -116,6 +128,8 @@ recompilation of structural changes.
 ---
 
 ## Failure Posture
+
+*Components: Cross-cutting (resolver-wide).*
 
 **RS-19 · Fail loud, degrade explicit, never silent.** Every degradation the resolver introduces —
 floor-matched profile, stale snapshot, missing telemetry, unmappable entity — surfaces as a

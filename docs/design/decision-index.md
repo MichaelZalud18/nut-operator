@@ -1,40 +1,59 @@
 # Decision Index and Glossary
 
+Components: Cross-cutting.
+
 This is the map across the design document set. When a namespace gains or retires an identifier,
 this file updates in the same change.
 
+Every doc under `docs/`, `docs/design/`, and `docs/audits/` carries a `Components:` (or
+`*Components:*`) line naming which `docs/tasks.md` section(s) it belongs to, so the mapping is
+visible at the point of reading, not just here. `scope-boundaries.md` and `resolver-requirements.md`
+tag per-section instead of per-file, since their `## SB-n` boundaries and detect-stage subsections
+each map to a different component — the "Component(s)" column below gives the condensed,
+file-level view for docs where a single tag is precise enough, and points at "varies" where it
+isn't.
+
+The component names are the ten `docs/tasks.md` sections — Inventory System, Capability Profiles,
+Telemetry & Triggers, Planning & Execution Logic, NUT Server / upsd, Node Agent / DaemonSet, Outputs
+& Publishing, Storage & Audit, Operator Maturity & Hardening, Foundation & Documentation — plus
+`Cross-cutting` for principles and boundaries that don't belong to one. `tasks.md` is the source of
+truth for what "belongs" to a component actually means in implementation terms; this index only
+tags which design content informs which component.
+
 ## Document Set
 
-| Doc | Stage / concern | Namespaces defined |
-| --- | --- | --- |
-| `scope-boundaries.md` | What the project is and is not | GP, SB, RB; OD registry of record |
-| `planner-requirements.md` | Decide | PL, CR |
-| `resolver-requirements.md` | Detect | RS |
-| `executor-requirements.md` | Act | EX |
-| `inventory-provider-contract.md` | Topology input contract | IN |
-| `faq.md` | User-facing answers | — |
-| `capability-profiles.md` | Profile catalog and SKU capability records | CR |
-| `capability-profiles-and-upsd-config.md` | Profile influence on `upsd`: configuration yes, sizing never | — |
-| `device-profile-scope-and-provenance.md` | Profile scope by device class, provenance, non-NUT power devices | — |
-| `telemetry-normalization.md` | NUT variable normalization boundary | Runtime telemetry facts |
-| `trigger-evaluation.md` | Telemetry-to-flow trigger decisions | Runtime decision facts |
-| `published-planner-artifacts.md` | Kubernetes-first interface and published plan artifacts | Artifact contract |
-| `shutdown-flow.md` | Public shutdown-flow model | Compiled plan format |
-| `audit-storage-schema.md` | PostgreSQL durable-state schema and writer boundary | Migration-bound |
-| `scaling-and-sizing.md` | Component scaling guidance and what actually binds | — |
-| `adaptive-execution-tier-pointer.md` | Mid-flow adaptation: tier pointer and timing modes | AE (provisional) |
+| Doc | Stage / concern | Namespaces defined | Component(s) |
+| --- | --- | --- | --- |
+| `scope-boundaries.md` | What the project is and is not | GP, SB, RB; OD registry of record | Varies per `## SB-n` — see file |
+| `planner-requirements.md` | Decide | PL, CR | Planning & Execution Logic; Capability Profiles (CR section) |
+| `resolver-requirements.md` | Detect | RS | Varies per section — see file |
+| `executor-requirements.md` | Act | EX | Planning & Execution Logic |
+| `inventory-provider-contract.md` | Topology input contract | IN | Inventory System |
+| `faq.md` | User-facing answers | — | Cross-cutting |
+| `capability-profiles.md` | Profile catalog and SKU capability records | CR | Capability Profiles |
+| `capability-profiles-and-upsd-config.md` | Profile influence on `upsd`: configuration yes, sizing never | — | Capability Profiles; NUT Server / upsd |
+| `device-profile-scope-and-provenance.md` | Profile scope by device class, provenance, non-NUT power devices | — | Capability Profiles |
+| `telemetry-normalization.md` | NUT variable normalization boundary | Runtime telemetry facts | Telemetry & Triggers |
+| `trigger-evaluation.md` | Telemetry-to-flow trigger decisions | Runtime decision facts | Telemetry & Triggers; Planning & Execution Logic |
+| `published-planner-artifacts.md` | Kubernetes-first interface and published plan artifacts | Artifact contract | Outputs & Publishing |
+| `shutdown-flow.md` | Public shutdown-flow model | Compiled plan format | Planning & Execution Logic; Outputs & Publishing |
+| `audit-storage-schema.md` | PostgreSQL durable-state schema and writer boundary | Migration-bound | Storage & Audit |
+| `scaling-and-sizing.md` | Component scaling guidance and what actually binds | — | NUT Server / upsd; Node Agent / DaemonSet; Planning & Execution Logic |
+| `adaptive-execution-tier-pointer.md` | Mid-flow adaptation: tier pointer and timing modes | AE (provisional) | Planning & Execution Logic |
+| `resiliency-and-partitions.md` | Partition/degradation contract across every external dependency | — | Cross-cutting |
+| `upstream-nut-relay.md` | `dummy-ups` relay mode for appliances with a built-in `upsd` | — | NUT Server / upsd |
 
 ## Audit Records
 
 Dated audit and findings records live in `docs/audits/` and share the `F-n` findings namespace.
 
-| Doc | Scope | Findings |
-| --- | --- | --- |
-| `operator-maturity-benchmarks.md` | External maturity standards and the recurring audit | F-1 – F-7 |
-| `node-agent-daemonset-audit.md` | Node agent DaemonSet render | F-8 – F-14 |
-| `nutserver-pod-audit.md` | `NUTServer` CRD and the `upsd` Deployment it renders | F-15 – F-19, F-23 |
-| `nut-usage-audit.md` | Cross-component NUT mechanism usage and fidelity | F-20 – F-22, F-24 |
-| `quirks-aliasing-firmware.md` | Quirk handling, variable aliasing, firmware gating | F-25 – F-27 |
+| Doc | Scope | Findings | Component(s) |
+| --- | --- | --- | --- |
+| `operator-maturity-benchmarks.md` | External maturity standards and the recurring audit | F-1 – F-7 | Operator Maturity & Hardening |
+| `node-agent-daemonset-audit.md` | Node agent DaemonSet render | F-8 – F-14 | Node Agent / DaemonSet |
+| `nutserver-pod-audit.md` | `NUTServer` CRD and the `upsd` Deployment it renders | F-15 – F-19, F-23 | NUT Server / upsd |
+| `nut-usage-audit.md` | Cross-component NUT mechanism usage and fidelity | F-20 – F-22, F-24 | NUT Server / upsd; Node Agent / DaemonSet; Telemetry & Triggers |
+| `quirks-aliasing-firmware.md` | Quirk handling, variable aliasing, firmware gating | F-25 – F-27 | Capability Profiles |
 
 ## Identifier Namespaces
 
@@ -60,7 +79,6 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 
 | ID | Question | Blocks | Likely owner doc |
 | --- | --- | --- | --- |
-| OD-6 | Audit durability while the audit store is shutting down | Audit writer, EX-14, EX-20 | Audit schema |
 | OD-8r | Provider key validation policy (interim: floor-match + warning, RS-6) | Resolver | Resolver |
 | OD-9 | Trigger degrade mechanics | — | Capability schema |
 | OD-10 | USB/serial support: version target and isolation model | — | v2 scoping |
@@ -88,6 +106,7 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | OD-2 | Collapsed — one entity set, two edge relations; logical graph is compiled output | inventory contract |
 | OD-3 | Communication path modeled minimally as `carries` edges | IN-5 |
 | OD-4 | Numbered shutdown tiers: 0 = last-ditch (workload-only), 1 = final stop / lowest for nodes, 2+ earlier; configurable default; compiled to derived edges. Tier-inversion handling deferred to OD-18 | scope-boundaries change log |
+| OD-6 | Closed with explicit shutdown-time audit spool: PostgreSQL remains primary; enabled local JSONL spool preserves replayable records when PostgreSQL writes fail during execution | audit-storage-schema.md, EX-20 |
 | OD-15 | Capability profile probe history is persisted in PostgreSQL as `capability_profile_verifications` | Audit schema |
 | OD-1 | Recovery/startup execution is out of scope; external systems consume published artifacts | scope-boundaries |
 | OD-5 | Startup ordering is an advisory projection for subscribers, not operator-executed recovery | scope-boundaries |

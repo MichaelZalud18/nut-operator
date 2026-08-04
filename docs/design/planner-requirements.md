@@ -1,5 +1,7 @@
 # Planner Requirements
 
+Components: Planning & Execution Logic, Capability Profiles.
+
 This document defines the requirements for the planner package, the "decide" stage of
 `nut-operator`.
 
@@ -281,6 +283,8 @@ depends on a later wave; quorum holds at every wave boundary.
 ---
 
 ## Capability Resolution Model
+
+*Components: Capability Profiles.*
 
 Settled during capability schema deconfliction. Recorded here because it constrains planner inputs.
 

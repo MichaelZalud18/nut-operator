@@ -3,6 +3,8 @@
 Status: design, 2026-08-03, rev 3. Supersedes the earlier mid-flow adaptive-execution proposal and
 tier-pointer revisions 1 and 2; the superseded drafts are not retained in the repository.
 
+Components: Planning & Execution Logic.
+
 Provisional `AE-n` prefix; folds into `PL` and `EX` on integration into the requirement docs.
 
 ## The model

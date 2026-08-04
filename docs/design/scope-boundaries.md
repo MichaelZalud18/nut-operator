@@ -1,5 +1,7 @@
 # Scope Boundaries
 
+Components: varies by boundary — each `## SB-n` heading below carries its own tag.
+
 This document records what `nut-operator` is and is not responsible for. These identifiers are
 stable: `SB-n` values do not get reused or renumbered.
 
@@ -15,6 +17,8 @@ Where this document and the repository disagree on planner or orchestration logi
 wins and the repository changes.
 
 ## Governing Principles
+
+*Components: Cross-cutting.*
 
 **GP-1 · Trigger provenance defines scope.** If the initiating signal is not power state, it is
 out of scope — regardless of how similar the resulting node action looks. Cordoning a node for a
@@ -47,6 +51,8 @@ or recover from those facts, but they do not own shutdown planning or host actua
 
 ## SB-1 · Shutdown and recovery are separate concerns
 
+*Components: Planning & Execution Logic, Outputs & Publishing.*
+
 Shutdown orchestration and bring-up orchestration are distinct control paths. NUT's own scope
 stops at clean shutdown; conventional bring-up is BIOS/PDU behavior plus service recovery on boot.
 
@@ -55,6 +61,8 @@ may subscribe to published planner artifacts, including advisory startup wave pr
 operator does not execute recovery and does not own bring-up policy.
 
 ## SB-2 · Relationship to NUT
+
+*Components: Telemetry & Triggers, NUT Server / upsd, Capability Profiles.*
 
 **SB-2a · NUT is the power-state path, unconditionally.** The operator never speaks to UPS
 hardware directly. All UPS interaction is mediated by NUT. A device with no viable NUT network
@@ -82,6 +90,8 @@ declared per device by capability profile.
 
 ## SB-3 · The node agent holds local flow; it holds no cluster authority
 
+*Components: Node Agent / DaemonSet.*
+
 The boundary is on **authority**, not on the presence of flow.
 
 In scope for the node agent:
@@ -105,6 +115,8 @@ container carries no NUT credentials and no policy authority.
 
 ## SB-4 · Two containers in the node agent
 
+*Components: Node Agent / DaemonSet.*
+
 All decision logic lives in the unprivileged container. The privileged executor stays small,
 dumb, and fire-and-forget behind a minimal verb API. No third container, no second pod, no
 sidecar proliferation.
@@ -120,6 +132,8 @@ actuation boundary and its own security rationale.
 
 ## SB-5 · Kured is out of scope
 
+*Components: Cross-cutting.*
+
 Kured's trigger is host and service health — OS patch reboots. That is not a power event, so
 GP-1 excludes it. The overlap with power-event orchestration does not meaningfully exist.
 
@@ -134,6 +148,8 @@ with a power event is possible and is documented as an operational note.
 
 ## SB-6 · Health and hardware monitoring are out of scope
 
+*Components: Cross-cutting.*
+
 Per GP-1 and GP-4. Node Problem Detector is excluded for the same reason as Kured — its trigger is
 node health, not power. MachineHealthCheck and descheduler are likewise out.
 
@@ -141,6 +157,8 @@ The operator consumes health and readiness signals as planning inputs. It does n
 diagnose, or remediate node faults.
 
 ## SB-7 · Power budget modeling is in scope
+
+*Components: Planning & Execution Logic.*
 
 Runtime remaining and load-shedding arithmetic — what shedding a given set of workloads buys in
 additional minutes — are in scope and were identified as the differentiating capability.
@@ -150,6 +168,8 @@ calculation separate from basic UPS threshold evaluation so ordinary shutdown sa
 depend on perfect power attribution.
 
 ## SB-8 · NetBox is a heavy design influence and a zero-weight runtime dependency
+
+*Components: Inventory System, Capability Profiles.*
 
 NetBox shapes the data model substantially. The default build ships without it.
 
@@ -180,6 +200,8 @@ tracked as OD-8r).
 
 ## SB-9 · Capability profiles are versioned as artifacts, not per device
 
+*Components: Capability Profiles.*
+
 Semantic version on the profile itself. Bump only when behavior changes. Map device model, and
 optionally firmware, to a best-matching profile version at resolution time.
 
@@ -192,6 +214,8 @@ are behaviorally fixes, because plans validated against the prior version may fa
 validation under the corrected one.
 
 ## SB-10 · Workload shutdown orchestration is core scope; the mechanism is stock Kubernetes
+
+*Components: Planning & Execution Logic.*
 
 Orchestrating the ordered shutdown of cluster services is a core product function, not something
 delegated elsewhere. The boundary is on mechanism, not ambition.
@@ -213,20 +237,24 @@ Prometheus Operator support is enabled.
 
 ## SB-11 · PostgreSQL is a required production component; the implementation is the user's choice
 
+*Components: Storage & Audit.*
+
 The durable store is PostgreSQL. CNPG is the recommended in-cluster implementation, not a
 privileged assumption of the design. `PowerStorageMode` is `Disabled | ExternalPostgres | CNPG`,
 defaulting to `CNPG`, with `Disabled` supported for development only.
 
 PostgreSQL sits on the **record** path, not the **decision** path. Compiled plans and desired
 state live in CRs; the planner compiles from spec. A PostgreSQL outage degrades auditability. It
-must not halt power response.
+must not halt power response when the shutdown-time audit spool is configured.
 
 Resilience note worth documenting for users: for the audit store specifically, `ExternalPostgres`
 is the more resilient option, because a database outside the cluster is not in the shutdown path
 of the event it exists to record. It cannot be the default — it requires infrastructure the user
-may not have — but it sidesteps the durability problem in OD-6 entirely.
+may not have — but it reduces reliance on the local spool during cluster shutdown.
 
 ## SB-12 · Three-tier observability
+
+*Components: Storage & Audit, Outputs & Publishing.*
 
 | Tier | Content | Destination |
 | --- | --- | --- |
@@ -242,6 +270,8 @@ must be answerable from stored structure, not from log parsing.
 
 ## SB-13 · Planner implementation defaults
 
+*Components: Planning & Execution Logic.*
+
 Not a boundary. This default can change without renegotiating scope.
 
 The planner is a Go package inside the operator repository, kept behind an interface so it stays
@@ -249,6 +279,8 @@ substitutable. Any decoupling happens at the interface level — a second implem
 reachable over gRPC, for instance — not at the language level.
 
 ## SB-14 · No embedded UI in v1
+
+*Components: Outputs & Publishing.*
 
 The project is fully usable through Kubernetes resources, CRDs, Events, logs, and PostgreSQL audit
 records. A dedicated web UI is not part of v1.
@@ -259,6 +291,8 @@ planner artifacts. It must not become part of the core reconciliation, planning,
 ---
 
 ## Repository-Derived Boundaries
+
+*Components: NUT Server / upsd, Planning & Execution Logic, Operator Maturity & Hardening.*
 
 Constraints already encoded in the implementation. Listed here so the boundary set is complete.
 
@@ -311,7 +345,6 @@ for defense in depth.
 
 | ID | Decision | Blocks |
 | --- | --- | --- |
-| OD-6 | Audit durability during shutdown. The sample flow scales `databases` and `storage` down in early waves while later waves still have execution records to write. Options: local spool draining post-recovery, audit cluster exempted into the last-ditch set, or documented preference for `ExternalPostgres` | Audit writer |
 | OD-8r | Resolver behavior on malformed or missing model strings from the topology provider: reject, floor-match with warning, or configurable | Resolver design |
 | OD-9 | Degrade mechanics for trigger-capability mismatch — folded into capability schema doc | Capability schema doc |
 | OD-10 | USB and serial UPS support: version target and isolation model | v2 scoping |
@@ -391,5 +424,6 @@ TBD, not blocking:
   The node cannot clear under PL-20 while the workload is still running. Options include
   compile-time validation, opt-in migration, and node blocking; node-local PVCs constrain the
   migration path.
-- Whether the audit store belongs in tier 0 or tier 1, bound to OD-6.
+- Whether an in-cluster audit store should be protected by tier 0 or tier 1 placement in addition
+  to the local spool.
 - Label key and central CR shape.

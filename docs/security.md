@@ -1,5 +1,7 @@
 # Security
 
+Components: Cross-cutting.
+
 `nut-operator` manages infrastructure that can shut down physical nodes. Security is part of the product contract, not a deployment afterthought.
 
 ## Defaults
@@ -21,6 +23,12 @@ The host-action boundary is intentionally narrow.
 The NUT server and client containers use network UPS protocols only. They do not need broad Linux capabilities, host devices, host namespaces, or Kubernetes API tokens.
 
 The actuator container owns host interaction only when approved actuation is enabled. It has no NUT credentials, no flow logic, and no broad policy authority. Its job is to validate the signal and execute the approved local action.
+
+Approved `SystemdPoweroff` rendering uses `hostPID` and adds only `CAP_SYS_BOOT` to the actuator
+container. It remains non-root, drops all other capabilities, keeps privilege escalation disabled,
+uses a read-only root filesystem, and receives no Kubernetes service-account token. The container
+seccomp profile is unconfined for this mode because common runtime-default profiles block the Linux
+`reboot(2)` syscall used for host poweroff.
 
 ## Network Controls
 

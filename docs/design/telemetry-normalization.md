@@ -1,5 +1,7 @@
 # Telemetry Normalization
 
+Components: Telemetry & Triggers.
+
 `internal/telemetry` is the pure normalization layer for NUT variable snapshots. `internal/nut`
 owns the narrow NUT protocol client for read-only variable polling. `internal/polling` composes
 those packages into one target-oriented telemetry poll. None of these packages owns Kubernetes

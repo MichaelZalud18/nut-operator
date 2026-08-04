@@ -1,5 +1,7 @@
 # Upstream NUT Relay
 
+Components: NUT Server / upsd.
+
 Some UPS appliances expose their own NUT `upsd` endpoint. `nut-operator` models those as
 `UPSDevice.spec.upstreamNUT` and renders them through NUT `dummy-ups` repeater mode.
 
