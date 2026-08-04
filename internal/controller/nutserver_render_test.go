@@ -117,7 +117,7 @@ func TestRenderUPSConfMergesCredentialSecretOverDriverOptions(t *testing.T) {
 			Spec: powerv1alpha1.UPSDeviceSpec{
 				Driver: "snmp-ups",
 				Endpoint: &powerv1alpha1.UPSEndpointSpec{
-					Host: "192.168.1.209",
+					Host: "ups-rack-a.example.net",
 				},
 				DriverOptions: map[string]string{
 					"snmp_version": "v3",
