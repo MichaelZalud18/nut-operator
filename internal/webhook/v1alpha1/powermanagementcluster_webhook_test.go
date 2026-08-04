@@ -113,6 +113,57 @@ var _ = Describe("PowerManagementCluster Webhook", func() {
 			Expect(err.Error()).To(ContainSubstring("spec.storage.cnpg"))
 		})
 
+		It("Should admit an absolute audit spool path with PostgreSQL storage", func() {
+			obj.Spec.Storage.Mode = powerv1alpha1.PowerStorageExternalPostgres
+			obj.Spec.Storage.ExternalPostgres = &powerv1alpha1.ExternalPostgresStorageSpec{
+				DSNSecretKeyRef: powerv1alpha1.SecretKeyReference{
+					Namespace: "power-system",
+					Name:      "power-postgres",
+					Key:       "dsn",
+				},
+				Schema: "power",
+			}
+			obj.Spec.Storage.AuditSpool = powerv1alpha1.AuditSpoolSpec{
+				Enabled: true,
+				Path:    "/var/lib/nut-operator/audit-spool",
+			}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should reject audit spool without a durable PostgreSQL storage backend", func() {
+			obj.Spec.Storage.Mode = powerv1alpha1.PowerStorageDisabled
+			obj.Spec.Storage.AuditSpool = powerv1alpha1.AuditSpoolSpec{
+				Enabled: true,
+				Path:    "/var/lib/nut-operator/audit-spool",
+			}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.storage.auditSpool.enabled"))
+		})
+
+		It("Should reject relative audit spool paths", func() {
+			obj.Spec.Storage.Mode = powerv1alpha1.PowerStorageExternalPostgres
+			obj.Spec.Storage.ExternalPostgres = &powerv1alpha1.ExternalPostgresStorageSpec{
+				DSNSecretKeyRef: powerv1alpha1.SecretKeyReference{
+					Namespace: "power-system",
+					Name:      "power-postgres",
+					Key:       "dsn",
+				},
+				Schema: "power",
+			}
+			obj.Spec.Storage.AuditSpool = powerv1alpha1.AuditSpoolSpec{
+				Enabled: true,
+				Path:    "relative/path",
+			}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.storage.auditSpool.path"))
+		})
+
 		It("Should warn when durable storage is disabled", func() {
 			obj.Spec.Storage.Mode = powerv1alpha1.PowerStorageDisabled
 

@@ -75,8 +75,8 @@ spec:
                 properties:
                   actuator:
                     description: |-
-                      actuator is the host-actuation image. Stub mode must run without privileged
-                      access; real host shutdown support is an explicit future boundary.
+                      actuator is the host-actuation image. Stub mode runs without host access; real host
+                      shutdown is rendered only after explicit actuation approval.
                     properties:
                       digest:
                         description: digest is an optional immutable image digest.
@@ -1457,6 +1457,50 @@ spec:
                   - name
                   type: object
                 type: array
+              nodeStatuses:
+                description: |-
+                  nodeStatuses records per-node agent pod coverage observed from Kubernetes pod readiness.
+                  It is the Kubernetes-native node-agent heartbeat used by shutdown execution safety gates.
+                items:
+                  description: NodePowerAgentNodeStatus records controller-observed
+                    agent coverage for one selected node.
+                  properties:
+                    lastHeartbeatTime:
+                      description: lastHeartbeatTime is the latest pod readiness transition
+                        observed by the controller.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message explains the observed coverage state for
+                        operators and audit records.
+                      type: string
+                    nodeName:
+                      description: nodeName is the Kubernetes Node name selected by
+                        this NodePowerAgent.
+                      type: string
+                    phase:
+                      description: phase is the observed pod phase, when present.
+                      type: string
+                    podName:
+                      description: podName is the observed agent pod on this node,
+                        when present.
+                      type: string
+                    ready:
+                      description: ready is true when a current, ready NodePowerAgent
+                        pod is observed on this node.
+                      type: boolean
+                    reason:
+                      description: reason is a machine-readable coverage reason such
+                        as AgentPodReady or AgentPodMissing.
+                      type: string
+                  required:
+                  - nodeName
+                  - ready
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - nodeName
+                x-kubernetes-list-type: map
               numberReady:
                 description: numberReady mirrors the generated DaemonSet status.
                 format: int32
@@ -1475,12 +1519,22 @@ spec:
                 - Degraded
                 - Error
                 type: string
+              readyNodeCount:
+                description: readyNodeCount records selected nodes with an observed
+                  ready agent pod.
+                format: int32
+                type: integer
               selectedNodes:
                 description: selectedNodes lists nodes selected by this fleet at the
                   last reconcile.
                 items:
                   type: string
                 type: array
+              unavailableNodeCount:
+                description: unavailableNodeCount records selected nodes without an
+                  observed ready agent pod.
+                format: int32
+                type: integer
             type: object
         required:
         - spec
@@ -3039,8 +3093,8 @@ spec:
                   planning.
                 type: string
               displayName:
-                description: displayName is a human-readable label for dashboards
-                  and events.
+                description: displayName is a human-readable label for events and
+                  published artifacts.
                 type: string
             type: object
           status:
@@ -3378,9 +3432,16 @@ spec:
                       toward control-plane quorum.
                     type: boolean
                   lastDitchRole:
-                    description: lastDitchRole is an explicit late-shutdown role interpreted
-                      by planner policy.
+                    description: |-
+                      lastDitchRole is an explicit late-shutdown role interpreted by planner policy.
+                      When shutdownTier is omitted, any non-empty lastDitchRole maps this node to tier 1.
                     type: string
+                  shutdownTier:
+                    description: shutdownTier explicitly assigns this node to a numbered
+                      shutdown tier. Nodes cannot use tier 0.
+                    format: int32
+                    minimum: 1
+                    type: integer
                 type: object
             required:
             - nodeName
@@ -3694,10 +3755,148 @@ spec:
                       to opt into real host shutdown.
                     type: boolean
                 type: object
+              shutdownTiers:
+                description: shutdownTiers configures numbered shutdown-tier policy
+                  for planner ordering.
+                properties:
+                  defaultTier:
+                    description: defaultTier is assigned to targets that match no
+                      explicit tier. Tiers 0 and 1 are reserved and cannot be the
+                      default.
+                    format: int32
+                    minimum: 2
+                    type: integer
+                  labelKey:
+                    description: labelKey is the Kubernetes label key whose numeric
+                      value declares an object's shutdown tier.
+                    type: string
+                  selectorRules:
+                    description: selectorRules assign tiers by selector before falling
+                      back to defaultTier.
+                    items:
+                      description: PowerShutdownTierSelectorRule assigns a tier to
+                        objects matched by labels.
+                      properties:
+                        name:
+                          description: name is unique within the policy.
+                          minLength: 1
+                          type: string
+                        selector:
+                          description: selector matches object labels.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        subject:
+                          description: subject limits which target kind this rule
+                            applies to. Empty means Any.
+                          enum:
+                          - Any
+                          - Namespace
+                          - Workload
+                          - Node
+                          type: string
+                        tier:
+                          description: tier is assigned to matching objects. Tier
+                            0 is workload-only and cannot be assigned to nodes.
+                          format: int32
+                          minimum: 0
+                          type: integer
+                      required:
+                      - name
+                      - selector
+                      - tier
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  tiers:
+                    description: tiers documents the known tier numbers and their
+                      operator-facing meanings.
+                    items:
+                      description: PowerShutdownTierDefinition names a shutdown tier.
+                      properties:
+                        description:
+                          description: description explains the tier's purpose.
+                          type: string
+                        name:
+                          description: name is a stable human-readable tier name.
+                          type: string
+                        tier:
+                          description: tier is the numeric shutdown tier. Higher tiers
+                            stop earlier; lower tiers stop later.
+                          format: int32
+                          minimum: 0
+                          type: integer
+                      required:
+                      - tier
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - tier
+                    x-kubernetes-list-type: map
+                type: object
               storage:
                 description: storage configures durable audit, telemetry, and flow
                   execution state.
                 properties:
+                  auditSpool:
+                    description: |-
+                      auditSpool enables a local JSONL fallback for audit records generated while PostgreSQL is unavailable during shutdown execution.
+                      The configured path must be backed by a durable volume supplied by the deployment.
+                    properties:
+                      enabled:
+                        default: false
+                        description: enabled allows execution to continue when PostgreSQL
+                          writes fail after the audit store was opened.
+                        type: boolean
+                      path:
+                        description: path is the absolute in-container directory where
+                          JSONL spool records are appended.
+                        maxLength: 512
+                        type: string
+                    type: object
                   cnpg:
                     description: cnpg points at a CloudNativePG Cluster used for storage.
                     properties:
@@ -4060,6 +4259,12 @@ spec:
                       items:
                         type: string
                       type: array
+                    shutdownTier:
+                      description: shutdownTier assigns this group to a numbered shutdown
+                        tier. Higher tiers stop earlier; tier 0 cannot be targeted.
+                      format: int32
+                      minimum: 0
+                      type: integer
                     target:
                       description: target selects the resources affected by this group.
                       properties:
@@ -4625,6 +4830,11 @@ spec:
                       description: index is the zero-based compiled order.
                       format: int32
                       type: integer
+                    shutdownTier:
+                      description: shutdownTier is the effective numbered shutdown
+                        tier, when present.
+                      format: int32
+                      type: integer
                     targetSummary:
                       description: targetSummary summarizes selected targets without
                         storing bulky object lists.
@@ -4674,6 +4884,11 @@ spec:
                     phase:
                       description: phase is the phase hint shared by this wave, when
                         one was present.
+                      format: int32
+                      type: integer
+                    shutdownTier:
+                      description: shutdownTier is the numbered tier shared by this
+                        wave, when tier policy assigned one.
                       format: int32
                       type: integer
                   required:
@@ -4763,6 +4978,90 @@ spec:
                 description: lastEvaluationTime is the most recent policy evaluation.
                 format: date-time
                 type: string
+              lastExecution:
+                description: lastExecution summarizes the most recent executor handoff
+                  and stores the active-trigger dedupe key.
+                properties:
+                  actionAttemptCount:
+                    description: actionAttemptCount records how many action attempts
+                      were recorded.
+                    format: int32
+                    type: integer
+                  completedAt:
+                    description: completedAt records when execution evidence recording
+                      finished.
+                    format: date-time
+                    type: string
+                  deduplicationKey:
+                    description: deduplicationKey identifies the active trigger episode
+                      and compiled plan this execution covers.
+                    type: string
+                  dryRun:
+                    description: dryRun is true when the executor suppressed all effectful
+                      actions.
+                    type: boolean
+                  executionID:
+                    description: executionID identifies the durable execution record.
+                    type: string
+                  groupCount:
+                    description: groupCount records how many groups produced execution
+                      evidence.
+                    format: int32
+                    type: integer
+                  message:
+                    description: message is a human-readable execution summary.
+                    type: string
+                  mode:
+                    description: mode is the flow mode observed at execution time.
+                    enum:
+                    - DryRun
+                    - Enforce
+                    type: string
+                  nodeReleaseCount:
+                    description: nodeReleaseCount records how many node release decisions
+                      were recorded.
+                    format: int32
+                    type: integer
+                  phase:
+                    description: phase summarizes the executor result.
+                    enum:
+                    - Running
+                    - Completed
+                    - Aborted
+                    - Failed
+                    - Skipped
+                    type: string
+                  planConfigHash:
+                    description: planConfigHash is the compiled plan hash executed.
+                    type: string
+                  reason:
+                    description: reason explains why the execution was started or
+                      skipped.
+                    type: string
+                  selectedUPSDevices:
+                    description: selectedUPSDevices is the sorted union of UPS devices
+                      that made the trigger eligible.
+                    items:
+                      type: string
+                    type: array
+                  startedAt:
+                    description: startedAt records when execution evidence recording
+                      began.
+                    format: date-time
+                    type: string
+                  triggerActive:
+                    description: triggerActive is true while the trigger episode represented
+                      by deduplicationKey remains eligible.
+                    type: boolean
+                  waveCount:
+                    description: waveCount records how many compiled waves were handed
+                      to the executor.
+                    format: int32
+                    type: integer
+                required:
+                - dryRun
+                - triggerActive
+                type: object
               observedGeneration:
                 description: observedGeneration is the last generation reconciled
                   by the controller.
@@ -4779,6 +5078,186 @@ spec:
                 - Completed
                 - Error
                 type: string
+              publishedArtifact:
+                description: publishedArtifact is the structured planner artifact
+                  published for subscribers.
+                properties:
+                  diagrams:
+                    description: diagrams are deterministic renderings generated from
+                      graph.
+                    properties:
+                      d2:
+                        description: d2 is the D2 rendering.
+                        type: string
+                      graphvizDOT:
+                        description: graphvizDOT is the Graphviz DOT rendering.
+                        type: string
+                      mermaid:
+                        description: mermaid is the Mermaid flowchart rendering.
+                        type: string
+                    type: object
+                  explanations:
+                    description: explanations record planner and edge-level "why"
+                      statements.
+                    items:
+                      description: PlannerExplanationStatus is a publishable planner
+                        "why" statement.
+                      properties:
+                        id:
+                          description: id is the stable explanation id.
+                          type: string
+                        message:
+                          description: message is the human-readable explanation.
+                          type: string
+                        reason:
+                          description: reason is a machine-readable explanation reason.
+                          type: string
+                        subject:
+                          description: subject identifies the graph edge, wave, or
+                            planner object explained.
+                          type: string
+                      required:
+                      - id
+                      - message
+                      type: object
+                    type: array
+                  graph:
+                    description: graph is the normalized dependency graph.
+                    properties:
+                      edges:
+                        description: edges are directed dependencies from from to
+                          to.
+                        items:
+                          description: PlannerGraphEdgeStatus is one normalized graph
+                            edge.
+                          properties:
+                            explanation:
+                              description: explanation is the stable publishable reason
+                                for this edge.
+                              type: string
+                            from:
+                              description: from is the source graph vertex id.
+                              type: string
+                            id:
+                              description: id is the stable graph edge id.
+                              type: string
+                            provenance:
+                              description: provenance records whether the edge was
+                                declared, derived, or policy-produced.
+                              type: string
+                            relation:
+                              description: relation is the planner relation that produced
+                                this edge.
+                              type: string
+                            sources:
+                              description: sources identify the declarative fields
+                                that produced this edge.
+                              items:
+                                description: PlannerGraphSourceRefStatus identifies
+                                  a declarative source for a graph edge.
+                                properties:
+                                  field:
+                                    description: field identifies the source input
+                                      field.
+                                    type: string
+                                  kind:
+                                    description: kind identifies the source input
+                                      kind.
+                                    type: string
+                                  name:
+                                    description: name identifies the source input
+                                      object or item.
+                                    type: string
+                                type: object
+                              type: array
+                            to:
+                              description: to is the destination graph vertex id.
+                              type: string
+                          required:
+                          - from
+                          - id
+                          - to
+                          type: object
+                        type: array
+                      vertices:
+                        description: vertices are graph nodes.
+                        items:
+                          description: PlannerGraphVertexStatus is one normalized
+                            graph vertex.
+                          properties:
+                            action:
+                              description: action is the compiled shutdown action
+                                associated with the vertex.
+                              type: string
+                            id:
+                              description: id is the stable graph vertex id.
+                              type: string
+                            kind:
+                              description: kind identifies the source vertex kind.
+                              type: string
+                            label:
+                              description: label is the human-readable vertex label.
+                              type: string
+                            phase:
+                              description: phase is the shutdown phase hint, when
+                                present.
+                              format: int32
+                              type: integer
+                            shutdownTier:
+                              description: shutdownTier is the effective numbered
+                                shutdown tier, when present.
+                              format: int32
+                              type: integer
+                            targetSummary:
+                              description: targetSummary summarizes selected targets
+                                without storing bulky object lists.
+                              type: string
+                          required:
+                          - id
+                          type: object
+                        type: array
+                    type: object
+                  startupWaves:
+                    description: startupWaves is the advisory reverse-order projection
+                      for subscriber-owned recovery.
+                    items:
+                      description: CompiledShutdownWave is the status-visible execution
+                        form of shutdown groups.
+                      properties:
+                        cumulativeDuration:
+                          description: cumulativeDuration is the expected elapsed
+                            time through this wave.
+                          type: string
+                        duration:
+                          description: duration is the maximum expected duration of
+                            any group in this wave.
+                          type: string
+                        groups:
+                          description: groups are the shutdown group names in this
+                            wave.
+                          items:
+                            type: string
+                          type: array
+                        index:
+                          description: index is the zero-based wave order.
+                          format: int32
+                          type: integer
+                        phase:
+                          description: phase is the phase hint shared by this wave,
+                            when one was present.
+                          format: int32
+                          type: integer
+                        shutdownTier:
+                          description: shutdownTier is the numbered tier shared by
+                            this wave, when tier policy assigned one.
+                          format: int32
+                          type: integer
+                      required:
+                      - groups
+                      - index
+                      type: object
+                    type: array
+                type: object
               resolvedInputHash:
                 description: resolvedInputHash identifies the declarative inventory
                   and UPS capability inputs used by the compiled plan.
@@ -4787,6 +5266,149 @@ spec:
                 description: topologyHash identifies the compiled declarative power
                   and communication topology.
                 type: string
+              triggerEvaluation:
+                description: triggerEvaluation is the most recent trigger evaluation
+                  against UPS telemetry status.
+                properties:
+                  decisions:
+                    description: decisions records one decision per configured trigger.
+                    items:
+                      description: ShutdownTriggerDecisionStatus records the evaluation
+                        result for one trigger.
+                      properties:
+                        eligible:
+                          description: eligible is true when the telemetry condition
+                            is true and hold-time gating has elapsed.
+                          type: boolean
+                        eligibleAt:
+                          description: eligibleAt records when the hold duration is
+                            satisfied.
+                          format: date-time
+                          type: string
+                        holdStartedAt:
+                          description: holdStartedAt records when this trigger/device
+                            condition first became true.
+                          format: date-time
+                          type: string
+                        matched:
+                          description: matched is true when the telemetry condition
+                            is currently true before hold-time gating.
+                          type: boolean
+                        reason:
+                          description: reason explains the decision.
+                          type: string
+                        selectedUPSDevices:
+                          description: selectedUPSDevices names UPS devices matched
+                            by this trigger.
+                          items:
+                            type: string
+                          type: array
+                        triggerID:
+                          description: triggerID is the controller-generated stable
+                            identifier for this trigger position.
+                          type: string
+                        type:
+                          description: type is the trigger kind.
+                          enum:
+                          - OnBattery
+                          - LowBattery
+                          - RuntimeBelow
+                          - ChargeBelow
+                          - TelemetryStale
+                          type: string
+                      required:
+                      - eligible
+                      - matched
+                      type: object
+                    type: array
+                  diagnostics:
+                    description: diagnostics records non-fatal warnings or trigger
+                      definition errors surfaced by evaluation.
+                    items:
+                      description: ShutdownTriggerDiagnosticStatus records a trigger-evaluation
+                        warning or error.
+                      properties:
+                        message:
+                          description: message is the human-readable diagnostic.
+                          type: string
+                        reason:
+                          description: reason is a machine-readable diagnostic reason.
+                          type: string
+                        severity:
+                          description: severity is Warning or Error.
+                          type: string
+                        subject:
+                          description: subject identifies the affected trigger or
+                            UPS device.
+                          type: string
+                      required:
+                      - message
+                      - reason
+                      - severity
+                      type: object
+                    type: array
+                  eligible:
+                    description: eligible is true when at least one trigger is eligible
+                      to proceed to the executor boundary.
+                    type: boolean
+                  matchedTriggerCount:
+                    description: matchedTriggerCount records how many triggers matched
+                      telemetry before hold-time gating.
+                    format: int32
+                    type: integer
+                  mode:
+                    description: mode is the flow mode at evaluation time.
+                    enum:
+                    - DryRun
+                    - Enforce
+                    type: string
+                  observedAt:
+                    description: observedAt is the controller-supplied time used for
+                      the evaluation.
+                    format: date-time
+                    type: string
+                  planConfigHash:
+                    description: planConfigHash is the compiled plan hash evaluated
+                      with this trigger tick.
+                    type: string
+                  reason:
+                    description: reason is the high-level evaluation reason.
+                    type: string
+                  selectedUPSDevices:
+                    description: selectedUPSDevices is the sorted union of UPS devices
+                      selected by eligible triggers.
+                    items:
+                      type: string
+                    type: array
+                required:
+                - eligible
+                type: object
+              triggerHoldStates:
+                description: triggerHoldStates persists compact hold timers for triggers
+                  with spec.triggers[].for.
+                items:
+                  description: ShutdownTriggerHoldStateStatus persists one active
+                    trigger hold timer.
+                  properties:
+                    startedAt:
+                      description: startedAt records when the condition first became
+                        true.
+                      format: date-time
+                      type: string
+                    triggerID:
+                      description: triggerID identifies the trigger whose condition
+                        is being held.
+                      type: string
+                    upsDevice:
+                      description: upsDevice is the UPSDevice name whose condition
+                        is being held.
+                      type: string
+                  required:
+                  - startedAt
+                  - triggerID
+                  - upsDevice
+                  type: object
+                type: array
             type: object
         required:
         - spec
@@ -5042,8 +5664,8 @@ spec:
                 - namespace
                 type: object
               displayName:
-                description: displayName is a human-readable name for dashboards and
-                  events.
+                description: displayName is a human-readable name for events and published
+                  artifacts.
                 type: string
               driver:
                 description: |-
@@ -5387,7 +6009,23 @@ rules:
   verbs:
   - get
   - list
+  - patch
+  - update
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/eviction
+  verbs:
+  - create
 - apiGroups:
   - apps
   resources:
@@ -5399,6 +6037,26 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - replicasets
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - argoproj.io
+  resources:
+  - workflows
+  verbs:
+  - create
+  - get
+  - list
   - watch
 - apiGroups:
   - networking.k8s.io
@@ -5511,7 +6169,14 @@ rules:
   resources:
   - nodepoweragents
   verbs:
-  - '*'
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - power.zalud.io
   resources:
@@ -5582,7 +6247,14 @@ rules:
   resources:
   - nutservers
   verbs:
-  - '*'
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - power.zalud.io
   resources:
@@ -5653,7 +6325,14 @@ rules:
   resources:
   - powerinfrastructures
   verbs:
-  - '*'
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - power.zalud.io
   resources:
@@ -5724,7 +6403,14 @@ rules:
   resources:
   - powerinventoryedges
   verbs:
-  - '*'
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - power.zalud.io
   resources:
@@ -5795,7 +6481,14 @@ rules:
   resources:
   - powerinventorynodes
   verbs:
-  - '*'
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - power.zalud.io
   resources:
@@ -5866,7 +6559,14 @@ rules:
   resources:
   - powermanagementclusters
   verbs:
-  - '*'
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - power.zalud.io
   resources:
@@ -5937,7 +6637,14 @@ rules:
   resources:
   - shutdownflows
   verbs:
-  - '*'
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - power.zalud.io
   resources:
@@ -6008,7 +6715,14 @@ rules:
   resources:
   - upscapabilityprofiles
   verbs:
-  - '*'
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - power.zalud.io
   resources:
@@ -6079,7 +6793,14 @@ rules:
   resources:
   - upsdevices
   verbs:
-  - '*'
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - power.zalud.io
   resources:
@@ -6222,6 +6943,11 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  annotations:
+    checkov.io/skip1: CKV_K8S_43=Base manager image is replaced by Kustomize, release
+      workflows, or GitOps overlays; production deployments use immutable digests.
+    checkov.io/skip2: CKV_K8S_38=The controller manager requires a Kubernetes API
+      service account token to reconcile CRDs and owned resources.
   labels:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: nut-operator
@@ -6242,6 +6968,7 @@ spec:
         app.kubernetes.io/name: nut-operator
         control-plane: controller-manager
     spec:
+      automountServiceAccountToken: true
       containers:
       - args:
         - --metrics-bind-address=:8443
@@ -6251,6 +6978,7 @@ spec:
         command:
         - /manager
         image: ghcr.io/michaelzalud18/nut-operator:main
+        imagePullPolicy: Always
         livenessProbe:
           httpGet:
             path: /healthz
@@ -6345,6 +7073,50 @@ metadata:
   namespace: nut-operator-system
 spec:
   selfSigned: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: nut-operator
+  name: nut-operator-allow-metrics-traffic
+  namespace: nut-operator-system
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          metrics: enabled
+    ports:
+    - port: 8443
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nut-operator
+      control-plane: controller-manager
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: nut-operator
+  name: nut-operator-allow-webhook-traffic
+  namespace: nut-operator-system
+spec:
+  ingress:
+  - ports:
+    - port: 9443
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nut-operator
+      control-plane: controller-manager
+  policyTypes:
+  - Ingress
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration

@@ -103,24 +103,28 @@ type Target struct {
 
 // NodeRelease describes a terminal node-agent handoff candidate.
 type NodeRelease struct {
-	NodeName          string
-	NodePowerAgent    string
-	SignalPath        string
-	AgentReady        bool
-	ReadinessReason   string
-	ReadinessMessage  string
-	PodName           string
-	LastHeartbeatTime *time.Time
+	NodeName              string
+	NodePowerAgent        string
+	SignalPath            string
+	SignalSecretKey       string
+	SignalSecretName      string
+	SignalSecretNamespace string
+	AgentReady            bool
+	ReadinessReason       string
+	ReadinessMessage      string
+	PodName               string
+	LastHeartbeatTime     *time.Time
 }
 
 // Action is passed to an injected action runner for non-dry-run execution.
 type Action struct {
-	ExecutionID    string
-	ShutdownFlow   string
-	PlanConfigHash string
-	WaveIndex      int32
-	Group          Group
-	DryRun         bool
+	ExecutionID        string
+	ShutdownFlow       string
+	PlanConfigHash     string
+	SelectedUPSDevices []string
+	WaveIndex          int32
+	Group              Group
+	DryRun             bool
 }
 
 // ActionOutcome summarizes one action-runner result.
@@ -370,12 +374,13 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 			outcome = ActionOutcome{Outcome: OutcomeBlocked, Error: actionErr.Error()}
 		} else {
 			outcome, actionErr = e.Runner.RunAction(ctx, Action{
-				ExecutionID:    executionID,
-				ShutdownFlow:   input.ShutdownFlow,
-				PlanConfigHash: input.PlanConfigHash,
-				WaveIndex:      waveIndex,
-				Group:          group,
-				DryRun:         false,
+				ExecutionID:        executionID,
+				ShutdownFlow:       input.ShutdownFlow,
+				PlanConfigHash:     input.PlanConfigHash,
+				SelectedUPSDevices: append([]string(nil), input.SelectedUPSDevices...),
+				WaveIndex:          waveIndex,
+				Group:              group,
+				DryRun:             false,
 			})
 			if outcome.Outcome == "" && actionErr == nil {
 				outcome.Outcome = OutcomeSucceeded

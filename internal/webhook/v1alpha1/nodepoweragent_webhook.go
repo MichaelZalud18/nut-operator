@@ -20,6 +20,7 @@ import (
 	"context"
 	"path"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -31,6 +32,8 @@ import (
 // nolint:unused
 // log is for logging in this package.
 var nodepoweragentlog = logf.Log.WithName("nodepoweragent-resource")
+
+const defaultNodePowerAgentPriorityClassName = "system-node-critical"
 
 // SetupNodePowerAgentWebhookWithManager registers the webhook for NodePowerAgent in the manager.
 func SetupNodePowerAgentWebhookWithManager(mgr ctrl.Manager) error {
@@ -103,7 +106,36 @@ func defaultNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) {
 	if obj.Spec.Shutdown.RequireFreshTelemetry == nil {
 		obj.Spec.Shutdown.RequireFreshTelemetry = ptrBool(true)
 	}
+	defaultNodePowerAgentPlacement(obj)
 	defaultPodHardening(&obj.Spec.Hardening)
+}
+
+func defaultNodePowerAgentPlacement(obj *powerv1alpha1.NodePowerAgent) {
+	if obj.Spec.Placement.PriorityClassName == "" {
+		obj.Spec.Placement.PriorityClassName = defaultNodePowerAgentPriorityClassName
+	}
+	defaultTolerations := []corev1.Toleration{
+		{Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule},
+		{Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute},
+	}
+	for _, toleration := range defaultTolerations {
+		if !hasToleration(obj.Spec.Placement.Tolerations, toleration) {
+			obj.Spec.Placement.Tolerations = append(obj.Spec.Placement.Tolerations, toleration)
+		}
+	}
+}
+
+func hasToleration(tolerations []corev1.Toleration, candidate corev1.Toleration) bool {
+	for _, toleration := range tolerations {
+		if toleration.Key == candidate.Key &&
+			toleration.Operator == candidate.Operator &&
+			toleration.Value == candidate.Value &&
+			toleration.Effect == candidate.Effect &&
+			toleration.TolerationSeconds == candidate.TolerationSeconds {
+			return true
+		}
+	}
+	return false
 }
 
 func validateNodePowerAgentAdmission(obj *powerv1alpha1.NodePowerAgent) error {

@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -76,6 +77,19 @@ func validateIdentifierText(path *field.Path, value, purpose string) field.Error
 	}
 	if containsControlCharacter(value) {
 		return field.ErrorList{field.Invalid(path, value, "must not contain control characters")}
+	}
+	return nil
+}
+
+func validateAbsoluteFilePath(path *field.Path, value, purpose string) field.ErrorList {
+	if strings.TrimSpace(value) == "" {
+		return field.ErrorList{field.Required(path, purpose)}
+	}
+	if containsControlCharacter(value) {
+		return field.ErrorList{field.Invalid(path, value, "must not contain control characters")}
+	}
+	if !filepath.IsAbs(value) {
+		return field.ErrorList{field.Invalid(path, value, "must be absolute")}
 	}
 	return nil
 }

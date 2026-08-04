@@ -37,8 +37,15 @@ import (
 )
 
 const (
-	nodePowerAgentConfigFile = "nut.conf"
-	upsmonConfigFile         = "upsmon.conf"
+	nodePowerAgentConfigFile                        = "nut.conf"
+	nodePowerAgentProjectedSignalDirectory          = "/var/lib/power-agent/signals"
+	nodePowerAgentProjectedSignalPath               = nodePowerAgentProjectedSignalDirectory + "/$(POWER_NODE_NAME).json"
+	nodePowerAgentSignalReason                      = "upsmon-fsd"
+	nodePowerAgentSignalWriterPath                  = "/usr/local/bin/power-signal-writer"
+	nodePowerAgentSystemdPoweroffMethod             = "reboot-syscall"
+	nodePowerAgentDefaultPriorityClassName          = "system-node-critical"
+	nodePowerAgentDefaultTerminationGracePeriodSecs = 60
+	upsmonConfigFile                                = "upsmon.conf"
 )
 
 type renderedNodePowerAgent struct {
@@ -71,10 +78,8 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		return renderedNodePowerAgent{}, err
 	}
 
-	mode := nodePowerAgentMode(agent)
-	policy := nodePowerAgentActuatorPolicy(agent)
-	if mode == powerv1alpha1.NodePowerAgentModeActuate && policy == powerv1alpha1.ActuatorPolicySystemdPoweroff {
-		return renderedNodePowerAgent{}, fmt.Errorf("SystemdPoweroff actuator rendering is not implemented; only network monitoring, dry-run, and stub actuator modes are currently rendered")
+	if err := validateNodePowerAgentRenderSafety(agent); err != nil {
+		return renderedNodePowerAgent{}, err
 	}
 
 	upsmonImage, upsmonPullPolicy, err := nodePowerAgentUpsmonImage(agent, cluster)
@@ -110,6 +115,10 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 	if err != nil {
 		return renderedNodePowerAgent{}, err
 	}
+	signalSecret, err := r.ensureNodePowerAgentSignalSecret(ctx, agent, namespace)
+	if err != nil {
+		return renderedNodePowerAgent{}, err
+	}
 	networkPolicy, err := r.ensureNodePowerAgentNetworkPolicy(ctx, agent, namespace, egressRules)
 	if err != nil {
 		return renderedNodePowerAgent{}, err
@@ -123,6 +132,8 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		UpsmonPullPolicy:   upsmonPullPolicy,
 		ActuatorImage:      actuatorImage,
 		ActuatorPullPolicy: actuatorPullPolicy,
+		SignalSecretName:   signalSecret.Name,
+		SelectedUPSDevices: nodePowerAgentSelectedUPSDevices(targets),
 	})
 	if err != nil {
 		return renderedNodePowerAgent{}, err
@@ -151,6 +162,7 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 			{APIVersion: "v1", Kind: "ServiceAccount", Namespace: namespace, Name: serviceAccount.Name},
 			{APIVersion: "v1", Kind: "ConfigMap", Namespace: namespace, Name: configMap.Name, Hash: hashStringMap(configData)},
 			{APIVersion: "v1", Kind: "Secret", Namespace: namespace, Name: secret.Name, Hash: hashByteMap(secretData)},
+			{APIVersion: "v1", Kind: "Secret", Namespace: namespace, Name: signalSecret.Name},
 			{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: namespace, Name: networkPolicy.Name},
 			{APIVersion: "apps/v1", Kind: "DaemonSet", Namespace: namespace, Name: daemonSet.Name},
 		},
@@ -203,6 +215,28 @@ func nodePowerAgentActuatorPolicy(agent *powerv1alpha1.NodePowerAgent) powerv1al
 		return agent.Spec.Shutdown.ActuatorPolicy
 	}
 	return powerv1alpha1.ActuatorPolicyStub
+}
+
+func validateNodePowerAgentRenderSafety(agent *powerv1alpha1.NodePowerAgent) error {
+	if nodePowerAgentActuatorPolicy(agent) != powerv1alpha1.ActuatorPolicySystemdPoweroff {
+		return nil
+	}
+	if nodePowerAgentMode(agent) != powerv1alpha1.NodePowerAgentModeActuate {
+		return fmt.Errorf("SystemdPoweroff actuator rendering requires spec.mode Actuate")
+	}
+	approvalAnnotation := agent.Spec.Shutdown.ApprovalAnnotation
+	if approvalAnnotation == "" {
+		return fmt.Errorf("SystemdPoweroff actuator rendering requires spec.shutdown.approvalAnnotation")
+	}
+	if agent.Annotations[approvalAnnotation] != "true" {
+		return fmt.Errorf("SystemdPoweroff actuator rendering requires approval annotation %q=true", approvalAnnotation)
+	}
+	return nil
+}
+
+func nodePowerAgentRequiresHostPoweroff(agent *powerv1alpha1.NodePowerAgent) bool {
+	return nodePowerAgentMode(agent) == powerv1alpha1.NodePowerAgentModeActuate &&
+		nodePowerAgentActuatorPolicy(agent) == powerv1alpha1.ActuatorPolicySystemdPoweroff
 }
 
 func nodePowerAgentUpsmonImage(agent *powerv1alpha1.NodePowerAgent, cluster *powerv1alpha1.PowerManagementCluster) (string, corev1.PullPolicy, error) {
@@ -350,7 +384,7 @@ func renderNodePowerAgentConfig() map[string]string {
 func renderNodePowerAgentSecret(agent *powerv1alpha1.NodePowerAgent, targets []agentMonitorTarget) (map[string][]byte, error) {
 	var out strings.Builder
 	out.WriteString("MINSUPPLIES 1\n")
-	out.WriteString("SHUTDOWNCMD \"/bin/true\"\n")
+	fmt.Fprintf(&out, "SHUTDOWNCMD %s\n", shellQuotedNUTValue(nodePowerAgentSignalWriterPath))
 	fmt.Fprintf(&out, "POLLFREQ %d\n", durationSeconds(agent.Spec.Upsmon.PollFrequency, 15))
 	fmt.Fprintf(&out, "POLLFREQALERT %d\n", durationSeconds(agent.Spec.Upsmon.AlertPollFrequency, 5))
 	fmt.Fprintf(&out, "HOSTSYNC %d\n", durationSeconds(agent.Spec.Upsmon.HostSync, 15))
@@ -382,6 +416,26 @@ func renderNodePowerAgentSecret(agent *powerv1alpha1.NodePowerAgent, targets []a
 	return map[string][]byte{
 		upsmonConfigFile: []byte(out.String()),
 	}, nil
+}
+
+func nodePowerAgentSelectedUPSDevices(targets []agentMonitorTarget) []string {
+	names := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if target.UPSName != "" {
+			names = append(names, target.UPSName)
+		}
+	}
+	sort.Strings(names)
+	deduped := names[:0]
+	var previous string
+	for _, name := range names {
+		if name == previous {
+			continue
+		}
+		deduped = append(deduped, name)
+		previous = name
+	}
+	return deduped
 }
 
 func durationSeconds(duration *metav1.Duration, fallback int64) int64 {
@@ -458,6 +512,19 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentServiceAccount(ctx contex
 	return serviceAccount, err
 }
 
+func (r *NodePowerAgentReconciler) ensureNodePowerAgentSignalSecret(ctx context.Context, agent *powerv1alpha1.NodePowerAgent, namespace string) (*corev1.Secret, error) {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: nodePowerAgentSignalSecretName(agent), Namespace: namespace}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		secret.Labels = labelsForNodePowerAgent(agent)
+		secret.Type = corev1.SecretTypeOpaque
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
+		}
+		return controllerutil.SetControllerReference(agent, secret, r.Scheme)
+	})
+	return secret, err
+}
+
 func (r *NodePowerAgentReconciler) ensureNodePowerAgentNetworkPolicy(ctx context.Context, agent *powerv1alpha1.NodePowerAgent, namespace string, egressRules []networkingv1.NetworkPolicyEgressRule) (*networkingv1.NetworkPolicy, error) {
 	policy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: nodePowerAgentNetworkPolicyName(agent), Namespace: namespace}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, policy, func() error {
@@ -480,6 +547,8 @@ type nodePowerAgentDaemonSetSpec struct {
 	UpsmonPullPolicy   corev1.PullPolicy
 	ActuatorImage      string
 	ActuatorPullPolicy corev1.PullPolicy
+	SignalSecretName   string
+	SelectedUPSDevices []string
 }
 
 func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Context, agent *powerv1alpha1.NodePowerAgent, namespace string, spec nodePowerAgentDaemonSetSpec) (*appsv1.DaemonSet, error) {
@@ -493,20 +562,29 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 	}
 
 	labels := labelsForNodePowerAgent(agent)
+	hostPoweroff := nodePowerAgentRequiresHostPoweroff(agent)
 	daemonSet := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: nodePowerAgentDaemonSetName(agent), Namespace: namespace}}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, daemonSet, func() error {
 		daemonSet.Labels = labels
 		daemonSet.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+		daemonSet.Spec.UpdateStrategy = appsv1.DaemonSetUpdateStrategy{
+			Type: appsv1.RollingUpdateDaemonSetStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDaemonSet{
+				MaxUnavailable: ptrIntOrStringFromInt32(1),
+			},
+		}
 		daemonSet.Spec.Template.Labels = labels
 		daemonSet.Spec.Template.Annotations = map[string]string{
 			"power.zalud.io/config-hash": spec.ConfigHash,
 		}
 		daemonSet.Spec.Template.Spec.ServiceAccountName = spec.ServiceAccountName
 		daemonSet.Spec.Template.Spec.AutomountServiceAccountToken = ptrBool(false)
+		daemonSet.Spec.Template.Spec.HostPID = hostPoweroff
 		daemonSet.Spec.Template.Spec.NodeSelector = podNodeSelector
-		daemonSet.Spec.Template.Spec.Tolerations = agent.Spec.Placement.Tolerations
+		daemonSet.Spec.Template.Spec.Tolerations = nodePowerAgentTolerations(agent)
 		daemonSet.Spec.Template.Spec.Affinity = affinity
-		daemonSet.Spec.Template.Spec.PriorityClassName = agent.Spec.Placement.PriorityClassName
+		daemonSet.Spec.Template.Spec.PriorityClassName = nodePowerAgentPriorityClassName(agent)
+		daemonSet.Spec.Template.Spec.TerminationGracePeriodSeconds = ptrInt64(nodePowerAgentDefaultTerminationGracePeriodSecs)
 		daemonSet.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
 			RunAsNonRoot: ptrBool(true),
 			RunAsUser:    ptrInt64(65532),
@@ -542,6 +620,16 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				},
 			},
 			{
+				Name: "power-agent-signals",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName:  spec.SignalSecretName,
+						DefaultMode: ptrInt32(0440),
+						Optional:    ptrBool(true),
+					},
+				},
+			},
+			{
 				Name: "upsmon-run",
 				VolumeSource: corev1.VolumeSource{
 					EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: resource.NewQuantity(16*1024*1024, resource.BinarySI)},
@@ -557,6 +645,8 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				Args:            []string{"-D"},
 				Resources:       agent.Spec.Resources.Upsmon,
 				SecurityContext: restrictedContainerSecurityContext(),
+				ReadinessProbe:  upsmonReadinessProbe(),
+				Env:             nodePowerAgentSignalEnv(agent, spec.ConfigHash, spec.SelectedUPSDevices),
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "nut-client-config", MountPath: "/etc/nut/nut.conf", SubPath: nodePowerAgentConfigFile, ReadOnly: true},
 					{Name: "upsmon-config", MountPath: "/etc/nut/upsmon.conf", SubPath: upsmonConfigFile, ReadOnly: true},
@@ -581,11 +671,15 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 						},
 					},
 					{Name: "POWER_SIGNAL_PATH", Value: nodePowerAgentSignalPath(agent)},
+					{Name: "POWER_SIGNAL_PATHS", Value: nodePowerAgentSignalPath(agent) + "," + nodePowerAgentProjectedSignalPath},
 					{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
+					{Name: "POWER_POWEROFF_METHOD", Value: nodePowerAgentPoweroffMethod(agent)},
 				},
-				SecurityContext: restrictedContainerSecurityContext(),
+				SecurityContext: actuatorContainerSecurityContext(hostPoweroff),
+				ReadinessProbe:  actuatorReadinessProbe(),
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "power-agent-run", MountPath: "/run/power-agent"},
+					{Name: "power-agent-signals", MountPath: nodePowerAgentProjectedSignalDirectory, ReadOnly: true},
 				},
 			})
 		}
@@ -602,6 +696,117 @@ func restrictedContainerSecurityContext() *corev1.SecurityContext {
 			Drop: []corev1.Capability{"ALL"},
 		},
 	}
+}
+
+func actuatorContainerSecurityContext(hostPoweroff bool) *corev1.SecurityContext {
+	if !hostPoweroff {
+		return restrictedContainerSecurityContext()
+	}
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: ptrBool(false),
+		ReadOnlyRootFilesystem:   ptrBool(true),
+		Capabilities: &corev1.Capabilities{
+			Add:  []corev1.Capability{"SYS_BOOT"},
+			Drop: []corev1.Capability{"ALL"},
+		},
+		SeccompProfile: &corev1.SeccompProfile{
+			Type: corev1.SeccompProfileTypeUnconfined,
+		},
+	}
+}
+
+func upsmonReadinessProbe() *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			Exec: &corev1.ExecAction{
+				Command: []string{
+					"sh",
+					"-ec",
+					`test -r /etc/nut/upsmon.conf && awk '/^MONITOR[[:space:]]/ {print $2}' /etc/nut/upsmon.conf | while IFS= read -r target; do server="${target#*@}"; test "$server" != "$target"; upsc -l "$server" >/dev/null; done`,
+				},
+			},
+		},
+		InitialDelaySeconds: 5,
+		PeriodSeconds:       30,
+		TimeoutSeconds:      5,
+		FailureThreshold:    3,
+	}
+}
+
+func actuatorReadinessProbe() *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			Exec: &corev1.ExecAction{
+				Command: []string{"/node-actuator", "--version"},
+			},
+		},
+		InitialDelaySeconds: 5,
+		PeriodSeconds:       30,
+		TimeoutSeconds:      5,
+		FailureThreshold:    3,
+	}
+}
+
+func nodePowerAgentSignalEnv(agent *powerv1alpha1.NodePowerAgent, configHash string, selectedUPSDevices []string) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "POWER_AGENT_MODE", Value: string(nodePowerAgentMode(agent))},
+		{
+			Name: "POWER_NODE_NAME",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"},
+			},
+		},
+		{Name: "POWER_SIGNAL_PATH", Value: nodePowerAgentSignalPath(agent)},
+		{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
+		{Name: "POWER_PLAN_CONFIG_HASH", Value: configHash},
+		{Name: "POWER_SELECTED_UPS_DEVICES", Value: strings.Join(selectedUPSDevices, ",")},
+		{Name: "POWER_SHUTDOWN_FLOW", Value: nodePowerAgentShutdownFlowName(agent)},
+		{Name: "POWER_SIGNAL_REASON", Value: nodePowerAgentSignalReason},
+	}
+}
+
+func nodePowerAgentTolerations(agent *powerv1alpha1.NodePowerAgent) []corev1.Toleration {
+	tolerations := []corev1.Toleration{
+		{Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule},
+		{Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute},
+	}
+	for _, toleration := range agent.Spec.Placement.Tolerations {
+		if !hasToleration(tolerations, toleration) {
+			tolerations = append(tolerations, toleration)
+		}
+	}
+	return tolerations
+}
+
+func hasToleration(tolerations []corev1.Toleration, candidate corev1.Toleration) bool {
+	for _, toleration := range tolerations {
+		if toleration.Key == candidate.Key &&
+			toleration.Operator == candidate.Operator &&
+			toleration.Value == candidate.Value &&
+			toleration.Effect == candidate.Effect &&
+			toleration.TolerationSeconds == candidate.TolerationSeconds {
+			return true
+		}
+	}
+	return false
+}
+
+func nodePowerAgentPriorityClassName(agent *powerv1alpha1.NodePowerAgent) string {
+	if agent.Spec.Placement.PriorityClassName != "" {
+		return agent.Spec.Placement.PriorityClassName
+	}
+	return nodePowerAgentDefaultPriorityClassName
+}
+
+func nodePowerAgentShutdownFlowName(agent *powerv1alpha1.NodePowerAgent) string {
+	if agent.Spec.ShutdownFlowRef != nil && agent.Spec.ShutdownFlowRef.Name != "" {
+		return agent.Spec.ShutdownFlowRef.Name
+	}
+	return "upsmon-local"
+}
+
+func nodePowerAgentPoweroffMethod(_ *powerv1alpha1.NodePowerAgent) string {
+	return nodePowerAgentSystemdPoweroffMethod
 }
 
 func durationString(duration *metav1.Duration, fallback string) string {
@@ -868,6 +1073,14 @@ func nodePowerAgentConfigMapName(agent *powerv1alpha1.NodePowerAgent) string {
 
 func nodePowerAgentSecretName(agent *powerv1alpha1.NodePowerAgent) string {
 	return agent.Name + "-upsmon-config"
+}
+
+func nodePowerAgentSignalSecretName(agent *powerv1alpha1.NodePowerAgent) string {
+	return agent.Name + "-node-signals"
+}
+
+func nodePowerAgentSignalKey(nodeName string) string {
+	return nodeName + ".json"
 }
 
 func nodePowerAgentServiceAccountName(agent *powerv1alpha1.NodePowerAgent) string {

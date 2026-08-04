@@ -199,7 +199,18 @@ func validatePowerStorage(path *field.Path, storage powerv1alpha1.PowerStorageSp
 		errs = append(errs, validatePositiveDuration(path.Child("retention").Child("events"), storage.Retention.Events)...)
 		errs = append(errs, validatePositiveDuration(path.Child("retention").Child("telemetry"), storage.Retention.Telemetry)...)
 	}
+	errs = append(errs, validateAuditSpool(path.Child("auditSpool"), storage.AuditSpool, storage.Mode)...)
 	return errs
+}
+
+func validateAuditSpool(path *field.Path, spool powerv1alpha1.AuditSpoolSpec, mode powerv1alpha1.PowerStorageMode) field.ErrorList {
+	if !spool.Enabled {
+		return nil
+	}
+	if mode == powerv1alpha1.PowerStorageDisabled {
+		return field.ErrorList{field.Invalid(path.Child("enabled"), spool.Enabled, "requires CNPG or ExternalPostgres storage")}
+	}
+	return validateAbsoluteFilePath(path.Child("path"), spool.Path, "required when audit spool is enabled")
 }
 
 func validatePowerShutdownTiers(path *field.Path, policy powerv1alpha1.PowerShutdownTierPolicySpec) field.ErrorList {

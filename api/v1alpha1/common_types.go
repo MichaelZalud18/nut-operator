@@ -198,9 +198,27 @@ type PowerStorageSpec struct {
 	// +optional
 	CNPG *CNPGStorageSpec `json:"cnpg,omitempty"`
 
+	// auditSpool enables a local JSONL fallback for audit records generated while PostgreSQL is unavailable during shutdown execution.
+	// The configured path must be backed by a durable volume supplied by the deployment.
+	// +optional
+	AuditSpool AuditSpoolSpec `json:"auditSpool,omitempty"`
+
 	// retention controls how long audit and telemetry records are retained.
 	// +optional
 	Retention *AuditRetentionSpec `json:"retention,omitempty"`
+}
+
+// AuditSpoolSpec configures a local fallback journal for shutdown-time audit records.
+type AuditSpoolSpec struct {
+	// enabled allows execution to continue when PostgreSQL writes fail after the audit store was opened.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// path is the absolute in-container directory where JSONL spool records are appended.
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	Path string `json:"path,omitempty"`
 }
 
 // ExternalPostgresStorageSpec configures an existing PostgreSQL database.

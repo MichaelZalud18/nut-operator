@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -9,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
 var version = "dev"
@@ -17,6 +18,9 @@ const (
 	policyDisabled        = "Disabled"
 	policyStub            = "Stub"
 	policySystemdPoweroff = "SystemdPoweroff"
+
+	poweroffMethodCommand       = "command"
+	poweroffMethodRebootSyscall = "reboot-syscall"
 )
 
 func main() {
@@ -44,13 +48,15 @@ func main() {
 		Policy:          policy,
 		NodeName:        env("POWER_NODE_NAME", ""),
 		SignalPath:      env("POWER_SIGNAL_PATH", "/run/power-agent/shutdown.json"),
+		SignalPaths:     signalPaths(env("POWER_SIGNAL_PATHS", ""), env("POWER_SIGNAL_PATH", "/run/power-agent/shutdown.json")),
 		SignalTTL:       parseDuration(env("POWER_SIGNAL_TTL", "2m"), 2*time.Minute),
 		Interval:        parseDuration(env("POWER_ACTUATOR_INTERVAL", "5s"), 5*time.Second),
+		PoweroffMethod:  env("POWER_POWEROFF_METHOD", poweroffMethodRebootSyscall),
 		PoweroffCommand: env("POWER_POWEROFF_COMMAND", "/usr/bin/systemctl"),
 		PoweroffArgs:    commandArgs(env("POWER_POWEROFF_ARGS", "poweroff")),
 	}
 
-	logger.Printf("starting mode=%s policy=%s node=%s signalPath=%s signalTTL=%s", config.Mode, config.Policy, config.NodeName, config.SignalPath, config.SignalTTL)
+	logger.Printf("starting mode=%s policy=%s node=%s signalPaths=%s signalTTL=%s poweroffMethod=%s", config.Mode, config.Policy, config.NodeName, strings.Join(config.SignalPaths, ","), config.SignalTTL, config.PoweroffMethod)
 
 	switch policy {
 	case policyDisabled, "":
@@ -73,31 +79,15 @@ type actuatorConfig struct {
 	Policy          string
 	NodeName        string
 	SignalPath      string
+	SignalPaths     []string
 	SignalTTL       time.Duration
 	Interval        time.Duration
+	PoweroffMethod  string
 	PoweroffCommand string
 	PoweroffArgs    []string
 }
 
-type shutdownSignal struct {
-	DryRun             bool     `json:"dryRun"`
-	ExecutionID        string   `json:"executionID"`
-	NodeName           string   `json:"nodeName"`
-	PlanConfigHash     string   `json:"planConfigHash"`
-	Reason             string   `json:"reason"`
-	SelectedUPSDevices []string `json:"selectedUPSDevices"`
-	ShutdownFlow       string   `json:"shutdownFlow"`
-	Timestamp          string   `json:"timestamp"`
-}
-
-type signalStatus struct {
-	Active  bool
-	Reason  string
-	Key     string
-	Payload shutdownSignal
-}
-
-type actuatorFunc func(*log.Logger, actuatorConfig, signalStatus) error
+type actuatorFunc func(*log.Logger, actuatorConfig, nodeagent.SignalStatus) error
 
 func env(key, fallback string) string {
 	value := os.Getenv(key)
@@ -122,6 +112,35 @@ func commandArgs(value string) []string {
 	return strings.Fields(value)
 }
 
+func signalPaths(value, fallback string) []string {
+	if value == "" {
+		if fallback == "" {
+			return nil
+		}
+		return []string{fallback}
+	}
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ':' || r == '\n' || r == '\t' || r == ' '
+	})
+	out := make([]string, 0, len(fields))
+	seen := map[string]struct{}{}
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		if _, exists := seen[field]; exists {
+			continue
+		}
+		seen[field] = struct{}{}
+		out = append(out, field)
+	}
+	if len(out) == 0 && fallback != "" {
+		return []string{fallback}
+	}
+	return out
+}
+
 func block(logger *log.Logger, reason string) {
 	logger.Printf("blocking forever: %s", reason)
 	select {}
@@ -133,75 +152,52 @@ func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFun
 	seen := map[string]struct{}{}
 
 	for {
-		status := inspectSignal(config.SignalPath, config.SignalTTL, time.Now().UTC(), config.NodeName)
-		if status.Active {
-			if _, alreadySeen := seen[status.Key]; !alreadySeen {
-				seen[status.Key] = struct{}{}
-				if err := actuate(logger, config, status); err != nil {
-					logger.Printf("actuator rejected signal executionID=%s node=%s reason=%s error=%v", status.Payload.ExecutionID, status.Payload.NodeName, status.Reason, err)
+		for _, path := range config.SignalPaths {
+			status := nodeagent.InspectSignal(path, config.SignalTTL, time.Now().UTC(), config.NodeName)
+			if status.Active {
+				if _, alreadySeen := seen[status.Key]; !alreadySeen {
+					seen[status.Key] = struct{}{}
+					if err := actuate(logger, config, status); err != nil {
+						logger.Printf("actuator rejected signal path=%s executionID=%s node=%s reason=%s error=%v", status.Path, status.Payload.ExecutionID, status.Payload.NodeName, status.Reason, err)
+					}
 				}
+			} else if status.Reason != "SignalMissing" {
+				logger.Printf("ignoring shutdown signal path=%s reason=%s", status.Path, status.Reason)
 			}
-		} else if status.Reason != "SignalMissing" {
-			logger.Printf("ignoring shutdown signal path=%s reason=%s", config.SignalPath, status.Reason)
 		}
 		<-ticker.C
 	}
 }
 
-func inspectSignal(path string, ttl time.Duration, now time.Time, expectedNode string) signalStatus {
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return signalStatus{Reason: "SignalMissing"}
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return signalStatus{Reason: "SignalUnreadable"}
-	}
-	var payload shutdownSignal
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return signalStatus{Reason: "SignalInvalidJSON"}
-	}
-	if payload.ExecutionID == "" || payload.NodeName == "" || payload.PlanConfigHash == "" || payload.ShutdownFlow == "" || payload.Timestamp == "" {
-		return signalStatus{Reason: "SignalMissingRequiredFields"}
-	}
-	if expectedNode != "" && payload.NodeName != expectedNode {
-		return signalStatus{Reason: "SignalWrongNode", Payload: payload}
-	}
-	timestamp, err := time.Parse(time.RFC3339Nano, payload.Timestamp)
-	if err != nil {
-		return signalStatus{Reason: "SignalInvalidTimestamp", Payload: payload}
-	}
-	if ttl > 0 {
-		if now.Sub(timestamp) > ttl {
-			return signalStatus{Reason: "SignalStale", Payload: payload}
-		}
-		if timestamp.Sub(now) > ttl {
-			return signalStatus{Reason: "SignalFromFuture", Payload: payload}
-		}
-	}
-	return signalStatus{
-		Active:  true,
-		Reason:  "SignalAccepted",
-		Key:     payload.ExecutionID + ":" + payload.NodeName + ":" + payload.PlanConfigHash + ":" + payload.Timestamp,
-		Payload: payload,
-	}
-}
-
-func stubActuator(logger *log.Logger, _ actuatorConfig, status signalStatus) error {
+func stubActuator(logger *log.Logger, _ actuatorConfig, status nodeagent.SignalStatus) error {
 	logger.Printf("stub actuator accepted shutdown signal executionID=%s node=%s flow=%s dryRun=%t", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow, status.Payload.DryRun)
 	return nil
 }
 
-func systemdPoweroffActuator(logger *log.Logger, config actuatorConfig, status signalStatus) error {
+func systemdPoweroffActuator(logger *log.Logger, config actuatorConfig, status nodeagent.SignalStatus) error {
 	if status.Payload.DryRun {
 		logger.Printf("systemd actuator observed dry-run signal executionID=%s node=%s", status.Payload.ExecutionID, status.Payload.NodeName)
 		return nil
 	}
-	logger.Printf("systemd actuator executing poweroff command executionID=%s node=%s flow=%s", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow)
-	return runPoweroff(config.PoweroffCommand, config.PoweroffArgs)
+	logger.Printf("systemd actuator executing poweroff method=%s executionID=%s node=%s flow=%s", config.PoweroffMethod, status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow)
+	return runPoweroff(config)
 }
 
-func runPoweroff(command string, args []string) error {
+func runPoweroff(config actuatorConfig) error {
+	switch config.PoweroffMethod {
+	case "", poweroffMethodRebootSyscall:
+		if err := rebootPoweroff(); err != nil {
+			return fmt.Errorf("run reboot poweroff syscall: %w", err)
+		}
+		return nil
+	case poweroffMethodCommand:
+		return runPoweroffCommand(config.PoweroffCommand, config.PoweroffArgs)
+	default:
+		return fmt.Errorf("unsupported POWER_POWEROFF_METHOD %q", config.PoweroffMethod)
+	}
+}
+
+func runPoweroffCommand(command string, args []string) error {
 	if command == "" {
 		return fmt.Errorf("POWER_POWEROFF_COMMAND is required")
 	}

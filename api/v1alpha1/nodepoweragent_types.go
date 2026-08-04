@@ -171,8 +171,8 @@ type NodePowerAgentImages struct {
 	// +optional
 	Upsmon ImageReference `json:"upsmon,omitempty"`
 
-	// actuator is the host-actuation image. Stub mode must run without privileged
-	// access; real host shutdown support is an explicit future boundary.
+	// actuator is the host-actuation image. Stub mode runs without host access; real host
+	// shutdown is rendered only after explicit actuation approval.
 	// +optional
 	Actuator ImageReference `json:"actuator,omitempty"`
 }

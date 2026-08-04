@@ -20,6 +20,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	corev1 "k8s.io/api/core/v1"
+
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 )
 
@@ -47,6 +49,15 @@ var _ = Describe("NodePowerAgent Webhook", func() {
 			Expect(obj.Spec.Shutdown.SignalPath).To(Equal("/run/power-agent/shutdown.json"))
 			Expect(obj.Spec.Shutdown.RequireFreshTelemetry).NotTo(BeNil())
 			Expect(*obj.Spec.Shutdown.RequireFreshTelemetry).To(BeTrue())
+			Expect(obj.Spec.Placement.PriorityClassName).To(Equal("system-node-critical"))
+			Expect(obj.Spec.Placement.Tolerations).To(ContainElement(corev1.Toleration{
+				Operator: corev1.TolerationOpExists,
+				Effect:   corev1.TaintEffectNoSchedule,
+			}))
+			Expect(obj.Spec.Placement.Tolerations).To(ContainElement(corev1.Toleration{
+				Operator: corev1.TolerationOpExists,
+				Effect:   corev1.TaintEffectNoExecute,
+			}))
 			Expect(obj.Spec.Hardening.SeccompProfileType).To(Equal("RuntimeDefault"))
 		})
 	})

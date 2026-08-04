@@ -5,61 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
+
+	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
-func TestInspectSignalAcceptsFreshStructuredSignal(t *testing.T) {
-	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
-	path := writeSignal(t, `{
-		"dryRun": true,
-		"executionID": "exec-1",
-		"nodeName": "node-a",
-		"planConfigHash": "hash-1",
-		"reason": "testing",
-		"selectedUPSDevices": ["ups-a"],
-		"shutdownFlow": "flow-a",
-		"timestamp": "`+now.Format(time.RFC3339Nano)+`"
-	}`)
-
-	status := inspectSignal(path, 2*time.Minute, now.Add(30*time.Second), "node-a")
-
-	if !status.Active {
-		t.Fatalf("expected active signal, got reason %q", status.Reason)
-	}
-	if status.Reason != "SignalAccepted" {
-		t.Fatalf("expected SignalAccepted, got %q", status.Reason)
-	}
-	if status.Key == "" {
-		t.Fatal("expected stable signal key")
-	}
-	if status.Payload.ExecutionID != "exec-1" {
-		t.Fatalf("expected payload executionID exec-1, got %q", status.Payload.ExecutionID)
-	}
-}
-
-func TestInspectSignalRejectsStaleWrongNodeAndInvalidJSON(t *testing.T) {
-	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
-	validPayload := `{
-		"dryRun": false,
-		"executionID": "exec-1",
-		"nodeName": "node-a",
-		"planConfigHash": "hash-1",
-		"shutdownFlow": "flow-a",
-		"timestamp": "` + now.Format(time.RFC3339Nano) + `"
-	}`
-
-	if status := inspectSignal(writeSignal(t, validPayload), 2*time.Minute, now.Add(3*time.Minute), "node-a"); status.Reason != "SignalStale" {
-		t.Fatalf("expected SignalStale, got %q", status.Reason)
-	}
-	if status := inspectSignal(writeSignal(t, validPayload), 2*time.Minute, now, "node-b"); status.Reason != "SignalWrongNode" {
-		t.Fatalf("expected SignalWrongNode, got %q", status.Reason)
-	}
-	if status := inspectSignal(writeSignal(t, `{`), 2*time.Minute, now, "node-a"); status.Reason != "SignalInvalidJSON" {
-		t.Fatalf("expected SignalInvalidJSON, got %q", status.Reason)
-	}
-}
-
-func TestRunPoweroffExecutesCommand(t *testing.T) {
+func TestRunPoweroffExecutesCommandMethod(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker")
 	script := filepath.Join(dir, "poweroff")
@@ -67,7 +17,11 @@ func TestRunPoweroffExecutesCommand(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 
-	if err := runPoweroff(script, []string{"requested", marker}); err != nil {
+	if err := runPoweroff(actuatorConfig{
+		PoweroffMethod:  poweroffMethodCommand,
+		PoweroffCommand: script,
+		PoweroffArgs:    []string{"requested", marker},
+	}); err != nil {
 		t.Fatalf("runPoweroff returned error: %v", err)
 	}
 	data, err := os.ReadFile(marker)
@@ -79,10 +33,39 @@ func TestRunPoweroffExecutesCommand(t *testing.T) {
 	}
 }
 
+func TestRunPoweroffUsesSyscallMethod(t *testing.T) {
+	called := false
+	previous := rebootPoweroff
+	rebootPoweroff = func() error {
+		called = true
+		return nil
+	}
+	t.Cleanup(func() {
+		rebootPoweroff = previous
+	})
+
+	if err := runPoweroff(actuatorConfig{PoweroffMethod: poweroffMethodRebootSyscall}); err != nil {
+		t.Fatalf("runPoweroff returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("expected reboot poweroff syscall path")
+	}
+}
+
+func TestSignalPathsParsesUniquePaths(t *testing.T) {
+	paths := signalPaths("/run/power-agent/shutdown.json,/var/lib/power-agent/signals/node-a.json /run/power-agent/shutdown.json", "")
+	if len(paths) != 2 {
+		t.Fatalf("expected two unique signal paths, got %#v", paths)
+	}
+	if paths[0] != "/run/power-agent/shutdown.json" || paths[1] != "/var/lib/power-agent/signals/node-a.json" {
+		t.Fatalf("unexpected signal paths: %#v", paths)
+	}
+}
+
 func TestSystemdPoweroffActuatorSkipsDryRunSignal(t *testing.T) {
-	status := signalStatus{
+	status := nodeagent.SignalStatus{
 		Active: true,
-		Payload: shutdownSignal{
+		Payload: nodeagent.ShutdownSignal{
 			DryRun:       true,
 			ExecutionID:  "exec-1",
 			NodeName:     "node-a",
@@ -94,13 +77,4 @@ func TestSystemdPoweroffActuatorSkipsDryRunSignal(t *testing.T) {
 	if err := systemdPoweroffActuator(log.New(os.Stdout, "", 0), config, status); err != nil {
 		t.Fatalf("expected dry-run signal to skip poweroff command, got %v", err)
 	}
-}
-
-func writeSignal(t *testing.T, payload string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "shutdown.json")
-	if err := os.WriteFile(path, []byte(payload), 0644); err != nil {
-		t.Fatalf("write signal: %v", err)
-	}
-	return path
 }

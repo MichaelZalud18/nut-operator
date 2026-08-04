@@ -72,6 +72,29 @@ func TestResolveExternalPostgresStorage(t *testing.T) {
 	}
 }
 
+func TestResolveAuditSpool(t *testing.T) {
+	backend, err := Resolve(powerv1alpha1.PowerStorageSpec{
+		Mode: powerv1alpha1.PowerStorageExternalPostgres,
+		ExternalPostgres: &powerv1alpha1.ExternalPostgresStorageSpec{
+			DSNSecretKeyRef: powerv1alpha1.SecretKeyReference{
+				Namespace: "power-system",
+				Name:      "power-postgres",
+				Key:       "dsn",
+			},
+		},
+		AuditSpool: powerv1alpha1.AuditSpoolSpec{
+			Enabled: true,
+			Path:    "/var/lib/nut-operator/audit-spool/../audit-spool",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if !backend.AuditSpool.Enabled || backend.AuditSpool.Path != "/var/lib/nut-operator/audit-spool" {
+		t.Fatalf("expected clean enabled audit spool, got %#v", backend.AuditSpool)
+	}
+}
+
 func TestResolveCNPGStorage(t *testing.T) {
 	eventRetention := metav1.Duration{Duration: 90 * 24 * time.Hour}
 	telemetryRetention := metav1.Duration{Duration: 14 * 24 * time.Hour}
@@ -127,5 +150,30 @@ func TestResolveRejectsIncompleteStorage(t *testing.T) {
 		},
 	}); err == nil {
 		t.Fatal("expected negative retention to be rejected")
+	}
+	if _, err := Resolve(powerv1alpha1.PowerStorageSpec{
+		Mode: powerv1alpha1.PowerStorageDisabled,
+		AuditSpool: powerv1alpha1.AuditSpoolSpec{
+			Enabled: true,
+			Path:    "/var/lib/nut-operator/audit-spool",
+		},
+	}); err == nil {
+		t.Fatal("expected audit spool with disabled storage to be rejected")
+	}
+	if _, err := Resolve(powerv1alpha1.PowerStorageSpec{
+		Mode: powerv1alpha1.PowerStorageExternalPostgres,
+		ExternalPostgres: &powerv1alpha1.ExternalPostgresStorageSpec{
+			DSNSecretKeyRef: powerv1alpha1.SecretKeyReference{
+				Namespace: "power-system",
+				Name:      "power-postgres",
+				Key:       "dsn",
+			},
+		},
+		AuditSpool: powerv1alpha1.AuditSpoolSpec{
+			Enabled: true,
+			Path:    "relative/path",
+		},
+	}); err == nil {
+		t.Fatal("expected relative audit spool path to be rejected")
 	}
 }

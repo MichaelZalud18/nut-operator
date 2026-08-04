@@ -56,6 +56,7 @@ type ShutdownFlowReconciler struct {
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows/finalizers,verbs=update
 // +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters;powerinfrastructures;powerinventoryedges;powerinventorynodes;upscapabilityprofiles;upsdevices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=namespaces;nodes;pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=update;patch
 // +kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create
@@ -286,9 +287,14 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 	if err != nil {
 		return err
 	}
+	writer, spoolWriter, err := shutdownAuditWriter(cluster, store)
+	if err != nil {
+		closeErr := store.Close()
+		return errors.Join(err, closeErr)
+	}
 
 	observedAt := r.now()
-	recordErr := store.RecordShutdownFlowCompilation(ctx, audit.ShutdownFlowCompilation{
+	recordErr := writer.RecordShutdownFlowCompilation(ctx, audit.ShutdownFlowCompilation{
 		CompilationID:      uuid.NewString(),
 		ObservedAt:         observedAt,
 		ShutdownFlow:       flow.Name,
@@ -305,7 +311,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 	})
 	if result.accepted {
 		for _, match := range bundle.CapabilityMatches {
-			err := store.RecordCapabilityProfileMatch(ctx, audit.CapabilityProfileMatch{
+			err := writer.RecordCapabilityProfileMatch(ctx, audit.CapabilityProfileMatch{
 				MatchID:        uuid.NewString(),
 				ObservedAt:     observedAt,
 				UPSDevice:      match.DeviceID,
@@ -320,14 +326,43 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 				recordErr = errors.Join(recordErr, err)
 			}
 		}
-		recordErr = errors.Join(recordErr, recordShutdownFlowDecisions(ctx, store, flow, observedAt, configHash, triggerEvaluation))
-		recordErr = errors.Join(recordErr, r.recordShutdownFlowExecution(ctx, store, flow, observedAt, bundle.Hash, configHash, triggerEvaluation))
+		recordErr = errors.Join(recordErr, recordShutdownFlowDecisions(ctx, writer, flow, observedAt, configHash, triggerEvaluation))
+		recordErr = errors.Join(recordErr, r.recordShutdownFlowExecution(ctx, writer, flow, observedAt, bundle.Hash, configHash, triggerEvaluation))
+	}
+	if spoolWriter != nil {
+		stats := spoolWriter.Stats()
+		if stats.FallbackWrites > 0 {
+			message := fmt.Sprintf("%d audit records were spooled to %s after PostgreSQL audit writes failed", stats.FallbackWrites, stats.LastSpoolPath)
+			setDegradedCondition(&flow.Status.Conditions, flow.Generation, true, "AuditSpoolFallback", message)
+			if triggerEvaluation != nil && triggerEvaluation.Eligible && flow.Status.LastExecution != nil && flow.Status.LastExecution.TriggerActive {
+				setExecutionReadyCondition(&flow.Status.Conditions, flow.Generation, true, "AuditSpoolFallback", message)
+				flow.Status.LastExecution.Message = message
+			}
+		}
 	}
 	closeErr := store.Close()
 	if recordErr != nil || closeErr != nil {
 		return errors.Join(recordErr, closeErr)
 	}
 	return nil
+}
+
+func shutdownAuditWriter(cluster *powerv1alpha1.PowerManagementCluster, store audit.Store) (audit.Writer, *audit.SpoolWriter, error) {
+	if cluster == nil || store == nil {
+		return store, nil, nil
+	}
+	if !cluster.Spec.Storage.AuditSpool.Enabled {
+		return store, nil, nil
+	}
+	backend, err := storageconfig.Resolve(cluster.Spec.Storage)
+	if err != nil {
+		return nil, nil, err
+	}
+	writer, err := audit.NewSpoolWriter(store, audit.SpoolOptions{Directory: backend.AuditSpool.Path})
+	if err != nil {
+		return nil, nil, err
+	}
+	return writer, writer, nil
 }
 
 func (r *ShutdownFlowReconciler) getManagementCluster(ctx context.Context, flow *powerv1alpha1.ShutdownFlow) (*powerv1alpha1.PowerManagementCluster, error) {
@@ -482,13 +517,13 @@ func auditDiagramExports(artifact *powerv1alpha1.PublishedPlannerArtifactStatus)
 	return artifact.Diagrams
 }
 
-func recordShutdownFlowDecisions(ctx context.Context, store audit.Store, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
-	if store == nil || flow == nil || evaluation == nil {
+func recordShutdownFlowDecisions(ctx context.Context, writer audit.Writer, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
+	if writer == nil || flow == nil || evaluation == nil {
 		return nil
 	}
 	var recordErr error
 	for _, decision := range evaluation.Decisions {
-		err := store.RecordShutdownFlowDecision(ctx, audit.ShutdownFlowDecision{
+		err := writer.RecordShutdownFlowDecision(ctx, audit.ShutdownFlowDecision{
 			DecisionID:         uuid.NewString(),
 			ObservedAt:         observedAt,
 			ShutdownFlow:       flow.Name,

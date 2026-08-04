@@ -350,6 +350,22 @@ spec:
                 description: storage configures durable audit, telemetry, and flow
                   execution state.
                 properties:
+                  auditSpool:
+                    description: |-
+                      auditSpool enables a local JSONL fallback for audit records generated while PostgreSQL is unavailable during shutdown execution.
+                      The configured path must be backed by a durable volume supplied by the deployment.
+                    properties:
+                      enabled:
+                        default: false
+                        description: enabled allows execution to continue when PostgreSQL
+                          writes fail after the audit store was opened.
+                        type: boolean
+                      path:
+                        description: path is the absolute in-container directory where
+                          JSONL spool records are appended.
+                        maxLength: 512
+                        type: string
+                    type: object
                   cnpg:
                     description: cnpg points at a CloudNativePG Cluster used for storage.
                     properties:

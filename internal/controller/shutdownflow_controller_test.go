@@ -18,6 +18,10 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -663,6 +667,9 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			}
 			Expect(releasesByNode["node-a"].NodePowerAgent).To(Equal("rack-a-agents"))
 			Expect(releasesByNode["node-a"].SignalPath).To(Equal("/run/power-agent/shutdown.json"))
+			Expect(releasesByNode["node-a"].SignalSecretNamespace).To(Equal("power-system"))
+			Expect(releasesByNode["node-a"].SignalSecretName).To(Equal("rack-a-agents-node-signals"))
+			Expect(releasesByNode["node-a"].SignalSecretKey).To(Equal("node-a.json"))
 			Expect(releasesByNode["node-a"].AgentReady).To(BeTrue())
 			Expect(releasesByNode["node-a"].ReadinessReason).To(Equal("AgentPodReady"))
 			Expect(releasesByNode["node-a"].ReadinessMessage).To(Equal("ready NodePowerAgent pod is observed on this node"))
@@ -670,12 +677,15 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(releasesByNode["node-a"].LastHeartbeatTime).NotTo(BeNil())
 			Expect(*releasesByNode["node-a"].LastHeartbeatTime).To(BeTemporally("==", heartbeat.Time))
 			Expect(releasesByNode["node-b"]).To(Equal(executorpkg.NodeRelease{
-				NodeName:         "node-b",
-				NodePowerAgent:   "rack-a-agents",
-				SignalPath:       "/run/power-agent/shutdown.json",
-				AgentReady:       false,
-				ReadinessReason:  "AgentPodMissing",
-				ReadinessMessage: "no NodePowerAgent pod is currently observed on this selected node",
+				NodeName:              "node-b",
+				NodePowerAgent:        "rack-a-agents",
+				SignalPath:            "/run/power-agent/shutdown.json",
+				SignalSecretNamespace: "power-system",
+				SignalSecretName:      "rack-a-agents-node-signals",
+				SignalSecretKey:       "node-b.json",
+				AgentReady:            false,
+				ReadinessReason:       "AgentPodMissing",
+				ReadinessMessage:      "no NodePowerAgent pod is currently observed on this selected node",
 			}))
 		})
 
@@ -738,6 +748,85 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(store.capabilityProfileMatches).To(BeEmpty())
 			Expect(store.shutdownFlowDecisions).To(BeEmpty())
 			Expect(store.closeCalls).To(Equal(1))
+		})
+
+		It("continues shutdown execution through the audit spool when primary audit writes fail", func() {
+			observedAt := time.Date(2026, 8, 3, 16, 0, 0, 0, time.UTC)
+			spoolDir := GinkgoT().TempDir()
+
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestPowerClusterName},
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					Storage: powerv1alpha1.PowerStorageSpec{
+						Mode: powerv1alpha1.PowerStorageExternalPostgres,
+						ExternalPostgres: &powerv1alpha1.ExternalPostgresStorageSpec{
+							DSNSecretKeyRef: powerv1alpha1.SecretKeyReference{
+								Namespace: "power-system",
+								Name:      "power-postgres",
+								Key:       "dsn",
+							},
+						},
+						AuditSpool: powerv1alpha1.AuditSpoolSpec{
+							Enabled: true,
+							Path:    spoolDir,
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
+			cluster.Status.Storage = powerv1alpha1.StorageStatus{
+				Mode:  powerv1alpha1.PowerStorageExternalPostgres,
+				Ready: true,
+			}
+			Expect(k8sClient.Status().Update(ctx, cluster)).To(Succeed())
+
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.ManagementClusterRef = &powerv1alpha1.ObjectNameReference{Name: shutdownFlowTestPowerClusterName}
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			pollTime := metav1.NewTime(observedAt.Add(-10 * time.Second))
+			device := &powerv1alpha1.UPSDevice{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery
+			device.Status.LastPollTime = &pollTime
+			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+
+			store := &fakeAuditStore{writeErr: errors.New("postgres write failed")}
+			controllerReconciler := &ShutdownFlowReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				StorageConnector: &fakeAuditConnector{store: store},
+				Clock: func() time.Time {
+					return observedAt
+				},
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.shutdownFlowExecutions).To(BeEmpty())
+			Expect(store.actionAttempts).To(BeEmpty())
+			Expect(store.closeCalls).To(Equal(1))
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.LastExecution).NotTo(BeNil())
+			Expect(resource.Status.LastExecution.Phase).To(Equal(powerv1alpha1.ShutdownExecutionPhaseCompleted))
+			Expect(resource.Status.LastExecution.Message).To(ContainSubstring("audit records were spooled"))
+			degraded := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionDegraded)
+			Expect(degraded).NotTo(BeNil())
+			Expect(degraded.Status).To(Equal(metav1.ConditionTrue))
+			Expect(degraded.Reason).To(Equal("AuditSpoolFallback"))
+			executionReady := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionExecutionReady)
+			Expect(executionReady).NotTo(BeNil())
+			Expect(executionReady.Status).To(Equal(metav1.ConditionTrue))
+			Expect(executionReady.Reason).To(Equal("AuditSpoolFallback"))
+
+			content, err := os.ReadFile(filepath.Join(spoolDir, "audit-spool.jsonl"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(content)).To(ContainSubstring(`"kind":"shutdownflow_execution"`))
+			Expect(string(content)).To(ContainSubstring(`"kind":"shutdownflow_action_attempt"`))
+			Expect(string(content)).To(ContainSubstring(`"ExecutionID":"`))
+			Expect(strings.Count(string(content), "\n")).To(BeNumerically(">=", 1))
 		})
 
 	})

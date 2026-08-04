@@ -174,6 +174,7 @@ var _ = Describe("NodePowerAgent Controller", func() {
 				{Namespace: namespace, Name: "test-resource-node-power-agent"},
 				{Namespace: namespace, Name: "test-resource-node-agent-config"},
 				{Namespace: namespace, Name: "test-resource-upsmon-config"},
+				{Namespace: namespace, Name: "test-resource-node-signals"},
 				{Namespace: namespace, Name: "rack-a-nut-users"},
 			} {
 				ds := &appsv1.DaemonSet{}
@@ -222,11 +223,13 @@ var _ = Describe("NodePowerAgent Controller", func() {
 				Expect(k8sClient.Delete(ctx, device)).To(Succeed())
 			}
 
-			ns := &corev1.Namespace{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, ns)
-			if err == nil {
-				Expect(k8sClient.Delete(ctx, ns)).To(Succeed())
-			}
+			// Namespace deletion is intentionally not attempted here: envtest runs no
+			// namespace-lifecycle controller, so a deleted Namespace never clears its
+			// finalizer and stays Terminating for the life of the test binary. The next
+			// spec's BeforeEach would then hit "namespace is being terminated" trying to
+			// reuse this same namespace name. Leaving the namespace Active and reused across
+			// specs is correct for this test environment; envtest itself is torn down after
+			// the suite completes.
 
 			node := &corev1.Node{}
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, node)
@@ -265,10 +268,15 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			secret := &corev1.Secret{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-upsmon-config"}, secret)).To(Succeed())
 			Expect(string(secret.Data["upsmon.conf"])).To(ContainSubstring("MONITOR rack-a-ups@rack-a.test-agent-power-system.svc.cluster.local 1 monitor test-monitor-password secondary"))
+			Expect(string(secret.Data["upsmon.conf"])).To(ContainSubstring("SHUTDOWNCMD \"/usr/local/bin/power-signal-writer\""))
 
 			serviceAccount := &corev1.ServiceAccount{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, serviceAccount)).To(Succeed())
 			Expect(*serviceAccount.AutomountServiceAccountToken).To(BeFalse())
+
+			signalSecret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-signals"}, signalSecret)).To(Succeed())
+			Expect(signalSecret.Type).To(Equal(corev1.SecretTypeOpaque))
 
 			networkPolicy := &networkingv1.NetworkPolicy{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, networkPolicy)).To(Succeed())
@@ -279,10 +287,28 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, daemonSet)).To(Succeed())
 			Expect(daemonSet.Spec.Template.Spec.AutomountServiceAccountToken).NotTo(BeNil())
 			Expect(*daemonSet.Spec.Template.Spec.AutomountServiceAccountToken).To(BeFalse())
+			Expect(daemonSet.Spec.UpdateStrategy.Type).To(Equal(appsv1.RollingUpdateDaemonSetStrategyType))
+			Expect(daemonSet.Spec.UpdateStrategy.RollingUpdate).NotTo(BeNil())
+			Expect(daemonSet.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable.IntVal).To(Equal(int32(1)))
+			Expect(daemonSet.Spec.Template.Spec.HostPID).To(BeFalse())
+			Expect(daemonSet.Spec.Template.Spec.PriorityClassName).To(Equal("system-node-critical"))
+			Expect(*daemonSet.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(60)))
+			Expect(daemonSet.Spec.Template.Spec.Tolerations).To(ContainElement(corev1.Toleration{
+				Operator: corev1.TolerationOpExists,
+				Effect:   corev1.TaintEffectNoSchedule,
+			}))
+			Expect(daemonSet.Spec.Template.Spec.Tolerations).To(ContainElement(corev1.Toleration{
+				Operator: corev1.TolerationOpExists,
+				Effect:   corev1.TaintEffectNoExecute,
+			}))
 			Expect(daemonSet.Spec.Template.Spec.Containers).To(HaveLen(2))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Name).To(Equal("upsmon"))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/michaelzalud18/upsmon-agent:main"))
 			Expect(*daemonSet.Spec.Template.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(daemonSet.Spec.Template.Spec.Containers[0].ReadinessProbe).NotTo(BeNil())
+			Expect(daemonSet.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_SIGNAL_PATH", Value: "/run/power-agent/shutdown.json"}))
+			Expect(daemonSet.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_SHUTDOWN_FLOW", Value: "upsmon-local"}))
+			Expect(daemonSet.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_SELECTED_UPS_DEVICES", Value: "rack-a-ups"}))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{
 				Name:      "upsmon-run",
 				MountPath: "/run",
@@ -293,11 +319,23 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(daemonSet.Spec.Template.Spec.Containers[1].Name).To(Equal("actuator"))
 			Expect(daemonSet.Spec.Template.Spec.Containers[1].Image).To(Equal("ghcr.io/michaelzalud18/node-actuator:main"))
 			Expect(*daemonSet.Spec.Template.Spec.Containers[1].SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(daemonSet.Spec.Template.Spec.Containers[1].SecurityContext.Capabilities.Add).To(BeEmpty())
+			Expect(daemonSet.Spec.Template.Spec.Containers[1].ReadinessProbe).NotTo(BeNil())
 			Expect(daemonSet.Spec.Template.Spec.Containers[1].Env).To(ContainElement(corev1.EnvVar{
 				Name: "POWER_NODE_NAME",
 				ValueFrom: &corev1.EnvVarSource{
 					FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"},
 				},
+			}))
+			Expect(daemonSet.Spec.Template.Spec.Containers[1].Env).To(ContainElement(corev1.EnvVar{
+				Name:  "POWER_SIGNAL_PATHS",
+				Value: "/run/power-agent/shutdown.json,/var/lib/power-agent/signals/$(POWER_NODE_NAME).json",
+			}))
+			Expect(daemonSet.Spec.Template.Spec.Containers[1].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_POWEROFF_METHOD", Value: "reboot-syscall"}))
+			Expect(daemonSet.Spec.Template.Spec.Containers[1].VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name:      "power-agent-signals",
+				MountPath: "/var/lib/power-agent/signals",
+				ReadOnly:  true,
 			}))
 
 			By("publishing ready pod coverage for the selected node")
@@ -338,6 +376,44 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(resource.Status.NodeStatuses[0].Reason).To(Equal("AgentPodReady"))
 			Expect(resource.Status.NodeStatuses[0].PodName).To(Equal("test-resource-node-power-agent-ready"))
 			Expect(resource.Status.NodeStatuses[0].LastHeartbeatTime.Time).To(BeTemporally("==", heartbeat.Time))
+		})
+
+		It("renders approved host poweroff with the narrow actuator privilege profile", func() {
+			resource := &powerv1alpha1.NodePowerAgent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Annotations = map[string]string{"power.zalud.io/approved-for-actuation": "true"}
+			resource.Spec.Mode = powerv1alpha1.NodePowerAgentModeActuate
+			resource.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicySystemdPoweroff
+			resource.Spec.Shutdown.ApprovalAnnotation = "power.zalud.io/approved-for-actuation"
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			controllerReconciler := &NodePowerAgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			daemonSet := &appsv1.DaemonSet{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, daemonSet)).To(Succeed())
+			Expect(daemonSet.Spec.Template.Spec.HostPID).To(BeTrue())
+			Expect(daemonSet.Spec.Template.Spec.AutomountServiceAccountToken).NotTo(BeNil())
+			Expect(*daemonSet.Spec.Template.Spec.AutomountServiceAccountToken).To(BeFalse())
+			Expect(daemonSet.Spec.Template.Spec.Containers).To(HaveLen(2))
+			actuator := daemonSet.Spec.Template.Spec.Containers[1]
+			Expect(actuator.Name).To(Equal("actuator"))
+			Expect(actuator.SecurityContext).NotTo(BeNil())
+			Expect(*actuator.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(*actuator.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
+			Expect(actuator.SecurityContext.Capabilities.Drop).To(ContainElement(corev1.Capability("ALL")))
+			Expect(actuator.SecurityContext.Capabilities.Add).To(ConsistOf(corev1.Capability("SYS_BOOT")))
+			Expect(actuator.SecurityContext.SeccompProfile).NotTo(BeNil())
+			Expect(actuator.SecurityContext.SeccompProfile.Type).To(Equal(corev1.SeccompProfileTypeUnconfined))
+			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_AGENT_MODE", Value: "Actuate"}))
+			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_ACTUATOR_POLICY", Value: "SystemdPoweroff"}))
+			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_POWEROFF_METHOD", Value: "reboot-syscall"}))
 		})
 	})
 })

@@ -36,8 +36,8 @@ import (
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 )
 
-func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context, store audit.Store, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
-	if store == nil || flow == nil || evaluation == nil {
+func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context, writer audit.Writer, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
+	if writer == nil || flow == nil || evaluation == nil {
 		return nil
 	}
 	if !evaluation.Eligible {
@@ -80,7 +80,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		return err
 	}
 	result, err := executorpkg.Executor{
-		Writer: store,
+		Writer: writer,
 		Runner: r.ExecutorRunner,
 		Clock:  r.now,
 	}.Execute(ctx, input)
@@ -239,6 +239,11 @@ func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, targ
 		if err := r.Get(ctx, client.ObjectKey{Name: ref.Name}, &agent); err != nil {
 			return nil, fmt.Errorf("get NodePowerAgent %q for shutdown execution: %w", ref.Name, err)
 		}
+		cluster, err := r.getNodePowerAgentManagementCluster(ctx, &agent)
+		if err != nil {
+			return nil, err
+		}
+		agentNamespace := nodePowerAgentNamespace(&agent, cluster)
 		nodeStatuses := nodePowerAgentStatusByNode(agent.Status.NodeStatuses)
 		for _, nodeName := range agent.Status.SelectedNodes {
 			nodeStatus, found := nodeStatuses[nodeName]
@@ -249,18 +254,32 @@ func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, targ
 				readinessMessage = nodeStatus.Message
 			}
 			releases = append(releases, executorpkg.NodeRelease{
-				NodeName:          nodeName,
-				NodePowerAgent:    agent.Name,
-				SignalPath:        nodePowerAgentSignalPath(&agent),
-				AgentReady:        found && nodeStatus.Ready,
-				ReadinessReason:   readinessReason,
-				ReadinessMessage:  readinessMessage,
-				PodName:           nodeStatus.PodName,
-				LastHeartbeatTime: metav1TimeToTimePtr(nodeStatus.LastHeartbeatTime),
+				NodeName:              nodeName,
+				NodePowerAgent:        agent.Name,
+				SignalPath:            nodePowerAgentSignalPath(&agent),
+				SignalSecretNamespace: agentNamespace,
+				SignalSecretName:      nodePowerAgentSignalSecretName(&agent),
+				SignalSecretKey:       nodePowerAgentSignalKey(nodeName),
+				AgentReady:            found && nodeStatus.Ready,
+				ReadinessReason:       readinessReason,
+				ReadinessMessage:      readinessMessage,
+				PodName:               nodeStatus.PodName,
+				LastHeartbeatTime:     metav1TimeToTimePtr(nodeStatus.LastHeartbeatTime),
 			})
 		}
 	}
 	return releases, nil
+}
+
+func (r *ShutdownFlowReconciler) getNodePowerAgentManagementCluster(ctx context.Context, agent *powerv1alpha1.NodePowerAgent) (*powerv1alpha1.PowerManagementCluster, error) {
+	if agent.Spec.ManagementClusterRef == nil || agent.Spec.ManagementClusterRef.Name == "" {
+		return nil, nil
+	}
+	var cluster powerv1alpha1.PowerManagementCluster
+	if err := r.Get(ctx, client.ObjectKey{Name: agent.Spec.ManagementClusterRef.Name}, &cluster); err != nil {
+		return nil, fmt.Errorf("get PowerManagementCluster %q for NodePowerAgent %q: %w", agent.Spec.ManagementClusterRef.Name, agent.Name, err)
+	}
+	return &cluster, nil
 }
 
 func nodePowerAgentStatusByNode(statuses []powerv1alpha1.NodePowerAgentNodeStatus) map[string]powerv1alpha1.NodePowerAgentNodeStatus {

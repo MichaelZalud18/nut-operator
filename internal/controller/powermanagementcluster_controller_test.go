@@ -70,6 +70,7 @@ type fakeAuditStore struct {
 	retentionRuns            []time.Time
 	closeCalls               int
 	eventErr                 error
+	writeErr                 error
 	retentionErr             error
 	closeErr                 error
 }
@@ -88,70 +89,113 @@ func (s *fakeAuditStore) Close() error {
 	return s.closeErr
 }
 
+func (s *fakeAuditStore) recordErr() error {
+	return s.writeErr
+}
+
 func (s *fakeAuditStore) RecordPowerEvent(_ context.Context, event audit.PowerEvent) error {
 	if s.eventErr != nil {
 		return s.eventErr
+	}
+	if err := s.recordErr(); err != nil {
+		return err
 	}
 	s.powerEvents = append(s.powerEvents, event)
 	return nil
 }
 
 func (s *fakeAuditStore) RecordTelemetrySnapshot(_ context.Context, snapshot audit.TelemetrySnapshot) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.telemetrySnapshots = append(s.telemetrySnapshots, snapshot)
 	return nil
 }
 
 func (s *fakeAuditStore) RecordCapabilityProfileMatch(_ context.Context, match audit.CapabilityProfileMatch) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.capabilityProfileMatches = append(s.capabilityProfileMatches, match)
 	return nil
 }
 
 func (s *fakeAuditStore) RecordCapabilityProfileVerification(_ context.Context, verification audit.CapabilityProfileVerification) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.capabilityVerifications = append(s.capabilityVerifications, verification)
 	return nil
 }
 
 func (s *fakeAuditStore) RecordShutdownFlowCompilation(_ context.Context, compilation audit.ShutdownFlowCompilation) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.shutdownFlowCompilations = append(s.shutdownFlowCompilations, compilation)
 	return nil
 }
 
 func (s *fakeAuditStore) RecordShutdownFlowDecision(_ context.Context, decision audit.ShutdownFlowDecision) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.shutdownFlowDecisions = append(s.shutdownFlowDecisions, decision)
 	return nil
 }
 
 func (s *fakeAuditStore) RecordShutdownFlowExecution(_ context.Context, execution audit.ShutdownFlowExecution) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.shutdownFlowExecutions = append(s.shutdownFlowExecutions, execution)
 	return nil
 }
 
 func (s *fakeAuditStore) RecordShutdownFlowExecutionWave(_ context.Context, wave audit.ShutdownFlowExecutionWave) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.executionWaves = append(s.executionWaves, wave)
 	return nil
 }
 
 func (s *fakeAuditStore) RecordShutdownFlowExecutionGroup(_ context.Context, group audit.ShutdownFlowExecutionGroup) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.executionGroups = append(s.executionGroups, group)
 	return nil
 }
 
 func (s *fakeAuditStore) RecordShutdownFlowActionAttempt(_ context.Context, attempt audit.ShutdownFlowActionAttempt) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.actionAttempts = append(s.actionAttempts, attempt)
 	return nil
 }
 
 func (s *fakeAuditStore) RecordNodeRelease(_ context.Context, release audit.NodeReleaseRecord) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.nodeReleases = append(s.nodeReleases, release)
 	return nil
 }
 
 func (s *fakeAuditStore) RecordNodeSignalHandoff(_ context.Context, handoff audit.NodeSignalHandoff) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.nodeSignalHandoffs = append(s.nodeSignalHandoffs, handoff)
 	return nil
 }
 
 func (s *fakeAuditStore) UpsertExecutorResumeState(_ context.Context, state audit.ExecutorResumeState) error {
+	if err := s.recordErr(); err != nil {
+		return err
+	}
 	s.executorResumeStates = append(s.executorResumeStates, state)
 	return nil
 }

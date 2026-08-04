@@ -47,7 +47,7 @@ Real host shutdown is not the default.
 The node-agent pod split is:
 
 - `upsmon` container: unprivileged NUT client, no Kubernetes API credentials required for ordinary monitoring.
-- `actuator` container: omitted or stubbed by default; real host shutdown is the isolated host-action boundary using only the minimum host access that the target runtime proves necessary.
+- `actuator` container: omitted or stubbed by default; approved real host shutdown watches local and projected signal files, then uses the isolated host-action boundary with `hostPID`, `SYS_BOOT`, no Kubernetes token, and no NUT credentials.
 
 ## Storage
 
@@ -63,9 +63,13 @@ spec:
         name: power-audit
       database: power
       schema: power
+    auditSpool:
+      enabled: true
+      path: /var/lib/nut-operator/audit-spool
 ```
 
 External PostgreSQL is also modeled for non-CNPG clusters. `Disabled` exists for local development only.
+The audit spool path must be backed by a deployment-supplied durable volume.
 
 ## Architecture
 

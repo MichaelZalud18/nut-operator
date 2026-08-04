@@ -21,6 +21,8 @@ package storage
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
@@ -41,8 +43,16 @@ type Backend struct {
 	Source           powerv1alpha1.PowerStorageMode
 	Schema           string
 	Retention        audit.RetentionPolicy
+	AuditSpool       AuditSpoolBackend
 	ExternalPostgres *ExternalPostgresBackend
 	CNPG             *CNPGBackend
+}
+
+// AuditSpoolBackend records the local fallback journal path for shutdown-time
+// audit records generated after PostgreSQL becomes unavailable.
+type AuditSpoolBackend struct {
+	Enabled bool
+	Path    string
 }
 
 // ExternalPostgresBackend points at an existing PostgreSQL DSN Secret.
@@ -65,23 +75,29 @@ func Resolve(spec powerv1alpha1.PowerStorageSpec) (Backend, error) {
 	if err != nil {
 		return Backend{}, err
 	}
+	spool, err := resolveAuditSpool(spec.AuditSpool, mode)
+	if err != nil {
+		return Backend{}, err
+	}
 	switch mode {
 	case powerv1alpha1.PowerStorageDisabled:
 		return Backend{
-			Kind:      BackendDisabled,
-			Source:    powerv1alpha1.PowerStorageDisabled,
-			Schema:    audit.DefaultSchema,
-			Retention: retention,
+			Kind:       BackendDisabled,
+			Source:     powerv1alpha1.PowerStorageDisabled,
+			Schema:     audit.DefaultSchema,
+			Retention:  retention,
+			AuditSpool: spool,
 		}, nil
 	case powerv1alpha1.PowerStorageExternalPostgres:
 		if spec.ExternalPostgres == nil {
 			return Backend{}, fmt.Errorf("ExternalPostgres storage requires spec.storage.externalPostgres")
 		}
 		return Backend{
-			Kind:      BackendPostgreSQL,
-			Source:    powerv1alpha1.PowerStorageExternalPostgres,
-			Schema:    defaultSchema(spec.ExternalPostgres.Schema),
-			Retention: retention,
+			Kind:       BackendPostgreSQL,
+			Source:     powerv1alpha1.PowerStorageExternalPostgres,
+			Schema:     defaultSchema(spec.ExternalPostgres.Schema),
+			Retention:  retention,
+			AuditSpool: spool,
 			ExternalPostgres: &ExternalPostgresBackend{
 				DSNSecretKeyRef: spec.ExternalPostgres.DSNSecretKeyRef,
 				RequireTLS:      spec.ExternalPostgres.RequireTLS == nil || *spec.ExternalPostgres.RequireTLS,
@@ -92,10 +108,11 @@ func Resolve(spec powerv1alpha1.PowerStorageSpec) (Backend, error) {
 			return Backend{}, fmt.Errorf("CNPG storage requires spec.storage.cnpg")
 		}
 		return Backend{
-			Kind:      BackendPostgreSQL,
-			Source:    powerv1alpha1.PowerStorageCNPG,
-			Schema:    defaultSchema(spec.CNPG.Schema),
-			Retention: retention,
+			Kind:       BackendPostgreSQL,
+			Source:     powerv1alpha1.PowerStorageCNPG,
+			Schema:     defaultSchema(spec.CNPG.Schema),
+			Retention:  retention,
+			AuditSpool: spool,
 			CNPG: &CNPGBackend{
 				ClusterRef:             spec.CNPG.ClusterRef,
 				Database:               defaultDatabase(spec.CNPG.Database),
@@ -105,6 +122,32 @@ func Resolve(spec powerv1alpha1.PowerStorageSpec) (Backend, error) {
 	default:
 		return Backend{}, fmt.Errorf("unsupported storage mode %q", spec.Mode)
 	}
+}
+
+func resolveAuditSpool(spec powerv1alpha1.AuditSpoolSpec, mode powerv1alpha1.PowerStorageMode) (AuditSpoolBackend, error) {
+	if !spec.Enabled {
+		return AuditSpoolBackend{}, nil
+	}
+	if mode == powerv1alpha1.PowerStorageDisabled {
+		return AuditSpoolBackend{}, fmt.Errorf("spec.storage.auditSpool requires CNPG or ExternalPostgres storage")
+	}
+	path := strings.TrimSpace(spec.Path)
+	if path == "" {
+		return AuditSpoolBackend{}, fmt.Errorf("spec.storage.auditSpool.path is required when audit spool is enabled")
+	}
+	if containsControlCharacter(path) {
+		return AuditSpoolBackend{}, fmt.Errorf("spec.storage.auditSpool.path must not contain control characters")
+	}
+	if !filepath.IsAbs(path) {
+		return AuditSpoolBackend{}, fmt.Errorf("spec.storage.auditSpool.path must be absolute")
+	}
+	return AuditSpoolBackend{Enabled: true, Path: filepath.Clean(path)}, nil
+}
+
+func containsControlCharacter(value string) bool {
+	return strings.ContainsFunc(value, func(r rune) bool {
+		return r < 0x20 || r == 0x7f
+	})
 }
 
 // EffectiveMode returns the API-defaulted storage mode.

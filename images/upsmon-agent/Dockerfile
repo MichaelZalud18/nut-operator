@@ -1,4 +1,18 @@
 ARG ALPINE_VERSION=3.22
+FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+COPY cmd/power-signal-writer/ cmd/power-signal-writer/
+COPY internal/nodeagent/ internal/nodeagent/
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-X main.version=${VERSION}" -o power-signal-writer ./cmd/power-signal-writer
+
 FROM alpine:${ALPINE_VERSION}
 
 ARG VERSION=dev
@@ -22,6 +36,8 @@ LABEL org.opencontainers.image.title="NUT Operator upsmon Agent" \
 RUN apk add --no-cache nut ca-certificates \
     && mkdir -p /run/power-agent \
     && chown -R 65532:65532 /run/power-agent
+
+COPY --from=builder /workspace/power-signal-writer /usr/local/bin/power-signal-writer
 
 USER 65532:65532
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD upsmon -V >/dev/null || exit 1

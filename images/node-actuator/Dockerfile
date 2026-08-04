@@ -9,6 +9,7 @@ COPY go.mod go.mod
 COPY go.sum go.sum
 RUN go mod download
 COPY cmd/node-actuator/ cmd/node-actuator/
+COPY internal/nodeagent/ internal/nodeagent/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-X main.version=${VERSION}" -o node-actuator ./cmd/node-actuator
 
 FROM gcr.io/distroless/static:nonroot

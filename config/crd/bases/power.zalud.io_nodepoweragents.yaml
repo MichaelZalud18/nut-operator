@@ -67,8 +67,8 @@ spec:
                 properties:
                   actuator:
                     description: |-
-                      actuator is the host-actuation image. Stub mode must run without privileged
-                      access; real host shutdown support is an explicit future boundary.
+                      actuator is the host-actuation image. Stub mode runs without host access; real host
+                      shutdown is rendered only after explicit actuation approval.
                     properties:
                       digest:
                         description: digest is an optional immutable image digest.
