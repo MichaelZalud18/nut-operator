@@ -207,7 +207,7 @@ func main() {
 	if err := (&controller.NUTServerReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("nutserver-controller"),
+		Recorder: mgr.GetEventRecorder("nutserver-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "nutserver")
 		os.Exit(1)
@@ -215,7 +215,7 @@ func main() {
 	if err := (&controller.NodePowerAgentReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("nodepoweragent-controller"),
+		Recorder: mgr.GetEventRecorder("nodepoweragent-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "nodepoweragent")
 		os.Exit(1)

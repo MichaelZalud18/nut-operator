@@ -26,7 +26,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -47,7 +47,7 @@ const nodePowerAgentFinalizer = "power.zalud.io/nodepoweragent-cleanup"
 type NodePowerAgentReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents,verbs=get;list;watch;create;update;patch;delete
@@ -173,7 +173,7 @@ func (r *NodePowerAgentReconciler) finalizeNodePowerAgent(ctx context.Context, a
 		return ctrl.Result{}, nil
 	}
 	if r.Recorder != nil {
-		r.Recorder.Event(agent, corev1.EventTypeNormal, "OperandTeardown",
+		r.Recorder.Eventf(agent, nil, corev1.EventTypeNormal, "OperandTeardown", "Delete",
 			"NodePowerAgent deleted; rendered operands are being garbage-collected via owner references")
 	}
 	controllerutil.RemoveFinalizer(agent, nodePowerAgentFinalizer)

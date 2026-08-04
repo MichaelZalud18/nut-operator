@@ -25,7 +25,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -47,7 +47,7 @@ type NUTServerReconciler struct {
 	client.Client
 	Scheme         *runtime.Scheme
 	UpstreamProber upstreamNUTProber
-	Recorder       record.EventRecorder
+	Recorder       events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers,verbs=get;list;watch;create;update;patch;delete
@@ -174,7 +174,7 @@ func (r *NUTServerReconciler) finalizeNUTServer(ctx context.Context, server *pow
 		return ctrl.Result{}, nil
 	}
 	if r.Recorder != nil {
-		r.Recorder.Event(server, corev1.EventTypeNormal, "OperandTeardown",
+		r.Recorder.Eventf(server, nil, corev1.EventTypeNormal, "OperandTeardown", "Delete",
 			"NUTServer deleted; rendered operands are being garbage-collected via owner references")
 	}
 	controllerutil.RemoveFinalizer(server, nutServerFinalizer)
