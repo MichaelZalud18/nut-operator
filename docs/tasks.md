@@ -229,10 +229,11 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 - `OD-14` partial-domain outage plan scope (shared with Telemetry & Triggers).
 - Controller/envtest coverage for executor resume behavior (restart mid-flow) — asserted by design
   (`EX-14`) but not covered by an actual restart test yet.
-- **`ShutdownFlow` reconciler hits continuous status-update conflicts.** Confirmed via a 10h log pull
-  against the alpha deployment (2026-08-04): 1,516 `"the object has been modified"` errors spread
-  evenly across the whole window (~1/48s), not just a post-deploy burst — 744 against `ShutdownFlow`
-  specifically. Root cause: `SetupWithManager` watches `UPSDevice` with no predicate, so every
+- **`ShutdownFlow` reconciler hits continuous status-update conflicts.** Confirmed via a 10h
+  production log pull (2026-08-04, evidence trail in the private deployment repo): 1,516
+  `"the object has been modified"` errors spread evenly across the whole window (~1/48s), not just
+  a post-deploy burst — 744 against `ShutdownFlow` specifically. Root cause: `SetupWithManager`
+  watches `UPSDevice` with no predicate, so every
   telemetry tick (5–15s per device) re-enqueues a reconcile; `Reconcile` does a single `r.Get` +
   `r.Status().Update` (not `Patch`), and back-to-back reconciles race the informer cache, so the
   final write frequently uses a stale `resourceVersion`. Self-heals via controller-runtime's built-in
@@ -290,9 +291,9 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   `secret.Data` or a password value, and `NUTServerReconciler` has no Event Recorder wired in at all,
   so there is no Events leak path to check.
 
-- **`UPSDevice.spec.credentialSecretRef` is wired (2026-08-04).** Found unwired while pointing real
-  `snmp-ups` `UPSDevice` resources at the homelab's UniFi UPS fleet (needed SNMPv3 `secName`/
-  `authPassword`/`privPassword`, not just a community string) — fixed same day.
+- **`UPSDevice.spec.credentialSecretRef` is wired (2026-08-04).** Found unwired while pointing a
+  real `snmp-ups` device at production hardware requiring SNMPv3 (`secName`/`authPassword`/
+  `privPassword`, not just a community string) — fixed same day.
   `resolveUPSDeviceCredentials` (`nutserver_render.go`) fetches the referenced Secret (same
   operand-namespace only, matching the existing `upstreamNUTAuthProjections` convention) and merges
   its keys into the device's driver options, winning over any `driverOptions` collision. `ups.conf`
