@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -168,6 +169,11 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			if err == nil {
 				By("Cleanup the specific resource instance NodePowerAgent")
 				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+				By("Reconciling to process the finalizer")
+				controllerReconciler := &NodePowerAgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+				_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				Expect(err).NotTo(HaveOccurred())
 			}
 
 			for _, key := range []types.NamespacedName{
@@ -251,6 +257,7 @@ var _ = Describe("NodePowerAgent Controller", func() {
 
 			resource := &powerv1alpha1.NodePowerAgent{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(resource, nodePowerAgentFinalizer)).To(BeTrue())
 			condition := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionAccepted)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
@@ -376,6 +383,30 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(resource.Status.NodeStatuses[0].Reason).To(Equal("AgentPodReady"))
 			Expect(resource.Status.NodeStatuses[0].PodName).To(Equal("test-resource-node-power-agent-ready"))
 			Expect(resource.Status.NodeStatuses[0].LastHeartbeatTime.Time).To(BeTemporally("==", heartbeat.Time))
+		})
+
+		It("should finalize and actually delete on deletion", func() {
+			controllerReconciler := &NodePowerAgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("Reconciling once to add the finalizer")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			resource := &powerv1alpha1.NodePowerAgent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(resource, nodePowerAgentFinalizer)).To(BeTrue())
+
+			By("Deleting the resource")
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			By("Reconciling again to process the finalizer")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &powerv1alpha1.NodePowerAgent{})).To(HaveOccurred())
 		})
 
 		It("renders approved host poweroff with the narrow actuator privilege profile", func() {

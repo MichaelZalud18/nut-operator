@@ -205,23 +205,28 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.NUTServerReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("nutserver-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "nutserver")
 		os.Exit(1)
 	}
 	if err := (&controller.NodePowerAgentReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("nodepoweragent-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "nodepoweragent")
 		os.Exit(1)
 	}
 	if err := (&controller.ShutdownFlowReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		ExecutorRunner: kubeactions.Runner{Client: mgr.GetClient()},
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		ExecutorRunner: kubeactions.Runner{
+			Client:           mgr.GetClient(),
+			ManagerNamespace: os.Getenv("POD_NAMESPACE"),
+		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "shutdownflow")
 		os.Exit(1)

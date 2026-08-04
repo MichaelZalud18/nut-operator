@@ -26,8 +26,10 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -35,15 +37,23 @@ import (
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 )
 
+// nodePowerAgentFinalizer mirrors nutServerFinalizer's reasoning (F-1): owner-reference garbage
+// collection already reliably deletes the rendered DaemonSet/ConfigMap/Secret/ServiceAccount/
+// NetworkPolicy; this makes deletion an explicit, blocking step with a Kubernetes Event instead of a
+// silent one.
+const nodePowerAgentFinalizer = "power.zalud.io/nodepoweragent-cleanup"
+
 // NodePowerAgentReconciler reconciles a NodePowerAgent object
 type NodePowerAgentReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers;upsdevices;powermanagementclusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
@@ -62,6 +72,16 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+
+	if !agent.DeletionTimestamp.IsZero() {
+		return r.finalizeNodePowerAgent(ctx, &agent)
+	}
+	if !controllerutil.ContainsFinalizer(&agent, nodePowerAgentFinalizer) {
+		controllerutil.AddFinalizer(&agent, nodePowerAgentFinalizer)
+		if err := r.Update(ctx, &agent); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	result := validateNodePowerAgent(&agent)
@@ -142,6 +162,25 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	return reconcileResult, nil
+}
+
+// finalizeNodePowerAgent runs when a NodePowerAgent is being deleted. See finalizeNUTServer's comment
+// for the same reasoning: owner-reference garbage collection already handles the rendered child
+// resources correctly; this adds an observable Event and a blocking deletion step where there was
+// previously none (F-1).
+func (r *NodePowerAgentReconciler) finalizeNodePowerAgent(ctx context.Context, agent *powerv1alpha1.NodePowerAgent) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(agent, nodePowerAgentFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	if r.Recorder != nil {
+		r.Recorder.Event(agent, corev1.EventTypeNormal, "OperandTeardown",
+			"NodePowerAgent deleted; rendered operands are being garbage-collected via owner references")
+	}
+	controllerutil.RemoveFinalizer(agent, nodePowerAgentFinalizer)
+	if err := r.Update(ctx, agent); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

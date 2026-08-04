@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -103,6 +104,11 @@ var _ = Describe("NUTServer Controller", func() {
 			if err == nil {
 				By("Cleanup the specific resource instance NUTServer")
 				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+				By("Reconciling to process the finalizer")
+				controllerReconciler := &NUTServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+				_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				Expect(err).NotTo(HaveOccurred())
 			}
 
 			device := &powerv1alpha1.UPSDevice{}
@@ -133,6 +139,7 @@ var _ = Describe("NUTServer Controller", func() {
 
 			resource := &powerv1alpha1.NUTServer{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(resource, nutServerFinalizer)).To(BeTrue())
 			condition := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionAccepted)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
@@ -200,6 +207,30 @@ var _ = Describe("NUTServer Controller", func() {
 			Expect(pdb.Spec.MinAvailable).NotTo(BeNil())
 			Expect(pdb.Spec.MinAvailable.IntValue()).To(Equal(1))
 			Expect(pdb.Spec.Selector.MatchLabels).To(Equal(deployment.Spec.Selector.MatchLabels))
+		})
+
+		It("should finalize and actually delete on deletion", func() {
+			controllerReconciler := &NUTServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("Reconciling once to add the finalizer")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			resource := &powerv1alpha1.NUTServer{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(resource, nutServerFinalizer)).To(BeTrue())
+
+			By("Deleting the resource")
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			By("Reconciling again to process the finalizer")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &powerv1alpha1.NUTServer{})).To(HaveOccurred())
 		})
 	})
 })
