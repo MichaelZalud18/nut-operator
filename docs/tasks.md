@@ -614,21 +614,79 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
   (markdown/html/sarif/flat-json) as a build artifact. Confirmed locally: zero new `actionlint`
   findings from any of the additions, ASH itself completes in ~12s so the 15-minute job timeout is
   headroom, not a tight fit.
+- **`F-30` fixed: the controller-manager now protects itself from its own orchestrated shutdown
+  actions (2026-08-04).** `internal/kubeactions.Runner.protectedNamespaces` (the mechanism behind
+  `F-14`) previously resolved only `NodePowerAgent` operand namespaces, never the manager's own —
+  meaning a `ShutdownFlow` group whose selector happened to match the manager's own node or namespace
+  could evict (`DrainNodes`), scale to zero (`ScaleWorkload`), or preempt/disrupt it
+  (`config/manager/manager.yaml` had no `priorityClassName` or `PodDisruptionBudget`, unlike every
+  operand the manager itself renders). Fixed on both layers: `manager.yaml` now sets
+  `priorityClassName: system-cluster-critical` (matching `F-18`'s pattern for `NUTServer`) and
+  `config/manager/manager_pdb.yaml` adds a `minAvailable: 1` PDB, which — paired with `replicas: 1` —
+  blocks voluntary eviction the same way `F-18` already does for the NUT server pod. A new
+  `POD_NAMESPACE` downward-API env var lets `Runner.ManagerNamespace` (new field) resolve the
+  manager's own install namespace at runtime, wired through `cmd/main.go` and folded into
+  `protectedNamespaces` alongside the existing `NodePowerAgent` namespaces — so `DrainNodes` and
+  `ScaleWorkload` reject the manager's own namespace through the exact same code path `F-14` already
+  proved correct, not a parallel special case. `CordonNodes` was deliberately left alone: cordoning
+  only blocks new scheduling, it doesn't evict a pod already running, so it isn't a liveness threat to
+  the manager the way eviction/scale-to-zero are. Covered by
+  `TestRunnerScaleWorkloadsExcludesManagerNamespace` and `TestRunnerDrainNodesExcludesManagerNamespace`.
+- **`F-1` fixed: `NUTServerReconciler` and `NodePowerAgentReconciler` now carry finalizers
+  (2026-08-04).** Verified first, carefully, before implementing: owner-reference garbage collection
+  already correctly deletes the rendered child resources (Deployment/DaemonSet, ConfigMap, Secrets,
+  Service, NetworkPolicy, PDB) for a cluster-scoped owner with namespaced dependents — that part of
+  the original finding's framing didn't hold up under direct verification, and building a finalizer to
+  "fix" already-working GC would have been finalizers for their own sake. What deletion genuinely never
+  had: any observable record it happened at all. This operator's whole interface model is status,
+  Kubernetes Events, and PostgreSQL audit records (`GP-7`), and a deleted `NUTServer`/`NodePowerAgent`
+  previously left none of the three. `power.zalud.io/nutserver-cleanup` and
+  `power.zalud.io/nodepoweragent-cleanup` finalizers now make deletion an explicit, blocking step: on
+  delete, each reconciler emits a Kubernetes `OperandTeardown` Event (new `Recorder record.EventRecorder`
+  field on both reconcilers, wired via `mgr.GetEventRecorderFor(...)` in `cmd/main.go`; RBAC for
+  `events create;patch` added) before removing the finalizer. RBAC for the finalizer itself needed no
+  manifest change — kubebuilder had already scaffolded `*/finalizers` `update` on all 9 CRDs from the
+  start. Covered by new envtest specs asserting finalizer presence after create and actual object
+  deletion after a second reconcile pass (`should finalize and actually delete on deletion`, both
+  controllers) — existing tests that delete-and-clean-up in `AfterEach` were updated to reconcile once
+  more after `Delete` so the finalizer's own removal is exercised, not just added.
+- **`F-4` fixed: operand-namespace fields now reject reserved Kubernetes namespaces
+  (2026-08-04).** The `namespaces` `create`/`update`/`patch` RBAC verb genuinely can't be narrowed by
+  name — Kubernetes RBAC only supports `resourceNames` on verbs acting on an object that already
+  exists, not `create` — so the original "narrow to what's actually needed" framing wasn't achievable
+  at the RBAC layer. Investigating *why* it mattered surfaced a real, more concrete gap it was gesturing
+  at: `NUTServerSpec.Namespace`/`NodePowerAgentSpec.Namespace`/`PowerManagementCluster.spec
+  .operandNamespace.name` are user-settable on cluster-scoped CRDs with zero validation beyond DNS-label
+  syntax — nothing stopped a `NUTServer`/`NodePowerAgent` CR from pointing its operand namespace at
+  `kube-system` and having the operator `CreateOrUpdate`-relabel it, or later render Deployments/
+  Secrets/ConfigMaps into it. Fixed by rejecting `default`/`kube-system`/`kube-public`/
+  `kube-node-lease` at both layers: `validateOptionalNamespace` (webhook, the primary defense — rejects
+  the request at admission time, covers all three fields via one shared helper) and
+  `rejectReservedOperandNamespace` (`internal/controller`, belt-and-suspenders for objects that predate
+  the webhook or reach the controller with it disabled). The two are intentionally duplicated rather
+  than shared across packages — same accepted pattern as `isSupportedInventoryEntityKind`. `serviceaccounts`
+  RBAC breadth (the other half of the original finding) was already confirmed defused in the same
+  2026-08-04 audit pass: no `AutomountServiceAccountToken`, no `rolebindings`/`clusterrolebindings`
+  RBAC at all.
+- **Real private-IP leak found and fixed in the process of building the new CI check below
+  (2026-08-04).** `internal/controller/nutserver_render_test.go` had a literal `192.168.1.209` as a
+  test fixture `Endpoint.Host` value — the real IP of a device from this session's private-repo alpha
+  deployment work, committed to this *public* repo in `70bb81f`. Self-introduced, caught while
+  designing the automated check below (a manual `grep` against the current tree, run before writing
+  the CI job, to see what it would actually need to handle), not by any existing tooling — confirms the
+  gap the new check closes was real, not hypothetical. Fixed by replacing it with the project's own
+  established convention (`*.example.net`, already used throughout `config/samples/` and
+  `docs/examples/`); the test doesn't assert on the host value so behavior is unaffected. Still visible
+  in git history at `70bb81f` — scrubbing that would mean a history rewrite and force-push, out of
+  scope unless explicitly requested. New `security.yml` job `private-ip-scan` greps all tracked files
+  for RFC1918 IPv4 literals (`.devcontainer/` excluded — its one RFC1918 usage is a generic Docker
+  network-config value, not site-specific infrastructure) and fails the build on any match; confirmed
+  clean against the current tree, including this fix. No RFC1918 secret/pattern is embedded in the
+  check itself — deliberately generic, so the check's own config can't become a second leak of exactly
+  what it's guarding against.
 
 #### Open Work
 
-- **`F-30` controller-manager has no protection against its own orchestrated shutdown actions.**
-  Found during a 2026-08-04 Kubernetes-design audit (`docs/audits/operator-maturity-benchmarks.md`).
-  `internal/kubeactions/runner.go`'s `protectedNamespaces` (the mechanism behind `F-14` self-exclusion)
-  only resolves `NodePowerAgent` operand namespaces — never the controller-manager's own namespace.
-  Neither `evictablePod` (`DrainNodes`) nor `scaleWorkloads` (`ScaleWorkload`) special-case the
-  manager's own pod or Deployment either. A `ShutdownFlow` group whose selector happens to match the
-  node or namespace the manager is running in can evict, drain, or scale it to zero mid-execution.
-  `config/manager/manager.yaml` also has no `priorityClassName` and no `PodDisruptionBudget` — every
-  operand the manager renders gets both (`F-18` for `NUTServer`, the DaemonSet audit for
-  `NodePowerAgent`), the manager itself gets neither. Highest-priority item in this section: this is
-  the one gap where the operator can take itself out mid-shutdown, the exact failure mode the rest of
-  the project is built to prevent.
 - **`F-31` `Status().Update()` resourceVersion race is universal, not `ShutdownFlow`-specific.**
   Confirmed via direct grep: all 9 controllers call `Status().Update()` exactly once each; zero use
   `Status().Patch()`. The Planning & Execution Logic section already documents the observed
@@ -642,12 +700,6 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
   incorrect — the label filter prevents wrong reconciles — but real memory/CPU overhead at cluster
   scale for watching pods this controller never acts on. Fix: scope via `cache.Options.ByObject` or an
   equivalent label selector on the watch.
-- **`F-4` update: the `serviceaccounts` RBAC half is substantially defused, `namespaces` is not.**
-  Verified 2026-08-04: `ServiceAccount` creation exists only in `nodepoweragent_render.go`, sets
-  `AutomountServiceAccountToken = false` on both the ServiceAccount and the DaemonSet pod template,
-  and the operator holds no RBAC on `rolebindings`/`clusterrolebindings` at all — it cannot bind any
-  permission to a ServiceAccount it creates. `namespaces create/update/patch` remains the real
-  open piece of this finding.
 - **`F-2` leader election: code default is `false`, but every real deployment overrides it.**
   Corrected 2026-08-04 — the flag default is `false` (`cmd/main.go`:
   `flag.BoolVar(&enableLeaderElection, "leader-elect", false, ...)`), but
@@ -656,13 +708,6 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
   (every deployment observed so far). Still worth flipping the code default to `true` for
   defense-in-depth — a future manifest change that drops the arg would silently regress — but this
   is not the live, active risk the original wording implied.
-- **`F-1` zero finalizers on any controller.** Confirmed — no `Finalizer` references outside tests.
-  Operand teardown relies entirely on owner references, which don't cover cross-namespace operands or
-  external side effects.
-- **`F-4` RBAC breadth.** Confirmed present: `nodepoweragent_controller.go` and
-  `nutserver_controller.go` both hold `namespaces` `create`, which is hard to justify for a shutdown
-  operator; narrow to what's actually needed or document why cluster-wide namespace creation is
-  required.
 - `F-5` **re-scoped after checking source**: the `argoproj.io/workflows` RBAC is not leftover
   scaffolding — it's the real `RunWorkflow` hook mechanism in `internal/kubeactions`, already listed
   as built under Planning & Execution Logic. Remaining work here is narrower than the original

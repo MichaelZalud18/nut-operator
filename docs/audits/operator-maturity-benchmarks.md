@@ -42,7 +42,7 @@ Mechanical, checkable, and where most reviewer friction lands.
 | Status subresource for observed state only | Met — GP-3 enforces it by design |
 | `observedGeneration` tracking | Met — present in all 9 API types and every controller |
 | Standard condition types with machine-readable reasons | Mostly met — see audit |
-| Finalizers for cleanup | **Not met — zero finalizers in any controller.** RBAC for it is already granted (`*/finalizers` `update` on all 9 CRDs, standard kubebuilder scaffold), so closing this is pure controller code, no manifest change. |
+| Finalizers for cleanup | **Met (2026-08-04)** — `NUTServerReconciler`/`NodePowerAgentReconciler` carry finalizers; owner-reference GC for the other 7 was verified never needing one (no Kubernetes child resources rendered). |
 | Status writes use `Patch`, not read-modify-write `Update` | **Not met anywhere** — all 9 controllers call `Status().Update()` exclusively, zero `Status().Patch()`. Confirmed as a live, observed bug for `ShutdownFlow` specifically (10h production log, 744 conflicts) but the vulnerable pattern is universal; the other 8 just reconcile too infrequently for it to have surfaced yet. See 2026-08-04 audit. |
 | `RequeueAfter` over sleeps | **Met — confirmed clean.** Zero `time.Sleep` calls in any controller. |
 | Leader election | **Active in every real deployment** — `config/manager/manager.yaml` passes bare `--leader-elect`, which Go's `flag` package treats as `true`. The code default is still `false`, which only matters if a manifest ever drops the arg. |
@@ -73,10 +73,10 @@ operator's failure mode is an ungraceful cluster shutdown.
 - **Leader election behavior during the managed event.** A lease renewal failure mid-shutdown must
   not permit a second operator instance to start a competing flow.
 - **Self-liveness posture.** The operator is a tier 0 workload and must not be evicted, drained, or
-  probe-restarted by its own flow. **Confirmed unmet 2026-08-04** — see F-30 below. The pattern this
-  requires (self-exclusion from orchestrated actions, priority class, PDB) is already built and
-  proven correct for `NodePowerAgent` operands (`F-14`, `F-18`); it was never extended to the
-  controller-manager's own pod and namespace.
+  probe-restarted by its own flow. **Confirmed unmet 2026-08-04, fixed same day** — see F-30 below.
+  The pattern this requires (self-exclusion from orchestrated actions, priority class, PDB) was
+  already built and proven correct for `NodePowerAgent` operands (`F-14`, `F-18`); it now also covers
+  the controller-manager's own pod and namespace.
 - **Degraded-dependency behavior.** Postgres down, NUT unreachable, provider stale — each must
   degrade explicitly and never block power response (SB-11, IN-15, RS-19).
 
@@ -253,3 +253,30 @@ substantially defused.
 - Before `v1beta1` promotion (Benchmark 3 becomes binding).
 - After OD-1 resolves (determines whether L3 is reachable).
 - Before first release with `ActuatorPolicy: SystemdPoweroff` enabled by anyone.
+
+## Fixes applied — 2026-08-04 (same day)
+
+Items 1, 2, and 4 from the recommended order above were implemented and verified (build, vet, full
+test suite including new specs, `make manifests`, ASH) the same day this audit pass ran. Full detail in
+`docs/tasks.md`'s Operator Maturity & Hardening Built section; summary here for the audit trail:
+
+- **`F-30` fixed** — `priorityClassName`/PDB added for the manager; `POD_NAMESPACE` downward API wires
+  the manager's own namespace into `kubeactions.Runner.protectedNamespaces` alongside the existing
+  `F-14` `NodePowerAgent` protection.
+- **`F-1` fixed** — finalizers added to `NUTServerReconciler`/`NodePowerAgentReconciler`. Scope
+  correction from the original finding: owner-reference GC was verified already correct for the
+  rendered child resources (not a gap); the finalizer's real job is making deletion observable via a
+  Kubernetes Event, which previously didn't exist at all for either resource.
+- **`F-4` fixed** — reserved-namespace rejection (`kube-system`, `kube-public`, `kube-node-lease`,
+  `default`) added at both the webhook and controller layers. The `namespaces create` RBAC verb itself
+  is unchanged (Kubernetes RBAC can't scope `create` by resource name), which is why this shows as
+  "fixed" via input validation rather than "narrowed" via RBAC.
+
+Still open from this list: `F-31` (`Status().Patch()`), `F-3` (metrics), `F-32` (Pod watch cache
+scoping), `F-7` (idempotency tests) — unchanged, see `docs/tasks.md`.
+
+A genuine, unrelated finding surfaced while building a new CI check during this same pass: a real
+private IP address (a device from this session's private-repo work) had been committed to this public
+repo's test fixtures in an earlier commit (`70bb81f`). Fixed in the working tree; still visible in git
+history. See `docs/tasks.md`'s Operator Maturity & Hardening Built section and `security.yml`'s new
+`private-ip-scan` job.
