@@ -332,6 +332,44 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   actuator for anything actually running in the cluster; only matters for non-cluster hardware on
   the same UPS or battery-waste cleanup. Not pursued unless that narrow case becomes a real need.
 - Credential rotation and advanced driver-specific config for the NUT operand render path.
+- **Scripted UPS-state-transition simulation (`dummy-ups` `dummy-loop`/`.seq`/`TIMER` mode) is not
+  modeled.** Confirmed 2026-08-04 (zero matches for `dummy-loop`/`.seq`/`TIMER` anywhere in the repo).
+  Only static single-state simulation exists today (`renderDummyUPSDefinition`'s `.dev` file, fixed
+  `OL`/100%/3600s/10% — real, and already used in tests), which can't drive an actual
+  `OnBattery`→`LowBattery` transition to exercise `ShutdownFlow` trigger eligibility end-to-end. NUT's
+  driver supports this natively via `mode = dummy-loop` plus a `.seq` file with `TIMER` directives; the
+  operator has no mechanism to deliver arbitrary simulation-fixture file content into the container,
+  only the one hardcoded `.dev` case. Two paths, in order: (1) prototype via the existing
+  `driverOptions` passthrough — `dummyUPSDefinitionFileName` already backs off its own `.dev`
+  rendering whenever `driverOptions.port` is set explicitly, so `port`/`mode = dummy-loop` render into
+  `ups.conf` correctly today; the missing piece is getting the `.seq` file itself onto the filesystem
+  (needs a hand-authored ConfigMap + volume patch outside the CRD today, not a first-class field).
+  (2) If that proves useful, promote to a real `simulation` field on `UPSDeviceSpec` (ConfigMap ref +
+  mode) — fixture data should be declarative and Git-reviewable, not a manual patch.
+- **`snmpsim` as a driver-conformance testing track, separate from `dummy-ups`.** Confirmed zero
+  coverage today: every `snmp-ups` reference in the repo is a config-string literal in tests ("does
+  the operator write `driver = snmp-ups` correctly"); nothing runs the actual `snmp-ups` NUT driver
+  against anything, real or simulated. Production/alpha hardware runs `snmp-ups` over SNMPv3, and this
+  session's entrypoint-coupling and readiness-probe bugs were both in that exact path — a real,
+  currently-unguarded regression surface. No operator/CRD change needed: `UPSDevice.spec.endpoint` +
+  `credentialSecretRef` already point `snmp-ups` at any host:port with SNMPv3 material, so a
+  `snmpsim-command-responder` Deployment serving `.snmprec` data (recorded from real hardware or
+  synthesized from the UPS MIB) is a drop-in target. Division of labor: `snmpsim` proves the driver
+  talks to a vendor's OIDs correctly; `dummy-ups` (once scripted transitions exist, above) proves the
+  operator reacts correctly once a device reports it's dying. `snmpsim` serves a static tree by
+  default (variation modules needed for dynamic values) — the wrong tool for transition testing, don't
+  conflate the two.
+- **Define the e2e target state for `dummy-ups`/`NUTServer`-backed coverage.** `test-e2e.yml`
+  currently runs `make test-e2e` against `kind` with no NUT simulator involved at all. Worth asserting
+  in that suite: CRDs install, all operand kinds render (Deployment/Service/ConfigMap/NetworkPolicy for
+  `NUTServer`, DaemonSet for `NodePowerAgent`), the DaemonSet lands on every `kind` node and its
+  `upsmon` container actually reaches a `NUTServer` pod backed by a `dummy-ups` fixture, and a sample
+  `ShutdownFlow` compiles to the expected waves in `/status`. Achievable today with the existing static
+  `.dev` fixture — no dependency on the scripted-transition work above. Real actuation testing
+  (`SystemdPoweroff`) is structurally out of scope for `kind` regardless: `kind` nodes are containers
+  and can't be powered off, and `NodePowerAgent` defaults to `DryRun`/`Stub` with `SystemdPoweroff`
+  additionally gated behind `Actuate` plus an approval annotation — that testing belongs on disposable
+  VMs outside GitHub Actions.
 
 #### Deferred / Declined (2026-08-03)
 
