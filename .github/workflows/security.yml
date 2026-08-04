@@ -1,0 +1,59 @@
+name: Security Scan
+
+on:
+  push:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  UV_CACHE_DIR: /tmp/nut-operator-ash-uv-cache
+  UV_TOOL_DIR: /tmp/nut-operator-ash-uv-tools
+
+jobs:
+  ash:
+    permissions:
+      contents: read
+    name: Run on Ubuntu
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Cache ASH's uv cache and tool install
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ env.UV_CACHE_DIR }}
+            ${{ env.UV_TOOL_DIR }}
+          key: ${{ runner.os }}-ash-uv-v3.5.8
+
+      - name: Install AWS Labs ASH
+        run: uv tool install 'git+https://github.com/awslabs/automated-security-helper.git@v3.5.8'
+
+      - name: Run ASH security scan
+        run: make security-scan
+
+      - name: Upload ASH report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ash-report
+          path: /tmp/nut-operator-ash-output
+          retention-days: 14

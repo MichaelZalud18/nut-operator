@@ -6,8 +6,18 @@ on:
       - main
     tags:
       - "v*.*.*"
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions: {}
 
@@ -20,6 +30,7 @@ jobs:
   build:
     name: Build ${{ matrix.image }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       attestations: write
       contents: read
@@ -85,14 +96,60 @@ jobs:
             type=sha,prefix=sha-,format=short
             type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
 
+      # PRs never push, so they get their own single-platform (native runner arch), loadable build
+      # scanned *before* anything is published. The old single build step ran push:false across both
+      # platforms on PRs too, which builds nothing loadable (a multi-platform manifest list has no
+      # single image to `docker load`) and skipped scanning entirely -- PRs got zero vulnerability
+      # signal. This closes that gap and drops the wasted arm64/QEMU build on PRs in the process.
+      - name: Build image for scanning (pull request)
+        id: build-pr
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.build-metadata.outputs.created }}
+            SOURCE=${{ github.server_url }}/${{ github.repository }}
+            DOCUMENTATION=${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}/README.md
+            LICENSES=Apache-2.0
+
+      - name: Scan pull request image
+        if: github.event_name == 'pull_request'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          timeout: 10m
+
+      # Non-PR builds (push to main, tags, workflow_dispatch) still build-then-push-then-scan in one
+      # multi-platform step: Buildx can't produce a scannable local image for a multi-platform
+      # manifest list, so a true pre-push scan would mean either dropping to single-arch here too or
+      # scanning each per-platform image separately before assembling the manifest -- meaningfully
+      # more machinery for a path that, unlike PRs, is only ever exercised by this repo's own
+      # maintainer commits, not external/untrusted changes. The residual risk window (image visible in
+      # GHCR for the seconds between push and scan failing the job) is accepted, not unnoticed.
       - name: Build and publish image
         id: build
+        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           platforms: ${{ env.PLATFORMS }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
@@ -119,5 +176,6 @@ jobs:
           timeout: 10m
 
       - name: Report digest
+        if: github.event_name != 'pull_request'
         run: |
           echo "${{ matrix.image }} digest: ${{ steps.build.outputs.digest }}"

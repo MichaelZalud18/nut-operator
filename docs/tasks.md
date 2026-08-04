@@ -588,6 +588,32 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
   pod-security label. `allow-webhook-traffic.yaml` was checked and needs no equivalent fix — it
   restricts by port only, not source namespace, by design (kube-apiserver's source identity is
   CNI-specific).
+- **CI pipeline optimized and ASH wired in (2026-08-04).** Verified before this pass: `make
+  security-scan` (ASH) was local-only, invoked nowhere under `.github/workflows/`; the only automated
+  scanning in CI was Trivy on published images in `Images`, which ran *after* push (so a CRITICAL/HIGH
+  finding failed the job without un-publishing the already-pushed image) and only on non-PR events (PRs
+  got zero vulnerability signal at all). Across `lint.yml`/`test.yml`/`test-e2e.yml`/`images.yml`, also
+  confirmed: no `concurrency` cancellation (demonstrated wasteful this session — 5 rapid-fire pushes
+  each ran full CI to completion independently), no `paths-ignore` (a docs-only commit triggered the
+  full multi-arch `Images` build+push+scan pipeline, also demonstrated this session), no caching for
+  envtest binaries or the custom-plugin `golangci-lint` build, no `timeout-minutes` on any job, and
+  `go mod tidy` ran silently before tests with any drift discarded rather than failing the build. Fixed
+  all of it: added `concurrency`/`paths-ignore`/`timeout-minutes` to all workflows; added a single
+  `actions/cache` on `bin/` (keyed on `Makefile`+`.custom-gcl.yml`) covering the custom-plugin
+  `golangci-lint` binary, envtest assets, `controller-gen`, and `kustomize` at once, since all of the
+  Makefile's `go-install-tool` targets share that directory; replaced the silent `go mod tidy` with a
+  `tidy` + `git diff --exit-code` drift check; split `images.yml`'s build step so PR events get their
+  own single-platform (native arch), `load: true` build scanned *before* anything is ever pushed —
+  closing the PR-coverage gap and dropping the previously-wasted arm64/QEMU build on PRs that produced
+  nothing scannable anyway (a multi-platform manifest list can't be `docker load`ed); non-PR
+  build-then-push-then-scan ordering is unchanged and the residual risk window is documented in the
+  workflow, not silently accepted — genuinely closing it would mean scanning per-platform images before
+  assembling the manifest, meaningfully more machinery for a path only ever exercised by this repo's
+  own maintainer commits, not external changes. New `security.yml` installs `uv` (cached, keyed on the
+  pinned ASH version), runs `make security-scan` on every push/PR, and uploads the full report
+  (markdown/html/sarif/flat-json) as a build artifact. Confirmed locally: zero new `actionlint`
+  findings from any of the additions, ASH itself completes in ~12s so the 15-minute job timeout is
+  headroom, not a tight fit.
 
 #### Open Work
 
@@ -647,9 +673,11 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 - Release image signing policy, cosign verification docs, and immutable digest production examples
   (`docs/images.md` describes the target state; keyless Sigstore signing as a release gate isn't
   confirmed wired into CI yet).
-- Re-run ASH after each hardening pass; triage every unsuppressed medium-or-higher finding.
+- **ASH now runs automatically on every push/PR** (`security.yml`, 2026-08-04) — "re-run ASH after
+  each hardening pass" is no longer a manual step to remember. What remains manual: triaging any new
+  unsuppressed medium-or-higher finding it surfaces.
 - Decide container-mode vs. locally-installed `grype`/`syft`/`opengrep`/`cfn-nag`/`cdk-nag` for full
-  ASH coverage.
+  ASH coverage — confirmed still `MISSING` in the scan output, not just undecided in principle.
 
 ---
 
