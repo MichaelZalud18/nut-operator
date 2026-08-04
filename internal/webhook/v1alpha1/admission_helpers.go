@@ -58,11 +58,29 @@ func validateDNSLabel(path *field.Path, value string) field.ErrorList {
 	return errs
 }
 
+// reservedOperandNamespaces are namespaces this operator must never be pointed at as an operand
+// namespace. The `namespaces` RBAC verb (create/update/patch) has no way to scope itself to specific
+// namespace names -- Kubernetes RBAC only supports resourceNames on verbs that act on an object that
+// already exists, not create -- so this is the only place that blast radius can actually be narrowed:
+// reject the request before the controller ever touches one of these (F-4).
+var reservedOperandNamespaces = map[string]bool{
+	"default":         true,
+	"kube-system":     true,
+	"kube-public":     true,
+	"kube-node-lease": true,
+}
+
 func validateOptionalNamespace(path *field.Path, value string) field.ErrorList {
 	if value == "" {
 		return nil
 	}
-	return validateDNSLabel(path, value)
+	if errs := validateDNSLabel(path, value); len(errs) > 0 {
+		return errs
+	}
+	if reservedOperandNamespaces[value] {
+		return field.ErrorList{field.Invalid(path, value, "must not be a reserved Kubernetes system namespace")}
+	}
+	return nil
 }
 
 func containsControlCharacter(value string) bool {

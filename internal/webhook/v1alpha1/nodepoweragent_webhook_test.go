@@ -110,6 +110,16 @@ var _ = Describe("NodePowerAgent Webhook", func() {
 			_, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).NotTo(HaveOccurred())
 		})
+
+		It("Should reject a reserved namespace as the operand namespace", func() {
+			obj.Spec = validNodePowerAgentSpec()
+			obj.Spec.Namespace = "kube-system"
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.namespace"))
+			Expect(err.Error()).To(ContainSubstring("reserved"))
+		})
 	})
 })
 

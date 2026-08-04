@@ -373,3 +373,23 @@ func validateUPSCapabilityProfile(obj *powerv1alpha1.UPSCapabilityProfile) valid
 	}
 	return accepted("UPS capability profile contract accepted")
 }
+
+// reservedOperandNamespaces mirrors internal/webhook/v1alpha1's list of namespaces this operator must
+// never be pointed at as an operand namespace (F-4). Duplicated rather than imported: the webhook
+// package depends on the API/controller packages, not the reverse, and this is the same small,
+// controlled duplication already accepted elsewhere in this codebase (isSupportedInventoryEntityKind).
+// The webhook is the primary defense (rejects the request at admission time); this is belt-and-
+// suspenders for objects that predate the webhook or reach the controller with it bypassed.
+var reservedOperandNamespaces = map[string]bool{
+	"default":         true,
+	"kube-system":     true,
+	"kube-public":     true,
+	"kube-node-lease": true,
+}
+
+func rejectReservedOperandNamespace(name string) error {
+	if reservedOperandNamespaces[name] {
+		return fmt.Errorf("operand namespace %q is a reserved Kubernetes system namespace", name)
+	}
+	return nil
+}

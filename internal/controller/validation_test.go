@@ -369,6 +369,17 @@ func TestValidateUPSCapabilityProfileAcceptsUniversalFloor(t *testing.T) {
 	}
 }
 
+func TestRejectReservedOperandNamespace(t *testing.T) {
+	for _, name := range []string{"default", "kube-system", "kube-public", "kube-node-lease"} {
+		if err := rejectReservedOperandNamespace(name); err == nil {
+			t.Fatalf("expected %q to be rejected as a reserved operand namespace", name)
+		}
+	}
+	if err := rejectReservedOperandNamespace("power-system"); err != nil {
+		t.Fatalf("expected power-system to be accepted, got %v", err)
+	}
+}
+
 func shutdownFlowWithGroups(groups []powerv1alpha1.ShutdownGroup) *powerv1alpha1.ShutdownFlow {
 	return &powerv1alpha1.ShutdownFlow{
 		Spec: powerv1alpha1.ShutdownFlowSpec{

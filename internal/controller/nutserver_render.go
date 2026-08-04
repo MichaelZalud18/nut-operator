@@ -655,6 +655,9 @@ func podDisruptionBudgetName(server *powerv1alpha1.NUTServer) string {
 }
 
 func (r *NUTServerReconciler) ensureOperandNamespace(ctx context.Context, name string) error {
+	if err := rejectReservedOperandNamespace(name); err != nil {
+		return err
+	}
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, namespace, func() error {
 		if namespace.Labels == nil {
