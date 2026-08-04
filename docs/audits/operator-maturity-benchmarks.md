@@ -42,9 +42,10 @@ Mechanical, checkable, and where most reviewer friction lands.
 | Status subresource for observed state only | Met — GP-3 enforces it by design |
 | `observedGeneration` tracking | Met — present in all 9 API types and every controller |
 | Standard condition types with machine-readable reasons | Mostly met — see audit |
-| Finalizers for cleanup | **Not met — zero finalizers in any controller** |
-| `RequeueAfter` over sleeps | Assumed; spot-check pending |
-| Leader election | Present but **defaults to disabled** |
+| Finalizers for cleanup | **Not met — zero finalizers in any controller.** RBAC for it is already granted (`*/finalizers` `update` on all 9 CRDs, standard kubebuilder scaffold), so closing this is pure controller code, no manifest change. |
+| Status writes use `Patch`, not read-modify-write `Update` | **Not met anywhere** — all 9 controllers call `Status().Update()` exclusively, zero `Status().Patch()`. Confirmed as a live, observed bug for `ShutdownFlow` specifically (10h production log, 744 conflicts) but the vulnerable pattern is universal; the other 8 just reconcile too infrequently for it to have surfaced yet. See 2026-08-04 audit. |
+| `RequeueAfter` over sleeps | **Met — confirmed clean.** Zero `time.Sleep` calls in any controller. |
+| Leader election | **Active in every real deployment** — `config/manager/manager.yaml` passes bare `--leader-elect`, which Go's `flag` package treats as `true`. The code default is still `false`, which only matters if a manifest ever drops the arg. |
 
 Check at: every controller added, and before release tagging.
 
@@ -72,7 +73,10 @@ operator's failure mode is an ungraceful cluster shutdown.
 - **Leader election behavior during the managed event.** A lease renewal failure mid-shutdown must
   not permit a second operator instance to start a competing flow.
 - **Self-liveness posture.** The operator is a tier 0 workload and must not be evicted, drained, or
-  probe-restarted by its own flow.
+  probe-restarted by its own flow. **Confirmed unmet 2026-08-04** — see F-30 below. The pattern this
+  requires (self-exclusion from orchestrated actions, priority class, PDB) is already built and
+  proven correct for `NodePowerAgent` operands (`F-14`, `F-18`); it was never extended to the
+  controller-manager's own pod and namespace.
 - **Degraded-dependency behavior.** Postgres down, NUT unreachable, provider stale — each must
   degrade explicitly and never block power response (SB-11, IN-15, RS-19).
 
@@ -140,6 +144,110 @@ for silent duplicate-creation bugs.
 5. F-7 idempotency tests — highest effort, catches the least visible class of bug.
 
 ## Re-audit triggers
+
+- Any new controller or CRD.
+- Before `v1beta1` promotion (Benchmark 3 becomes binding).
+- After OD-1 resolves (determines whether L3 is reachable).
+- Before first release with `ActuatorPolicy: SystemdPoweroff` enabled by anyone.
+
+---
+
+# Audit — 2026-08-04
+
+Against commit `9e65976`. Kubernetes/controller-runtime design focus, prompted by the 2026-08-03
+audit's own re-audit trigger (several controller/RBAC/watch changes landed this session: `F-28`
+CNPG watch gating, `F-29` metrics NetworkPolicy fix, `credentialSecretRef` wiring, `imagePullPolicy`
+and entrypoint/readiness fixes). Static reading plus direct `grep`/`go vet` verification of every
+claim below — no claim in this section is inferred from the prior audit without being re-checked
+against current source.
+
+## Findings
+
+**F-30 · The controller-manager has no protection against its own orchestrated shutdown actions.**
+`internal/kubeactions/runner.go`'s `protectedNamespaces` — the mechanism that makes `F-14`
+self-exclusion real — resolves only the operand namespaces of every `NodePowerAgent` in the cluster.
+It does not include the controller-manager's own install namespace. `evictablePod` (used by
+`drainNodes`) skips `Succeeded`/`Failed` pods, mirror pods, and DaemonSet-owned pods — nothing checks
+for the manager's own `control-plane: controller-manager` label or its namespace. `scaleWorkloads`
+has the identical gap for `ScaleWorkload`. Concretely: a user-authored `ShutdownFlow` group whose
+`nodeSelector` matches the node the manager pod happens to be scheduled on (`DrainNodes`), or whose
+`namespaceSelector`/`workloadSelector` happens to match the manager's own namespace or Deployment
+(`ScaleWorkload`), evicts or scales down the very process executing the flow, mid-execution. This is
+exactly the failure mode Benchmark 4 names ("must not be evicted, drained, or probe-restarted by its
+own flow") and exactly the pattern already built correctly for operands (`F-14`, `F-18`) — it just
+was never turned back on the manager itself. Compounding factors, all confirmed in
+`config/manager/manager.yaml`: no `priorityClassName` (every operand the manager renders gets one —
+`system-cluster-critical` or `system-node-critical` — the manager itself gets none), no
+`PodDisruptionBudget`, and `replicas: 1` with no static PDB manifest anywhere under `config/`
+protecting it from voluntary eviction. Highest-value finding in this pass — it is the one gap that
+can make the operator take itself out mid-shutdown, which is the single failure mode this project
+exists to prevent elsewhere.
+
+**F-31 · `Status().Update()` (read-modify-write) is universal, not a `ShutdownFlow`-specific bug.**
+`grep -c "Status().Update("` across all 9 `*_controller.go` files returns exactly 1 in every file;
+`Status().Patch(` returns 0 everywhere. `docs/tasks.md` already documents the observed consequence
+for `ShutdownFlow` (10h production log, 744 `"the object has been modified"` conflicts) and correctly
+root-causes it to the combination of an unpredicated high-frequency watch plus `Update` instead of
+`Patch`. What wasn't previously stated: the `Update`-instead-of-`Patch` half of that root cause is
+not particular to `ShutdownFlow` — every controller in the codebase has the identical
+resourceVersion race latent in it. The other 8 haven't manifested it in logs only because nothing
+currently drives their reconcile frequency as high as `UPSDevice` telemetry ticks (5–15s) do for
+`ShutdownFlow`. Fixing `Status().Patch()` as a shared pattern (not a one-off `ShutdownFlow` fix)
+closes the whole class, not just the one instance that happened to get loud enough to show up in
+logs first.
+
+**F-32 · `NodePowerAgent`'s Pod watch is unscoped — no predicate, no cache scoping.**
+`nodepoweragent_controller.go`'s `SetupWithManager` calls `Watches(&corev1.Pod{}, ...)` with a map
+function that filters by the `power.zalud.io/nodepoweragent` label, but the watch itself has no
+`WithPredicates` and `cmd/main.go` configures no `cache.Options.ByObject` scoping for `corev1.Pod{}`
+(confirmed: zero matches for `Cache`/`ByObject` in `cmd/main.go`). controller-runtime's default cache
+behavior means this caches and receives watch events for *every* Pod in the cluster, not just
+DaemonSet-owned agent pods — the label filter runs after the fact, per event, for every pod in every
+namespace. Self-limiting (no incorrect behavior, just wasted cache memory and CPU on the map
+function) but real overhead at cluster scale, and inconsistent with how deliberately this project
+scopes RBAC and predicates everywhere else. Standard fix: `cache.Options{ByObject: map[client.Object]cache.ByObject{&corev1.Pod{}: {Label: labels.SelectorFromSet(...)}}}` scoped to pods carrying the
+agent label, or an equivalent field/label selector on the watch itself.
+
+**F-4 update · `serviceaccounts` RBAC breadth is less dangerous than originally scored.** Verified
+directly: `corev1.ServiceAccount{}` creation exists only in `nodepoweragent_render.go`, sets
+`AutomountServiceAccountToken = false` on both the created ServiceAccount *and* the DaemonSet pod
+template it's mounted into (belt and suspenders), and the operator holds no RBAC on
+`rolebindings`/`clusterrolebindings` at all — grepped the full `+kubebuilder:rbac` marker set,
+neither resource appears. The operator cannot bind any permission to a ServiceAccount it creates,
+structurally, not just by current code behavior. The `namespaces` `create`/`update`/`patch` grant
+remains the one live, unresolved piece of the original `F-4` finding; the `serviceaccounts` half is
+substantially defused.
+
+## Not findings (re-confirmed this pass)
+
+- `F-2`, previously flagged as the top item in "Recommended order" below — corrected 2026-08-04, see
+  `docs/tasks.md`. Leader election is active in every real deployment via the manifest's bare arg;
+  the code default only matters as defense-in-depth against a future manifest regression.
+- `time.Sleep` usage: zero, confirmed by direct grep across `internal/controller`.
+- Owner-reference usage (`SetControllerReference`/`SetOwnerReference`): present and scoped correctly
+  in the only two controllers that render child Kubernetes resources (`nutserver_render.go`,
+  `nodepoweragent_render.go`). The remaining 7 controllers own no Kubernetes child objects, so no
+  owner-reference gap exists there — nothing to close.
+- Cluster-scoped CRD owning namespaced operands (all 9 CRDs are `+kubebuilder:resource:scope=Cluster`
+  while `NUTServer`/`NodePowerAgent` render namespaced Deployments/DaemonSets/Secrets/etc): this is a
+  supported Kubernetes garbage-collection pattern, not a gap — a namespaced object may carry an owner
+  reference to a cluster-scoped owner. Checked because it looked suspicious at a glance; it isn't.
+
+## Recommended order (supersedes the 2026-08-03 list)
+
+1. **`F-30` manager self-protection** — the operator taking itself down mid-shutdown is a worse
+   failure mode than anything else on this list; the pattern to copy (`F-14`/`F-18`) already exists
+   in the codebase.
+2. `F-1` finalizers — unchanged in priority; RBAC friction confirmed to be zero.
+3. `F-31` `Status().Patch()` — moderate effort, closes the whole class instead of patching the one
+   loud instance.
+4. `F-4` `namespaces create` narrowing — the `serviceaccounts` half no longer needs it; this is the
+   remaining scope.
+5. `F-3` metrics — unchanged, still unlocks all of L4.
+6. `F-32` Pod watch cache scoping — cheap, but lowest blast radius of this list.
+7. `F-7` idempotency tests — unchanged, highest effort.
+
+## Re-audit triggers (unchanged from 2026-08-03, still current)
 
 - Any new controller or CRD.
 - Before `v1beta1` promotion (Benchmark 3 becomes binding).

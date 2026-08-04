@@ -553,6 +553,37 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 
 #### Open Work
 
+- **`F-30` controller-manager has no protection against its own orchestrated shutdown actions.**
+  Found during a 2026-08-04 Kubernetes-design audit (`docs/audits/operator-maturity-benchmarks.md`).
+  `internal/kubeactions/runner.go`'s `protectedNamespaces` (the mechanism behind `F-14` self-exclusion)
+  only resolves `NodePowerAgent` operand namespaces — never the controller-manager's own namespace.
+  Neither `evictablePod` (`DrainNodes`) nor `scaleWorkloads` (`ScaleWorkload`) special-case the
+  manager's own pod or Deployment either. A `ShutdownFlow` group whose selector happens to match the
+  node or namespace the manager is running in can evict, drain, or scale it to zero mid-execution.
+  `config/manager/manager.yaml` also has no `priorityClassName` and no `PodDisruptionBudget` — every
+  operand the manager renders gets both (`F-18` for `NUTServer`, the DaemonSet audit for
+  `NodePowerAgent`), the manager itself gets neither. Highest-priority item in this section: this is
+  the one gap where the operator can take itself out mid-shutdown, the exact failure mode the rest of
+  the project is built to prevent.
+- **`F-31` `Status().Update()` resourceVersion race is universal, not `ShutdownFlow`-specific.**
+  Confirmed via direct grep: all 9 controllers call `Status().Update()` exactly once each; zero use
+  `Status().Patch()`. The Planning & Execution Logic section already documents the observed
+  consequence for `ShutdownFlow` (10h production log, 744 conflicts) and root-causes it partly to this
+  pattern — what's new is confirming the same latent race exists in all 8 other controllers too, just
+  unobserved because nothing else drives reconcile frequency as high as `ShutdownFlow`'s unpredicated
+  `UPSDevice` watch does. Fix as a shared `Status().Patch()` pattern, not a `ShutdownFlow`-only change.
+- **`F-32` `NodePowerAgent`'s Pod watch has no predicate and no cache scoping.** `Watches(&corev1.Pod{}, ...)`
+  filters by label inside the map function, but the watch itself and the manager's cache
+  (`cmd/main.go` configures no `cache.Options.ByObject`) both cover every Pod cluster-wide. Not
+  incorrect — the label filter prevents wrong reconciles — but real memory/CPU overhead at cluster
+  scale for watching pods this controller never acts on. Fix: scope via `cache.Options.ByObject` or an
+  equivalent label selector on the watch.
+- **`F-4` update: the `serviceaccounts` RBAC half is substantially defused, `namespaces` is not.**
+  Verified 2026-08-04: `ServiceAccount` creation exists only in `nodepoweragent_render.go`, sets
+  `AutomountServiceAccountToken = false` on both the ServiceAccount and the DaemonSet pod template,
+  and the operator holds no RBAC on `rolebindings`/`clusterrolebindings` at all — it cannot bind any
+  permission to a ServiceAccount it creates. `namespaces create/update/patch` remains the real
+  open piece of this finding.
 - **`F-2` leader election: code default is `false`, but every real deployment overrides it.**
   Corrected 2026-08-04 — the flag default is `false` (`cmd/main.go`:
   `flag.BoolVar(&enableLeaderElection, "leader-elect", false, ...)`), but
