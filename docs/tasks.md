@@ -669,8 +669,8 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
   2026-08-04 audit pass: no `AutomountServiceAccountToken`, no `rolebindings`/`clusterrolebindings`
   RBAC at all.
 - **Real private-IP leak found and fixed in the process of building the new CI check below
-  (2026-08-04).** `internal/controller/nutserver_render_test.go` had a literal `192.168.1.209` as a
-  test fixture `Endpoint.Host` value — the real IP of a device from this session's private-repo alpha
+  (2026-08-04).** `internal/controller/nutserver_render_test.go` had a literal private IPv4 address as
+  a test fixture `Endpoint.Host` value — the real IP of a device from this session's private-repo alpha
   deployment work, committed to this *public* repo in `70bb81f`. Self-introduced, caught while
   designing the automated check below (a manual `grep` against the current tree, run before writing
   the CI job, to see what it would actually need to handle), not by any existing tooling — confirms the
