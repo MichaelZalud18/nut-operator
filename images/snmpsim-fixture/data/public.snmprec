@@ -1,0 +1,19 @@
+# RFC 1628 (UPS-MIB) fixture for driver-conformance testing of NUT's snmp-ups driver in
+# `mibs=ietf` mode. Values were chosen to match, and have been verified against, NUT's real
+# ietf-mib.c OID mapping table (upstream networkupstools/nut), not guessed: an Online UPS at
+# 100% charge, 60 minutes (3600s) runtime, 10% load. Lines must stay in strict ascending OID
+# order -- snmpsim serves GETNEXT/walk by file position, and out-of-order OIDs break SNMP walk
+# semantics with an "OID not increasing" error partway through.
+#
+# Community: public (SNMPv1/SNMPv2c). This fixture intentionally covers community-based auth
+# only; see images/snmpsim-fixture/README.md for the SNMPv3 coverage gap this leaves.
+1.3.6.1.2.1.1.1.0|4|nut-operator simulated UPS
+1.3.6.1.2.1.1.2.0|6|1.3.6.1.2.1.33
+1.3.6.1.2.1.33.1.1.1.0|4|nut-operator
+1.3.6.1.2.1.33.1.1.2.0|4|snmpsim-fixture
+1.3.6.1.2.1.33.1.1.3.0|4|1.0
+1.3.6.1.2.1.33.1.2.1.0|2|2
+1.3.6.1.2.1.33.1.2.3.0|2|60
+1.3.6.1.2.1.33.1.2.4.0|2|100
+1.3.6.1.2.1.33.1.4.1.0|2|3
+1.3.6.1.2.1.33.1.4.4.1.5.1|2|10

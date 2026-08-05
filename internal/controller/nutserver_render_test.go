@@ -151,6 +151,248 @@ func TestRenderUPSConfMergesCredentialSecretOverDriverOptions(t *testing.T) {
 	}
 }
 
+func TestRenderUPSConfSelectsSimulationSequenceOverStaticDummyFile(t *testing.T) {
+	conf, err := renderUPSConf([]powerv1alpha1.UPSDevice{
+		{
+			ObjectMeta: objectMeta("ups-1"),
+			Spec: powerv1alpha1.UPSDeviceSpec{
+				Driver: "dummy-ups",
+				Simulation: &powerv1alpha1.UPSDeviceSimulation{
+					SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+						Namespace: "power-system",
+						Name:      "ups-1-transitions",
+					},
+				},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("renderUPSConf returned error: %v", err)
+	}
+
+	for _, want := range []string{
+		"[ups-1]",
+		"  driver = dummy-ups",
+		"  port = ups-1.seq",
+		"  mode = dummy-loop",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("rendered simulation config missing %q:\n%s", want, conf)
+		}
+	}
+	if strings.Contains(conf, "ups-1.dev") {
+		t.Fatalf("rendered simulation config unexpectedly referenced the static .dev file:\n%s", conf)
+	}
+}
+
+func TestRenderUPSConfSimulationRespectsExplicitModeOverride(t *testing.T) {
+	conf, err := renderUPSConf([]powerv1alpha1.UPSDevice{
+		{
+			ObjectMeta: objectMeta("ups-1"),
+			Spec: powerv1alpha1.UPSDeviceSpec{
+				Driver: "dummy-ups",
+				DriverOptions: map[string]string{
+					"mode": "dummy-once",
+				},
+				Simulation: &powerv1alpha1.UPSDeviceSimulation{
+					SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+						Namespace: "power-system",
+						Name:      "ups-1-transitions",
+					},
+				},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("renderUPSConf returned error: %v", err)
+	}
+	if !strings.Contains(conf, "  mode = dummy-once") {
+		t.Fatalf("expected user-supplied mode override to win, got:\n%s", conf)
+	}
+	if strings.Contains(conf, "dummy-loop") {
+		t.Fatalf("expected default mode not to appear alongside an explicit override:\n%s", conf)
+	}
+}
+
+func TestRenderNUTServerConfigRendersSimulationFixtureContent(t *testing.T) {
+	device := powerv1alpha1.UPSDevice{
+		ObjectMeta: objectMeta("ups-1"),
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			Driver: "dummy-ups",
+			Simulation: &powerv1alpha1.UPSDeviceSimulation{
+				SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+					Namespace: "power-system",
+					Name:      "ups-1-transitions",
+				},
+			},
+		},
+	}
+	fixture := "ups.status: OL\n\nTIMER 15\n\nups.status: OB\n"
+
+	config, err := renderNUTServerConfig(
+		&powerv1alpha1.NUTServer{},
+		[]powerv1alpha1.UPSDevice{device},
+		nil,
+		map[string]string{"ups-1": fixture},
+	)
+	if err != nil {
+		t.Fatalf("renderNUTServerConfig returned error: %v", err)
+	}
+	if got := config["ups-1.seq"]; got != fixture {
+		t.Fatalf("config[%q] = %q, want %q", "ups-1.seq", got, fixture)
+	}
+	if _, ok := config["ups-1.dev"]; ok {
+		t.Fatal("expected no static .dev file to be rendered alongside a simulation fixture")
+	}
+}
+
+func TestRenderNUTServerConfigErrorsWhenSimulationFixtureMissing(t *testing.T) {
+	device := powerv1alpha1.UPSDevice{
+		ObjectMeta: objectMeta("ups-1"),
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			Driver: "dummy-ups",
+			Simulation: &powerv1alpha1.UPSDeviceSimulation{
+				SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+					Namespace: "power-system",
+					Name:      "ups-1-transitions",
+				},
+			},
+		},
+	}
+
+	_, err := renderNUTServerConfig(&powerv1alpha1.NUTServer{}, []powerv1alpha1.UPSDevice{device}, nil, nil)
+	if err == nil {
+		t.Fatal("expected missing simulation fixture content to error")
+	}
+}
+
+func TestResolveUPSDeviceSimulationFixturesFetchesReferencedConfigMap(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add corev1 to scheme: %v", err)
+	}
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "ups-1-transitions", Namespace: "power-system"},
+		Data: map[string]string{
+			"sequence.seq": "ups.status: OL\n",
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(configMap).Build()
+
+	fixtures, err := resolveUPSDeviceSimulationFixtures(context.Background(), fakeClient, "power-system", []powerv1alpha1.UPSDevice{
+		{
+			ObjectMeta: objectMeta("ups-1"),
+			Spec: powerv1alpha1.UPSDeviceSpec{
+				Driver: "dummy-ups",
+				Simulation: &powerv1alpha1.UPSDeviceSimulation{
+					SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+						Namespace: "power-system",
+						Name:      "ups-1-transitions",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolveUPSDeviceSimulationFixtures returned error: %v", err)
+	}
+	if got := fixtures["ups-1"]; got != "ups.status: OL\n" {
+		t.Fatalf("fixtures[%q] = %q, want %q", "ups-1", got, "ups.status: OL\n")
+	}
+}
+
+func TestResolveUPSDeviceSimulationFixturesHonorsCustomKey(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add corev1 to scheme: %v", err)
+	}
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "ups-1-transitions", Namespace: "power-system"},
+		Data: map[string]string{
+			"battery-drain.seq": "ups.status: OB\n",
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(configMap).Build()
+
+	fixtures, err := resolveUPSDeviceSimulationFixtures(context.Background(), fakeClient, "power-system", []powerv1alpha1.UPSDevice{
+		{
+			ObjectMeta: objectMeta("ups-1"),
+			Spec: powerv1alpha1.UPSDeviceSpec{
+				Driver: "dummy-ups",
+				Simulation: &powerv1alpha1.UPSDeviceSimulation{
+					SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+						Namespace: "power-system",
+						Name:      "ups-1-transitions",
+					},
+					SequenceKey: "battery-drain.seq",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolveUPSDeviceSimulationFixtures returned error: %v", err)
+	}
+	if got := fixtures["ups-1"]; got != "ups.status: OB\n" {
+		t.Fatalf("fixtures[%q] = %q, want %q", "ups-1", got, "ups.status: OB\n")
+	}
+}
+
+func TestResolveUPSDeviceSimulationFixturesRejectsCrossNamespaceRef(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add corev1 to scheme: %v", err)
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	_, err := resolveUPSDeviceSimulationFixtures(context.Background(), fakeClient, "power-system", []powerv1alpha1.UPSDevice{
+		{
+			ObjectMeta: objectMeta("ups-1"),
+			Spec: powerv1alpha1.UPSDeviceSpec{
+				Driver: "dummy-ups",
+				Simulation: &powerv1alpha1.UPSDeviceSimulation{
+					SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+						Namespace: "other-system",
+						Name:      "ups-1-transitions",
+					},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected cross-namespace simulation sequenceConfigMapRef to be rejected")
+	}
+}
+
+func TestResolveUPSDeviceSimulationFixturesRejectsMissingKey(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add corev1 to scheme: %v", err)
+	}
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "ups-1-transitions", Namespace: "power-system"},
+		Data:       map[string]string{"unexpected-key.seq": "ups.status: OL\n"},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(configMap).Build()
+
+	_, err := resolveUPSDeviceSimulationFixtures(context.Background(), fakeClient, "power-system", []powerv1alpha1.UPSDevice{
+		{
+			ObjectMeta: objectMeta("ups-1"),
+			Spec: powerv1alpha1.UPSDeviceSpec{
+				Driver: "dummy-ups",
+				Simulation: &powerv1alpha1.UPSDeviceSimulation{
+					SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+						Namespace: "power-system",
+						Name:      "ups-1-transitions",
+					},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected missing sequenceKey to be rejected")
+	}
+}
+
 func TestResolveUPSDeviceCredentialsFetchesReferencedSecret(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {

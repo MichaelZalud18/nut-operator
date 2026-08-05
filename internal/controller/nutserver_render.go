@@ -79,11 +79,25 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
+	// ensureOperandNamespace runs before any lookup scoped to that namespace (credentialSecretRef,
+	// simulation.sequenceConfigMapRef): both are user-supplied objects the operand namespace is
+	// expected to already contain, but for a standalone NUTServer (no PowerManagementCluster
+	// pre-creating operandNamespace) this reconciler is also what creates that namespace in the
+	// first place. Resolving those refs first would mean the very first reconcile always fails with
+	// NotFound before the namespace it needs ever gets created, and the resource could never
+	// converge without an out-of-band namespace creation.
+	if err := r.ensureOperandNamespace(ctx, namespace); err != nil {
+		return renderedNUTServer{}, err
+	}
 	credentials, err := resolveUPSDeviceCredentials(ctx, r.Client, namespace, devices)
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
-	configData, err := renderNUTServerConfig(server, devices, credentials)
+	simulationFixtures, err := resolveUPSDeviceSimulationFixtures(ctx, r.Client, namespace, devices)
+	if err != nil {
+		return renderedNUTServer{}, err
+	}
+	configData, err := renderNUTServerConfig(server, devices, credentials, simulationFixtures)
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
@@ -95,10 +109,6 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	upsConf := configData["ups.conf"]
 	delete(configData, "ups.conf")
 	configHash := hashStringMap(configData)
-
-	if err := r.ensureOperandNamespace(ctx, namespace); err != nil {
-		return renderedNUTServer{}, err
-	}
 
 	configMap, err := r.ensureNUTServerConfigMap(ctx, server, namespace, configData)
 	if err != nil {
@@ -264,7 +274,7 @@ func selectUPSDevices(ctx context.Context, c client.Client, server *powerv1alpha
 	return devices, nil
 }
 
-func renderNUTServerConfig(server *powerv1alpha1.NUTServer, devices []powerv1alpha1.UPSDevice, credentials map[string]map[string]string) (map[string]string, error) {
+func renderNUTServerConfig(server *powerv1alpha1.NUTServer, devices []powerv1alpha1.UPSDevice, credentials map[string]map[string]string, simulationFixtures map[string]string) (map[string]string, error) {
 	upsConf, err := renderUPSConf(devices, credentials)
 	if err != nil {
 		return nil, err
@@ -276,6 +286,16 @@ func renderNUTServerConfig(server *powerv1alpha1.NUTServer, devices []powerv1alp
 		"upsd.conf": fmt.Sprintf("LISTEN %s %d\n", listenAddress(server), servicePort(server)),
 	}
 	for _, device := range devices {
+		if filename, ok, err := dummyUPSSimulationFileName(device); err != nil {
+			return nil, err
+		} else if ok {
+			fixture, hasFixture := simulationFixtures[device.Name]
+			if !hasFixture {
+				return nil, fmt.Errorf("UPSDevice %q simulation.sequenceConfigMapRef resolved no fixture content", device.Name)
+			}
+			config[filename] = fixture
+			continue
+		}
 		filename, ok, err := dummyUPSDefinitionFileName(device)
 		if err != nil {
 			return nil, err
@@ -321,7 +341,11 @@ func renderUPSConf(devices []powerv1alpha1.UPSDevice, credentials map[string]map
 				fmt.Fprintf(&out, "  repeater_disable_strict_start = true\n")
 			}
 		}
-		if filename, ok, err := dummyUPSDefinitionFileName(device); err != nil {
+		if filename, ok, err := dummyUPSSimulationFileName(device); err != nil {
+			return "", err
+		} else if ok {
+			fmt.Fprintf(&out, "  port = %s\n", filename)
+		} else if filename, ok, err := dummyUPSDefinitionFileName(device); err != nil {
 			return "", err
 		} else if ok {
 			fmt.Fprintf(&out, "  port = %s\n", filename)
@@ -339,7 +363,12 @@ func renderUPSConf(devices []powerv1alpha1.UPSDevice, credentials map[string]map
 			}
 		}
 
-		options := make(map[string]string, len(device.Spec.DriverOptions))
+		options := make(map[string]string, len(device.Spec.DriverOptions)+1)
+		if hasSimulationSequence(device) {
+			// Explicit, even though the .seq extension alone already selects dummy-loop mode
+			// (belt-and-suspenders); a user-supplied mode below still wins on key collision.
+			options["mode"] = "dummy-loop"
+		}
 		for key, value := range device.Spec.DriverOptions {
 			options[key] = value
 		}
@@ -379,11 +408,76 @@ func dummyUPSDefinitionFileName(device powerv1alpha1.UPSDevice) (string, bool, e
 	if explicitPort := device.Spec.DriverOptions["port"]; explicitPort != "" {
 		return "", false, nil
 	}
+	if hasSimulationSequence(device) {
+		return "", false, nil
+	}
 	filename := nutDeviceName(device) + ".dev"
 	if err := validateNUTConfigToken(filename); err != nil {
 		return "", false, fmt.Errorf("invalid dummy UPS definition filename for UPSDevice %q: %w", device.Name, err)
 	}
 	return filename, true, nil
+}
+
+// hasSimulationSequence reports whether a UPSDevice requests dummy-ups scripted
+// state-transition simulation via a referenced .seq fixture ConfigMap.
+func hasSimulationSequence(device powerv1alpha1.UPSDevice) bool {
+	return device.Spec.Simulation != nil && device.Spec.Simulation.SequenceConfigMapRef.Name != ""
+}
+
+// dummyUPSSimulationFileName names the dummy-ups `.seq` scripted-transition fixture file for a
+// device requesting spec.simulation, mirroring dummyUPSDefinitionFileName's static `.dev` case.
+// The `.seq` extension alone selects NUT's dummy-loop driver mode; renderUPSConf also writes an
+// explicit `mode = dummy-loop` driver option for clarity.
+func dummyUPSSimulationFileName(device powerv1alpha1.UPSDevice) (string, bool, error) {
+	if device.Spec.Driver != "dummy-ups" {
+		return "", false, nil
+	}
+	if device.Spec.UpstreamNUT != nil {
+		return "", false, nil
+	}
+	if explicitPort := device.Spec.DriverOptions["port"]; explicitPort != "" {
+		return "", false, nil
+	}
+	if !hasSimulationSequence(device) {
+		return "", false, nil
+	}
+	filename := nutDeviceName(device) + ".seq"
+	if err := validateNUTConfigToken(filename); err != nil {
+		return "", false, fmt.Errorf("invalid dummy UPS simulation filename for UPSDevice %q: %w", device.Name, err)
+	}
+	return filename, true, nil
+}
+
+// resolveUPSDeviceSimulationFixtures fetches spec.simulation.sequenceConfigMapRef for each
+// selected device so renderNUTServerConfig can render a dummy-ups `.seq` scripted-transition
+// fixture instead of the static `.dev` file, letting tests drive real OnBattery/LowBattery
+// transitions without hand-patching cluster state. Same-namespace-only, matching
+// resolveUPSDeviceCredentials.
+func resolveUPSDeviceSimulationFixtures(ctx context.Context, c client.Client, namespace string, devices []powerv1alpha1.UPSDevice) (map[string]string, error) {
+	fixtures := make(map[string]string)
+	for _, device := range devices {
+		if !hasSimulationSequence(device) {
+			continue
+		}
+		ref := device.Spec.Simulation.SequenceConfigMapRef
+		if ref.Namespace != namespace {
+			return nil, fmt.Errorf("UPSDevice %q simulation.sequenceConfigMapRef must be in operand namespace %q", device.Name, namespace)
+		}
+		key := device.Spec.Simulation.SequenceKey
+		if key == "" {
+			key = "sequence.seq"
+		}
+		var cm corev1.ConfigMap
+		if err := c.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, &cm); err != nil {
+			return nil, fmt.Errorf("get simulation.sequenceConfigMapRef ConfigMap for UPSDevice %q: %w", device.Name, err)
+		}
+		content, ok := cm.Data[key]
+		if !ok {
+			return nil, fmt.Errorf("UPSDevice %q simulation.sequenceConfigMapRef ConfigMap %q missing key %q", device.Name, ref.Name, key)
+		}
+		fixtures[device.Name] = content
+	}
+	return fixtures, nil
 }
 
 func renderedUPSDriver(device powerv1alpha1.UPSDevice) string {
@@ -783,6 +877,27 @@ func (r *NUTServerReconciler) ensureNUTServerNetworkPolicy(ctx context.Context, 
 				From: []networkingv1.NetworkPolicyPeer{
 					{
 						PodSelector: &metav1.LabelSelector{},
+					},
+					{
+						// The operator's own manager pod polls upsd for UPSDevice telemetry
+						// (UPSDeviceReconciler) but does not live in this operand namespace, so the
+						// same-namespace peer above never covers it. Verified against a real kind
+						// cluster: with only the same-namespace rule, a real NetworkPolicy-enforcing
+						// CNI (confirmed here, and true for the Cilium CNI this project's own
+						// reference deployment uses) silently blocks the manager's poll traffic --
+						// telemetry never updates, with no error surfaced anywhere except a generic
+						// connect timeout. NamespaceSelector is intentionally unscoped (the manager's
+						// own namespace is deployment-configurable, e.g. via kustomize namePrefix);
+						// the manager pod's labels are the actual constant, matching the same
+						// selector config/network-policy's allow-metrics-traffic/allow-webhook-traffic
+						// policies already use to identify it from outside its namespace.
+						NamespaceSelector: &metav1.LabelSelector{},
+						PodSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"control-plane":          "controller-manager",
+								"app.kubernetes.io/name": "nut-operator",
+							},
+						},
 					},
 				},
 				Ports: []networkingv1.NetworkPolicyPort{

@@ -320,6 +320,75 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   rendered config (including credentials) so a rotation still rolls the pod; that hash is a one-way
   SHA-256 digest, doesn't leak the plaintext. Matches the `F-24` precedent of not putting a content
   hash on credential-bearing `Secret`s in `ManagedResourceStatus`.
+- **Scripted `dummy-ups` state-transition simulation is built (2026-08-05).** Previously only the
+  static single-state `.dev` fixture existed, unable to drive a real `OnBattery`->`LowBattery`
+  transition. New `UPSDevice.spec.simulation.sequenceConfigMapRef` (+`sequenceKey`, default
+  `sequence.seq`) points at a user-authored `ConfigMap` holding a NUT dummy-ups `.seq` file (verified
+  against NUT's own driver source before implementing: `TIMER <seconds>` lines pause parsing for that
+  long before the next `variable: value` block takes effect; the `.seq` extension alone already
+  selects dummy-loop mode, confirmed via `networkupstools/nut`'s `drivers/dummy-ups.c`). Render path
+  (`resolveUPSDeviceSimulationFixtures`, `dummyUPSSimulationFileName` in `nutserver_render.go`) fetches
+  the ConfigMap same-namespace-only (matching `credentialSecretRef`'s convention), renders the fixture
+  content verbatim to `<name>.seq`, and writes an explicit `mode = dummy-loop` driver option
+  (overridable, belt-and-suspenders with the extension-based default). Mutually exclusive with an
+  explicit `driverOptions.port` and with `spec.upstreamNUT` (`validateUPSDevice`). Fixture data is
+  declarative and Git-reviewable, not a manual patch, per the original open-work item's stated
+  preference. Example: `docs/examples/simulation/`. Live-verified end-to-end against a real kind
+  cluster: `test/e2e/e2e_test.go`'s "drives real Online/OnBattery/LowBattery transitions from a
+  scripted dummy-ups fixture" asserts on `UPSDeviceReconciler`'s actual telemetry-poll output, not a
+  mock, proving the scripted transition reaches `UPSDevice.status.phase` through the real driver and
+  the real poller.
+- **Fixed an operand-namespace creation-ordering bug, found while building the simulation feature
+  above.** `reconcileNUTServerOperands` resolved `credentialSecretRef`/the new
+  `simulation.sequenceConfigMapRef` — both scoped to the rendered operand namespace — *before*
+  `ensureOperandNamespace` created that namespace. For a standalone `NUTServer` (no
+  `PowerManagementCluster` pre-creating `operandNamespace`), the very first reconcile always failed
+  with `NotFound` before the namespace it needed ever got created, so the resource could never
+  converge without an out-of-band namespace creation. This was a real, pre-existing gap in
+  `credentialSecretRef` too, not just new-feature fallout — the e2e signal-handoff test never
+  exercised it only because its `UPSDevice` has no namespace-scoped reference to resolve. Fixed by
+  moving `ensureOperandNamespace` to run first.
+- **Fixed a real cross-namespace `NetworkPolicy` gap that silently broke telemetry polling,
+  found by the scripted-transition e2e spec (2026-08-05).** `ensureNUTServerNetworkPolicy`'s
+  ingress rule was `{podSelector: {}}` with no `namespaceSelector` — same-operand-namespace traffic
+  only. `UPSDeviceReconciler`'s telemetry poller runs from the operator's own manager pod, which
+  does not live in the operand namespace, so this rule never actually covered the one thing that
+  most needs to reach `upsd`. Confirmed, not assumed: reproduced deterministically against a real
+  kind cluster with a minimal two-pod NetworkPolicy repro (same-namespace traffic passed, identical
+  cross-namespace traffic timed out; re-tested after widening the rule and cross-namespace traffic
+  passed) before touching the real code — kindnet does enforce `NetworkPolicy`, and so does this
+  project's own reference Cilium deployment. Every `UPSDevice` behind a `NUTServer` in a
+  NetworkPolicy-enforcing cluster would have had telemetry silently stuck in `Unavailable`/`Stale`
+  forever, with nothing but a generic connect-timeout condition message to go on — this was not a
+  test-only gap. Fixed by adding a second ingress peer: `namespaceSelector: {}` (unscoped, since the
+  manager's own namespace is deployment-configurable) combined with a `podSelector` matching
+  `control-plane: controller-manager`/`app.kubernetes.io/name: nut-operator` — the same manager-pod
+  label selector `config/network-policy`'s `allow-metrics-traffic`/`allow-webhook-traffic` policies
+  already use from outside the manager's own namespace. Non-matching cross-namespace traffic stays
+  blocked (re-verified in the same repro), so this is a targeted fix, not a policy relaxation.
+- **`snmpsim` driver-conformance fixture is built (2026-08-05), closing the "zero coverage" gap the
+  original open-work item flagged.** New `images/snmpsim-fixture/` (a `snmpsim-command-responder`
+  Deployment image, non-root, test-only — deliberately excluded from `docker-build-operands` and
+  `images.yml`'s publish matrix, never a real operand) serves a static RFC1628 UPS-MIB (`.snmprec`)
+  fixture. The fixture's OIDs and scaling factors were verified against NUT's own
+  `drivers/ietf-mib.c` mapping table before being written (not guessed), then confirmed by running the
+  *real* `snmp-ups` driver against the *real* simulator in dump mode and reading back
+  `battery.charge: 100`, `battery.runtime: 3600`, `ups.load: 10`, `ups.status: OL`, `ups.mfr`/
+  `ups.model` — an exact match. `test/e2e/e2e_test.go`'s "proves the real snmp-ups driver decodes a
+  simulated UPS-MIB device correctly" stands up the fixture plus a real `snmp-ups`-backed `UPSDevice`/
+  `NUTServer` on a real kind node and asserts the same values through `UPSDeviceReconciler`'s telemetry
+  poller. Scope, matching the original item's own framing: SNMPv2c community auth only (production
+  hardware uses SNMPv3); proves OID/decode conformance, not authentication-mode parity. Division of
+  labor unchanged from the original proposal: `snmpsim` proves the driver talks to real OIDs
+  correctly; `dummy-ups` (above) proves the operator reacts correctly once a device reports state —
+  intentionally not conflated, since `snmpsim` serves a static tree and cannot drive transitions.
+- **e2e target state for `dummy-ups`/`NUTServer`-backed coverage is met.** Both new specs above,
+  together with the pre-existing "delivers a projected Secret signal..." spec, cover: CRDs install,
+  every operand kind renders, the `NodePowerAgent` DaemonSet's `upsmon` reaches a real `NUTServer`
+  pod, `UPSDevice` status reflects real (`dummy-ups` and `snmp-ups`) telemetry, and a real scripted
+  transition drives trigger-relevant status change end-to-end. Real actuation testing remains
+  structurally out of scope for `kind`, as originally noted (no real poweroff on a `kind` node
+  regardless of driver).
 
 #### Open Work
 
@@ -338,44 +407,11 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   actuator for anything actually running in the cluster; only matters for non-cluster hardware on
   the same UPS or battery-waste cleanup. Not pursued unless that narrow case becomes a real need.
 - Credential rotation and advanced driver-specific config for the NUT operand render path.
-- **Scripted UPS-state-transition simulation (`dummy-ups` `dummy-loop`/`.seq`/`TIMER` mode) is not
-  modeled.** Confirmed 2026-08-04 (zero matches for `dummy-loop`/`.seq`/`TIMER` anywhere in the repo).
-  Only static single-state simulation exists today (`renderDummyUPSDefinition`'s `.dev` file, fixed
-  `OL`/100%/3600s/10% — real, and already used in tests), which can't drive an actual
-  `OnBattery`→`LowBattery` transition to exercise `ShutdownFlow` trigger eligibility end-to-end. NUT's
-  driver supports this natively via `mode = dummy-loop` plus a `.seq` file with `TIMER` directives; the
-  operator has no mechanism to deliver arbitrary simulation-fixture file content into the container,
-  only the one hardcoded `.dev` case. Two paths, in order: (1) prototype via the existing
-  `driverOptions` passthrough — `dummyUPSDefinitionFileName` already backs off its own `.dev`
-  rendering whenever `driverOptions.port` is set explicitly, so `port`/`mode = dummy-loop` render into
-  `ups.conf` correctly today; the missing piece is getting the `.seq` file itself onto the filesystem
-  (needs a hand-authored ConfigMap + volume patch outside the CRD today, not a first-class field).
-  (2) If that proves useful, promote to a real `simulation` field on `UPSDeviceSpec` (ConfigMap ref +
-  mode) — fixture data should be declarative and Git-reviewable, not a manual patch.
-- **`snmpsim` as a driver-conformance testing track, separate from `dummy-ups`.** Confirmed zero
-  coverage today: every `snmp-ups` reference in the repo is a config-string literal in tests ("does
-  the operator write `driver = snmp-ups` correctly"); nothing runs the actual `snmp-ups` NUT driver
-  against anything, real or simulated. Production/alpha hardware runs `snmp-ups` over SNMPv3, and this
-  session's entrypoint-coupling and readiness-probe bugs were both in that exact path — a real,
-  currently-unguarded regression surface. No operator/CRD change needed: `UPSDevice.spec.endpoint` +
-  `credentialSecretRef` already point `snmp-ups` at any host:port with SNMPv3 material, so a
-  `snmpsim-command-responder` Deployment serving `.snmprec` data (recorded from real hardware or
-  synthesized from the UPS MIB) is a drop-in target. Division of labor: `snmpsim` proves the driver
-  talks to a vendor's OIDs correctly; `dummy-ups` (once scripted transitions exist, above) proves the
-  operator reacts correctly once a device reports it's dying. `snmpsim` serves a static tree by
-  default (variation modules needed for dynamic values) — the wrong tool for transition testing, don't
-  conflate the two.
-- **Define the e2e target state for `dummy-ups`/`NUTServer`-backed coverage.** `test-e2e.yml`
-  currently runs `make test-e2e` against `kind` with no NUT simulator involved at all. Worth asserting
-  in that suite: CRDs install, all operand kinds render (Deployment/Service/ConfigMap/NetworkPolicy for
-  `NUTServer`, DaemonSet for `NodePowerAgent`), the DaemonSet lands on every `kind` node and its
-  `upsmon` container actually reaches a `NUTServer` pod backed by a `dummy-ups` fixture, and a sample
-  `ShutdownFlow` compiles to the expected waves in `/status`. Achievable today with the existing static
-  `.dev` fixture — no dependency on the scripted-transition work above. Real actuation testing
-  (`SystemdPoweroff`) is structurally out of scope for `kind` regardless: `kind` nodes are containers
-  and can't be powered off, and `NodePowerAgent` defaults to `DryRun`/`Stub` with `SystemdPoweroff`
-  additionally gated behind `Actuate` plus an approval annotation — that testing belongs on disposable
-  VMs outside GitHub Actions.
+- SNMPv3 coverage for the `snmpsim` driver-conformance fixture (currently SNMPv2c community-auth
+  only, see Built above) — would need `snmpsim`'s USM configuration wired to match a `credentialSecretRef`
+  fixture Secret. Not pursued: the conformance question (OID/decode correctness) is orthogonal to the
+  auth mode, and production hardware's SNMPv3 path is already exercised for real in
+  `docs/audits/nut-usage-audit.md`'s alpha-hardware findings.
 
 #### Deferred / Declined (2026-08-03)
 

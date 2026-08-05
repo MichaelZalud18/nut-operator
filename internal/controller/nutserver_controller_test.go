@@ -173,6 +173,18 @@ var _ = Describe("NUTServer Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-server"}, networkPolicy)).To(Succeed())
 			Expect(networkPolicy.Spec.PolicyTypes).To(ContainElement(networkingv1.PolicyTypeIngress))
 			Expect(networkPolicy.Spec.Ingress).To(HaveLen(1))
+			Expect(networkPolicy.Spec.Ingress[0].From).To(HaveLen(2))
+			Expect(networkPolicy.Spec.Ingress[0].From[0].PodSelector).To(Equal(&metav1.LabelSelector{}))
+			// Second peer: the operator's own manager pod lives outside this operand namespace, so a
+			// same-namespace-only rule would silently block its own telemetry polling under any
+			// NetworkPolicy-enforcing CNI (verified against a real kind cluster, not assumed).
+			Expect(networkPolicy.Spec.Ingress[0].From[1].NamespaceSelector).To(Equal(&metav1.LabelSelector{}))
+			Expect(networkPolicy.Spec.Ingress[0].From[1].PodSelector).To(Equal(&metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"control-plane":          "controller-manager",
+					"app.kubernetes.io/name": "nut-operator",
+				},
+			}))
 
 			deployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-server"}, deployment)).To(Succeed())

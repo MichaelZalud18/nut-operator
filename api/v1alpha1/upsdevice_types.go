@@ -69,6 +69,31 @@ type UPSDeviceSpec struct {
 	// telemetry controls device polling and stale-data behavior.
 	// +optional
 	Telemetry UPSTelemetrySpec `json:"telemetry,omitempty"`
+
+	// simulation configures scripted state-transition fixture data for the dummy-ups driver, used
+	// to exercise OnBattery/LowBattery transitions in tests without real hardware. Only valid when
+	// driver is dummy-ups and upstreamNUT is not set.
+	// +optional
+	Simulation *UPSDeviceSimulation `json:"simulation,omitempty"`
+}
+
+// UPSDeviceSimulation configures dummy-ups scripted state-transition simulation (NUT's
+// dummy-loop driver mode). Fixture content is declarative and Git-reviewable, sourced from a
+// ConfigMap rather than authored directly on the UPSDevice, matching credentialSecretRef's
+// reference-not-inline convention.
+type UPSDeviceSimulation struct {
+	// sequenceConfigMapRef points at a ConfigMap holding a dummy-ups `.seq` scripted
+	// transition fixture (NUT's TIMER-directive format: blocks of `variable: value` lines,
+	// optionally preceded by a `TIMER <seconds>` line, separated by blank lines, looping once the
+	// sequence ends). Must be in the rendered NUTServer operand namespace, matching
+	// credentialSecretRef's convention.
+	// +kubebuilder:validation:Required
+	SequenceConfigMapRef NamespacedNameReference `json:"sequenceConfigMapRef"`
+
+	// sequenceKey is the ConfigMap data key holding the .seq fixture content.
+	// +kubebuilder:default=sequence.seq
+	// +optional
+	SequenceKey string `json:"sequenceKey,omitempty"`
 }
 
 // UPSDeviceIdentitySpec declares capability matching keys for one UPS.

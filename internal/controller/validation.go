@@ -121,6 +121,17 @@ func validateUPSDevice(obj *powerv1alpha1.UPSDevice) validationResult {
 	if obj.Spec.Identity.Firmware != "" && obj.Spec.Identity.Model == "" {
 		return rejected("IdentityFirmwareRequiresModel", "spec.identity.firmware requires spec.identity.model")
 	}
+	if obj.Spec.Simulation != nil {
+		if obj.Spec.Driver != "dummy-ups" {
+			return rejected("SimulationRequiresDummyUPS", "spec.simulation requires spec.driver dummy-ups")
+		}
+		if explicitPort := obj.Spec.DriverOptions["port"]; explicitPort != "" {
+			return rejected("SimulationPortConflict", "spec.simulation cannot be combined with an explicit spec.driverOptions.port")
+		}
+		if obj.Spec.Simulation.SequenceConfigMapRef.Name == "" {
+			return rejected("SimulationSequenceConfigMapRequired", "spec.simulation.sequenceConfigMapRef.name is required")
+		}
+	}
 
 	return accepted("UPS device contract accepted")
 }
@@ -135,6 +146,9 @@ func validateUpstreamNUTUPSDevice(obj *powerv1alpha1.UPSDevice) validationResult
 	}
 	if obj.Spec.CredentialSecretRef != nil {
 		return rejected("UpstreamNUTCredentialConflict", "spec.credentialSecretRef cannot be set with spec.upstreamNUT; use spec.upstreamNUT.auth.secretKeyRef")
+	}
+	if obj.Spec.Simulation != nil {
+		return rejected("UpstreamNUTSimulationConflict", "spec.simulation cannot be set with spec.upstreamNUT")
 	}
 	if upstream.Host == "" {
 		return rejected("UpstreamNUTHostRequired", "spec.upstreamNUT.host is required")

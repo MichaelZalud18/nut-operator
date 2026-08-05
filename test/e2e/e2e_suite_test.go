@@ -46,6 +46,11 @@ var (
 	nutServerImage         = nutServerRepository + ":" + operandImageTag
 	upsmonAgentImage       = upsmonAgentRepository + ":" + operandImageTag
 	nodeActuatorImage      = nodeActuatorRepository + ":" + operandImageTag
+	// snmpsimFixtureRepository/Image is a test-only fixture (a simulated SNMP UPS), not a real
+	// operand -- needed by the snmp-ups driver-conformance suite, which runs the real snmp-ups
+	// driver against it inside a real NUTServer pod on Kind.
+	snmpsimFixtureRepository = "example.com/snmpsim-fixture"
+	snmpsimFixtureImage      = snmpsimFixtureRepository + ":" + operandImageTag
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
 )
@@ -87,9 +92,13 @@ var _ = BeforeSuite(func() {
 		fmt.Sprintf("NODE_ACTUATOR_IMG=%s", nodeActuatorImage), fmt.Sprintf("NODE_ACTUATOR_SHA_IMG=%s", nodeActuatorImage))
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the node-actuator operand image")
+	cmd = exec.Command("make", "docker-build-snmpsim-fixture",
+		fmt.Sprintf("SNMPSIM_FIXTURE_IMG=%s", snmpsimFixtureImage), fmt.Sprintf("SNMPSIM_FIXTURE_SHA_IMG=%s", snmpsimFixtureImage))
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the snmpsim fixture image")
 
 	By("loading the operand images on Kind")
-	for _, image := range []string{nutServerImage, upsmonAgentImage, nodeActuatorImage} {
+	for _, image := range []string{nutServerImage, upsmonAgentImage, nodeActuatorImage, snmpsimFixtureImage} {
 		err = utils.LoadImageToKindClusterWithName(image)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to load %s into Kind", image))
 	}

@@ -488,6 +488,290 @@ spec:
 			}
 			Eventually(verifySignalObserved, 2*time.Minute, 5*time.Second).Should(Succeed())
 		})
+
+		It("drives real Online/OnBattery/LowBattery transitions from a scripted dummy-ups fixture", func() {
+			// Only the static single-state .dev fixture existed before spec.simulation: it can prove
+			// the render path and driver connectivity, but it can never actually change state, so
+			// nothing could exercise a real OnBattery/LowBattery transition end-to-end (telemetry
+			// polling -> UPSDevice.status.phase -> eventually ShutdownFlow trigger eligibility)
+			// without hand-patching status, which isn't what happens in production. This drives the
+			// transition through NUT's own dummy-loop driver reading a real .seq file delivered via
+			// spec.simulation.sequenceConfigMapRef, and asserts on UPSDeviceReconciler's real
+			// telemetry poll output, not a mock.
+			const simulationNamespace = "power-simulation-e2e"
+
+			// The operand namespace is created by NUTServer's own reconciler (ensureOperandNamespace),
+			// asynchronously, on its first reconcile -- it does not exist yet at apply time. The fixture
+			// ConfigMap is namespace-scoped and must land in that namespace, so it has to be created
+			// after the namespace exists; creating it explicitly here (rather than racing the operator)
+			// is both simpler and matches how a real deployment would pre-provision the namespace via a
+			// PowerManagementCluster before ever creating a UPSDevice with a namespace-scoped reference.
+			By("creating the operand namespace directly (no operator-managed NUTServer exists yet to create it)")
+			nsCmd := exec.Command("kubectl", "create", "ns", simulationNamespace)
+			_, err := utils.Run(nsCmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the scripted-transition namespace")
+
+			DeferCleanup(func() {
+				By("cleaning up the scripted-transition namespace")
+				cmd := exec.Command("kubectl", "delete", "ns", simulationNamespace, "--ignore-not-found", "--wait=false")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("creating a ConfigMap-backed .seq fixture, UPSDevice, and NUTServer")
+			manifest := fmt.Sprintf(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: simulation-e2e-transitions
+  namespace: %[1]s
+data:
+  sequence.seq: |
+    device.mfr: nut-operator
+    device.model: e2e-simulation
+    ups.mfr: nut-operator
+    ups.model: e2e-simulation
+    ups.status: OL
+    battery.charge: 100
+    battery.runtime: 3600
+    ups.load: 10
+
+    TIMER 45
+
+    device.mfr: nut-operator
+    device.model: e2e-simulation
+    ups.mfr: nut-operator
+    ups.model: e2e-simulation
+    ups.status: OB
+    battery.charge: 40
+    battery.runtime: 600
+    ups.load: 10
+
+    TIMER 45
+
+    device.mfr: nut-operator
+    device.model: e2e-simulation
+    ups.mfr: nut-operator
+    ups.model: e2e-simulation
+    ups.status: OB LB
+    battery.charge: 8
+    battery.runtime: 90
+    ups.load: 10
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  name: simulation-e2e-ups
+spec:
+  displayName: Simulation E2E Dummy UPS
+  driver: dummy-ups
+  simulation:
+    sequenceConfigMapRef:
+      namespace: %[1]s
+      name: simulation-e2e-transitions
+  telemetry:
+    pollInterval: 5s
+    alertPollInterval: 5s
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  name: simulation-e2e-nutserver
+spec:
+  namespace: %[1]s
+  deviceRefs:
+    - name: simulation-e2e-ups
+  image:
+    repository: %[2]s
+    tag: %[3]s
+    pullPolicy: IfNotPresent
+  auth:
+    mode: OperatorManaged
+  tls:
+    mode: Disabled
+`, simulationNamespace, nutServerRepository, operandImageTag)
+			applyCmd := exec.Command("kubectl", "apply", "-f", "-")
+			applyCmd.Stdin = strings.NewReader(manifest)
+			_, err = utils.Run(applyCmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the scripted-transition simulation fixture")
+
+			DeferCleanup(func() {
+				By("cleaning up the scripted-transition simulation fixture")
+				deleteCmd := exec.Command("kubectl", "delete", "-f", "-", "--ignore-not-found", "--wait=false")
+				deleteCmd.Stdin = strings.NewReader(manifest)
+				_, _ = utils.Run(deleteCmd)
+			})
+
+			By("waiting for the NUTServer to report Ready")
+			verifyNUTServerReady := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "nutserver", "simulation-e2e-nutserver",
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Ready"))
+			}
+			Eventually(verifyNUTServerReady, 3*time.Minute).Should(Succeed())
+
+			upsDevicePhase := func() (string, error) {
+				cmd := exec.Command("kubectl", "get", "upsdevice", "simulation-e2e-ups",
+					"-o", "jsonpath={.status.phase}")
+				return utils.Run(cmd)
+			}
+
+			By("observing the fixture's initial Online state via real telemetry polling")
+			verifyOnline := func(g Gomega) {
+				phase, err := upsDevicePhase()
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(phase).To(Equal("Online"))
+			}
+			Eventually(verifyOnline, 2*time.Minute, 2*time.Second).Should(Succeed())
+
+			By("observing the scripted transition into OnBattery")
+			verifyOnBattery := func(g Gomega) {
+				phase, err := upsDevicePhase()
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(phase).To(Equal("OnBattery"))
+			}
+			Eventually(verifyOnBattery, 90*time.Second, 2*time.Second).Should(Succeed())
+
+			By("observing the scripted transition into LowBattery, with matching telemetry values")
+			verifyLowBattery := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "upsdevice", "simulation-e2e-ups",
+					"-o", "jsonpath={.status.phase} {.status.lastStatus} {.status.batteryChargePercent}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("LowBattery OB LB 8"))
+			}
+			Eventually(verifyLowBattery, 90*time.Second, 2*time.Second).Should(Succeed())
+		})
+
+		It("proves the real snmp-ups driver decodes a simulated UPS-MIB device correctly", func() {
+			// dummy-ups (above) proves the operator reacts correctly once a device reports state;
+			// it says nothing about whether snmp-ups -- the driver every real network UPS in this
+			// project's design actually uses -- talks to real SNMP OIDs correctly. Nothing in this
+			// repo previously ran the real snmp-ups driver against anything, real or simulated
+			// (every prior "snmp-ups" reference was just a config-string literal in a unit test).
+			// This stands up a real snmpsim-command-responder serving a fixture verified against
+			// NUT's own upstream ietf-mib.c OID mapping table, points a real NUTServer's snmp-ups
+			// driver at it, and asserts on UPSDeviceReconciler's real telemetry poll output.
+			const snmpNamespace = "power-snmpconformance-e2e"
+
+			By("creating the operand namespace directly (no operator-managed NUTServer exists yet to create it)")
+			cmd := exec.Command("kubectl", "create", "ns", snmpNamespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the snmp-conformance namespace")
+
+			DeferCleanup(func() {
+				By("cleaning up the snmp-conformance namespace")
+				cmd := exec.Command("kubectl", "delete", "ns", snmpNamespace, "--ignore-not-found", "--wait=false")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("deploying the snmpsim fixture and a snmp-ups-backed UPSDevice/NUTServer")
+			manifest := fmt.Sprintf(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snmpsim-fixture
+  namespace: %[1]s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: snmpsim-fixture
+  template:
+    metadata:
+      labels:
+        app: snmpsim-fixture
+    spec:
+      containers:
+        - name: snmpsim
+          image: %[2]s
+          ports:
+            - containerPort: 161
+              protocol: UDP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: snmpsim-fixture
+  namespace: %[1]s
+spec:
+  selector:
+    app: snmpsim-fixture
+  ports:
+    - port: 161
+      protocol: UDP
+      targetPort: 161
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  name: snmp-conformance-ups
+spec:
+  displayName: SNMP Conformance E2E UPS
+  driver: snmp-ups
+  endpoint:
+    host: snmpsim-fixture.%[1]s.svc.cluster.local
+    port: 161
+  driverOptions:
+    mibs: ietf
+    community: public
+    snmp_version: v2c
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  name: snmp-conformance-nutserver
+spec:
+  namespace: %[1]s
+  deviceRefs:
+    - name: snmp-conformance-ups
+  image:
+    repository: %[3]s
+    tag: %[4]s
+    pullPolicy: IfNotPresent
+  auth:
+    mode: OperatorManaged
+  tls:
+    mode: Disabled
+`, snmpNamespace, snmpsimFixtureImage, nutServerRepository, operandImageTag)
+			applyCmd := exec.Command("kubectl", "apply", "-f", "-")
+			applyCmd.Stdin = strings.NewReader(manifest)
+			_, err = utils.Run(applyCmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the snmp-conformance fixture")
+
+			DeferCleanup(func() {
+				By("cleaning up the snmp-conformance fixture")
+				deleteCmd := exec.Command("kubectl", "delete", "-f", "-", "--ignore-not-found", "--wait=false")
+				deleteCmd.Stdin = strings.NewReader(manifest)
+				_, _ = utils.Run(deleteCmd)
+			})
+
+			By("waiting for the snmpsim fixture Deployment to become available")
+			cmd = exec.Command("kubectl", "-n", snmpNamespace, "rollout", "status", "deployment/snmpsim-fixture", "--timeout=60s")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "snmpsim fixture Deployment never became available")
+
+			By("waiting for the NUTServer to report Ready, proving the snmp-ups driver connected")
+			verifyNUTServerReady := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "nutserver", "snmp-conformance-nutserver",
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Ready"))
+			}
+			Eventually(verifyNUTServerReady, 3*time.Minute).Should(Succeed())
+
+			By("confirming the telemetry poller decoded the fixture's real SNMP values correctly")
+			verifyTelemetry := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "upsdevice", "snmp-conformance-ups",
+					"-o", "jsonpath={.status.phase} {.status.lastStatus} {.status.batteryChargePercent} {.status.loadPercent} {.status.runtimeSeconds}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Online OL 100 10 3600"))
+			}
+			Eventually(verifyTelemetry, 90*time.Second, 2*time.Second).Should(Succeed())
+		})
 	})
 })
 

@@ -98,6 +98,117 @@ func TestValidateUPSDeviceRejectsFirmwareIdentityWithoutModel(t *testing.T) {
 	}
 }
 
+func TestValidateUPSDeviceAcceptsDummyUPSSimulation(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			Driver: "dummy-ups",
+			Simulation: &powerv1alpha1.UPSDeviceSimulation{
+				SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+					Namespace: "power-system",
+					Name:      "ups-1-transitions",
+				},
+			},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if !result.accepted {
+		t.Fatalf("expected dummy-ups simulation to be accepted, got %s: %s", result.reason, result.message)
+	}
+}
+
+func TestValidateUPSDeviceRejectsSimulationOnNonDummyDriver(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			Driver: "snmp-ups",
+			Endpoint: &powerv1alpha1.UPSEndpointSpec{
+				Host: "ups-rack-a.example.net",
+			},
+			Simulation: &powerv1alpha1.UPSDeviceSimulation{
+				SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+					Namespace: "power-system",
+					Name:      "ups-1-transitions",
+				},
+			},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if result.accepted {
+		t.Fatal("expected simulation on a non-dummy-ups driver to be rejected")
+	}
+	if result.reason != "SimulationRequiresDummyUPS" {
+		t.Fatalf("expected SimulationRequiresDummyUPS, got %q", result.reason)
+	}
+}
+
+func TestValidateUPSDeviceRejectsSimulationWithExplicitPort(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			Driver: "dummy-ups",
+			DriverOptions: map[string]string{
+				"port": "manual.dev",
+			},
+			Simulation: &powerv1alpha1.UPSDeviceSimulation{
+				SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+					Namespace: "power-system",
+					Name:      "ups-1-transitions",
+				},
+			},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if result.accepted {
+		t.Fatal("expected simulation combined with an explicit driverOptions.port to be rejected")
+	}
+	if result.reason != "SimulationPortConflict" {
+		t.Fatalf("expected SimulationPortConflict, got %q", result.reason)
+	}
+}
+
+func TestValidateUPSDeviceRejectsSimulationWithUpstreamNUT(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			UpstreamNUT: &powerv1alpha1.UPSUpstreamNUTSpec{
+				Host:    "ups-tower.example.net",
+				UPSName: "ups",
+			},
+			Simulation: &powerv1alpha1.UPSDeviceSimulation{
+				SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+					Namespace: "power-system",
+					Name:      "ups-1-transitions",
+				},
+			},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if result.accepted {
+		t.Fatal("expected simulation combined with upstreamNUT to be rejected")
+	}
+	if result.reason != "UpstreamNUTSimulationConflict" {
+		t.Fatalf("expected UpstreamNUTSimulationConflict, got %q", result.reason)
+	}
+}
+
+func TestValidateUPSDeviceRejectsSimulationWithoutConfigMapName(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			Driver:     "dummy-ups",
+			Simulation: &powerv1alpha1.UPSDeviceSimulation{},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if result.accepted {
+		t.Fatal("expected simulation without a sequenceConfigMapRef name to be rejected")
+	}
+	if result.reason != "SimulationSequenceConfigMapRequired" {
+		t.Fatalf("expected SimulationSequenceConfigMapRequired, got %q", result.reason)
+	}
+}
+
 func TestValidateUPSDeviceAcceptsUpstreamNUTWithoutDriver(t *testing.T) {
 	device := &powerv1alpha1.UPSDevice{
 		Spec: powerv1alpha1.UPSDeviceSpec{

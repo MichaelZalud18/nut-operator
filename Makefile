@@ -15,6 +15,11 @@ UPSMON_AGENT_IMG ?= $(IMAGE_REGISTRY)/upsmon-agent:$(IMAGE_TAG)
 UPSMON_AGENT_SHA_IMG ?= $(IMAGE_REGISTRY)/upsmon-agent:$(IMAGE_SHA_TAG)
 NODE_ACTUATOR_IMG ?= $(IMAGE_REGISTRY)/node-actuator:$(IMAGE_TAG)
 NODE_ACTUATOR_SHA_IMG ?= $(IMAGE_REGISTRY)/node-actuator:$(IMAGE_SHA_TAG)
+# snmpsim-fixture is a test-only fixture image (a simulated SNMP UPS for snmp-ups driver
+# conformance testing) -- intentionally not part of docker-build-operands/docker-push/images.yml,
+# since it is never a real operand and must never be published as one.
+SNMPSIM_FIXTURE_IMG ?= $(IMAGE_REGISTRY)/snmpsim-fixture:$(IMAGE_TAG)
+SNMPSIM_FIXTURE_SHA_IMG ?= $(IMAGE_REGISTRY)/snmpsim-fixture:$(IMAGE_SHA_TAG)
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 # Disable VCS stamping by default so local scaffolds outside a clean git repo still build reproducibly.
@@ -204,6 +209,19 @@ docker-build-node-actuator: ## Build the project-owned node actuator image.
 		-f images/node-actuator/Dockerfile \
 		-t $(NODE_ACTUATOR_IMG) \
 		-t $(NODE_ACTUATOR_SHA_IMG) .
+
+.PHONY: docker-build-snmpsim-fixture
+docker-build-snmpsim-fixture: ## Build the test-only SNMP UPS simulator fixture image (not a real operand, not published).
+	$(CONTAINER_TOOL) build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg REVISION=$(REVISION) \
+		--build-arg CREATED=$(CREATED) \
+		--build-arg SOURCE=$(IMAGE_SOURCE) \
+		--build-arg DOCUMENTATION=$(IMAGE_DOCUMENTATION) \
+		--build-arg LICENSES=$(IMAGE_LICENSES) \
+		-f images/snmpsim-fixture/Dockerfile \
+		-t $(SNMPSIM_FIXTURE_IMG) \
+		-t $(SNMPSIM_FIXTURE_SHA_IMG) .
 
 .PHONY: docker-build-operands
 docker-build-operands: docker-build-nut-server docker-build-upsmon-agent docker-build-node-actuator ## Build all project-owned operand images.

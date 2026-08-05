@@ -1,0 +1,92 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orion-core-ups-transitions
+  namespace: power-system
+data:
+  # NUT dummy-ups `.seq` scripted-transition fixture. Blocks of `variable: value` lines are
+  # separated by blank lines; a `TIMER <seconds>` line before a block holds the previous block's
+  # state for that long before applying the next one. The driver loops back to the first block
+  # once the sequence ends (NUT's dummy-loop mode, selected by the .seq extension).
+  #
+  # This fixture models a line-power loss: Online -> OnBattery -> LowBattery, each state held for
+  # 20 seconds -- enough for the default 30s telemetry poll interval (10s while degraded) to
+  # observe every state, so a ShutdownFlow OnBattery/LowBattery trigger can be exercised
+  # end-to-end without real hardware.
+  sequence.seq: |
+    device.mfr: nut-operator
+    device.model: simulation-fixture
+    ups.mfr: nut-operator
+    ups.model: simulation-fixture
+    ups.status: OL
+    battery.charge: 100
+    battery.runtime: 3600
+    ups.load: 10
+
+    TIMER 20
+
+    device.mfr: nut-operator
+    device.model: simulation-fixture
+    ups.mfr: nut-operator
+    ups.model: simulation-fixture
+    ups.status: OB
+    battery.charge: 40
+    battery.runtime: 600
+    ups.load: 10
+
+    TIMER 20
+
+    device.mfr: nut-operator
+    device.model: simulation-fixture
+    ups.mfr: nut-operator
+    ups.model: simulation-fixture
+    ups.status: OB LB
+    battery.charge: 8
+    battery.runtime: 90
+    ups.load: 10
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  name: orion-core-ups-simulated
+  labels:
+    power.zalud.io/domain: orion-core
+spec:
+  displayName: Orion Core UPS (simulated)
+  driver: dummy-ups
+  simulation:
+    sequenceConfigMapRef:
+      namespace: power-system
+      name: orion-core-ups-transitions
+  powerDomains:
+    - orion-core
+  thresholds:
+    minRuntimeSeconds: 300
+    minChargePercent: 15
+    onBatteryHoldoff: 5s
+    staleAfter: 45s
+  telemetry:
+    pollInterval: 10s
+    alertPollInterval: 5s
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  name: orion-core-simulated
+spec:
+  namespace: power-system
+  deviceSelector:
+    matchLabels:
+      power.zalud.io/domain: orion-core
+  image:
+    repository: ghcr.io/michaelzalud18/nut-server
+    tag: main
+    pullPolicy: IfNotPresent
+  auth:
+    mode: OperatorManaged
+  tls:
+    mode: Disabled
+  service:
+    type: ClusterIP
+    port: 3493
