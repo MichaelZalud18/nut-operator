@@ -26,6 +26,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -39,6 +42,7 @@ import (
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
+	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
@@ -111,6 +115,13 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				Scheme: k8sClient.Scheme(),
 			}
 
+			// F-3: capture before reconciling so the metrics assertions below are delta-based, not
+			// absolute -- other specs in this Describe reconcile the same-named resource and share the
+			// same global collectors.
+			compileAcceptedBefore := testutil.ToFloat64(metrics.ShutdownFlowCompileTotal.WithLabelValues(shutdownFlowTestResourceName, "Accepted"))
+			compileDurationSamplesBefore := histogramSampleCount(metrics.ShutdownFlowCompileDurationSeconds.WithLabelValues(shutdownFlowTestResourceName))
+			triggerEvaluationsBefore := testutil.ToFloat64(metrics.ShutdownFlowTriggerEvaluationsTotal.WithLabelValues(shutdownFlowTestResourceName, "false"))
+
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
@@ -124,6 +135,12 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			degraded := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionDegraded)
 			Expect(degraded).NotTo(BeNil())
 			Expect(degraded.Status).To(Equal(metav1.ConditionFalse))
+
+			By("confirming the reconcile actually recorded metrics, not just compiled against them")
+			Expect(testutil.ToFloat64(metrics.ShutdownFlowCompileTotal.WithLabelValues(shutdownFlowTestResourceName, "Accepted"))).To(Equal(compileAcceptedBefore + 1))
+			Expect(histogramSampleCount(metrics.ShutdownFlowCompileDurationSeconds.WithLabelValues(shutdownFlowTestResourceName))).To(Equal(compileDurationSamplesBefore + 1))
+			Expect(testutil.ToFloat64(metrics.ShutdownFlowTriggerEvaluationsTotal.WithLabelValues(shutdownFlowTestResourceName, "false"))).To(Equal(triggerEvaluationsBefore + 1))
+			Expect(testutil.ToFloat64(metrics.ShutdownFlowDegraded.WithLabelValues(shutdownFlowTestResourceName))).To(Equal(float64(0)))
 			Expect(resource.Status.CompiledSteps).To(HaveLen(2))
 			Expect(resource.Status.CompiledWaves).To(HaveLen(2))
 			Expect(resource.Status.CompiledWaves[0].Groups).To(ConsistOf("applications"))
@@ -960,6 +977,19 @@ func cleanupShutdownFlowResolverFixture(ctx context.Context) {
 
 func boolPtr(value bool) *bool {
 	return &value
+}
+
+// histogramSampleCount reads the current observation count directly off a histogram's Write() output,
+// rather than via testutil.CollectAndCount (which counts distinct label-combination series, not
+// observations). Other specs in this Describe reconcile the same-named ShutdownFlow resource and share
+// the same global collectors, so an order-independent, observation-level delta is what actually proves
+// a new Observe() happened on this reconcile.
+func histogramSampleCount(observer prometheus.Observer) uint64 {
+	histogram, ok := observer.(prometheus.Histogram)
+	Expect(ok).To(BeTrue(), "observer does not implement prometheus.Histogram")
+	var metric dto.Metric
+	Expect(histogram.Write(&metric)).To(Succeed())
+	return metric.GetHistogram().GetSampleCount()
 }
 
 // resourceVersionRaceInjectingClient reproduces the F-31 race under test: it lets the reconciler

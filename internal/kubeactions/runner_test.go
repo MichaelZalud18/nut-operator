@@ -23,6 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +37,7 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/executor"
+	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 )
 
 func TestRunnerScalesWorkloads(t *testing.T) {
@@ -55,6 +59,9 @@ func TestRunnerScalesWorkloads(t *testing.T) {
 		},
 	).Build()}
 
+	attemptsBefore := testutil.ToFloat64(metrics.ActuatorActionAttemptsTotal.WithLabelValues(ActionScale, "Enforce", executor.OutcomeSucceeded))
+	durationSamplesBefore := histogramSampleCount(t, metrics.ActuatorActionDurationSeconds.WithLabelValues(ActionScale))
+
 	outcome, err := runner.RunAction(context.Background(), executor.Action{
 		ShutdownFlow:   "test-flow",
 		ExecutionID:    "execution-a",
@@ -75,6 +82,15 @@ func TestRunnerScalesWorkloads(t *testing.T) {
 	}
 	if outcome.Outcome != executor.OutcomeSucceeded {
 		t.Fatalf("expected succeeded outcome, got %#v", outcome)
+	}
+
+	// F-3: RunAction is the single choke point every executor action passes through, real or dry-run --
+	// confirm it actually records the actuator metrics rather than just compiling against them.
+	if got := testutil.ToFloat64(metrics.ActuatorActionAttemptsTotal.WithLabelValues(ActionScale, "Enforce", executor.OutcomeSucceeded)); got != attemptsBefore+1 {
+		t.Fatalf("ActuatorActionAttemptsTotal did not increment for ScaleWorkload/Enforce/Succeeded: before=%v after=%v", attemptsBefore, got)
+	}
+	if got := histogramSampleCount(t, metrics.ActuatorActionDurationSeconds.WithLabelValues(ActionScale)); got != durationSamplesBefore+1 {
+		t.Fatalf("ActuatorActionDurationSeconds did not record a new observation for ScaleWorkload: before=%d after=%d", durationSamplesBefore, got)
 	}
 
 	var deployment appsv1.Deployment
@@ -442,4 +458,22 @@ func TestLabelValueIsKubernetesSafe(t *testing.T) {
 
 func objectMeta(namespace, name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{Namespace: namespace, Name: name}
+}
+
+// histogramSampleCount reads the current observation count directly off a histogram's Write() output,
+// rather than via testutil.CollectAndCount (which counts distinct label-combination series, not
+// observations, and so can't tell two Observe() calls on the same series apart from one). Other tests
+// in this file reuse the same action-type labels, so an order-independent, observation-level delta
+// check is what actually proves a new Observe() happened.
+func histogramSampleCount(t *testing.T, observer prometheus.Observer) uint64 {
+	t.Helper()
+	histogram, ok := observer.(prometheus.Histogram)
+	if !ok {
+		t.Fatalf("observer %T does not implement prometheus.Histogram", observer)
+	}
+	var metric dto.Metric
+	if err := histogram.Write(&metric); err != nil {
+		t.Fatalf("write histogram metric: %v", err)
+	}
+	return metric.GetHistogram().GetSampleCount()
 }

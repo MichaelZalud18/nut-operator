@@ -1,0 +1,106 @@
+/*
+Copyright 2026 Michael Zalud.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package metrics
+
+import (
+	"testing"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
+)
+
+func TestBoolToFloat(t *testing.T) {
+	if got := BoolToFloat(true); got != 1 {
+		t.Fatalf("BoolToFloat(true) = %v, want 1", got)
+	}
+	if got := BoolToFloat(false); got != 0 {
+		t.Fatalf("BoolToFloat(false) = %v, want 0", got)
+	}
+}
+
+func TestShutdownFlowCompileTotalCountsByResult(t *testing.T) {
+	before := testutil.ToFloat64(ShutdownFlowCompileTotal.WithLabelValues("test-metrics-flow", "Accepted"))
+	ShutdownFlowCompileTotal.WithLabelValues("test-metrics-flow", "Accepted").Inc()
+	after := testutil.ToFloat64(ShutdownFlowCompileTotal.WithLabelValues("test-metrics-flow", "Accepted"))
+	if after != before+1 {
+		t.Fatalf("ShutdownFlowCompileTotal did not increment: before=%v after=%v", before, after)
+	}
+}
+
+func TestShutdownFlowCompileDurationSecondsRecordsObservations(t *testing.T) {
+	before := testutil.CollectAndCount(ShutdownFlowCompileDurationSeconds)
+	ShutdownFlowCompileDurationSeconds.WithLabelValues("test-metrics-flow-duration").Observe(0.5)
+	after := testutil.CollectAndCount(ShutdownFlowCompileDurationSeconds)
+	if after != before+1 {
+		t.Fatalf("ShutdownFlowCompileDurationSeconds series count did not grow: before=%d after=%d", before, after)
+	}
+}
+
+func TestShutdownFlowPlanHashChangesTotalCounts(t *testing.T) {
+	before := testutil.ToFloat64(ShutdownFlowPlanHashChangesTotal.WithLabelValues("test-metrics-flow"))
+	ShutdownFlowPlanHashChangesTotal.WithLabelValues("test-metrics-flow").Inc()
+	after := testutil.ToFloat64(ShutdownFlowPlanHashChangesTotal.WithLabelValues("test-metrics-flow"))
+	if after != before+1 {
+		t.Fatalf("ShutdownFlowPlanHashChangesTotal did not increment: before=%v after=%v", before, after)
+	}
+}
+
+func TestShutdownFlowTriggerEvaluationsTotalCountsByEligibility(t *testing.T) {
+	before := testutil.ToFloat64(ShutdownFlowTriggerEvaluationsTotal.WithLabelValues("test-metrics-flow", "true"))
+	ShutdownFlowTriggerEvaluationsTotal.WithLabelValues("test-metrics-flow", "true").Inc()
+	after := testutil.ToFloat64(ShutdownFlowTriggerEvaluationsTotal.WithLabelValues("test-metrics-flow", "true"))
+	if after != before+1 {
+		t.Fatalf("ShutdownFlowTriggerEvaluationsTotal did not increment: before=%v after=%v", before, after)
+	}
+}
+
+func TestShutdownFlowDegradedReflectsLatestSet(t *testing.T) {
+	ShutdownFlowDegraded.WithLabelValues("test-metrics-flow-degraded").Set(BoolToFloat(true))
+	if got := testutil.ToFloat64(ShutdownFlowDegraded.WithLabelValues("test-metrics-flow-degraded")); got != 1 {
+		t.Fatalf("ShutdownFlowDegraded = %v, want 1 after Set(true)", got)
+	}
+	ShutdownFlowDegraded.WithLabelValues("test-metrics-flow-degraded").Set(BoolToFloat(false))
+	if got := testutil.ToFloat64(ShutdownFlowDegraded.WithLabelValues("test-metrics-flow-degraded")); got != 0 {
+		t.Fatalf("ShutdownFlowDegraded = %v, want 0 after Set(false)", got)
+	}
+}
+
+func TestShutdownFlowExecutionDurationSecondsRecordsObservations(t *testing.T) {
+	before := testutil.CollectAndCount(ShutdownFlowExecutionDurationSeconds)
+	ShutdownFlowExecutionDurationSeconds.WithLabelValues("test-metrics-flow", "DryRun").Observe(1.2)
+	after := testutil.CollectAndCount(ShutdownFlowExecutionDurationSeconds)
+	if after != before+1 {
+		t.Fatalf("ShutdownFlowExecutionDurationSeconds series count did not grow: before=%d after=%d", before, after)
+	}
+}
+
+func TestActuatorActionAttemptsTotalCountsByLabelSet(t *testing.T) {
+	before := testutil.ToFloat64(ActuatorActionAttemptsTotal.WithLabelValues("ScaleWorkload", "DryRun", "Simulated"))
+	ActuatorActionAttemptsTotal.WithLabelValues("ScaleWorkload", "DryRun", "Simulated").Inc()
+	after := testutil.ToFloat64(ActuatorActionAttemptsTotal.WithLabelValues("ScaleWorkload", "DryRun", "Simulated"))
+	if after != before+1 {
+		t.Fatalf("ActuatorActionAttemptsTotal did not increment: before=%v after=%v", before, after)
+	}
+}
+
+func TestActuatorActionDurationSecondsRecordsObservations(t *testing.T) {
+	before := testutil.CollectAndCount(ActuatorActionDurationSeconds)
+	ActuatorActionDurationSeconds.WithLabelValues("DrainNodes").Observe(3.4)
+	after := testutil.CollectAndCount(ActuatorActionDurationSeconds)
+	if after != before+1 {
+		t.Fatalf("ActuatorActionDurationSeconds series count did not grow: before=%d after=%d", before, after)
+	}
+}
