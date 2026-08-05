@@ -209,6 +209,14 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   integration, not scaffolding), and projected-Secret `AgentShutdown` signal handoff.
 - Node-agent coverage gating: enforce-mode releases block when a target node lacks a ready agent pod;
   dry-run records the same degraded facts without acting.
+- **`ShutdownFlow`'s continuous status-update conflicts are fixed (`F-31`, 2026-08-04).** The
+  resourceVersion race documented below is closed operator-wide by switching every controller's status
+  write from `Status().Update()` to `Status().Patch()` — see Operator Maturity & Hardening. What
+  `F-31` does *not* address: `SetupWithManager` still watches `UPSDevice` with no predicate, so every
+  telemetry tick (5–15s per device) still re-enqueues a `ShutdownFlow` reconcile, each doing a Postgres
+  audit-store round trip via `recordShutdownFlowAudit` — real reconcile churn, just no longer
+  error-producing churn. Scoping that watch predicate to the fields the trigger logic actually reads
+  (phase, charge %, runtime seconds) remains open below.
 
 #### Open Work
 
@@ -229,18 +237,16 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 - `OD-14` partial-domain outage plan scope (shared with Telemetry & Triggers).
 - Controller/envtest coverage for executor resume behavior (restart mid-flow) — asserted by design
   (`EX-14`) but not covered by an actual restart test yet.
-- **`ShutdownFlow` reconciler hits continuous status-update conflicts.** Confirmed via a 10h
+- **`ShutdownFlow`'s unpredicated `UPSDevice` watch causes reconcile churn.** Confirmed via a 10h
   production log pull (2026-08-04, evidence trail in the private deployment repo): 1,516
-  `"the object has been modified"` errors spread evenly across the whole window (~1/48s), not just
-  a post-deploy burst — 744 against `ShutdownFlow` specifically. Root cause: `SetupWithManager`
-  watches `UPSDevice` with no predicate, so every
-  telemetry tick (5–15s per device) re-enqueues a reconcile; `Reconcile` does a single `r.Get` +
-  `r.Status().Update` (not `Patch`), and back-to-back reconciles race the informer cache, so the
-  final write frequently uses a stale `resourceVersion`. Self-heals via controller-runtime's built-in
-  requeue-on-error, but it's constant reconcile churn — each attempt also does a Postgres audit-store
-  round trip via `recordShutdownFlowAudit`. Fix candidates: switch the status write to `Status().Patch`
-  (sidesteps the resourceVersion race entirely), and/or scope the `UPSDevice` watch predicate to the
-  fields the trigger logic actually reads (phase, charge %, runtime seconds).
+  `"the object has been modified"` errors spread evenly across the whole window (~1/48s) — 744 against
+  `ShutdownFlow` specifically. The conflict-error symptom is now fixed (`F-31`, see Built above and
+  Operator Maturity & Hardening), but the root cause of the churn itself is unchanged:
+  `SetupWithManager` watches `UPSDevice` with no predicate, so every telemetry tick (5–15s per device)
+  still re-enqueues a `ShutdownFlow` reconcile, each doing a Postgres audit-store round trip via
+  `recordShutdownFlowAudit` regardless of whether anything the trigger logic reads actually changed.
+  Fix: scope the `UPSDevice` watch predicate to the fields the trigger logic actually reads (phase,
+  charge %, runtime seconds).
 
 ---
 
@@ -684,35 +690,52 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
   clean against the current tree, including this fix. No RFC1918 secret/pattern is embedded in the
   check itself — deliberately generic, so the check's own config can't become a second leak of exactly
   what it's guarding against.
+- **`F-31` fixed: all 9 controllers now write status via `Status().Patch()`, not `Status().Update()`
+  (2026-08-04).** Confirmed via grep before fixing: all 9 reconcilers called `Status().Update()`
+  exactly once each; zero used `Status().Patch()`. Reproduced the exact production failure mode (10h
+  log, 744 `ShutdownFlow` conflicts) as a real regression test rather than assuming the mechanism:
+  `resourceVersionRaceInjectingClient` in `shutdownflow_controller_test.go` lets the reconciler's own
+  `Get` return normally, then — on a separate fetch that never touches the object the reconciler holds
+  — advances that same object's `resourceVersion` on the (real, envtest) API server before the
+  reconciler reaches its status write, simulating a concurrent write landing between a cache-backed
+  read and the eventual write. Verified both directions: temporarily reverted to
+  `Status().Update()` and confirmed the test fails with the exact same `409 Conflict` / "the object has
+  been modified" error from the production log; restored `Status().Patch(ctx, obj,
+  client.MergeFrom(base))` (with `base` captured via `DeepCopy()` immediately after the initial `Get`,
+  before any mutation) and confirmed it passes. A merge patch has no `resourceVersion` precondition, so
+  it applies cleanly against whatever the live object actually is instead of racing a stale read. Fixed
+  identically across all 9 controllers, including `NUTServer`/`NodePowerAgent` where the finalizer-add
+  `r.Update()` (a separate, unrelated metadata write) happens between the base capture and the status
+  write — harmless, since the status subresource endpoint only ever persists the `.status` diff
+  regardless of what else changed in the patch body.
+- **`F-2` fixed: leader-election code default flipped `false` → `true` (2026-08-04).** Every real
+  deployment was already effectively running with leader election active (`config/manager/manager.yaml`
+  passes bare `--leader-elect`, which Go's `flag` package treats as `true`) — this closes the
+  defense-in-depth gap where a future manifest change dropping that arg would have silently regressed
+  to no leader election. Verified the flip doesn't break local iteration: controller-runtime's leader
+  election requires an in-cluster-detected namespace when enabled, which a `go run` process against a
+  kubeconfig doesn't have (`unable to find leader election namespace: not running in-cluster` —
+  confirmed by reading `sigs.k8s.io/controller-runtime/pkg/leaderelection`, not guessed). Fixed by
+  adding `--leader-elect=false` to the `Makefile`'s `run` target, so `make run` keeps working
+  out-of-cluster exactly as before; the in-cluster path (`config/manager/manager.yaml`, and thus every
+  real and `test-e2e.yml` deployment) is unaffected since it already passed the flag explicitly.
+- **`F-5` re-scoped and closed: documented the `argoproj.io/workflows` RBAC/`RunWorkflow` integration
+  (2026-08-04).** Added an "RBAC Scope" section to `docs/security.md` covering the two ClusterRole
+  grants broader than they look in isolation: `argoproj.io/workflows` (backs the real, used
+  `RunWorkflow` executor action in `internal/kubeactions` — creates an Argo `Workflow` referencing an
+  existing `WorkflowTemplate` by name, never inline spec; no `workflowtemplates` RBAC at all) and
+  `namespaces` `create`/`update`/`patch` (can't be narrowed by name at the RBAC layer since `create`
+  doesn't support `resourceNames`; the gap is closed at the input-validation layer by `F-4` instead,
+  referenced directly from the new section).
 
 #### Open Work
 
-- **`F-31` `Status().Update()` resourceVersion race is universal, not `ShutdownFlow`-specific.**
-  Confirmed via direct grep: all 9 controllers call `Status().Update()` exactly once each; zero use
-  `Status().Patch()`. The Planning & Execution Logic section already documents the observed
-  consequence for `ShutdownFlow` (10h production log, 744 conflicts) and root-causes it partly to this
-  pattern — what's new is confirming the same latent race exists in all 8 other controllers too, just
-  unobserved because nothing else drives reconcile frequency as high as `ShutdownFlow`'s unpredicated
-  `UPSDevice` watch does. Fix as a shared `Status().Patch()` pattern, not a `ShutdownFlow`-only change.
 - **`F-32` `NodePowerAgent`'s Pod watch has no predicate and no cache scoping.** `Watches(&corev1.Pod{}, ...)`
   filters by label inside the map function, but the watch itself and the manager's cache
   (`cmd/main.go` configures no `cache.Options.ByObject`) both cover every Pod cluster-wide. Not
   incorrect — the label filter prevents wrong reconciles — but real memory/CPU overhead at cluster
   scale for watching pods this controller never acts on. Fix: scope via `cache.Options.ByObject` or an
   equivalent label selector on the watch.
-- **`F-2` leader election: code default is `false`, but every real deployment overrides it.**
-  Corrected 2026-08-04 — the flag default is `false` (`cmd/main.go`:
-  `flag.BoolVar(&enableLeaderElection, "leader-elect", false, ...)`), but
-  `config/manager/manager.yaml` passes `--leader-elect` as a bare arg, and Go's `flag` package
-  treats a bare bool flag as `true`. So leader election *is* active wherever this manifest is used
-  (every deployment observed so far). Still worth flipping the code default to `true` for
-  defense-in-depth — a future manifest change that drops the arg would silently regress — but this
-  is not the live, active risk the original wording implied.
-- `F-5` **re-scoped after checking source**: the `argoproj.io/workflows` RBAC is not leftover
-  scaffolding — it's the real `RunWorkflow` hook mechanism in `internal/kubeactions`, already listed
-  as built under Planning & Execution Logic. Remaining work here is narrower than the original
-  finding suggested: document this integration in `docs/security.md`'s network/RBAC sections so it
-  isn't mistaken for scope creep again.
 - `F-7` idempotency test: reconcile from a partial-failure state and assert convergence — no such
   test exists across the four operand render paths.
 - Release image signing policy, cosign verification docs, and immutable digest production examples

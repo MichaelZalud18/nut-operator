@@ -30,6 +30,31 @@ uses a read-only root filesystem, and receives no Kubernetes service-account tok
 seccomp profile is unconfined for this mode because common runtime-default profiles block the Linux
 `reboot(2)` syscall used for host poweroff.
 
+## RBAC Scope
+
+The manager's ClusterRole is generated from each reconciler's `+kubebuilder:rbac` markers
+(`internal/controller/*_controller.go`) via `make manifests`, into `config/rbac/role.yaml`. Two
+grants are broader than they might look in isolation and are called out explicitly here so they
+aren't mistaken for scope creep in a future audit:
+
+- **`argoproj.io/workflows` (`create;get;list;watch`, no `workflowtemplates` access).** This backs
+  `ShutdownGroup.Action: RunWorkflow` in `internal/kubeactions` — a real, used executor action, not
+  scaffolding. It creates an Argo `Workflow` object in a target namespace that references an
+  existing `WorkflowTemplate` by name (`workflowTemplateRef`); the operator never authors or
+  supplies inline workflow spec, and has no RBAC to create, read, or modify `WorkflowTemplate`s
+  themselves. This lets an orchestrated shutdown wave hand off to an Argo-defined
+  recovery/notification/cleanup workflow without the operator needing to know what that workflow
+  does.
+- **`namespaces` (`create;update;patch`).** `NUTServer`/`NodePowerAgent`/`PowerManagementCluster`
+  are cluster-scoped CRDs whose `spec`-referenced operand namespace may not exist yet; the operator
+  creates and labels it on first reconcile. Kubernetes RBAC can't scope a `create` verb by resource
+  name — only verbs acting on an object that already exists support `resourceNames` — so this can't
+  be narrowed further at the RBAC layer. The resulting gap (a CR pointing its operand namespace at a
+  reserved system namespace) is closed at the input layer instead: `validateOptionalNamespace`
+  (admission webhook) and `rejectReservedOperandNamespace` (controller, belt-and-suspenders) reject
+  `default`/`kube-system`/`kube-public`/`kube-node-lease` before the operator ever creates or
+  relabels a namespace.
+
 ## Network Controls
 
 Generated operands are compatible with default-deny namespaces.

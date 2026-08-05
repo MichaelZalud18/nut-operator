@@ -43,9 +43,9 @@ Mechanical, checkable, and where most reviewer friction lands.
 | `observedGeneration` tracking | Met — present in all 9 API types and every controller |
 | Standard condition types with machine-readable reasons | Mostly met — see audit |
 | Finalizers for cleanup | **Met (2026-08-04)** — `NUTServerReconciler`/`NodePowerAgentReconciler` carry finalizers; owner-reference GC for the other 7 was verified never needing one (no Kubernetes child resources rendered). |
-| Status writes use `Patch`, not read-modify-write `Update` | **Not met anywhere** — all 9 controllers call `Status().Update()` exclusively, zero `Status().Patch()`. Confirmed as a live, observed bug for `ShutdownFlow` specifically (10h production log, 744 conflicts) but the vulnerable pattern is universal; the other 8 just reconcile too infrequently for it to have surfaced yet. See 2026-08-04 audit. |
+| Status writes use `Patch`, not read-modify-write `Update` | **Met (2026-08-04)** — all 9 controllers switched to `Status().Patch(ctx, obj, client.MergeFrom(base))`. Regression-tested, not just converted: `shutdownflow_controller_test.go`'s `resourceVersionRaceInjectingClient` reproduces the exact production race (a write landing between a reconciler's `Get` and its status write) and confirmed both that the old `Update()` pattern fails with the production-observed 409 Conflict, and that `Patch()` doesn't. |
 | `RequeueAfter` over sleeps | **Met — confirmed clean.** Zero `time.Sleep` calls in any controller. |
-| Leader election | **Active in every real deployment** — `config/manager/manager.yaml` passes bare `--leader-elect`, which Go's `flag` package treats as `true`. The code default is still `false`, which only matters if a manifest ever drops the arg. |
+| Leader election | **Met (2026-08-04)** — code default flipped `false` → `true` (`cmd/main.go`), closing the defense-in-depth gap; `config/manager/manager.yaml` already ran with it active via bare `--leader-elect`. `Makefile`'s `run` target now passes `--leader-elect=false` explicitly, since out-of-cluster leader election has no namespace to create its lease in. |
 
 Check at: every controller added, and before release tagging.
 
@@ -272,11 +272,32 @@ test suite including new specs, `make manifests`, ASH) the same day this audit p
   is unchanged (Kubernetes RBAC can't scope `create` by resource name), which is why this shows as
   "fixed" via input validation rather than "narrowed" via RBAC.
 
-Still open from this list: `F-31` (`Status().Patch()`), `F-3` (metrics), `F-32` (Pod watch cache
-scoping), `F-7` (idempotency tests) — unchanged, see `docs/tasks.md`.
-
 A genuine, unrelated finding surfaced while building a new CI check during this same pass: a real
 private IP address (a device from this session's private-repo work) had been committed to this public
 repo's test fixtures in an earlier commit (`70bb81f`). Fixed in the working tree; still visible in git
 history. See `docs/tasks.md`'s Operator Maturity & Hardening Built section and `security.yml`'s new
 `private-ip-scan` job.
+
+## Fixes applied — 2026-08-04 (later same day)
+
+`F-31`, `F-2`, and `F-5` — the three remaining items from the "Recommended order" list above other
+than `F-32`/`F-3`/`F-7` — implemented and verified (build, `make lint`, full test suite including a
+new regression spec) the same day. Full detail in `docs/tasks.md`'s Operator Maturity & Hardening
+Built section; summary here for the audit trail:
+
+- **`F-31` fixed** — all 9 controllers converted from `Status().Update()` to
+  `Status().Patch(ctx, obj, client.MergeFrom(base))`. Not just converted: reproduced the exact
+  production race as a new envtest regression test (`resourceVersionRaceInjectingClient`,
+  `shutdownflow_controller_test.go`) and confirmed it fails against the old `Update()` pattern with
+  the same 409 Conflict from the production log, then passes against the new `Patch()` pattern.
+- **`F-2` fixed** — leader-election code default flipped `false` → `true`. Verified the flip doesn't
+  regress local development before shipping it: controller-runtime requires an in-cluster-detected
+  namespace for leader election, which a `go run` process against kubeconfig doesn't have, so
+  `Makefile`'s `run` target now passes `--leader-elect=false` explicitly.
+- **`F-5` closed** — added an "RBAC Scope" section to `docs/security.md` documenting the
+  `argoproj.io/workflows` grant (`RunWorkflow` executor action, references `WorkflowTemplate`s by
+  name, no `workflowtemplates` RBAC) and the `namespaces create` grant (can't be narrowed by name at
+  the RBAC layer; closed at the input layer by `F-4` instead) so neither reads as scope creep again.
+
+Still open: `F-32` (Pod watch cache scoping), `F-3` (metrics), `F-7` (idempotency tests), image
+signing, and the container-scanner tooling decision — unchanged, see `docs/tasks.md`.
