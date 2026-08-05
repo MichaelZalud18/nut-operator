@@ -49,6 +49,7 @@ func (r *UPSCapabilityProfileReconciler) Reconcile(ctx context.Context, req ctrl
 		}
 		return ctrl.Result{}, err
 	}
+	base := profile.DeepCopy()
 
 	result := validateUPSCapabilityProfile(&profile)
 	profile.Status.ObservedGeneration = profile.Generation
@@ -63,7 +64,7 @@ func (r *UPSCapabilityProfileReconciler) Reconcile(ctx context.Context, req ctrl
 	setReadyCondition(&profile.Status.Conditions, profile.Generation, result.accepted, result.reason, result.message)
 	setDegradedCondition(&profile.Status.Conditions, profile.Generation, !result.accepted, result.reason, result.message)
 
-	if err := r.Status().Update(ctx, &profile); err != nil {
+	if err := r.Status().Patch(ctx, &profile, client.MergeFrom(base)); err != nil {
 		log.Error(err, "failed to update UPSCapabilityProfile status")
 		return ctrl.Result{}, err
 	}

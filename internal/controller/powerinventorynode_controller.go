@@ -49,6 +49,7 @@ func (r *PowerInventoryNodeReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 		return ctrl.Result{}, err
 	}
+	base := node.DeepCopy()
 
 	result := validatePowerInventoryNode(&node)
 	node.Status.ObservedGeneration = node.Generation
@@ -61,7 +62,7 @@ func (r *PowerInventoryNodeReconciler) Reconcile(ctx context.Context, req ctrl.R
 	setReadyCondition(&node.Status.Conditions, node.Generation, result.accepted, result.reason, result.message)
 	setDegradedCondition(&node.Status.Conditions, node.Generation, !result.accepted, result.reason, result.message)
 
-	if err := r.Status().Update(ctx, &node); err != nil {
+	if err := r.Status().Patch(ctx, &node, client.MergeFrom(base)); err != nil {
 		log.Error(err, "failed to update PowerInventoryNode status")
 		return ctrl.Result{}, err
 	}

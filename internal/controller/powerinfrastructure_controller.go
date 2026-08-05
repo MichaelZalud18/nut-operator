@@ -49,6 +49,7 @@ func (r *PowerInfrastructureReconciler) Reconcile(ctx context.Context, req ctrl.
 		}
 		return ctrl.Result{}, err
 	}
+	base := infrastructure.DeepCopy()
 
 	result := validatePowerInfrastructure(&infrastructure)
 	infrastructure.Status.ObservedGeneration = infrastructure.Generation
@@ -67,7 +68,7 @@ func (r *PowerInfrastructureReconciler) Reconcile(ctx context.Context, req ctrl.
 	)
 	setDegradedCondition(&infrastructure.Status.Conditions, infrastructure.Generation, !result.accepted, result.reason, result.message)
 
-	if err := r.Status().Update(ctx, &infrastructure); err != nil {
+	if err := r.Status().Patch(ctx, &infrastructure, client.MergeFrom(base)); err != nil {
 		log.Error(err, "failed to update PowerInfrastructure status")
 		return ctrl.Result{}, err
 	}

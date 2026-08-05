@@ -84,6 +84,7 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return ctrl.Result{}, err
 	}
+	base := device.DeepCopy()
 
 	result := validateUPSDevice(&device)
 	device.Status.ObservedGeneration = device.Generation
@@ -153,7 +154,7 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 
-	if err := r.Status().Update(ctx, &device); err != nil {
+	if err := r.Status().Patch(ctx, &device, client.MergeFrom(base)); err != nil {
 		log.Error(err, "failed to update UPSDevice status")
 		return ctrl.Result{}, err
 	}

@@ -49,6 +49,7 @@ func (r *PowerInventoryEdgeReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 		return ctrl.Result{}, err
 	}
+	base := edge.DeepCopy()
 
 	result := validatePowerInventoryEdge(&edge)
 	edge.Status.ObservedGeneration = edge.Generation
@@ -61,7 +62,7 @@ func (r *PowerInventoryEdgeReconciler) Reconcile(ctx context.Context, req ctrl.R
 	setReadyCondition(&edge.Status.Conditions, edge.Generation, result.accepted, result.reason, result.message)
 	setDegradedCondition(&edge.Status.Conditions, edge.Generation, !result.accepted, result.reason, result.message)
 
-	if err := r.Status().Update(ctx, &edge); err != nil {
+	if err := r.Status().Patch(ctx, &edge, client.MergeFrom(base)); err != nil {
 		log.Error(err, "failed to update PowerInventoryEdge status")
 		return ctrl.Result{}, err
 	}

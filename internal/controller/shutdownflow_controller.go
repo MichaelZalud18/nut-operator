@@ -75,6 +75,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		return ctrl.Result{}, err
 	}
+	base := flow.DeepCopy()
 
 	observedAt := r.now()
 	reconcileResult := ctrl.Result{}
@@ -223,7 +224,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		log.Error(err, "failed to record ShutdownFlow audit records", "shutdownflow", flow.Name)
 	}
 
-	if err := r.Status().Update(ctx, &flow); err != nil {
+	if err := r.Status().Patch(ctx, &flow, client.MergeFrom(base)); err != nil {
 		log.Error(err, "failed to update ShutdownFlow status")
 		return ctrl.Result{}, err
 	}

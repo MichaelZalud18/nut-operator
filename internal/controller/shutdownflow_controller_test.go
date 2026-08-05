@@ -142,6 +142,26 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.CapabilityMatchCount).To(Equal(int32(1)))
 		})
 
+		It("tolerates the object advancing between Get and the status write (F-31)", func() {
+			By("Reconciling through a client that simulates a concurrent external write landing between the reconciler's Get and its status write")
+			controllerReconciler := &ShutdownFlowReconciler{
+				Client: &resourceVersionRaceInjectingClient{Client: k8sClient, key: typeNamespacedName},
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			condition := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionAccepted)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(resource.Annotations).To(HaveKeyWithValue("f31-race-test/external-write", "true"))
+		})
+
 		It("evaluates trigger eligibility from UPSDevice telemetry status", func() {
 			observedAt := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
 			pollTime := metav1.NewTime(observedAt.Add(-10 * time.Second))
@@ -940,4 +960,42 @@ func cleanupShutdownFlowResolverFixture(ctx context.Context) {
 
 func boolPtr(value bool) *bool {
 	return &value
+}
+
+// resourceVersionRaceInjectingClient reproduces the F-31 race under test: it lets the reconciler
+// read an object via Get as normal, then -- once, out of band, on a *separate* fetch that never
+// touches the obj the reconciler holds -- advances that same object's resourceVersion on the API
+// server before the reconciler reaches its status write. This is exactly the failure mode recorded
+// in docs/tasks.md (10h production log, 744 "the object has been modified" conflicts on
+// ShutdownFlow): a reconcile's cache-backed read lands slightly behind a concurrent write, and the
+// reconcile's own later status write then races that stale read. Status().Update() carries the
+// stale resourceVersion and is rejected with a 409 Conflict; Status().Patch(client.MergeFrom(...))
+// has no resourceVersion precondition and applies cleanly regardless.
+type resourceVersionRaceInjectingClient struct {
+	client.Client
+	key      types.NamespacedName
+	injected bool
+}
+
+func (c *resourceVersionRaceInjectingClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if err := c.Client.Get(ctx, key, obj, opts...); err != nil {
+		return err
+	}
+	if c.injected || key != c.key {
+		return nil
+	}
+	if _, ok := obj.(*powerv1alpha1.ShutdownFlow); !ok {
+		return nil
+	}
+	c.injected = true
+
+	var live powerv1alpha1.ShutdownFlow
+	if err := c.Client.Get(ctx, key, &live); err != nil {
+		return err
+	}
+	if live.Annotations == nil {
+		live.Annotations = map[string]string{}
+	}
+	live.Annotations["f31-race-test/external-write"] = "true"
+	return c.Update(ctx, &live)
 }

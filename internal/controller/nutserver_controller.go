@@ -73,6 +73,7 @@ func (r *NUTServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return ctrl.Result{}, err
 	}
+	base := server.DeepCopy()
 
 	if !server.DeletionTimestamp.IsZero() {
 		return r.finalizeNUTServer(ctx, &server)
@@ -155,7 +156,7 @@ func (r *NUTServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		setDegradedCondition(&server.Status.Conditions, server.Generation, true, result.reason, result.message)
 	}
 
-	if err := r.Status().Update(ctx, &server); err != nil {
+	if err := r.Status().Patch(ctx, &server, client.MergeFrom(base)); err != nil {
 		log.Error(err, "failed to update NUTServer status")
 		return ctrl.Result{}, err
 	}

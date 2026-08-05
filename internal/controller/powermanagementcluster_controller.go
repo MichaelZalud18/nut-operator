@@ -74,6 +74,7 @@ func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ct
 		}
 		return ctrl.Result{}, err
 	}
+	base := cluster.DeepCopy()
 
 	result := validatePowerManagementCluster(&cluster)
 	storageStatus, storageReady, readyReason, readyMessage := r.evaluateStorage(ctx, &cluster, result)
@@ -89,7 +90,7 @@ func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ct
 	)
 	setDegradedCondition(&cluster.Status.Conditions, cluster.Generation, !result.accepted || !storageReady, readyReason, readyMessage)
 
-	if err := r.Status().Update(ctx, &cluster); err != nil {
+	if err := r.Status().Patch(ctx, &cluster, client.MergeFrom(base)); err != nil {
 		log.Error(err, "failed to update PowerManagementCluster status")
 		return ctrl.Result{}, err
 	}

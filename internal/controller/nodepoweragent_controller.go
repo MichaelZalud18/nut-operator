@@ -73,6 +73,7 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		return ctrl.Result{}, err
 	}
+	base := agent.DeepCopy()
 
 	if !agent.DeletionTimestamp.IsZero() {
 		return r.finalizeNodePowerAgent(ctx, &agent)
@@ -156,7 +157,7 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		setDegradedCondition(&agent.Status.Conditions, agent.Generation, true, result.reason, result.message)
 	}
 
-	if err := r.Status().Update(ctx, &agent); err != nil {
+	if err := r.Status().Patch(ctx, &agent, client.MergeFrom(base)); err != nil {
 		log.Error(err, "failed to update NodePowerAgent status")
 		return ctrl.Result{}, err
 	}
