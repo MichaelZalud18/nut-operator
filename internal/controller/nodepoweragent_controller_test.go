@@ -315,6 +315,8 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/michaelzalud18/upsmon-agent:main"))
 			Expect(*daemonSet.Spec.Template.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].ReadinessProbe).NotTo(BeNil())
+			Expect(daemonSet.Spec.Template.Spec.Containers[0].LivenessProbe).NotTo(BeNil())
+			Expect(daemonSet.Spec.Template.Spec.Containers[0].LivenessProbe.Exec.Command).To(Equal([]string{"pgrep", "-x", "upsmon"}))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_SIGNAL_PATH", Value: "/run/power-agent/shutdown.json"}))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_SHUTDOWN_FLOW", Value: "upsmon-local"}))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_SELECTED_UPS_DEVICES", Value: "rack-a-ups"}))
@@ -330,6 +332,7 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(*daemonSet.Spec.Template.Spec.Containers[1].SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(daemonSet.Spec.Template.Spec.Containers[1].SecurityContext.Capabilities.Add).To(BeEmpty())
 			Expect(daemonSet.Spec.Template.Spec.Containers[1].ReadinessProbe).NotTo(BeNil())
+			Expect(daemonSet.Spec.Template.Spec.Containers[1].LivenessProbe).To(BeNil(), "actuator must never carry a liveness probe: a restart loop during a live shutdown could re-trigger or lose signal state")
 			Expect(daemonSet.Spec.Template.Spec.Containers[1].Env).To(ContainElement(corev1.EnvVar{
 				Name: "POWER_NODE_NAME",
 				ValueFrom: &corev1.EnvVarSource{

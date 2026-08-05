@@ -649,6 +649,7 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				Resources:       agent.Spec.Resources.Upsmon,
 				SecurityContext: restrictedContainerSecurityContext(),
 				ReadinessProbe:  upsmonReadinessProbe(),
+				LivenessProbe:   upsmonLivenessProbe(),
 				Env:             nodePowerAgentSignalEnv(agent, spec.ConfigHash, spec.SelectedUPSDevices),
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "nut-client-config", MountPath: "/etc/nut/nut.conf", SubPath: nodePowerAgentConfigFile, ReadOnly: true},
@@ -715,6 +716,27 @@ func actuatorContainerSecurityContext(hostPoweroff bool) *corev1.SecurityContext
 		SeccompProfile: &corev1.SeccompProfile{
 			Type: corev1.SeccompProfileTypeUnconfined,
 		},
+	}
+}
+
+// upsmonLivenessProbe restarts upsmon if the process itself has died, and only that (F-35). It is
+// deliberately NOT tied to NUT server reachability -- that's upsmonReadinessProbe's job -- so a upsmon
+// that's alive but can't currently reach its configured UPS server stays up and NotReady rather than
+// getting restarted, which would just churn the same failure. This is the read-only monitoring
+// container, not the actuator: unlike the actuator (see actuatorReadinessProbe's caller in
+// ensureNodePowerAgentDaemonSet, which deliberately carries no LivenessProbe at all), a restart here
+// mid-event has no risk of re-triggering or losing actuation signal state.
+func upsmonLivenessProbe() *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			Exec: &corev1.ExecAction{
+				Command: []string{"pgrep", "-x", "upsmon"},
+			},
+		},
+		InitialDelaySeconds: 10,
+		PeriodSeconds:       30,
+		TimeoutSeconds:      5,
+		FailureThreshold:    3,
 	}
 }
 
