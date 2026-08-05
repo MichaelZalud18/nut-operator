@@ -34,6 +34,18 @@ import (
 var (
 	// managerImage is the manager image to be built and loaded for testing.
 	managerImage = "example.com/nut-operator:v0.0.1"
+	// operandImageTag is the tag used for all project-owned operand images built and loaded for
+	// testing. Needed by the NodePowerAgent signal-handoff suite, which runs a real
+	// dummy-ups-backed NUTServer and NodePowerAgent DaemonSet end-to-end.
+	operandImageTag = "v0.0.1"
+	// nutServerRepository, upsmonAgentRepository, and nodeActuatorRepository are the repositories
+	// (without tag) for the operand images above.
+	nutServerRepository    = "example.com/nut-server"
+	upsmonAgentRepository  = "example.com/upsmon-agent"
+	nodeActuatorRepository = "example.com/node-actuator"
+	nutServerImage         = nutServerRepository + ":" + operandImageTag
+	upsmonAgentImage       = upsmonAgentRepository + ":" + operandImageTag
+	nodeActuatorImage      = nodeActuatorRepository + ":" + operandImageTag
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
 )
@@ -61,6 +73,26 @@ var _ = BeforeSuite(func() {
 	By("loading the manager image on Kind")
 	err = utils.LoadImageToKindClusterWithName(managerImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
+
+	By("building the operand images")
+	cmd = exec.Command("make", "docker-build-nut-server",
+		fmt.Sprintf("NUT_SERVER_IMG=%s", nutServerImage), fmt.Sprintf("NUT_SERVER_SHA_IMG=%s", nutServerImage))
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the nut-server operand image")
+	cmd = exec.Command("make", "docker-build-upsmon-agent",
+		fmt.Sprintf("UPSMON_AGENT_IMG=%s", upsmonAgentImage), fmt.Sprintf("UPSMON_AGENT_SHA_IMG=%s", upsmonAgentImage))
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the upsmon-agent operand image")
+	cmd = exec.Command("make", "docker-build-node-actuator",
+		fmt.Sprintf("NODE_ACTUATOR_IMG=%s", nodeActuatorImage), fmt.Sprintf("NODE_ACTUATOR_SHA_IMG=%s", nodeActuatorImage))
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the node-actuator operand image")
+
+	By("loading the operand images on Kind")
+	for _, image := range []string{nutServerImage, upsmonAgentImage, nodeActuatorImage} {
+		err = utils.LoadImageToKindClusterWithName(image)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to load %s into Kind", image))
+	}
 
 	configureKubectlKubeRC()
 	setupCertManager()

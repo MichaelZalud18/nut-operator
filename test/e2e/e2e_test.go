@@ -20,11 +20,13 @@ limitations under the License.
 package e2e
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -358,15 +360,134 @@ var _ = Describe("Manager", Ordered, func() {
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+		It("delivers a projected Secret signal to the NodePowerAgent actuator within the configured TTL", func() {
+			// Previously blocked on tooling (kind wasn't installed in the dev environment this suite
+			// was authored in); envtest has no real kubelet, so this is the only place the actual
+			// claim -- "a projected Secret update reaches a running DaemonSet pod within a bounded
+			// time" -- can be checked at all. Real dummy-ups UPSDevice/NUTServer/NodePowerAgent stack,
+			// real kubelet-synced projected volume, real node-actuator binary.
+			const agentNamespace = "power-signal-e2e"
+
+			By("discovering the Kind node name")
+			cmd := exec.Command("kubectl", "get", "nodes", "-o", "jsonpath={.items[0].metadata.name}")
+			nodeName, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodeName).NotTo(BeEmpty())
+
+			By("creating a dummy-ups-backed UPSDevice, NUTServer, and NodePowerAgent")
+			manifest := fmt.Sprintf(`
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  name: signal-e2e-ups
+spec:
+  displayName: Signal Handoff E2E Dummy UPS
+  driver: dummy-ups
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  name: signal-e2e-nutserver
+spec:
+  namespace: %[1]s
+  deviceRefs:
+    - name: signal-e2e-ups
+  image:
+    repository: %[2]s
+    tag: %[6]s
+    pullPolicy: IfNotPresent
+  auth:
+    mode: OperatorManaged
+  tls:
+    mode: Disabled
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  name: signal-e2e-agent
+spec:
+  namespace: %[1]s
+  nutServerRefs:
+    - name: signal-e2e-nutserver
+  nodeSelector:
+    matchLabels:
+      kubernetes.io/hostname: %[3]s
+  mode: DryRun
+  images:
+    upsmon:
+      repository: %[4]s
+      tag: %[6]s
+      pullPolicy: IfNotPresent
+    actuator:
+      repository: %[5]s
+      tag: %[6]s
+      pullPolicy: IfNotPresent
+  shutdown:
+    actuatorPolicy: Stub
+    signalTTL: 2m
+    requireFreshTelemetry: false
+`, agentNamespace, nutServerRepository, nodeName, upsmonAgentRepository, nodeActuatorRepository, operandImageTag)
+			applyCmd := exec.Command("kubectl", "apply", "-f", "-")
+			applyCmd.Stdin = strings.NewReader(manifest)
+			_, err = utils.Run(applyCmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the dummy-ups signal handoff fixture")
+
+			DeferCleanup(func() {
+				By("cleaning up the signal handoff fixture")
+				deleteCmd := exec.Command("kubectl", "delete", "-f", "-", "--ignore-not-found", "--wait=false")
+				deleteCmd.Stdin = strings.NewReader(manifest)
+				_, _ = utils.Run(deleteCmd)
+				cmd := exec.Command("kubectl", "delete", "ns", agentNamespace, "--ignore-not-found", "--wait=false")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("waiting for the NodePowerAgent to report Ready")
+			verifyAgentReady := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "nodepoweragent", "signal-e2e-agent",
+					"-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Ready"))
+			}
+			Eventually(verifyAgentReady, 3*time.Minute).Should(Succeed())
+
+			By("finding the NodePowerAgent DaemonSet pod")
+			cmd = exec.Command("kubectl", "-n", agentNamespace, "get", "pods",
+				"-l", "power.zalud.io/nodepoweragent=signal-e2e-agent",
+				"-o", "jsonpath={.items[0].metadata.name}")
+			agentPodName, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(agentPodName).NotTo(BeEmpty())
+
+			By("writing a shutdown signal directly into the projected signal Secret")
+			executionID := fmt.Sprintf("e2e-signal-%d", time.Now().UnixNano())
+			signalPayload := map[string]any{
+				"dryRun":             true,
+				"executionID":        executionID,
+				"nodeName":           nodeName,
+				"planConfigHash":     "e2e-signal-handoff",
+				"reason":             "E2ESignalHandoffTest",
+				"selectedUPSDevices": []string{"signal-e2e-ups"},
+				"shutdownFlow":       "signal-e2e-flow",
+				"timestamp":          time.Now().UTC().Format(time.RFC3339Nano),
+			}
+			encodedPayload, err := json.Marshal(signalPayload)
+			Expect(err).NotTo(HaveOccurred())
+			patch := fmt.Sprintf(`{"data":{%q:%q}}`, nodeName+".json", base64.StdEncoding.EncodeToString(encodedPayload))
+			cmd = exec.Command("kubectl", "-n", agentNamespace, "patch", "secret", "signal-e2e-agent-node-signals",
+				"--type=merge", "-p", patch)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to write the signal Secret")
+
+			By("confirming the actuator observes the signal within the configured 2m TTL")
+			verifySignalObserved := func(g Gomega) {
+				cmd := exec.Command("kubectl", "-n", agentNamespace, "logs", agentPodName, "-c", "actuator")
+				logs, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(logs).To(ContainSubstring("stub actuator accepted shutdown signal executionID=" + executionID))
+			}
+			Eventually(verifySignalObserved, 2*time.Minute, 5*time.Second).Should(Succeed())
+		})
 	})
 })
 
