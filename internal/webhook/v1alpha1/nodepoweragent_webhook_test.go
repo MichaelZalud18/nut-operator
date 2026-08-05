@@ -21,6 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 )
@@ -59,6 +60,27 @@ var _ = Describe("NodePowerAgent Webhook", func() {
 				Effect:   corev1.TaintEffectNoExecute,
 			}))
 			Expect(obj.Spec.Hardening.SeccompProfileType).To(Equal("RuntimeDefault"))
+			Expect(obj.Spec.Resources.Upsmon.Requests).To(HaveKeyWithValue(corev1.ResourceCPU, resource.MustParse("10m")))
+			Expect(obj.Spec.Resources.Upsmon.Requests).To(HaveKeyWithValue(corev1.ResourceMemory, resource.MustParse("32Mi")))
+			Expect(obj.Spec.Resources.Upsmon.Limits).To(HaveKeyWithValue(corev1.ResourceCPU, resource.MustParse("100m")))
+			Expect(obj.Spec.Resources.Upsmon.Limits).To(HaveKeyWithValue(corev1.ResourceMemory, resource.MustParse("64Mi")))
+			Expect(obj.Spec.Resources.Actuator.Requests).To(HaveKeyWithValue(corev1.ResourceCPU, resource.MustParse("5m")))
+			Expect(obj.Spec.Resources.Actuator.Requests).To(HaveKeyWithValue(corev1.ResourceMemory, resource.MustParse("16Mi")))
+			Expect(obj.Spec.Resources.Actuator.Limits).To(HaveKeyWithValue(corev1.ResourceCPU, resource.MustParse("50m")))
+			Expect(obj.Spec.Resources.Actuator.Limits).To(HaveKeyWithValue(corev1.ResourceMemory, resource.MustParse("32Mi")))
+		})
+
+		It("Should default only the resource keys the user did not already set", func() {
+			obj.Spec.Resources.Upsmon = corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m")},
+			}
+
+			Expect(defaulter.Default(ctx, obj)).To(Succeed())
+
+			Expect(obj.Spec.Resources.Upsmon.Requests).To(HaveKeyWithValue(corev1.ResourceCPU, resource.MustParse("250m")))
+			Expect(obj.Spec.Resources.Upsmon.Requests).To(HaveKeyWithValue(corev1.ResourceMemory, resource.MustParse("32Mi")))
+			Expect(obj.Spec.Resources.Upsmon.Limits).To(HaveKeyWithValue(corev1.ResourceCPU, resource.MustParse("100m")))
+			Expect(obj.Spec.Resources.Upsmon.Limits).To(HaveKeyWithValue(corev1.ResourceMemory, resource.MustParse("64Mi")))
 		})
 	})
 

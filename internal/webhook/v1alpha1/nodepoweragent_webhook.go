@@ -21,6 +21,7 @@ import (
 	"path"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -107,7 +108,49 @@ func defaultNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) {
 		obj.Spec.Shutdown.RequireFreshTelemetry = ptrBool(true)
 	}
 	defaultNodePowerAgentPlacement(obj)
+	defaultNodePowerAgentResources(obj)
 	defaultPodHardening(&obj.Spec.Hardening)
+}
+
+// defaultNodePowerAgentResources fills in conservative requests/limits for whichever resource keys
+// the user left unset (F-34). Without this, the tier-0 DaemonSet this whole project depends on
+// surviving node pressure runs BestEffort QoS by default -- no OOM-score protection, no scheduler
+// capacity reservation -- unless every user remembers to set spec.resources themselves. Per-key, not
+// wholesale: a user-supplied request or limit for a given resource name is never overwritten.
+func defaultNodePowerAgentResources(obj *powerv1alpha1.NodePowerAgent) {
+	defaultResourceRequirements(&obj.Spec.Resources.Upsmon, corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("10m"),
+		corev1.ResourceMemory: resource.MustParse("32Mi"),
+	}, corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("100m"),
+		corev1.ResourceMemory: resource.MustParse("64Mi"),
+	})
+	defaultResourceRequirements(&obj.Spec.Resources.Actuator, corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("5m"),
+		corev1.ResourceMemory: resource.MustParse("16Mi"),
+	}, corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("50m"),
+		corev1.ResourceMemory: resource.MustParse("32Mi"),
+	})
+}
+
+func defaultResourceRequirements(resources *corev1.ResourceRequirements, defaultRequests, defaultLimits corev1.ResourceList) {
+	if resources.Requests == nil {
+		resources.Requests = corev1.ResourceList{}
+	}
+	for name, quantity := range defaultRequests {
+		if _, set := resources.Requests[name]; !set {
+			resources.Requests[name] = quantity
+		}
+	}
+	if resources.Limits == nil {
+		resources.Limits = corev1.ResourceList{}
+	}
+	for name, quantity := range defaultLimits {
+		if _, set := resources.Limits[name]; !set {
+			resources.Limits[name] = quantity
+		}
+	}
 }
 
 func defaultNodePowerAgentPlacement(obj *powerv1alpha1.NodePowerAgent) {
