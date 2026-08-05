@@ -535,7 +535,7 @@ data:
     battery.runtime: 3600
     ups.load: 10
 
-    TIMER 45
+    TIMER 40
 
     device.mfr: nut-operator
     device.model: e2e-simulation
@@ -546,7 +546,7 @@ data:
     battery.runtime: 600
     ups.load: 10
 
-    TIMER 45
+    TIMER 40
 
     device.mfr: nut-operator
     device.model: e2e-simulation
@@ -556,6 +556,8 @@ data:
     battery.charge: 8
     battery.runtime: 90
     ups.load: 10
+
+    TIMER 40
 ---
 apiVersion: power.zalud.io/v1alpha1
 kind: UPSDevice
@@ -617,13 +619,21 @@ spec:
 				return utils.Run(cmd)
 			}
 
+			// The fixture loops (dummy-loop mode): OL/OB/LB each held ~40s, then wraps back to OL,
+			// a 120s cycle. Each Eventually window below is sized past a full cycle (not just one
+			// state's dwell time) so a check that starts moments after its target state's window
+			// already closed still survives to catch it on the next lap, rather than racing a single
+			// pass. Confirmed empirically (real dummy-ups driver, real upsc polling) that a state
+			// with no trailing TIMER after it is only held for one driver poll cycle (~2s) before
+			// looping -- the fixture above deliberately gives every block, including the last, its
+			// own TIMER so this test isn't racing a near-instant window.
 			By("observing the fixture's initial Online state via real telemetry polling")
 			verifyOnline := func(g Gomega) {
 				phase, err := upsDevicePhase()
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(phase).To(Equal("Online"))
 			}
-			Eventually(verifyOnline, 2*time.Minute, 2*time.Second).Should(Succeed())
+			Eventually(verifyOnline, 3*time.Minute, 2*time.Second).Should(Succeed())
 
 			By("observing the scripted transition into OnBattery")
 			verifyOnBattery := func(g Gomega) {
@@ -631,7 +641,7 @@ spec:
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(phase).To(Equal("OnBattery"))
 			}
-			Eventually(verifyOnBattery, 90*time.Second, 2*time.Second).Should(Succeed())
+			Eventually(verifyOnBattery, 150*time.Second, 2*time.Second).Should(Succeed())
 
 			By("observing the scripted transition into LowBattery, with matching telemetry values")
 			verifyLowBattery := func(g Gomega) {
@@ -641,7 +651,7 @@ spec:
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal("LowBattery OB LB 8"))
 			}
-			Eventually(verifyLowBattery, 90*time.Second, 2*time.Second).Should(Succeed())
+			Eventually(verifyLowBattery, 150*time.Second, 2*time.Second).Should(Succeed())
 		})
 
 		It("proves the real snmp-ups driver decodes a simulated UPS-MIB device correctly", func() {

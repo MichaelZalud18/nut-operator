@@ -13,7 +13,11 @@ data:
   # This fixture models a line-power loss: Online -> OnBattery -> LowBattery, each state held for
   # 20 seconds -- enough for the default 30s telemetry poll interval (10s while degraded) to
   # observe every state, so a ShutdownFlow OnBattery/LowBattery trigger can be exercised
-  # end-to-end without real hardware.
+  # end-to-end without real hardware. The final block has its own trailing TIMER too: a block with
+  # no TIMER after it is only held for one driver poll cycle (a couple of seconds) before the loop
+  # wraps back to the top, confirmed against the real driver -- without it, LowBattery would be
+  # visible for a couple of seconds out of every ~40, not the 20-second window every other state
+  # gets.
   sequence.seq: |
     device.mfr: nut-operator
     device.model: simulation-fixture
@@ -45,6 +49,8 @@ data:
     battery.charge: 8
     battery.runtime: 90
     ups.load: 10
+
+    TIMER 20
 ---
 apiVersion: power.zalud.io/v1alpha1
 kind: UPSDevice
