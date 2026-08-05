@@ -18,7 +18,7 @@ this operator," so the project is graded against it whether or not it opts in.
 | L1 Basic Install | Provision operands, configuration via CR | Met |
 | L2 Seamless Upgrades | Operator and operand version upgrades handled | Partial — no upgrade path exercised, no conversion webhooks |
 | L3 Full Lifecycle | Backup, restore, failure recovery | Partial — recovery execution is external subscriber scope; audit durability OD-6 is closed with local spool fallback |
-| L4 Deep Insights | Metrics, alerts, log processing, workload analysis | Not met — no custom metrics registered |
+| L4 Deep Insights | Metrics, alerts, log processing, workload analysis | Partial (2026-08-04) — the highest-value ShutdownFlow/actuator metrics are registered; per-device telemetry, capability-match, and inventory-compiler metrics are not. See `docs/metrics.md`. |
 | L5 Auto Pilot | Auto-scaling, auto-config tuning, auto-remediation | Out of scope by design (GP-1: non-power triggers excluded) |
 
 Notes specific to this project:
@@ -105,6 +105,15 @@ whole of L4 and it is currently empty. Highest-value candidates: compile duratio
 failures by diagnostic class, plan hash changes, trigger evaluations, wave execution duration,
 actuation attempts, degraded-dependency conditions. The `ServiceMonitor` support already noted in
 SB-10 has nothing project-specific to scrape.
+
+**F-3 update · all seven highest-value candidates are now registered (2026-08-04).** New
+`internal/metrics` package, registered against controller-runtime's own `metrics.Registry` — no new
+endpoint or RBAC. "Compile failures by diagnostic class" landed coarser than the original wording
+implied: `internal/shutdownflow`'s adapter functions discard `planner.Compile`'s diagnostics return
+value before it reaches the reconciler, so `compile_total`'s `result` label uses the same
+already-computed rejection-reason string the `Accepted` condition uses, not the full diagnostic class
+— noted as follow-on work in `docs/tasks.md`, not silently downgraded. Full contract in
+`docs/metrics.md`.
 
 **F-4 · Broad write access to core resources.** The operator holds `create;update;patch` on
 `configmaps`, `secrets`, `serviceaccounts`, `services`, `namespaces`, and `networkpolicies`, plus
@@ -338,7 +347,26 @@ summary here for the audit trail:
   same-named namespace can fail depending on timing — both new specs use a dedicated, uniquely-named
   namespace instead of relying on that cleanup ever completing.
 
-All items from the original "Recommended order" list in this audit are now closed:
-`F-2`/`F-4`/`F-5` (2026-08-03/04), `F-30`/`F-1` (2026-08-04), `F-31`/`F-32`/`F-7` (2026-08-04). Open
-work remaining anywhere in Operator Maturity & Hardening: `F-3` (metrics), image signing, and the
-container-scanner tooling decision — see `docs/tasks.md`.
+## Fixes applied — 2026-08-04 (fourth pass, same day)
+
+`F-3` — the last item from the original "Recommended order" list — implemented and verified (build,
+vet, `make lint`, full test suite including new collector and reconcile-path tests, `make manifests`
+with no RBAC diff, ASH) the same day. Full detail in `docs/tasks.md`'s Outputs & Publishing Built
+section and `docs/metrics.md`; summary here for the audit trail:
+
+- **`F-3` fixed** — see the "F-3 update" note above. All seven highest-value candidates the audit
+  named are registered: `compile_total`/`compile_duration_seconds`, `plan_hash_changes_total`,
+  `trigger_evaluations_total`, `degraded`, `execution_duration_seconds`, and
+  `actuator_action_attempts_total`/`actuator_action_duration_seconds`. Instrumented at the impure
+  boundary (`internal/controller`, `internal/kubeactions`), not inside the pure `internal/planner` or
+  `internal/trigger` packages. Tested at two levels: the `internal/metrics` package's own unit tests
+  exercise every collector directly, and delta-based assertions added to existing `runner_test.go`
+  and `shutdownflow_controller_test.go` specs prove the real reconcile/action-runner paths actually
+  record them — verified order-independent against the rest of each suite across 8 random
+  `ginkgo.seed` values, since other specs in both files reuse the same labels against the same global
+  collectors.
+
+All items from the original "Recommended order" list in this audit are now closed: `F-2`/`F-4`/`F-5`
+(2026-08-03/04), `F-30`/`F-1` (2026-08-04), `F-31`/`F-32`/`F-7`/`F-3` (2026-08-04). Open work remaining
+anywhere in Operator Maturity & Hardening: image signing and the container-scanner tooling decision —
+see `docs/tasks.md`.

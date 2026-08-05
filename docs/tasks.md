@@ -463,17 +463,40 @@ Design doc: `docs/design/published-planner-artifacts.md` (`GP-6`/`GP-7`).
   (`GP-7`).
 - Advisory startup wave projections published for recovery-system subscribers without the operator
   executing recovery itself (`OD-1`/`OD-5`, closed).
+- **`F-3` fixed: Prometheus metrics for the highest-value candidates from the maturity audit
+  (2026-08-04).** New `internal/metrics` package, registered against controller-runtime's own
+  `metrics.Registry` (the kubebuilder-book-documented pattern) — same `/metrics` endpoint, same
+  authn/authz filter, no new port or RBAC. Covers compile duration and outcome (`compile_total`,
+  `compile_duration_seconds` — outcome uses the same rejection-reason string already computed for the
+  `Accepted` condition, since the underlying planner diagnostics are discarded before reaching the
+  reconciler and threading them through was out of scope for this pass), plan hash changes
+  (`plan_hash_changes_total`), trigger evaluations (`trigger_evaluations_total`), degraded-dependency
+  state (`degraded`, a level gauge mirroring the `Degraded` condition), wave execution duration
+  (`execution_duration_seconds`), and actuation attempts (`actuator_action_attempts_total`,
+  `actuator_action_duration_seconds` — instrumented once at `kubeactions.Runner.RunAction`, the single
+  choke point every executor action passes through, real or dry-run). Deliberately instrumented at the
+  impure boundary (`internal/controller`, `internal/kubeactions`), not inside `internal/planner` or
+  `internal/trigger`, since both are pure by design and a global Prometheus counter is a side effect.
+  Full contract documented in `docs/metrics.md`. Tested at two levels: `internal/metrics`'s own unit
+  tests exercise every collector via `prometheus/client_golang/prometheus/testutil`, and delta-based
+  assertions in `runner_test.go`/`shutdownflow_controller_test.go` prove the real reconcile/action
+  paths actually record them (not just compile against them) — order-independent against the rest of
+  each suite, verified across 8 random `ginkgo.seed` values. `ServiceMonitor` enablement itself
+  (`config/default/kustomization.yaml`'s commented `../prometheus` line) is left as-is, matching the
+  kubebuilder scaffold default of not assuming the Prometheus Operator CRDs are installed — noted in
+  `docs/metrics.md`, not flipped silently.
 
 #### Open Work
 
 - Once the planner consumes inventory-derived domains and communication ordering (see Planning &
   Execution Logic), the published graph/domain artifacts should reflect that richer structure — right
   now the published graph is only as complete as the planner's current inputs.
-- **`F-3` metrics.** No Prometheus registrations exist at all — this is the entire "publish facts as
-  metrics" gap. Highest-value candidates per the maturity audit: compile duration, compile failures
-  by diagnostic class, plan hash changes, trigger evaluations, wave execution duration, actuation
-  attempts, degraded-dependency conditions. The `ServiceMonitor` scaffolding already exists
-  (`SB-10`); there's currently nothing project-specific for it to scrape.
+- **Metrics coverage is not exhaustive.** `F-3`'s highest-value candidates are covered (see Built), but
+  per-`UPSDevice` telemetry poll metrics, capability-match metrics, and inventory compiler metrics
+  (domain/orphan counts) are not — see `docs/metrics.md`'s Open Work note. Also open: threading the
+  planner's actual diagnostic classes through to `compile_total`'s `result` label instead of the
+  coarser rejection-reason string, which needs `internal/shutdownflow`'s adapter functions to stop
+  discarding `planner.Compile`'s diagnostics return value first.
 - No worked example showing how an external subscriber (dashboard, recovery orchestrator) actually
   consumes the published artifacts in practice — the contract is documented, but there's no sample
   integration.
