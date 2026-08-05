@@ -114,6 +114,13 @@ type NodeRelease struct {
 	ReadinessMessage      string
 	PodName               string
 	LastHeartbeatTime     *time.Time
+
+	// TelemetryFresh reflects the originating NodePowerAgent's spec.shutdown.requireFreshTelemetry
+	// gate (default true): whether every UPS device that agent monitors currently reports non-stale
+	// telemetry. True when the agent doesn't require fresh telemetry at all. Computed by the caller
+	// (internal/controller), not the executor, since only the caller has Kubernetes read access.
+	TelemetryFresh       bool
+	TelemetryStaleReason string
 }
 
 // Action is passed to an injected action runner for non-dry-run execution.
@@ -453,7 +460,8 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 			signalPath = DefaultSignalPath
 		}
 		staleAfter := observedAt.Add(signalTTL(input.SignalTTL))
-		released := release.AgentReady && !dryRun
+		clearedForRelease := release.AgentReady && release.TelemetryFresh
+		released := clearedForRelease && !dryRun
 		reason := nodeReleaseReason(release, dryRun)
 		recordErr = errors.Join(recordErr, writer.RecordNodeRelease(ctx, audit.NodeReleaseRecord{
 			ReleaseID:      e.newID(),
@@ -466,12 +474,14 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 			Released:       released,
 			Reason:         reason,
 			Clearance: map[string]any{
-				"agentReady":        release.AgentReady,
-				"dryRun":            dryRun,
-				"group":             group.Name,
-				"lastHeartbeatTime": releaseHeartbeatTime(release),
-				"podName":           release.PodName,
-				"readinessReason":   release.ReadinessReason,
+				"agentReady":           release.AgentReady,
+				"dryRun":               dryRun,
+				"group":                group.Name,
+				"lastHeartbeatTime":    releaseHeartbeatTime(release),
+				"podName":              release.PodName,
+				"readinessReason":      release.ReadinessReason,
+				"telemetryFresh":       release.TelemetryFresh,
+				"telemetryStaleReason": release.TelemetryStaleReason,
 			},
 			Details: map[string]any{
 				"readinessMessage":   release.ReadinessMessage,
@@ -487,21 +497,23 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 			NodePowerAgent: release.NodePowerAgent,
 			SignalPath:     signalPath,
 			SignalPayload: map[string]any{
-				"agentReady":         release.AgentReady,
-				"dryRun":             dryRun,
-				"executionID":        executionID,
-				"lastHeartbeatTime":  releaseHeartbeatTime(release),
-				"nodeName":           release.NodeName,
-				"planConfigHash":     input.PlanConfigHash,
-				"podName":            release.PodName,
-				"readinessReason":    release.ReadinessReason,
-				"reason":             reason,
-				"selectedUPSDevices": append([]string(nil), input.SelectedUPSDevices...),
-				"shutdownFlow":       input.ShutdownFlow,
-				"timestamp":          observedAt.UTC().Format(time.RFC3339Nano),
+				"agentReady":           release.AgentReady,
+				"dryRun":               dryRun,
+				"executionID":          executionID,
+				"lastHeartbeatTime":    releaseHeartbeatTime(release),
+				"nodeName":             release.NodeName,
+				"planConfigHash":       input.PlanConfigHash,
+				"podName":              release.PodName,
+				"readinessReason":      release.ReadinessReason,
+				"reason":               reason,
+				"selectedUPSDevices":   append([]string(nil), input.SelectedUPSDevices...),
+				"shutdownFlow":         input.ShutdownFlow,
+				"telemetryFresh":       release.TelemetryFresh,
+				"telemetryStaleReason": release.TelemetryStaleReason,
+				"timestamp":            observedAt.UTC().Format(time.RFC3339Nano),
 			},
 			StaleAfter: &staleAfter,
-			Accepted:   release.AgentReady && !dryRun,
+			Accepted:   clearedForRelease && !dryRun,
 			Reason:     handoffReason,
 			Details: map[string]any{
 				"group":             group.Name,
@@ -520,14 +532,21 @@ func agentShutdownReadinessError(dryRun bool, group Group) error {
 	}
 	var out error
 	for _, release := range group.NodeReleases {
-		if release.AgentReady {
+		if !release.AgentReady {
+			reason := release.ReadinessReason
+			if reason == "" {
+				reason = "AgentReadinessUnknown"
+			}
+			out = errors.Join(out, fmt.Errorf("node %q is not ready for AgentShutdown: %s", release.NodeName, reason))
 			continue
 		}
-		reason := release.ReadinessReason
-		if reason == "" {
-			reason = "AgentReadinessUnknown"
+		if !release.TelemetryFresh {
+			reason := release.TelemetryStaleReason
+			if reason == "" {
+				reason = "AgentTelemetryStale"
+			}
+			out = errors.Join(out, fmt.Errorf("node %q is not ready for AgentShutdown: %s", release.NodeName, reason))
 		}
-		out = errors.Join(out, fmt.Errorf("node %q is not ready for AgentShutdown: %s", release.NodeName, reason))
 	}
 	return out
 }
@@ -535,16 +554,18 @@ func agentShutdownReadinessError(dryRun bool, group Group) error {
 func blockedNodeReleaseDetails(releases []NodeRelease) []map[string]any {
 	blocked := make([]map[string]any, 0)
 	for _, release := range releases {
-		if release.AgentReady {
+		if release.AgentReady && release.TelemetryFresh {
 			continue
 		}
 		blocked = append(blocked, map[string]any{
-			"lastHeartbeatTime": releaseHeartbeatTime(release),
-			"nodeName":          release.NodeName,
-			"nodePowerAgent":    release.NodePowerAgent,
-			"podName":           release.PodName,
-			"readinessMessage":  release.ReadinessMessage,
-			"readinessReason":   release.ReadinessReason,
+			"lastHeartbeatTime":    releaseHeartbeatTime(release),
+			"nodeName":             release.NodeName,
+			"nodePowerAgent":       release.NodePowerAgent,
+			"podName":              release.PodName,
+			"readinessMessage":     release.ReadinessMessage,
+			"readinessReason":      release.ReadinessReason,
+			"telemetryFresh":       release.TelemetryFresh,
+			"telemetryStaleReason": release.TelemetryStaleReason,
 		})
 	}
 	return blocked
@@ -556,6 +577,12 @@ func nodeReleaseReason(release NodeRelease, dryRun bool) string {
 			return release.ReadinessReason
 		}
 		return "AgentReadinessUnknown"
+	}
+	if !release.TelemetryFresh {
+		if release.TelemetryStaleReason != "" {
+			return release.TelemetryStaleReason
+		}
+		return "AgentTelemetryStale"
 	}
 	if dryRun {
 		return "DryRunRelease"
@@ -569,6 +596,12 @@ func nodeSignalHandoffReason(release NodeRelease, dryRun bool) string {
 			return release.ReadinessReason
 		}
 		return "AgentReadinessUnknown"
+	}
+	if !release.TelemetryFresh {
+		if release.TelemetryStaleReason != "" {
+			return release.TelemetryStaleReason
+		}
+		return "AgentTelemetryStale"
 	}
 	if dryRun {
 		return "DryRunSignal"

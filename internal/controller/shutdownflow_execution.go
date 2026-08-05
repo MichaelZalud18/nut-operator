@@ -27,6 +27,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -252,6 +253,10 @@ func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, targ
 		}
 		agentNamespace := nodePowerAgentNamespace(&agent, cluster)
 		nodeStatuses := nodePowerAgentStatusByNode(agent.Status.NodeStatuses)
+		telemetryFresh, telemetryStaleReason, err := r.nodePowerAgentTelemetryFreshness(ctx, &agent)
+		if err != nil {
+			return nil, err
+		}
 		for _, nodeName := range agent.Status.SelectedNodes {
 			nodeStatus, found := nodeStatuses[nodeName]
 			readinessReason := "AgentReadinessUnknown"
@@ -272,10 +277,61 @@ func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, targ
 				ReadinessMessage:      readinessMessage,
 				PodName:               nodeStatus.PodName,
 				LastHeartbeatTime:     metav1TimeToTimePtr(nodeStatus.LastHeartbeatTime),
+				TelemetryFresh:        telemetryFresh,
+				TelemetryStaleReason:  telemetryStaleReason,
 			})
 		}
 	}
 	return releases, nil
+}
+
+// nodePowerAgentTelemetryFreshness implements spec.shutdown.requireFreshTelemetry (defaulted true by
+// the webhook, previously unenforced anywhere -- F-33). It fails closed: any error resolving the
+// agent's monitored devices, any device this agent depends on with no status yet, and any device
+// reporting Stale/Unavailable/Unknown telemetry are all treated as not fresh, consistent with
+// resiliency-and-partitions.md's "lost connectivity degrades certainty, never grants optimistic
+// action." Checked once per agent, not per node: the set of UPS devices an agent depends on for
+// telemetry is fleet-wide, not per selected node.
+func (r *ShutdownFlowReconciler) nodePowerAgentTelemetryFreshness(ctx context.Context, agent *powerv1alpha1.NodePowerAgent) (bool, string, error) {
+	if agent.Spec.Shutdown.RequireFreshTelemetry != nil && !*agent.Spec.Shutdown.RequireFreshTelemetry {
+		return true, "", nil
+	}
+
+	deviceNames := map[string]struct{}{}
+	for _, ref := range agent.Spec.NUTServerRefs {
+		var server powerv1alpha1.NUTServer
+		if err := r.Get(ctx, client.ObjectKey{Name: ref.Name}, &server); err != nil {
+			return false, "", fmt.Errorf("get NUTServer %q for NodePowerAgent %q telemetry freshness: %w", ref.Name, agent.Name, err)
+		}
+		for _, name := range server.Status.SelectedDevices {
+			deviceNames[name] = struct{}{}
+		}
+	}
+	if len(deviceNames) == 0 {
+		return false, "AgentTelemetryUnknown", nil
+	}
+
+	names := make([]string, 0, len(deviceNames))
+	for name := range deviceNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		var device powerv1alpha1.UPSDevice
+		if err := r.Get(ctx, client.ObjectKey{Name: name}, &device); err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, "AgentTelemetryUnknown", nil
+			}
+			return false, "", fmt.Errorf("get UPSDevice %q for NodePowerAgent %q telemetry freshness: %w", name, agent.Name, err)
+		}
+		switch device.Status.Phase {
+		case powerv1alpha1.UPSDevicePhaseOnline, powerv1alpha1.UPSDevicePhaseOnBattery, powerv1alpha1.UPSDevicePhaseLowBattery:
+			continue
+		default:
+			return false, "AgentTelemetryStale", nil
+		}
+	}
+	return true, "", nil
 }
 
 func (r *ShutdownFlowReconciler) getNodePowerAgentManagementCluster(ctx context.Context, agent *powerv1alpha1.NodePowerAgent) (*powerv1alpha1.PowerManagementCluster, error) {

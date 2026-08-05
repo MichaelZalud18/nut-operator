@@ -326,6 +326,105 @@ func TestExecutorBlocksEnforceAgentShutdownWhenNodeAgentIsUnavailable(t *testing
 	}
 }
 
+func TestExecutorBlocksEnforceAgentShutdownWhenTelemetryIsStale(t *testing.T) {
+	writer := &fakeAuditWriter{}
+	fixed := time.Date(2026, 8, 2, 15, 0, 0, 0, time.UTC)
+	executor := Executor{
+		Writer: writer,
+		Clock: func() time.Time {
+			return fixed
+		},
+		NewID: sequenceIDs(),
+		Runner: fakeActionRunner{
+			outcome: ActionOutcome{Outcome: OutcomeSucceeded},
+		},
+	}
+
+	result, err := executor.Execute(context.Background(), Input{
+		ExecutionID:    "execution-d",
+		ShutdownFlow:   "conserve-power",
+		Mode:           ModeEnforce,
+		Approved:       true,
+		PlanConfigHash: "plan-hash-d",
+		Waves:          []Wave{{Index: 0, Groups: []string{"node-a"}}},
+		Groups: []Group{{
+			Name:   "node-a",
+			Action: ActionAgentShutdown,
+			NodeReleases: []NodeRelease{{
+				NodeName:             "node-a",
+				NodePowerAgent:       "rack-a-agents",
+				AgentReady:           true,
+				TelemetryFresh:       false,
+				TelemetryStaleReason: "AgentTelemetryStale",
+			}},
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "AgentTelemetryStale") {
+		t.Fatalf("expected stale-telemetry error, got %v", err)
+	}
+	if result.Phase != PhaseAborted || result.NodeReleases != 1 {
+		t.Fatalf("expected aborted result with one node release, got %#v", result)
+	}
+	release := writer.nodeReleases[0]
+	if release.Released || release.Reason != "AgentTelemetryStale" {
+		t.Fatalf("expected unreleased AgentTelemetryStale record, got %#v", release)
+	}
+	handoff := writer.nodeSignalHandoffs[0]
+	if handoff.Accepted || handoff.Reason != "AgentTelemetryStale" {
+		t.Fatalf("expected rejected AgentTelemetryStale handoff, got %#v", handoff)
+	}
+}
+
+func TestExecutorReleasesEnforceAgentShutdownWhenReadyAndFresh(t *testing.T) {
+	writer := &fakeAuditWriter{}
+	fixed := time.Date(2026, 8, 2, 15, 0, 0, 0, time.UTC)
+	runner := fakeActionRunner{outcome: ActionOutcome{Outcome: OutcomeSucceeded}}
+	executor := Executor{
+		Writer: writer,
+		Clock: func() time.Time {
+			return fixed
+		},
+		NewID:  sequenceIDs(),
+		Runner: runner,
+	}
+
+	result, err := executor.Execute(context.Background(), Input{
+		ExecutionID:    "execution-e",
+		ShutdownFlow:   "conserve-power",
+		Mode:           ModeEnforce,
+		Approved:       true,
+		PlanConfigHash: "plan-hash-e",
+		Waves:          []Wave{{Index: 0, Groups: []string{"node-a"}}},
+		Groups: []Group{{
+			Name:   "node-a",
+			Action: ActionAgentShutdown,
+			NodeReleases: []NodeRelease{{
+				NodeName:       "node-a",
+				NodePowerAgent: "rack-a-agents",
+				AgentReady:     true,
+				TelemetryFresh: true,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Phase != PhaseCompleted || result.DryRun {
+		t.Fatalf("expected completed enforce result, got %#v", result)
+	}
+	if len(writer.actionAttempts) != 1 || writer.actionAttempts[0].Outcome != OutcomeSucceeded {
+		t.Fatalf("expected one succeeded action attempt, got %#v", writer.actionAttempts)
+	}
+	release := writer.nodeReleases[0]
+	if !release.Released || release.Reason != "ReleaseApproved" {
+		t.Fatalf("expected released ReleaseApproved record, got %#v", release)
+	}
+	handoff := writer.nodeSignalHandoffs[0]
+	if !handoff.Accepted || handoff.Reason != "SignalAccepted" {
+		t.Fatalf("expected accepted SignalAccepted handoff, got %#v", handoff)
+	}
+}
+
 type fakeActionRunner struct {
 	outcome ActionOutcome
 }

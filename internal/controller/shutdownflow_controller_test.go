@@ -656,6 +656,10 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				ObjectMeta: metav1.ObjectMeta{Name: "rack-a-agents"},
 				Spec: powerv1alpha1.NodePowerAgentSpec{
 					NUTServerRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-a"}},
+					// This spec covers the coverage-mapping logic, not telemetry-freshness gating (F-33)
+					// -- covered separately below -- so disable the requirement rather than adding
+					// unrelated NUTServer/UPSDevice fixtures here.
+					Shutdown: powerv1alpha1.AgentShutdownSpec{RequireFreshTelemetry: boolPtr(false)},
 				},
 				Status: powerv1alpha1.NodePowerAgentStatus{
 					SelectedNodes: []string{"node-a", "node-b"},
@@ -713,6 +717,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(releasesByNode["node-a"].PodName).To(Equal("agent-node-a"))
 			Expect(releasesByNode["node-a"].LastHeartbeatTime).NotTo(BeNil())
 			Expect(*releasesByNode["node-a"].LastHeartbeatTime).To(BeTemporally("==", heartbeat.Time))
+			Expect(releasesByNode["node-a"].TelemetryFresh).To(BeTrue())
 			Expect(releasesByNode["node-b"]).To(Equal(executorpkg.NodeRelease{
 				NodeName:              "node-b",
 				NodePowerAgent:        "rack-a-agents",
@@ -723,7 +728,107 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				AgentReady:            false,
 				ReadinessReason:       "AgentPodMissing",
 				ReadinessMessage:      "no NodePowerAgent pod is currently observed on this selected node",
+				TelemetryFresh:        true,
 			}))
+		})
+
+		It("gates AgentShutdown releases on requireFreshTelemetry (F-33)", func() {
+			scheme := runtime.NewScheme()
+			Expect(powerv1alpha1.AddToScheme(scheme)).To(Succeed())
+			freshDevice := &powerv1alpha1.UPSDevice{
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-a-ups"},
+				Status:     powerv1alpha1.UPSDeviceStatus{Phase: powerv1alpha1.UPSDevicePhaseOnline},
+			}
+			staleDevice := &powerv1alpha1.UPSDevice{
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-b-ups"},
+				Status:     powerv1alpha1.UPSDeviceStatus{Phase: powerv1alpha1.UPSDevicePhaseStale},
+			}
+			freshServer := &powerv1alpha1.NUTServer{
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-a"},
+				Status:     powerv1alpha1.NUTServerStatus{SelectedDevices: []string{"rack-a-ups"}},
+			}
+			staleServer := &powerv1alpha1.NUTServer{
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-b"},
+				Status:     powerv1alpha1.NUTServerStatus{SelectedDevices: []string{"rack-b-ups"}},
+			}
+			unknownServer := &powerv1alpha1.NUTServer{
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-c"},
+			}
+			freshAgent := &powerv1alpha1.NodePowerAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-a-agents"},
+				Spec: powerv1alpha1.NodePowerAgentSpec{
+					NUTServerRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-a"}},
+				},
+				Status: powerv1alpha1.NodePowerAgentStatus{
+					SelectedNodes: []string{"node-a"},
+					NodeStatuses: []powerv1alpha1.NodePowerAgentNodeStatus{
+						{NodeName: "node-a", Ready: true, Reason: "AgentPodReady"},
+					},
+				},
+			}
+			staleAgent := &powerv1alpha1.NodePowerAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-b-agents"},
+				Spec: powerv1alpha1.NodePowerAgentSpec{
+					NUTServerRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-b"}},
+				},
+				Status: powerv1alpha1.NodePowerAgentStatus{
+					SelectedNodes: []string{"node-b"},
+					NodeStatuses: []powerv1alpha1.NodePowerAgentNodeStatus{
+						{NodeName: "node-b", Ready: true, Reason: "AgentPodReady"},
+					},
+				},
+			}
+			unknownAgent := &powerv1alpha1.NodePowerAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-c-agents"},
+				Spec: powerv1alpha1.NodePowerAgentSpec{
+					NUTServerRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-c"}},
+				},
+				Status: powerv1alpha1.NodePowerAgentStatus{
+					SelectedNodes: []string{"node-c"},
+					NodeStatuses: []powerv1alpha1.NodePowerAgentNodeStatus{
+						{NodeName: "node-c", Ready: true, Reason: "AgentPodReady"},
+					},
+				},
+			}
+			optedOutAgent := &powerv1alpha1.NodePowerAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-b-agents-opted-out"},
+				Spec: powerv1alpha1.NodePowerAgentSpec{
+					NUTServerRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-b"}},
+					Shutdown:      powerv1alpha1.AgentShutdownSpec{RequireFreshTelemetry: boolPtr(false)},
+				},
+				Status: powerv1alpha1.NodePowerAgentStatus{
+					SelectedNodes: []string{"node-d"},
+					NodeStatuses: []powerv1alpha1.NodePowerAgentNodeStatus{
+						{NodeName: "node-d", Ready: true, Reason: "AgentPodReady"},
+					},
+				},
+			}
+			reconciler := &ShutdownFlowReconciler{
+				Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+					freshDevice, staleDevice, freshServer, staleServer, unknownServer,
+					freshAgent, staleAgent, unknownAgent, optedOutAgent,
+				).Build(),
+			}
+
+			fresh, freshReason, err := reconciler.nodePowerAgentTelemetryFreshness(context.Background(), freshAgent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fresh).To(BeTrue())
+			Expect(freshReason).To(BeEmpty())
+
+			stale, staleReason, err := reconciler.nodePowerAgentTelemetryFreshness(context.Background(), staleAgent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stale).To(BeFalse())
+			Expect(staleReason).To(Equal("AgentTelemetryStale"))
+
+			unknown, unknownReason, err := reconciler.nodePowerAgentTelemetryFreshness(context.Background(), unknownAgent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(unknown).To(BeFalse())
+			Expect(unknownReason).To(Equal("AgentTelemetryUnknown"))
+
+			optedOut, optedOutReason, err := reconciler.nodePowerAgentTelemetryFreshness(context.Background(), optedOutAgent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(optedOut).To(BeTrue())
+			Expect(optedOutReason).To(BeEmpty())
 		})
 
 		It("records rejected compilation audit without requiring a plan hash", func() {
