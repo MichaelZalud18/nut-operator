@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,6 +39,7 @@ import (
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
+	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 )
@@ -118,10 +120,15 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus
 	var triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus
 	if result.accepted {
+		compileStart := time.Now()
 		compiled, compiledWaves, estimatedDuration, configHash, publishedArtifact = compileShutdownFlowWithResolvedInputsAndTierPolicy(&flow, bundle, shutdownFlowTierPolicy(managementCluster))
+		metrics.ShutdownFlowCompileDurationSeconds.WithLabelValues(flow.Name).Observe(time.Since(compileStart).Seconds())
+		compileResult := "Accepted"
 		if configHash == "" {
 			result = rejected("PlannerFailed", "shutdown flow planner failed after resolver inputs were attached")
+			compileResult = "PlannerFailed"
 		}
+		metrics.ShutdownFlowCompileTotal.WithLabelValues(flow.Name, compileResult).Inc()
 	}
 	if result.accepted {
 		evaluation, status, holdStates, err := evaluateShutdownFlowTriggers(ctx, r.Client, &flow, observedAt, configHash)
@@ -129,6 +136,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{}, fmt.Errorf("evaluate ShutdownFlow %q triggers: %w", flow.Name, err)
 		}
 		triggerEvaluation = status
+		metrics.ShutdownFlowTriggerEvaluationsTotal.WithLabelValues(flow.Name, strconv.FormatBool(status.Eligible)).Inc()
 		if requeueAfter := triggerRequeueAfter(evaluation, observedAt); requeueAfter > 0 {
 			reconcileResult.RequeueAfter = requeueAfter
 		}
@@ -137,6 +145,9 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		flow.Status.CompiledWaves = compiledWaves
 		flow.Status.PublishedArtifact = publishedArtifact
 		flow.Status.EstimatedDuration = estimatedDuration
+		if configHash != "" && configHash != base.Status.ConfigHash {
+			metrics.ShutdownFlowPlanHashChangesTotal.WithLabelValues(flow.Name).Inc()
+		}
 		flow.Status.ConfigHash = configHash
 		flow.Status.ResolvedInputHash = bundle.Hash
 		flow.Status.TopologyHash = bundle.Topology.Hash
@@ -195,6 +206,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		readyMessage,
 	)
 	setDegradedCondition(&flow.Status.Conditions, flow.Generation, degraded, degradedReason, degradedMessage)
+	metrics.ShutdownFlowDegraded.WithLabelValues(flow.Name).Set(metrics.BoolToFloat(degraded))
 	if triggerEvaluation != nil {
 		setTriggerEligibleCondition(
 			&flow.Status.Conditions,

@@ -34,6 +34,7 @@ import (
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
+	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 )
 
 func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context, writer audit.Writer, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
@@ -79,11 +80,17 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		)
 		return err
 	}
+	executeStart := time.Now()
 	result, err := executorpkg.Executor{
 		Writer: writer,
 		Runner: r.ExecutorRunner,
 		Clock:  r.now,
 	}.Execute(ctx, input)
+	executionMode := "Enforce"
+	if input.DryRun {
+		executionMode = "DryRun"
+	}
+	metrics.ShutdownFlowExecutionDurationSeconds.WithLabelValues(flow.Name, executionMode).Observe(time.Since(executeStart).Seconds())
 	completedAt := metav1.NewTime(r.now())
 	status := &powerv1alpha1.ShutdownExecutionStatus{
 		ExecutionID:        result.ExecutionID,

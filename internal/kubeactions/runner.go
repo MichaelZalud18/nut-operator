@@ -38,6 +38,7 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/executor"
+	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
@@ -83,8 +84,28 @@ type Runner struct {
 	ManagerNamespace string
 }
 
-// RunAction implements executor.ActionRunner.
+// RunAction implements executor.ActionRunner. It is a thin instrumented wrapper around runAction: every
+// executor action (real or dry-run) passes through here exactly once, making it the single choke point
+// for the actuator's action-attempt metrics (F-3).
 func (r Runner) RunAction(ctx context.Context, action executor.Action) (executor.ActionOutcome, error) {
+	start := time.Now()
+	outcome, err := r.runAction(ctx, action)
+
+	mode := "Enforce"
+	if action.DryRun {
+		mode = "DryRun"
+	}
+	outcomeLabel := outcome.Outcome
+	if outcomeLabel == "" {
+		outcomeLabel = "Error"
+	}
+	metrics.ActuatorActionAttemptsTotal.WithLabelValues(action.Group.Action, mode, outcomeLabel).Inc()
+	metrics.ActuatorActionDurationSeconds.WithLabelValues(action.Group.Action).Observe(time.Since(start).Seconds())
+
+	return outcome, err
+}
+
+func (r Runner) runAction(ctx context.Context, action executor.Action) (executor.ActionOutcome, error) {
 	if r.Client == nil {
 		err := fmt.Errorf("kubernetes action runner requires a client")
 		return blocked(err), err
