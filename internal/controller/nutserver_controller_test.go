@@ -209,6 +209,71 @@ var _ = Describe("NUTServer Controller", func() {
 			Expect(pdb.Spec.Selector.MatchLabels).To(Equal(deployment.Spec.Selector.MatchLabels))
 		})
 
+		It("converges from a partial, stale operand state and stays stable on a repeat reconcile (F-7)", func() {
+			// A dedicated namespace, not the shared `namespace` const: envtest runs no namespace
+			// controller, so a Delete() in another spec's AfterEach never actually finishes (the
+			// namespace sits in Terminating forever), and a blind Create against that same name here
+			// would race it. A per-test namespace name sidesteps that entirely.
+			const f7Namespace = "test-power-system-f7-idempotency"
+
+			By("pointing the resource at a dedicated namespace and seeding a partial, stale operand state")
+			resource := &powerv1alpha1.NUTServer{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.Namespace = f7Namespace
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			Expect(k8sClient.Create(ctx, &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: f7Namespace},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-resource-nut-config", Namespace: f7Namespace},
+				Data:       map[string]string{"upsd.conf": "stale-content-from-a-previous-spec\n"},
+			})).To(Succeed())
+
+			controllerReconciler := &NUTServerReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("reconciling once: should converge to the full desired state despite the stale, partial seed")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			configMap := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: f7Namespace, Name: "test-resource-nut-config"}, configMap)).To(Succeed())
+			Expect(configMap.Data["upsd.conf"]).To(Equal("LISTEN 0.0.0.0 3493\n"))
+			Expect(configMap.OwnerReferences).NotTo(BeEmpty())
+
+			ns := &corev1.Namespace{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: f7Namespace}, ns)).To(Succeed())
+			Expect(ns.Labels).To(HaveKeyWithValue("power.zalud.io/operand-namespace", "true"))
+
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: f7Namespace, Name: "test-resource-nut-server"}, deployment)).To(Succeed())
+			service := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: f7Namespace, Name: resourceName}, service)).To(Succeed())
+			pdb := &policyv1.PodDisruptionBudget{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: f7Namespace, Name: "test-resource-nut-server"}, pdb)).To(Succeed())
+
+			deploymentResourceVersion := deployment.ResourceVersion
+			configMapResourceVersion := configMap.ResourceVersion
+			namespaceResourceVersion := ns.ResourceVersion
+
+			By("reconciling again with nothing changed: should be a stable no-op, not a spurious rewrite")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: f7Namespace, Name: "test-resource-nut-server"}, deployment)).To(Succeed())
+			Expect(deployment.ResourceVersion).To(Equal(deploymentResourceVersion))
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: f7Namespace, Name: "test-resource-nut-config"}, configMap)).To(Succeed())
+			Expect(configMap.ResourceVersion).To(Equal(configMapResourceVersion))
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: f7Namespace}, ns)).To(Succeed())
+			Expect(ns.ResourceVersion).To(Equal(namespaceResourceVersion))
+
+			By("cleaning up the dedicated namespace and its contents")
+			Expect(k8sClient.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: f7Namespace}})).To(Succeed())
+		})
+
 		It("should finalize and actually delete on deletion", func() {
 			controllerReconciler := &NUTServerReconciler{
 				Client: k8sClient,
