@@ -29,7 +29,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -385,6 +387,56 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(resource.Status.NodeStatuses[0].LastHeartbeatTime.Time).To(BeTemporally("==", heartbeat.Time))
 		})
 
+		It("converges from a partial, stale operand state and stays stable on a repeat reconcile (F-7)", func() {
+			By("seeding a stale operand ConfigMap as if an earlier reconcile crashed midway through rendering")
+			Expect(k8sClient.Create(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-resource-node-agent-config", Namespace: namespace},
+				Data:       map[string]string{"nut.conf": "stale-content-from-a-previous-spec\n"},
+			})).To(Succeed())
+
+			controllerReconciler := &NodePowerAgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			By("reconciling once: should converge to the full desired state despite the stale, partial seed")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			configMap := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-agent-config"}, configMap)).To(Succeed())
+			Expect(configMap.Data["nut.conf"]).To(Equal("MODE=netclient\n"))
+			Expect(configMap.OwnerReferences).NotTo(BeEmpty())
+
+			ns := &corev1.Namespace{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, ns)).To(Succeed())
+			Expect(ns.Labels).To(HaveKeyWithValue("power.zalud.io/operand-namespace", "true"))
+
+			daemonSet := &appsv1.DaemonSet{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, daemonSet)).To(Succeed())
+			secret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-upsmon-config"}, secret)).To(Succeed())
+			serviceAccount := &corev1.ServiceAccount{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, serviceAccount)).To(Succeed())
+			networkPolicy := &networkingv1.NetworkPolicy{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, networkPolicy)).To(Succeed())
+
+			daemonSetResourceVersion := daemonSet.ResourceVersion
+			configMapResourceVersion := configMap.ResourceVersion
+			namespaceResourceVersion := ns.ResourceVersion
+
+			By("reconciling again with nothing changed: should be a stable no-op, not a spurious rewrite")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, daemonSet)).To(Succeed())
+			Expect(daemonSet.ResourceVersion).To(Equal(daemonSetResourceVersion))
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-agent-config"}, configMap)).To(Succeed())
+			Expect(configMap.ResourceVersion).To(Equal(configMapResourceVersion))
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, ns)).To(Succeed())
+			Expect(ns.ResourceVersion).To(Equal(namespaceResourceVersion))
+		})
+
 		It("should finalize and actually delete on deletion", func() {
 			controllerReconciler := &NodePowerAgentReconciler{
 				Client: k8sClient,
@@ -445,6 +497,72 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_AGENT_MODE", Value: "Actuate"}))
 			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_ACTUATOR_POLICY", Value: "SystemdPoweroff"}))
 			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_POWEROFF_METHOD", Value: "reboot-syscall"}))
+		})
+
+		It("reconciles via a real running manager and reacts to a labeled Pod through the dedicated watch (F-32)", func() {
+			By("starting a real manager with SetupWithManager, exactly as cmd/main.go does")
+			mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+				Scheme:                 k8sClient.Scheme(),
+				Metrics:                metricsserver.Options{BindAddress: "0"},
+				HealthProbeBindAddress: "0",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect((&NodePowerAgentReconciler{
+				Client: mgr.GetClient(),
+				Scheme: mgr.GetScheme(),
+			}).SetupWithManager(mgr)).To(Succeed())
+
+			mgrCtx, mgrCancel := context.WithCancel(ctx)
+			defer mgrCancel()
+			go func() {
+				defer GinkgoRecover()
+				Expect(mgr.Start(mgrCtx)).To(Succeed())
+			}()
+			Expect(mgr.GetCache().WaitForCacheSync(mgrCtx)).To(BeTrue())
+
+			By("waiting for the manager's own initial reconcile to render the DaemonSet")
+			daemonSet := &appsv1.DaemonSet{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, daemonSet)
+			}, 10*time.Second, 100*time.Millisecond).Should(Succeed())
+
+			By("creating a ready Pod carrying the NodePowerAgent label and letting the dedicated watch pick it up")
+			resource := &powerv1alpha1.NodePowerAgent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			watchedPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: namespace,
+					Name:      "test-resource-node-power-agent-watched",
+					Labels:    labelsForNodePowerAgent(resource),
+				},
+				Spec: corev1.PodSpec{
+					NodeName: nodeName,
+					Containers: []corev1.Container{{
+						Name:  "upsmon",
+						Image: "ghcr.io/michaelzalud18/upsmon-agent:main",
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, watchedPod)).To(Succeed())
+			watchedPod.Status.Phase = corev1.PodRunning
+			watchedPod.Status.Conditions = []corev1.PodCondition{{
+				Type:               corev1.PodReady,
+				Status:             corev1.ConditionTrue,
+				LastTransitionTime: metav1.NewTime(time.Now()),
+			}}
+			Expect(k8sClient.Status().Update(ctx, watchedPod)).To(Succeed())
+
+			By("asserting the manager reconciled off the Pod watch alone -- no manual Reconcile call here")
+			Eventually(func() int32 {
+				current := &powerv1alpha1.NodePowerAgent{}
+				if err := k8sClient.Get(ctx, typeNamespacedName, current); err != nil {
+					return -1
+				}
+				return current.Status.ReadyNodeCount
+			}, 10*time.Second, 100*time.Millisecond).Should(Equal(int32(1)))
+
+			mgrCancel()
+			Expect(k8sClient.Delete(ctx, watchedPod)).To(Succeed())
 		})
 	})
 })

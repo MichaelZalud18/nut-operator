@@ -1059,10 +1059,10 @@ func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 
 func labelsForNodePowerAgent(agent *powerv1alpha1.NodePowerAgent) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":        "nut-operator",
-		"app.kubernetes.io/component":   "node-power-agent",
-		"app.kubernetes.io/managed-by":  "nut-operator",
-		"power.zalud.io/nodepoweragent": agent.Name,
+		"app.kubernetes.io/name":       "nut-operator",
+		"app.kubernetes.io/component":  "node-power-agent",
+		"app.kubernetes.io/managed-by": "nut-operator",
+		nodePowerAgentPodLabelKey:      agent.Name,
 	}
 }
 
