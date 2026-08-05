@@ -727,17 +727,43 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
   `namespaces` `create`/`update`/`patch` (can't be narrowed by name at the RBAC layer since `create`
   doesn't support `resourceNames`; the gap is closed at the input-validation layer by `F-4` instead,
   referenced directly from the new section).
+- **`F-32` fixed: `NodePowerAgent`'s Pod watch no longer shares the manager's cluster-wide Pod cache
+  (2026-08-04).** The naive fix the finding suggested — `cache.Options.ByObject` on the shared manager
+  cache — turned out to be unsafe, not just simple: confirmed via direct read that
+  `internal/kubeactions.Runner.evictPodsOnNode` (the real `DrainNodes` eviction path) does
+  `r.Client.List(ctx, &pods)` with **no label or field selector at all**, filtering client-side by
+  `pod.Spec.NodeName`, and `Runner.Client` is the same `mgr.GetClient()` every controller shares.
+  Scoping that shared cache's Pod informer to `NodePowerAgent`-labeled pods would have made
+  `DrainNodes` silently stop seeing any other pod in the cluster — a safety-critical regression in the
+  operator's actual host-shutdown eviction path, not a hypothetical one. Fixed instead with a second,
+  fully independent `cache.Cache` (`cache.New`, label selector on `power.zalud.io/nodepoweragent`
+  exists, registered via `mgr.Add` and wired in with `WatchesRawSource(source.Kind(...))`) that never
+  touches `mgr.GetCache()`/`mgr.GetClient()` at all. Since `SetupWithManager` isn't exercised by the
+  existing envtest reconcile-only tests (they call `Reconcile` directly), added a new spec that starts
+  a real `ctrl.Manager` end-to-end against envtest, confirms it reconciles the existing resource on its
+  own via the manager's initial list, then creates a labeled Pod with no manual `Reconcile` call and
+  confirms the dedicated watch alone drives `Status.ReadyNodeCount` to 1 — proving the cache/watch
+  wiring actually works against a real API server, the one thing local `go build`/`go vet` can't catch
+  (this is exactly the class of bug `F-28` was, caught only via a live cluster).
+- **`F-7` fixed: added partial-failure convergence tests for both operand-rendering controllers
+  (2026-08-04).** `NUTServer` and `NodePowerAgent` are the only two controllers that render
+  Kubernetes child resources (`nutserver_render.go`, `nodepoweragent_render.go`); grepped both files
+  first to confirm every `ensure*` helper already uses `controllerutil.CreateOrUpdate` with no raw
+  `.Create()` calls anywhere, so there was no live duplicate-creation bug to find — the actual gap was
+  purely the missing test coverage the finding named. Added one spec per controller: seed a stale,
+  partial operand state (a `ConfigMap` with content from a prior spec, no other child resources yet),
+  reconcile once and assert full convergence to the current desired state (stale content corrected,
+  every operand rendered, owner references set), then reconcile again with nothing changed and assert
+  every touched object's `resourceVersion` is unchanged — proving both convergence and true
+  idempotency (no spurious rewrite loop), not just "doesn't error." Hit and fixed a real envtest
+  footgun along the way, unrelated to the controllers themselves: envtest runs no namespace
+  controller, so a `Delete()` on a namespace in one spec's `AfterEach` never actually finishes, and a
+  later spec creating the same-named namespace can 403/409 against it depending on timing. Both new
+  specs use a dedicated, uniquely-named namespace instead of the Describe block's shared one to avoid
+  depending on that cleanup ever completing.
 
 #### Open Work
 
-- **`F-32` `NodePowerAgent`'s Pod watch has no predicate and no cache scoping.** `Watches(&corev1.Pod{}, ...)`
-  filters by label inside the map function, but the watch itself and the manager's cache
-  (`cmd/main.go` configures no `cache.Options.ByObject`) both cover every Pod cluster-wide. Not
-  incorrect — the label filter prevents wrong reconciles — but real memory/CPU overhead at cluster
-  scale for watching pods this controller never acts on. Fix: scope via `cache.Options.ByObject` or an
-  equivalent label selector on the watch.
-- `F-7` idempotency test: reconcile from a partial-failure state and assert convergence — no such
-  test exists across the four operand render paths.
 - Release image signing policy, cosign verification docs, and immutable digest production examples
   (`docs/images.md` describes the target state; keyless Sigstore signing as a release gate isn't
   confirmed wired into CI yet).

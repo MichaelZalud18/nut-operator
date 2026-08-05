@@ -37,7 +37,7 @@ Mechanical, checkable, and where most reviewer friction lands.
 
 | Convention | Position |
 | --- | --- |
-| Idempotent reconcile | Assumed, unverified — no partial-failure convergence test found |
+| Idempotent reconcile | **Met (2026-08-04)** — partial-failure convergence tests added for both operand-rendering controllers (`NUTServer`, `NodePowerAgent`; confirmed via grep these are the only two that render Kubernetes child resources). Each seeds a stale, partial operand state, reconciles once and asserts full convergence, then reconciles again and asserts every touched object's `resourceVersion` is unchanged — idempotency, not just no-error. |
 | No in-memory state across reconciles | Appears held; planner purity helps |
 | Status subresource for observed state only | Met — GP-3 enforces it by design |
 | `observedGeneration` tracking | Met — present in all 9 API types and every controller |
@@ -208,6 +208,20 @@ function) but real overhead at cluster scale, and inconsistent with how delibera
 scopes RBAC and predicates everywhere else. Standard fix: `cache.Options{ByObject: map[client.Object]cache.ByObject{&corev1.Pod{}: {Label: labels.SelectorFromSet(...)}}}` scoped to pods carrying the
 agent label, or an equivalent field/label selector on the watch itself.
 
+**F-32 update · the "standard fix" above is unsafe in this codebase; fixed with a dedicated cache
+instead (2026-08-04).** `cache.Options.ByObject` scopes the manager's one *shared* cache — the same
+cache backing `mgr.GetClient()`, which `internal/kubeactions.Runner.evictPodsOnNode` (the real
+`DrainNodes` eviction path) reads via `r.Client.List(ctx, &pods)` with no selector at all, filtering
+client-side by `pod.Spec.NodeName`. Scoping that shared cache to `NodePowerAgent`-labeled pods would
+have made `DrainNodes` silently stop seeing every other pod in the cluster — breaking real node
+eviction during an actual shutdown, not a hypothetical. Fixed with a second, independent `cache.Cache`
+(`cache.New`, its own label selector, registered via `mgr.Add`, wired in with
+`WatchesRawSource(source.Kind(...))`) that never touches the shared cache or client at all. Verified
+end-to-end, not just by reading: a new envtest spec starts a real `ctrl.Manager` (`SetupWithManager`
+isn't exercised by the existing reconcile-direct tests), lets it reconcile the pre-existing resource on
+its own, then creates a labeled Pod with no manual `Reconcile` call and confirms only the dedicated
+watch drives `Status.ReadyNodeCount` to 1.
+
 **F-4 update · `serviceaccounts` RBAC breadth is less dangerous than originally scored.** Verified
 directly: `corev1.ServiceAccount{}` creation exists only in `nodepoweragent_render.go`, sets
 `AutomountServiceAccountToken = false` on both the created ServiceAccount *and* the DaemonSet pod
@@ -299,5 +313,32 @@ Built section; summary here for the audit trail:
   name, no `workflowtemplates` RBAC) and the `namespaces create` grant (can't be narrowed by name at
   the RBAC layer; closed at the input layer by `F-4` instead) so neither reads as scope creep again.
 
-Still open: `F-32` (Pod watch cache scoping), `F-3` (metrics), `F-7` (idempotency tests), image
-signing, and the container-scanner tooling decision — unchanged, see `docs/tasks.md`.
+Still open: `F-3` (metrics), image signing, and the container-scanner tooling decision — unchanged,
+see `docs/tasks.md`.
+
+## Fixes applied — 2026-08-04 (third pass, same day)
+
+`F-32` and `F-7` — the last two items from the original "Recommended order" list — implemented and
+verified (build, vet, `make lint`, full test suite across 8 random seeds, `make manifests` with no RBAC
+diff, ASH) the same day. Full detail in `docs/tasks.md`'s Operator Maturity & Hardening Built section;
+summary here for the audit trail:
+
+- **`F-32` fixed** — see the "F-32 update" note above: the finding's own suggested fix
+  (`cache.Options.ByObject` on the shared manager cache) turned out to be unsafe, since
+  `internal/kubeactions.Runner`'s `DrainNodes` eviction path shares that exact cache/client and lists
+  Pods with no selector at all. Fixed with a fully independent `cache.Cache` + `WatchesRawSource`
+  instead, verified end-to-end against a real, started `ctrl.Manager` in a new envtest spec — the only
+  path that exercises `SetupWithManager` at all, since the existing suite calls `Reconcile` directly.
+- **`F-7` fixed** — added partial-failure convergence + idempotency tests for both operand-rendering
+  controllers (`NUTServer`, `NodePowerAgent` — confirmed via grep these are the only two that render
+  Kubernetes child resources, and that every render helper already used `controllerutil.CreateOrUpdate`
+  with no raw `Create()` calls, so there was no live duplicate-creation bug, only missing coverage).
+  Found and fixed a real envtest gotcha along the way: envtest runs no namespace controller, so a
+  `Delete()` in one spec's `AfterEach` never actually finishes, and a later spec creating the
+  same-named namespace can fail depending on timing — both new specs use a dedicated, uniquely-named
+  namespace instead of relying on that cleanup ever completing.
+
+All items from the original "Recommended order" list in this audit are now closed:
+`F-2`/`F-4`/`F-5` (2026-08-03/04), `F-30`/`F-1` (2026-08-04), `F-31`/`F-32`/`F-7` (2026-08-04). Open
+work remaining anywhere in Operator Maturity & Hardening: `F-3` (metrics), image signing, and the
+container-scanner tooling decision — see `docs/tasks.md`.
