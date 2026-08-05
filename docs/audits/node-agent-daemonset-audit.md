@@ -10,6 +10,11 @@ from F-7.
 Remediation note: F-8 through F-13 are implemented in the node-agent hard-infra pass. F-14 remains
 open as the next node-agent-specific audit item.
 
+**Update (2026-08-05): F-8 through F-14 are all closed** — see `docs/tasks.md`'s Node Agent /
+DaemonSet Built section for how each landed. A second, fresh pass against the current code (not just
+this file) surfaced four more findings, `F-33`–`F-36`, appended below rather than folded into the
+original findings list, which is left as the historical record it was written as.
+
 ## Benchmark basis
 
 No formal DaemonSet standard exists. The conventions below are drawn from the established
@@ -124,3 +129,54 @@ SB-5 is unaffected — different trigger, different product.
 5. F-14 self-exclusion enforcement — implements an existing design rule.
 6. F-11, F-12 grace period and probes — deliberate values, with the actuator liveness hazard
    documented.
+
+All items above are closed as of 2026-08-05 — see `docs/tasks.md`.
+
+## Findings — second pass, 2026-08-05
+
+Static reading plus live verification against a real kind cluster (previously blocked on tooling —
+`kind` is now installed and confirmed working in this environment). Continues the `F-n` namespace
+from `F-32`.
+
+**F-33 · `spec.shutdown.requireFreshTelemetry` was defaulted but never enforced.** The field exists,
+defaults to `true` in the webhook, and its doc comment says it "blocks actuation when UPS telemetry is
+stale" — but grep across the whole codebase found nothing reading it anywhere. `internal/trigger`'s
+own staleness gating is a different, ShutdownFlow-trigger-level mechanism that doesn't cover this: a
+flow can be triggered by one device's condition while its groups release nodes covered by a different
+agent whose own devices are independently stale. A field that looks like a safety gate and silently
+does nothing is worse than not having the field: a user reading the CRD schema has every reason to
+believe it's load-bearing. Fixed — see `docs/tasks.md`.
+
+**F-34 · Tier-0 DaemonSet containers had no default resource requests/limits.**
+`NodePowerAgentResources.Upsmon`/`.Actuator` are plain `corev1.ResourceRequirements{}` with nothing
+defaulting them anywhere in the render or webhook path. A user who doesn't set `spec.resources` runs
+BestEffort QoS on the one pod this entire project depends on surviving node pressure — no OOM-score
+protection, no scheduler capacity reservation. `priorityClassName: system-node-critical` (`F-9`)
+protects against *preemption*; it does nothing for OOM-kill ordering, which is scored primarily off
+QoS class and requests. Fixed — see `docs/tasks.md`.
+
+**F-35 · `upsmon` had no liveness probe at all.** The original audit (`F-12`) correctly flagged that
+the actuator must never carry a liveness probe (restart mid-flow risks re-triggering or losing signal
+state) but didn't separately weigh in on `upsmon`, which carries no such hazard — it's the read-only
+monitoring container. The result: a `upsmon` process that hangs without crashing outright sits
+`NotReady` forever with no path back to healthy. Fixed with a process-existence check
+(deliberately not tied to NUT reachability, which is what the readiness probe already covers) — see
+`docs/tasks.md`.
+
+**F-36 · `node-actuator`'s `command` poweroff method is fully implemented but structurally
+unreachable.** `runPoweroffCommand` in `cmd/node-actuator/main.go` works and is tested, but
+`nodepoweragent_render.go`'s `nodePowerAgentPoweroffMethod` hardcodes `"reboot-syscall"` regardless of
+spec content — there's no CRD field that can ever select the other method. Possibly intentional (the
+narrower `CAP_SYS_BOOT`-only privilege model is what `F-13` actually recommended over a
+`systemctl`-invoking path), but that's a call the design docs should make explicitly rather than
+leaving as an accidentally-dead code path. Not fixed — needs a decision, not a unilateral API
+addition. See `docs/tasks.md`.
+
+**Not a finding, but worth recording: the in-cluster signal-handoff smoke test is unblocked.** `kind`
+is now installed and works cleanly against the Docker daemon in this environment (WSL2, direct docker
+access — no nested-sandbox restrictions encountered). Manually verified the exact claim the original
+open-work item asked about — a real dummy-ups-backed `NodePowerAgent` DaemonSet, running on a real
+kind node, observed a directly-written projected `Secret` signal update in its actuator container logs
+~44 seconds after the write, well inside the 2-minute TTL and consistent with kubelet's projected-volume
+sync period — before committing the equivalent as a permanent `test/e2e` spec. Full `make test-e2e`
+(6 of 6 specs) passes.

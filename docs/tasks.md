@@ -395,7 +395,7 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 
 Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_render.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
-`internal/nodeagent`. Audit: `docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`).
+`internal/nodeagent`. Audit: `docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`, `F-33`–`F-36`).
 
 #### Built
 
@@ -433,12 +433,70 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
   one-way SHA-256 hash of a 32-byte random value (`randomPassword()`), used for the standard
   config-hash-triggers-rollout pattern, not a partial leak: recovering the password from the hash is
   computationally infeasible. Confirmed safe, not just assumed.
+- **`F-33` fixed: `spec.shutdown.requireFreshTelemetry` is now actually enforced (2026-08-05).**
+  Confirmed via grep before fixing: the field existed, defaulted to `true` by the webhook, and was
+  read by nothing anywhere in the codebase — a safety field that looked live but did nothing, a worse
+  state than not having it at all. Trigger-level staleness gating (`internal/trigger` excluding stale
+  UPS devices from eligibility) is a different mechanism and doesn't cover this: a `ShutdownFlow`'s
+  trigger can fire off one device's staleness while its groups still release nodes covered by a
+  *different* agent, whose own monitored devices might independently be stale. Fixed by computing
+  per-agent freshness once in `nodeReleasesForTarget` (walks `NUTServerRefs` →
+  `NUTServer.Status.SelectedDevices` → each `UPSDevice.Status.Phase`; any device not
+  `Online`/`OnBattery`/`LowBattery`, or the agent's device set entirely unresolvable, means not fresh
+  — fails closed, per `resiliency-and-partitions.md`) and threading it through as data
+  (`executor.NodeRelease.TelemetryFresh`/`TelemetryStaleReason`) into the exact same group-level gate
+  `F-14`'s `AgentReady` check already uses (`agentShutdownReadinessError`), rather than inventing a
+  parallel mechanism. New envtest coverage (`gates AgentShutdown releases on requireFreshTelemetry`)
+  and two new executor unit tests (blocked-when-stale, released-when-ready-and-fresh — the latter
+  filling a real pre-existing gap: no test previously exercised a *successful* enforce-mode
+  `AgentShutdown` release at all).
+- **`F-34` fixed: tier-0 DaemonSet containers now default to non-zero resource requests/limits
+  (2026-08-05).** `NodePowerAgentResources.Upsmon`/`.Actuator` were plain `corev1.ResourceRequirements{}`
+  with no defaulting anywhere — a user who didn't set `spec.resources` got BestEffort QoS on the exact
+  pod this whole project depends on surviving node pressure: no OOM-score protection, no scheduler
+  capacity reservation. Fixed in the webhook defaulter, matching where `F-9`'s `priorityClassName`
+  default already lives, per-resource-key rather than wholesale (a user-supplied request/limit for a
+  given key is never overwritten). Conservative values: `upsmon` 10m/32Mi requests, 100m/64Mi limits;
+  `actuator` 5m/16Mi requests, 50m/32Mi limits.
+- **`F-35` fixed: `upsmon` now has a process-liveness probe (2026-08-05).** Neither container had a
+  `LivenessProbe`; the original audit explicitly called out that the actuator must never have one
+  (restart mid-flow risks re-triggering or losing signal state) but didn't weigh in on `upsmon`, which
+  carries no such hazard (it's the read-only monitoring container). Without one, a hung-but-not-crashed
+  `upsmon` process sat `NotReady` forever with no automatic recovery. Fixed with `pgrep -x upsmon` —
+  deliberately NOT tied to NUT server reachability (that's `upsmonReadinessProbe`'s job) so a `upsmon`
+  that's alive but can't currently reach its UPS server stays up and `NotReady` rather than getting
+  restarted, which would just churn the same failure. Verified `pgrep -x` actually works as intended
+  in the real `alpine:3.22` base image (busybox `pgrep`), not assumed. New test asserts the actuator
+  container carries no `LivenessProbe`, documenting the deliberate omission as a test invariant, not
+  just a comment.
+- **In-cluster signal-handoff smoke test unblocked and passing (2026-08-05).** Previously blocked on
+  tooling (`kind` wasn't installed in the dev environment). `kind` is now installed
+  (`go install sigs.k8s.io/kind`) and confirmed working end-to-end against the real Docker daemon in
+  this environment. New e2e spec (`test/e2e/e2e_test.go`, "delivers a projected Secret signal to the
+  NodePowerAgent actuator within the configured TTL") deploys a real `dummy-ups`-backed
+  `UPSDevice`/`NUTServer`/`NodePowerAgent` stack via the actual operator on a real kind node, patches
+  the projected signal `Secret` directly (the same write path `kubeactions.Runner.agentShutdownHandoff`
+  uses), and asserts the actuator container's logs show it accepted the signal — proving projected
+  `Secret` updates actually reach a running DaemonSet pod through a real kubelet within a bounded time,
+  something envtest structurally cannot check (no real kubelet, no real volume sync). Manually verified
+  first end-to-end against a live kind cluster (signal observed ~44s after the `Secret` write, well
+  inside the 2m TTL and consistent with kubelet's projected-volume sync period) before committing it as
+  permanent suite code; the full `make test-e2e` target (6 of 6 specs, including this one) passes
+  clean. `e2e_suite_test.go`'s `BeforeSuite` now also builds and loads the three operand images
+  (`nut-server`, `upsmon-agent`, `node-actuator`), not just the manager image as before.
 
 #### Open Work
 
-- In-cluster smoke test proving projected Secret signal updates reach DaemonSet pods within the
-  configured TTL on common runtimes. Blocked on tooling: `kind` isn't installed in this environment
-  (docker is); this needs a real kubelet, not envtest, so it can't be faked with the existing suite.
+- **`F-36` `node-actuator`'s `command` poweroff method is implemented but unreachable through the
+  CRD.** `cmd/node-actuator/main.go`'s `runPoweroff` fully supports `POWER_POWEROFF_METHOD=command`
+  (`runPoweroffCommand`, arbitrary command + args), but
+  `nodepoweragent_render.go`'s `nodePowerAgentPoweroffMethod` hardcodes `"reboot-syscall"` and ignores
+  its `*NodePowerAgent` parameter entirely — there is no `spec` field that can select the `command`
+  method. Not fixed: this needs a real design decision (a new spec field, its validation, and whether
+  exposing an arbitrary host command from a CRD is even desired) rather than a unilateral API addition.
+  The `reboot-syscall` default is also the narrower, `F-13`-preferred privilege model
+  (`CAP_SYS_BOOT` alone vs. a broader `systemctl`-invoking path), so this may be intentionally
+  unreachable rather than an oversight — needs a decision either way, not just code.
 
 ---
 
