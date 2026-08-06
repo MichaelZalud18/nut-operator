@@ -56,7 +56,7 @@ matching. See `inventory-provider-contract.md`.
 
 **PL-7** · Resolved capability profiles, one per device, already matched by the resolver via the
 deterministic precedence chain (exact model+firmware → exact model → model glob → driver family →
-universal floor; CRD source over bundled within a tier; highest semver within a source). The planner
+unidentified-device profile; CRD source over bundled within a tier; highest semver within a source). The planner
 consumes matched results and never performs matching. Matching is pure logic and lives in its own
 package under the same determinism discipline as the planner; the resolver calls it.
 
@@ -242,10 +242,23 @@ at execution alongside instance resolution, per OD-11.
 **PL-32** · Missing or stale data never yields an optimistic verdict. Absent runtime telemetry
 produces `Unknown` feasibility, never `Feasible`.
 
-**PL-33** · A device that matches no specific profile matches the universal floor profile — the
-least-specific selector in the precedence chain, bundled with the operator and guaranteed to always
-match — and raises a warning. This is not a special case; it is the terminal tier of the matching
-algorithm. It does not by itself fail the compile. Interaction with PL-19 is specified under PL-19.
+**PL-33** · A device that matches no specific profile matches the **unidentified-device profile** —
+the least-specific selector in the precedence chain, bundled with the operator and guaranteed to
+always match — and raises a warning. This is not a special case; it is the terminal tier of the
+matching algorithm. It does not by itself fail the compile. Interaction with PL-19 is specified
+under PL-19.
+
+**Amended 2026-08-05 (OD-31).** Compiling is not the same as enforcing. Matching this profile means
+nothing has been verified about the device: some NUT driver answered, and no product profile claimed
+it. Earlier wording treated that as a reduced-capability device, which it is not — UPS behavior
+varies too widely for an unverified device to be a safe basis for powering nodes off.
+
+The compile still succeeds, so the plan stays reviewable in dry-run, which is where an operator
+discovers the gap. What changes is enforcement: a `ShutdownFlow` in `Enforce` mode whose triggers
+depend on an unidentified device is rejected, with the devices named, unless
+`spec.safety.allowUnidentifiedDevices` records acceptance. This is a configuration-time refusal
+visible in Git and `/status` well before an outage, not the mid-outage refusal PL-31 warns against.
+Naming follows: "universal floor" implied a guaranteed capability baseline and is retired.
 
 **PL-34** · Planning succeeds against partial input where structurally possible. The plan is marked
 degraded and the degradation reasons are enumerated.

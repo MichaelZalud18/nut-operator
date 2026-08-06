@@ -11,7 +11,7 @@ what is built and what remains open, with design-doc identifiers (`OD-n`, `PL-n`
 findings (`F-n`) cited so the reasoning behind an item is one click away rather than re-litigated.
 Items that genuinely span two components are listed under their primary owner with a cross-reference.
 
-Last reviewed: 2026-08-03
+Last reviewed: 2026-08-05
 
 ---
 
@@ -25,34 +25,23 @@ resolver/adapter that feeds it into reconciliation. Design contract: `docs/desig
 
 #### Built
 
-- `internal/inventory`: a pure compiler (no I/O, no Kubernetes imports) that validates a `Snapshot`
-  of entities and edges, then derives power domains by transitive closure over `feeds` edges
-  (`IN-7`/`IN-9`), derives communication-carrier ordering from `carries` edges (`IN-3`/`IN-5`), and
-  enforces the orphan rule with an explicit exemption escape hatch (`IN-12`). Deterministic and
-  hash-stable; a node reachable from two UPS roots lands in both domains with no special-casing
-  (`IN-11`).
-- `PowerInventoryNode` and `PowerInventoryEdge` CRDs. `PowerInfrastructure` and
-  `UPSDevice.spec.powerDomains` round out the four entity kinds/domain label from `IN-1`/`IN-10`.
-  `PowerInventoryEdge` is the only place topology (`feeds`/`carries`) is authored.
-- Admission webhooks and controller-level validators for all four inventory CRDs: DNS-subdomain node
-  name checks, tier-0 rejection, `feeds`-requires-input/`carries`-forbids-input, self-edge rejection,
-  entity-kind and relation enum checks.
-- `declarative_inventory_resolver.go`/`declarative_inventory_adapter.go` wire the compiler into
-  reconciliation. This is load-bearing, not decorative: `ShutdownFlowReconciler` calls it on every
-  reconcile, so an invalid inventory graph (an orphaned node, a malformed edge) genuinely blocks or
-  degrades `ShutdownFlow` acceptance today.
-- The compiled topology's hash folds into the planner's structural plan-identity hash (`IN-14`).
-- Numbered shutdown tiers (`OD-4`) land on `PowerInventoryNode.spec.roles.shutdownTier`, with
-  `lastDitchRole` aliased to tier 1.
-- Test coverage: compiler determinism/domain-derivation/orphan/communication-path tests, end-to-end
-  resolver tests against a fake client, and webhook validation tests per CRD.
+- `internal/inventory`: pure compiler — validation, power-domain closure over `feeds`, carrier
+  ordering from `carries`, orphan rule with exemptions (`IN-3`/`IN-5`/`IN-7`/`IN-9`/`IN-11`/`IN-12`).
+- `PowerInventoryNode`/`PowerInventoryEdge`/`PowerInfrastructure` CRDs and the domain label
+  (`IN-1`/`IN-10`); `PowerInventoryEdge` is the sole topology author.
+- Admission webhooks and controller validators for all four inventory CRDs.
+- Compiler wired into `ShutdownFlow` reconciliation; an invalid graph blocks or degrades acceptance.
+- Compiled topology hash folds into plan identity (`IN-14`).
+- Numbered shutdown tiers on `spec.roles.shutdownTier` (`OD-4`).
+- Coverage: compiler determinism, domain derivation, orphan rules, resolver end-to-end, webhooks.
 
 #### Open Work
 
-- **Wire the derived topology into the planner.** `Topology.Domains` and `Topology.CommunicationOrders`
-  are computed and validated but nothing downstream consumes them — trigger domain matching still
-  runs off live telemetry snapshots, not this derived closure, and `carries`-based ordering
-  (`PL-21`) has no consumer yet either. This is the single highest-value remaining item in this
+- **Wire the derived topology into the planner.** Partially started 2026-08-05: `Topology.Domains`
+  now reaches the planner and is consumed by `PL-19` trigger-capability validation. What still has no
+  consumer is the part that shapes the plan itself — wave compilation does not read derived domain
+  membership, trigger *evaluation* still runs off live telemetry snapshots rather than the derived
+  closure, and `carries`-based ordering (`PL-21`) has no consumer at all. This is the single highest-value remaining item in this
   component; see the matching entry under Planning & Execution Logic.
 - No cross-check that a `PowerInventoryNode`/edge reference names a real `corev1.Node` — identity is
   trusted by convention (`IN-13`), never verified against the cluster.
@@ -75,42 +64,33 @@ resolver/adapter that feeds it into reconciliation. Design contract: `docs/desig
 
 Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundled catalog under
 `config/catalog/`, and the device-quirk/aliasing/provenance design surface. Design docs:
-`docs/design/capability-profiles.md`, `capability-profiles-and-upsd-config.md`,
-`device-profile-scope-and-provenance.md`.
+`docs/design/capability-profiles.md`.
 
 #### Built
 
-- `UPSCapabilityProfile` CRD with declared telemetry (NUT variables) and actuation
-  (behaviors/quirks) sections, matched via a deterministic precedence chain: exact model+firmware →
-  exact model → model glob → driver family → universal floor, with CRD-over-bundled and
-  highest-semver tiebreaks within a tier.
-- Bundled catalog (`config/catalog/upscapabilityprofiles.yaml`): Ubiquiti UniFi UPS Tower and 2U
-  profiles, with recorded quirks and actuation intentionally left undeclared pending firmware
-  verification.
-- Capability matching feeds the resolver's structural bundle and folds into the plan-identity hash.
-- Sizing/configuration boundary is settled and documented: profiles influence `upsd` config
-  (driver selection, poll behavior) but never pod sizing, replica count, or scheduling.
-- Device-class scope is settled: queried devices (UPS, NUT-managed PDU) get profiles; topological
-  devices (switches, panels, non-NUT power devices like UniFi RPS) do not.
-- Provenance field design (`ProjectVerified`/`Community`/`UserLocal`) and the upgrade-safety
-  guarantee (CRD profiles outrank bundled data, upgrades never touch user CRs) are drafted and in
-  the FAQ.
+- `UPSCapabilityProfile` CRD and the five-tier match precedence chain.
+- Bundled catalog (`config/catalog/upscapabilityprofiles.yaml`) at `1.0.0`; Ubiquiti quirks
+  firmware-scoped against field evidence. Manifest drift test covers variables and aliases.
+- Matched profiles carry declared content, not just identity, and that content folds into plan
+  identity (`PL-30`).
+- `F-25` closed: `spec.telemetry.aliases` (a map) applied at normalization, with precedence rules
+  and diagnostics settled (`OD-23`).
+- `UPSCapabilityProbe`: drafts a profile and an issue report from a real device, advisory only
+  (`RS-7`–`RS-10`).
+- `OD-31` closed: unidentified devices block `Enforce` unless `spec.safety.allowUnidentifiedDevices`.
+- `ProviderModelMissing` diagnostic when a missing model actually costs a match.
+- Settled scope: profiles influence `upsd` config but never sizing; queried devices get profiles,
+  topological devices do not; provenance and upgrade-safety guarantees drafted.
 
 #### Open Work
 
-- **`F-25` telemetry variable aliasing** — no mechanism exists. A device reporting `battery.low`
-  instead of the standard `battery.charge.low` is silently invisible to the normalizer; the value
-  survives in the raw variable map but no derived field or trigger sees it. Highest-priority item in
-  this component — it's a recorded, real quirk with no path to act on it. Implementation lands in
-  the resolver (see Telemetry & Triggers), but the schema change (`UPSCapabilityTelemetrySpec` alias
-  map) is owned here.
 - **`F-26` firmware-gated quirks can't expire.** `Quirks` is a flat `[]string` with no firmware
   constraint, so a device on current firmware inherits every historical quirk of its model family
   permanently. Decide between structured quirk objects and firmware-ranged selectors (`OD-22`).
-  Concrete case found (2026-08-04, see `docs/design/capability-profiles.md` Field Verification):
-  the bundled Ubiquiti quirk `built-in-nut-server` does not hold against real `UPS 2U`/`UPS Tower`
-  hardware on firmware `1.6.1` — TCP 3493 is closed, SNMPv3 is the only working telemetry path.
-  Needs a decision, not just a code fix.
+  The concrete case that exposed it (2026-08-04, see `docs/design/capability-profiles.md` Field
+  Verification) has since had its *data* corrected — see Built above — but the structural question
+  is untouched: quirk strings still carry firmware scope only by naming convention, and nothing
+  validates or enforces it. Needs a decision, not just another data fix.
 - **`F-27` verification lifecycle is undefined** for actuation commands: what counts as verified,
   where the result is recorded, how a verified result becomes a profile change, and whether a
   locally-verified user profile can declare support without a catalog release.
@@ -136,35 +116,21 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 
 Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`), poll composition
 (`internal/polling`), and trigger evaluation (`internal/trigger`). Design docs:
-`telemetry-normalization.md`, `trigger-evaluation.md`, `resiliency-and-partitions.md`.
+`telemetry-and-triggers.md`, `resiliency-and-partitions.md`.
 
 #### Built
 
-- `internal/nut`: a real NUT protocol client — `LIST VAR` with `BEGIN`/`END LIST VAR` framing and
-  `ERR` handling — not a wrapper around `upsc`.
-- `internal/telemetry`: pure normalization from raw NUT variable maps to stable policy/audit facts —
-  phase classification (`Online`/`OnBattery`/`LowBattery`/`Stale`/`Unavailable`/`Unknown`), parsed
-  charge/runtime/load, non-fatal diagnostics for unknown status symbols and bad numeric values.
-- `internal/polling` composes the transport and normalizer into a per-target poll with an audit
-  adapter for `ups_telemetry_snapshots`.
-- `internal/trigger`: pure evaluator. Given trigger definitions, normalized UPS state, and prior hold
-  state, it returns eligibility, selected devices, next hold state, and diagnostics — no Kubernetes
-  reads, no NUT polling, no wall-clock access.
-- `UPSDevice` reconciliation resolves its `NUTServer`, polls the in-cluster Service, updates status,
-  and records durable snapshots when the audit store is ready.
-- `ShutdownFlow` trigger evaluation is wired end-to-end: `internal/shutdownflow` adapts
-  `spec.triggers`/`UPSDevice.status` into the evaluator, persists hold state, records
-  `shutdownflow_decisions`, and dispatches eligible episodes to the executor, deduplicated by
-  `status.lastExecution.deduplicationKey`.
-- `dummy-ups` repeater/relay mode for upstream NUT appliances (`UPSDevice.spec.upstreamNUT`) is
-  implemented and upstream-loyal — this corrects the original `F-22` finding, which overstated NUT
-  feature non-use.
+- `internal/nut`: real NUT protocol client (`LIST VAR` framing, `ERR` handling), not an `upsc` wrapper.
+- `internal/telemetry`: pure normalization to phase, charge, runtime, load, plus diagnostics.
+  Profile-declared aliases resolve here (`F-25` runtime half).
+- `internal/polling`: transport + normalizer per target, with the `ups_telemetry_snapshots` adapter.
+- `internal/trigger`: pure evaluator — eligibility, selected devices, hold state, diagnostics.
+- `UPSDevice` reconciliation polls, updates status, and records snapshots when storage is ready.
+- `ShutdownFlow` trigger evaluation wired end to end, deduplicated by `deduplicationKey`.
+- `dummy-ups` repeater mode for upstream NUT appliances (`spec.upstreamNUT`), correcting `F-22`.
 
 #### Open Work
 
-- `F-25` alias resolution belongs here at runtime — once Capability Profiles adds the alias map to
-  the schema, this component applies it when building the telemetry snapshot, and records that a
-  value arrived under a non-standard name in the snapshot's diagnostics.
 - `PL-19` trigger-capability degrade mechanics (`OD-9`): the reject-vs-degrade split (some devices
   vs. all devices in a domain) is decided in principle, but the actual coarser-trigger substitution
   table isn't built.
@@ -186,37 +152,24 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 
 #### Built
 
-- `internal/planner`: pure graph compilation — `requires`/`before`/`after` edges, cycle detection,
-  wave compilation, deterministic plan-hash identity, structured diagnostics (no bare "cycle
-  detected"), degradation handling (`Unknown` feasibility on stale/missing telemetry, universal-floor
-  warnings that don't fail the compile).
-- Numbered shutdown tiers (`OD-4`, closed) fully implemented: central
-  `PowerManagementCluster.spec.shutdownTiers` policy, per-group tier inputs, label/selector/default
-  tier resolution with total deterministic precedence, derived tier-to-tier edges (`internal/planner/tiers.go`),
-  tier-0 rejection for orchestrated groups and nodes, and tier status published on steps, waves, and
-  the graph.
-- Planner artifact publication (`internal/planner/artifacts.go`): normalized dependency graph,
-  edge/source explanations with provenance (`Declared`/`Derived`/`Policy`), advisory startup wave
-  projection, deterministic Mermaid/Graphviz/D2 exports (consumer side lives in Outputs &
-  Publishing).
-- `ShutdownFlow` dry-run execution dispatch from eligible trigger decisions into `internal/executor`,
-  with `status.lastExecution`, active-trigger deduplication, durable execution evidence, and
-  `ExecutionReady` condition updates.
-- `internal/executor`: ordered wave execution evidence, dry-run action attempts, node release
-  records, signal-file handoff records, resume-state updates — restart-safe by design (`EX-14`).
-- `internal/kubeactions`: enforce-mode `ScaleWorkload`, `CordonNodes`, `DrainNodes`, provider-neutral
-  `RunWorkflow` hooks (the `argoproj.io/workflows` RBAC noted in `F-5` is this — a real, used
-  integration, not scaffolding), and projected-Secret `AgentShutdown` signal handoff.
-- Node-agent coverage gating: enforce-mode releases block when a target node lacks a ready agent pod;
-  dry-run records the same degraded facts without acting.
-- **`ShutdownFlow`'s continuous status-update conflicts are fixed (`F-31`, 2026-08-04).** The
-  resourceVersion race documented below is closed operator-wide by switching every controller's status
-  write from `Status().Update()` to `Status().Patch()` — see Operator Maturity & Hardening. What
-  `F-31` does *not* address: `SetupWithManager` still watches `UPSDevice` with no predicate, so every
-  telemetry tick (5–15s per device) still re-enqueues a `ShutdownFlow` reconcile, each doing a Postgres
-  audit-store round trip via `recordShutdownFlowAudit` — real reconcile churn, just no longer
-  error-producing churn. Scoping that watch predicate to the fields the trigger logic actually reads
-  (phase, charge %, runtime seconds) remains open below.
+- `internal/planner`: pure graph compilation — edges, cycle detection, waves, deterministic plan
+  hash, structured diagnostics, degradation handling.
+- `PL-19` trigger-capability validation wired, using the some/all split (reject vs degrade).
+- Derived power domains reach the planner as trigger-validation scope; wave compilation still does
+  not read them (see Open Work).
+- `OD-4` closed: tier policy, resolution precedence, derived tier edges, tier status on steps/waves.
+- Planner artifacts (`internal/planner/artifacts.go`): normalized graph, provenance-tagged
+  explanations, advisory startup projection, Mermaid/Graphviz/D2 exports.
+- `ShutdownFlow` dry-run dispatch into `internal/executor` with `status.lastExecution` and
+  `ExecutionReady`.
+- `internal/executor`: ordered wave evidence, action attempts, releases, handoffs, resume state,
+  restart-safe (`EX-14`).
+- `internal/kubeactions`: enforce-mode `ScaleWorkload`, `CordonNodes`, `DrainNodes`, `RunWorkflow`,
+  `AgentShutdown`.
+- Node-agent coverage gating: enforce blocks releases without a ready agent, dry-run records the
+  same facts.
+- `F-31` closed operator-wide (status writes are patches). The unpredicated `UPSDevice` watch it
+  exposed is still open below.
 
 #### Open Work
 
@@ -258,137 +211,25 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 
 #### Built
 
-- `NUTServer` operand rendering: Namespace, ConfigMap, operator-managed Secret, Service,
-  NetworkPolicy, Deployment, and upstream NUT relay mode via `dummy-ups`.
-- `upsd.conf`/`upsd.users` rendering with injection-validated config values.
-- Container security context: non-root UID 65532, read-only root filesystem, all capabilities
-  dropped, no privilege escalation, consistent across the render path.
-- Project-owned `nut-server` Dockerfile with pinned NUT packages and healthcheck instructions.
-- Protocol fidelity confirmed by audit: real `LIST VAR` framing (not `upsc` shelling), standard NUT
-  variable names throughout, `MODE=netclient`, every agent connects as `secondary`,
-  `SHUTDOWNCMD "/bin/true"` as the stub actuator expressed in NUT-native terms.
-- **`F-23` privileged-user separation is done**, ahead of the original audit's expectation:
-  `renderUPSDUsers` already renders a separate `[admin]` user (`actions = SET`, `instcmds = ALL`,
-  its own `admin-password`) distinct from the `[monitor]` secondary user. Node-agent rendering
-  (`nodepoweragent_render.go`) only ever reads `monitor-password` — the admin credential structurally
-  never reaches a node agent. This closes the credential-separation half of `F-23`; the design
-  question it was gating (which instant commands actually get exposed) is still `OD-20`.
-- **`F-15` `spec.replicas` is pinned to 1.** CRD schema (`+kubebuilder:validation:Maximum=1`) and
-  the admission webhook (`validateNUTServerAdmission`) both reject any value other than 1 — defense
-  in depth per the policy-gate pattern in `docs/security.md`.
-- **`F-16` Deployment strategy is explicit `Recreate`.** Set in `ensureNUTServerDeployment`, so an
-  upgrade never briefly runs two `upsd` instances and splits NUT's client-login accounting.
-- **`F-17` readiness probe now proves live driver connectivity, not just structural registration
-  (2026-08-04).** `upsc -l` alone was wrong: verified empirically (real container, real
-  `snmp-ups` failure) that it lists every device *defined in `ups.conf`* regardless of whether the
-  driver ever actually connected — a fully-disconnected driver still passed it. The probe
-  (`upsdReadinessProbeScript`) now lists devices via `upsc -l`, then queries a real variable
-  (`ups.status`) per device, passing if any one has a genuinely connected driver — same "at least
-  one UPS" intent as originally documented, just actually true now. Does not yet prove any single
-  device's telemetry is *fresh* — see Open Work below.
-- **Driver-startup/container-lifecycle coupling fixed (2026-08-04).** `images/nut-server/entrypoint.sh`
-  ran `upsdrvctl start` under `set -eu` with no failure handling — any single driver failing to
-  start (bad credentials, unreachable device) killed the whole container before `upsd` ever ran, so
-  a broken UPS took down telemetry for every *other* device on that server too, and made it
-  impossible to reach the server at all to fix credentials. Now `upsdrvctl start` failures are
-  logged and non-fatal; `upsd` always starts, and the (now-correct) `F-17` readiness probe reports
-  the real per-driver state instead of the whole pod crash-looping.
-- **`F-18` priority class and PodDisruptionBudget are in place.** The webhook defaults
-  `spec.placement.priorityClassName` to `system-cluster-critical` when unset (mirrors the
-  `system-node-critical` pattern already used for `NodePowerAgent`, at the cluster-singleton tier
-  instead of the per-node tier). `ensureNUTServerPodDisruptionBudget` renders a PDB with
-  `minAvailable: 1`, which — paired with the `F-15` replica pin — blocks voluntary eviction of the
-  sole `upsd` pod entirely.
-- **`F-21` `upssched` non-use is a recorded decision**, not an omission — see the resolution note in
-  `docs/audits/nut-usage-audit.md`. Follows from `SB-2b` and `GP-4`: `upssched` is a per-node
-  sequencer, and sequencing is reserved for the operator's deterministic planner.
-- **`F-24` confirmed no credential leak path.** The `upsd.users` Secret has no `Hash` set in
-  `ManagedResourceStatus` (only the ConfigMap does — `configHash` is computed from `configData`
-  alone, never from Secret contents), no log statement in the render or controller path touches
-  `secret.Data` or a password value, and `NUTServerReconciler` has no Event Recorder wired in at all,
-  so there is no Events leak path to check.
-
-- **`UPSDevice.spec.credentialSecretRef` is wired (2026-08-04).** Found unwired while pointing a
-  real `snmp-ups` device at production hardware requiring SNMPv3 (`secName`/`authPassword`/
-  `privPassword`, not just a community string) — fixed same day.
-  `resolveUPSDeviceCredentials` (`nutserver_render.go`) fetches the referenced Secret (same
-  operand-namespace only, matching the existing `upstreamNUTAuthProjections` convention) and merges
-  its keys into the device's driver options, winning over any `driverOptions` collision. `ups.conf`
-  itself moved out of the plain `ConfigMap` into a new dedicated Secret
-  (`<name>-nut-driver-config`) projected into the same `/etc/nut` volume — the container mount path
-  is unchanged, no image changes needed. The Deployment's rollout-trigger hash still covers the full
-  rendered config (including credentials) so a rotation still rolls the pod; that hash is a one-way
-  SHA-256 digest, doesn't leak the plaintext. Matches the `F-24` precedent of not putting a content
-  hash on credential-bearing `Secret`s in `ManagedResourceStatus`.
-- **Scripted `dummy-ups` state-transition simulation is built (2026-08-05).** Previously only the
-  static single-state `.dev` fixture existed, unable to drive a real `OnBattery`->`LowBattery`
-  transition. New `UPSDevice.spec.simulation.sequenceConfigMapRef` (+`sequenceKey`, default
-  `sequence.seq`) points at a user-authored `ConfigMap` holding a NUT dummy-ups `.seq` file (verified
-  against NUT's own driver source before implementing: `TIMER <seconds>` lines pause parsing for that
-  long before the next `variable: value` block takes effect; the `.seq` extension alone already
-  selects dummy-loop mode, confirmed via `networkupstools/nut`'s `drivers/dummy-ups.c`). Render path
-  (`resolveUPSDeviceSimulationFixtures`, `dummyUPSSimulationFileName` in `nutserver_render.go`) fetches
-  the ConfigMap same-namespace-only (matching `credentialSecretRef`'s convention), renders the fixture
-  content verbatim to `<name>.seq`, and writes an explicit `mode = dummy-loop` driver option
-  (overridable, belt-and-suspenders with the extension-based default). Mutually exclusive with an
-  explicit `driverOptions.port` and with `spec.upstreamNUT` (`validateUPSDevice`). Fixture data is
-  declarative and Git-reviewable, not a manual patch, per the original open-work item's stated
-  preference. Example: `docs/examples/simulation/`. Live-verified end-to-end against a real kind
-  cluster: `test/e2e/e2e_test.go`'s "drives real Online/OnBattery/LowBattery transitions from a
-  scripted dummy-ups fixture" asserts on `UPSDeviceReconciler`'s actual telemetry-poll output, not a
-  mock, proving the scripted transition reaches `UPSDevice.status.phase` through the real driver and
-  the real poller.
-- **Fixed an operand-namespace creation-ordering bug, found while building the simulation feature
-  above.** `reconcileNUTServerOperands` resolved `credentialSecretRef`/the new
-  `simulation.sequenceConfigMapRef` — both scoped to the rendered operand namespace — *before*
-  `ensureOperandNamespace` created that namespace. For a standalone `NUTServer` (no
-  `PowerManagementCluster` pre-creating `operandNamespace`), the very first reconcile always failed
-  with `NotFound` before the namespace it needed ever got created, so the resource could never
-  converge without an out-of-band namespace creation. This was a real, pre-existing gap in
-  `credentialSecretRef` too, not just new-feature fallout — the e2e signal-handoff test never
-  exercised it only because its `UPSDevice` has no namespace-scoped reference to resolve. Fixed by
-  moving `ensureOperandNamespace` to run first.
-- **Fixed a real cross-namespace `NetworkPolicy` gap that silently broke telemetry polling,
-  found by the scripted-transition e2e spec (2026-08-05).** `ensureNUTServerNetworkPolicy`'s
-  ingress rule was `{podSelector: {}}` with no `namespaceSelector` — same-operand-namespace traffic
-  only. `UPSDeviceReconciler`'s telemetry poller runs from the operator's own manager pod, which
-  does not live in the operand namespace, so this rule never actually covered the one thing that
-  most needs to reach `upsd`. Confirmed, not assumed: reproduced deterministically against a real
-  kind cluster with a minimal two-pod NetworkPolicy repro (same-namespace traffic passed, identical
-  cross-namespace traffic timed out; re-tested after widening the rule and cross-namespace traffic
-  passed) before touching the real code — kindnet does enforce `NetworkPolicy`, and so does this
-  project's own reference Cilium deployment. Every `UPSDevice` behind a `NUTServer` in a
-  NetworkPolicy-enforcing cluster would have had telemetry silently stuck in `Unavailable`/`Stale`
-  forever, with nothing but a generic connect-timeout condition message to go on — this was not a
-  test-only gap. Fixed by adding a second ingress peer: `namespaceSelector: {}` (unscoped, since the
-  manager's own namespace is deployment-configurable) combined with a `podSelector` matching
-  `control-plane: controller-manager`/`app.kubernetes.io/name: nut-operator` — the same manager-pod
-  label selector `config/network-policy`'s `allow-metrics-traffic`/`allow-webhook-traffic` policies
-  already use from outside the manager's own namespace. Non-matching cross-namespace traffic stays
-  blocked (re-verified in the same repro), so this is a targeted fix, not a policy relaxation.
-- **`snmpsim` driver-conformance fixture is built (2026-08-05), closing the "zero coverage" gap the
-  original open-work item flagged.** New `images/snmpsim-fixture/` (a `snmpsim-command-responder`
-  Deployment image, non-root, test-only — deliberately excluded from `docker-build-operands` and
-  `images.yml`'s publish matrix, never a real operand) serves a static RFC1628 UPS-MIB (`.snmprec`)
-  fixture. The fixture's OIDs and scaling factors were verified against NUT's own
-  `drivers/ietf-mib.c` mapping table before being written (not guessed), then confirmed by running the
-  *real* `snmp-ups` driver against the *real* simulator in dump mode and reading back
-  `battery.charge: 100`, `battery.runtime: 3600`, `ups.load: 10`, `ups.status: OL`, `ups.mfr`/
-  `ups.model` — an exact match. `test/e2e/e2e_test.go`'s "proves the real snmp-ups driver decodes a
-  simulated UPS-MIB device correctly" stands up the fixture plus a real `snmp-ups`-backed `UPSDevice`/
-  `NUTServer` on a real kind node and asserts the same values through `UPSDeviceReconciler`'s telemetry
-  poller. Scope, matching the original item's own framing: SNMPv2c community auth only (production
-  hardware uses SNMPv3); proves OID/decode conformance, not authentication-mode parity. Division of
-  labor unchanged from the original proposal: `snmpsim` proves the driver talks to real OIDs
-  correctly; `dummy-ups` (above) proves the operator reacts correctly once a device reports state —
-  intentionally not conflated, since `snmpsim` serves a static tree and cannot drive transitions.
-- **e2e target state for `dummy-ups`/`NUTServer`-backed coverage is met.** Both new specs above,
-  together with the pre-existing "delivers a projected Secret signal..." spec, cover: CRDs install,
-  every operand kind renders, the `NodePowerAgent` DaemonSet's `upsmon` reaches a real `NUTServer`
-  pod, `UPSDevice` status reflects real (`dummy-ups` and `snmp-ups`) telemetry, and a real scripted
-  transition drives trigger-relevant status change end-to-end. Real actuation testing remains
-  structurally out of scope for `kind`, as originally noted (no real poweroff on a `kind` node
-  regardless of driver).
+- `NUTServer` operand rendering: Namespace, ConfigMap, Secrets, Service, NetworkPolicy, Deployment,
+  and `dummy-ups` relay mode.
+- `upsd.conf`/`upsd.users` rendering with injection-validated values; hardened container security
+  context; project-owned image with pinned NUT packages.
+- Protocol fidelity confirmed by audit (`docs/audits/nut-usage-audit.md`).
+- `F-15` replicas pinned to 1; `F-16` `Recreate` strategy; `F-18` priority class and PDB.
+- `F-17` readiness probe proves live driver connectivity, not just registration; driver-start
+  failures are non-fatal to the container.
+- `F-21` `upssched` non-use and `F-23` privileged-user separation are recorded decisions
+  (`docs/audits/nut-usage-audit.md`, `docs/audits/nutserver-pod-audit.md`); `F-24` confirmed no
+  credential leak path.
+- `UPSDevice.spec.credentialSecretRef` wired; `ups.conf` moved into a dedicated Secret.
+- Scripted `dummy-ups` transitions via `spec.simulation.sequenceConfigMapRef`
+  (`docs/examples/simulation/`), plus an `snmpsim` driver-conformance fixture
+  (`images/snmpsim-fixture/`).
+- Fixed: operand-namespace creation ordering, and a cross-namespace `NetworkPolicy` gap that left
+  telemetry polling silently unreachable.
+- e2e target state met for `dummy-ups`/`snmp-ups`/`NUTServer` coverage. Real actuation stays out of
+  scope for `kind`.
 
 #### Open Work
 
@@ -435,91 +276,19 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 
 #### Built
 
-- `NodePowerAgent` DaemonSet rendering: Namespace, ServiceAccount, ConfigMap, Secret-backed
-  `upsmon.conf`, egress NetworkPolicy, `MonitorOnly`/`DryRun`/`Actuate` modes.
-- Explicit rollout strategy, `system-node-critical` priority default, baseline toleration set, and
-  readiness probes — closes `F-8`, `F-9`, `F-10`, `F-12` from the DaemonSet audit.
-- `power-signal-writer` (`cmd/power-signal-writer`): project-owned `SHUTDOWNCMD` binary, writing to a
-  projected signal Secret; `upsmon` gets a writable `/run` mount while the root filesystem stays
-  read-only.
-- `internal/nodeagent` (`signal.go`): node actuator signal handling — structured shutdown JSON
-  validation, signal TTL and node-name matching enforcement, dry-run `SystemdPoweroff` skip, watches
-  both the local `upsmon` handoff file and the executor-projected Secret path.
-- `cmd/node-actuator`: syscall-backed host poweroff (`poweroff_linux.go`, with
-  `poweroff_unsupported.go` for other GOOS) with command override support.
-- Approved `SystemdPoweroff` isolation uses `hostPID` + `CAP_SYS_BOOT` only — the narrow-privilege
-  model `F-13` called for, not blanket `privileged: true`. Non-root, all other capabilities dropped,
-  read-only root filesystem, no Kubernetes service-account token.
-- Partition-aware coverage status: per-node agent-pod readiness feeds `AgentShutdown` executor
-  release evidence; enforce-mode blocks releases against nodes without a ready agent, dry-run records
-  the same degraded facts without acting.
-- **`F-14` self-exclusion is enforced in the executor.** `internal/kubeactions.Runner` resolves every
-  `NodePowerAgent`'s operand namespace (`protectedNamespaces`) and skips it structurally: `ScaleWorkload`
-  targets in a protected namespace are excluded rather than scaled (`selfExcluded` in the action
-  outcome), and `DrainNodes` eviction skips pods in a protected namespace regardless of owner kind
-  (`selfExcludedNamespaces`) — belt-and-suspenders on top of the pre-existing DaemonSet-ownership
-  skip in `evictablePod`, which only covered eviction and only for DaemonSet-owned pods. Not just a
-  PDB question: DaemonSet pods were already undrainable; the gap was that nothing was *structurally*
-  protected against a future non-DaemonSet resource landing in that namespace, or against a
-  `ScaleWorkload` group whose selector happened to sweep it in.
-- **`F-24` confirmed no credential leak path, with one caveat.** No log statement in the render or
-  controller path touches `secret.Data` or the monitor password, and there's no Event Recorder wired
-  into `NodePowerAgentReconciler`. Unlike the NUT Server side, the `upsmon.conf` Secret's
-  `ManagedResourceStatus` entry *does* carry a `Hash` (`hashByteMap(secretData)`) — this is a
-  one-way SHA-256 hash of a 32-byte random value (`randomPassword()`), used for the standard
-  config-hash-triggers-rollout pattern, not a partial leak: recovering the password from the hash is
-  computationally infeasible. Confirmed safe, not just assumed.
-- **`F-33` fixed: `spec.shutdown.requireFreshTelemetry` is now actually enforced (2026-08-05).**
-  Confirmed via grep before fixing: the field existed, defaulted to `true` by the webhook, and was
-  read by nothing anywhere in the codebase — a safety field that looked live but did nothing, a worse
-  state than not having it at all. Trigger-level staleness gating (`internal/trigger` excluding stale
-  UPS devices from eligibility) is a different mechanism and doesn't cover this: a `ShutdownFlow`'s
-  trigger can fire off one device's staleness while its groups still release nodes covered by a
-  *different* agent, whose own monitored devices might independently be stale. Fixed by computing
-  per-agent freshness once in `nodeReleasesForTarget` (walks `NUTServerRefs` →
-  `NUTServer.Status.SelectedDevices` → each `UPSDevice.Status.Phase`; any device not
-  `Online`/`OnBattery`/`LowBattery`, or the agent's device set entirely unresolvable, means not fresh
-  — fails closed, per `resiliency-and-partitions.md`) and threading it through as data
-  (`executor.NodeRelease.TelemetryFresh`/`TelemetryStaleReason`) into the exact same group-level gate
-  `F-14`'s `AgentReady` check already uses (`agentShutdownReadinessError`), rather than inventing a
-  parallel mechanism. New envtest coverage (`gates AgentShutdown releases on requireFreshTelemetry`)
-  and two new executor unit tests (blocked-when-stale, released-when-ready-and-fresh — the latter
-  filling a real pre-existing gap: no test previously exercised a *successful* enforce-mode
-  `AgentShutdown` release at all).
-- **`F-34` fixed: tier-0 DaemonSet containers now default to non-zero resource requests/limits
-  (2026-08-05).** `NodePowerAgentResources.Upsmon`/`.Actuator` were plain `corev1.ResourceRequirements{}`
-  with no defaulting anywhere — a user who didn't set `spec.resources` got BestEffort QoS on the exact
-  pod this whole project depends on surviving node pressure: no OOM-score protection, no scheduler
-  capacity reservation. Fixed in the webhook defaulter, matching where `F-9`'s `priorityClassName`
-  default already lives, per-resource-key rather than wholesale (a user-supplied request/limit for a
-  given key is never overwritten). Conservative values: `upsmon` 10m/32Mi requests, 100m/64Mi limits;
-  `actuator` 5m/16Mi requests, 50m/32Mi limits.
-- **`F-35` fixed: `upsmon` now has a process-liveness probe (2026-08-05).** Neither container had a
-  `LivenessProbe`; the original audit explicitly called out that the actuator must never have one
-  (restart mid-flow risks re-triggering or losing signal state) but didn't weigh in on `upsmon`, which
-  carries no such hazard (it's the read-only monitoring container). Without one, a hung-but-not-crashed
-  `upsmon` process sat `NotReady` forever with no automatic recovery. Fixed with `pgrep -x upsmon` —
-  deliberately NOT tied to NUT server reachability (that's `upsmonReadinessProbe`'s job) so a `upsmon`
-  that's alive but can't currently reach its UPS server stays up and `NotReady` rather than getting
-  restarted, which would just churn the same failure. Verified `pgrep -x` actually works as intended
-  in the real `alpine:3.22` base image (busybox `pgrep`), not assumed. New test asserts the actuator
-  container carries no `LivenessProbe`, documenting the deliberate omission as a test invariant, not
-  just a comment.
-- **In-cluster signal-handoff smoke test unblocked and passing (2026-08-05).** Previously blocked on
-  tooling (`kind` wasn't installed in the dev environment). `kind` is now installed
-  (`go install sigs.k8s.io/kind`) and confirmed working end-to-end against the real Docker daemon in
-  this environment. New e2e spec (`test/e2e/e2e_test.go`, "delivers a projected Secret signal to the
-  NodePowerAgent actuator within the configured TTL") deploys a real `dummy-ups`-backed
-  `UPSDevice`/`NUTServer`/`NodePowerAgent` stack via the actual operator on a real kind node, patches
-  the projected signal `Secret` directly (the same write path `kubeactions.Runner.agentShutdownHandoff`
-  uses), and asserts the actuator container's logs show it accepted the signal — proving projected
-  `Secret` updates actually reach a running DaemonSet pod through a real kubelet within a bounded time,
-  something envtest structurally cannot check (no real kubelet, no real volume sync). Manually verified
-  first end-to-end against a live kind cluster (signal observed ~44s after the `Secret` write, well
-  inside the 2m TTL and consistent with kubelet's projected-volume sync period) before committing it as
-  permanent suite code; the full `make test-e2e` target (6 of 6 specs, including this one) passes
-  clean. `e2e_suite_test.go`'s `BeforeSuite` now also builds and loads the three operand images
-  (`nut-server`, `upsmon-agent`, `node-actuator`), not just the manager image as before.
+- `NodePowerAgent` DaemonSet rendering with `MonitorOnly`/`DryRun`/`Actuate` modes; `F-8`–`F-12`
+  closed (rollout strategy, priority, tolerations, probes).
+- `power-signal-writer`: project-owned `SHUTDOWNCMD` binary writing to a projected signal Secret.
+- `internal/nodeagent`: signal validation, TTL and node-name enforcement, dry-run skip, both handoff
+  paths watched.
+- `cmd/node-actuator`: syscall-backed poweroff with a non-Linux stub.
+- `F-13` narrow privilege model: `hostPID` + `CAP_SYS_BOOT` only, no service-account token.
+- `F-14` self-exclusion enforced structurally in the executor (`protectedNamespaces`).
+- `F-24` confirmed safe, including the `upsmon.conf` Secret hash.
+- `F-33` closed: `requireFreshTelemetry` is enforced per agent, failing closed.
+- `F-34` closed: non-zero resource defaults for both tier-0 containers.
+- `F-35` closed: `upsmon` liveness probe; the actuator's deliberate lack of one is a test invariant.
+- Signal handoff proven on a real `kind` cluster within the configured TTL.
 
 #### Open Work
 
@@ -540,45 +309,18 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 
 Owns: the published planner artifact contract (compiled plan, dependency graph, waves, explanations,
 diagram exports) and the CR-status-as-interface model — the "what gets exported and how" surface.
-Design doc: `docs/design/published-planner-artifacts.md` (`GP-6`/`GP-7`).
+Design doc: `docs/shutdown-flow.md`, Published Artifacts section (`GP-6`/`GP-7`).
 
 #### Built
 
-- Single structured planner artifact (`PL-45`–`PL-48`): compiled plan, dependency graph, waves,
-  advisory startup projection, diagnostics, feasibility verdicts, plan hash, duration estimates.
-- Dependency graph emitted as normalized vertices/edges, not text — every edge carries relation type,
-  source object references, provenance (`Declared`/`Derived`/`Policy`), and a stable explanation
-  string, so "why was this node in wave four" is answerable from structure, not log archaeology.
-- Deterministic Mermaid, Graphviz/DOT, and D2 diagram exports generated from the structured graph —
-  renderers, never independent sources of truth.
-- Kubernetes-first interface fully in place: CRDs + `/status` + Events + logs + PostgreSQL audit
-  records as the whole v1 interface, no dedicated UI. The operator publishes facts; subscribers
-  (dashboards, docs generators, monitoring, recovery orchestration) own what they do with them
-  (`GP-7`).
-- Advisory startup wave projections published for recovery-system subscribers without the operator
-  executing recovery itself (`OD-1`/`OD-5`, closed).
-- **`F-3` fixed: Prometheus metrics for the highest-value candidates from the maturity audit
-  (2026-08-04).** New `internal/metrics` package, registered against controller-runtime's own
-  `metrics.Registry` (the kubebuilder-book-documented pattern) — same `/metrics` endpoint, same
-  authn/authz filter, no new port or RBAC. Covers compile duration and outcome (`compile_total`,
-  `compile_duration_seconds` — outcome uses the same rejection-reason string already computed for the
-  `Accepted` condition, since the underlying planner diagnostics are discarded before reaching the
-  reconciler and threading them through was out of scope for this pass), plan hash changes
-  (`plan_hash_changes_total`), trigger evaluations (`trigger_evaluations_total`), degraded-dependency
-  state (`degraded`, a level gauge mirroring the `Degraded` condition), wave execution duration
-  (`execution_duration_seconds`), and actuation attempts (`actuator_action_attempts_total`,
-  `actuator_action_duration_seconds` — instrumented once at `kubeactions.Runner.RunAction`, the single
-  choke point every executor action passes through, real or dry-run). Deliberately instrumented at the
-  impure boundary (`internal/controller`, `internal/kubeactions`), not inside `internal/planner` or
-  `internal/trigger`, since both are pure by design and a global Prometheus counter is a side effect.
-  Full contract documented in `docs/metrics.md`. Tested at two levels: `internal/metrics`'s own unit
-  tests exercise every collector via `prometheus/client_golang/prometheus/testutil`, and delta-based
-  assertions in `runner_test.go`/`shutdownflow_controller_test.go` prove the real reconcile/action
-  paths actually record them (not just compile against them) — order-independent against the rest of
-  each suite, verified across 8 random `ginkgo.seed` values. `ServiceMonitor` enablement itself
-  (`config/default/kustomization.yaml`'s commented `../prometheus` line) is left as-is, matching the
-  kubebuilder scaffold default of not assuming the Prometheus Operator CRDs are installed — noted in
-  `docs/metrics.md`, not flipped silently.
+- Single structured planner artifact (`PL-45`–`PL-48`).
+- Dependency graph as normalized vertices/edges with relation type, source refs, provenance, and
+  explanations — answerable from structure, not logs.
+- Deterministic Mermaid, Graphviz/DOT, and D2 exports as renderers only.
+- Kubernetes-first interface complete: CRDs, status, Events, logs, PostgreSQL. No UI (`GP-7`).
+- Advisory startup wave projections published for recovery subscribers (`OD-1`/`OD-5` closed).
+- `F-3` closed: `internal/metrics` on controller-runtime's registry, instrumented at the impure
+  boundary. Contract in `docs/metrics.md`.
 
 #### Open Work
 
@@ -607,30 +349,25 @@ spool. Design doc: `docs/design/audit-storage-schema.md`.
 
 #### Built
 
-- Storage backend resolution (`internal/storage`) for `Disabled`/`ExternalPostgres`/`CNPG` modes,
-  connection-management concerns kept separate from domain validation and controller status.
-- Full PostgreSQL audit schema (`internal/audit`): power events, telemetry snapshots, capability
-  profile matches and verification/probe history, accepted/rejected planner compilations, shutdown
-  decisions, executor runs, wave/group progress, action attempts, node release records, signal-handoff
-  evidence, executor resume state. Executor child tables cascade-delete from their parent execution.
-- Planner compilation audit records persist compiled waves, dependency graph, advisory startup waves,
-  explanations, and diagram exports as structured JSONB payloads.
-- Retention enforcement (`spec.storage.retention`, two families: `events` and `telemetry`) evaluated
-  by `PowerManagementCluster` storage readiness; negative retention values rejected before a store
-  opens.
-- **`OD-6` closed:** shutdown-time audit spool (`internal/audit/spool.go`). When enabled, a
-  PostgreSQL write failure during execution falls back to a durable local JSONL journal
-  (`audit-spool.jsonl`) keyed by a stable replay key (`executionID`/`executionID/waveIndex`), sets
-  `AuditSpoolFallback` on `Degraded`/`ExecutionReady`, and never creates a second execution identity.
-  Requires CNPG or `ExternalPostgres` plus an explicit durable volume — not a database replacement.
+- Backend resolution (`internal/storage`) for `Disabled`/`ExternalPostgres`/`CNPG`, with connection
+  management kept out of domain validation.
+- Full audit schema (`internal/audit`) through migration 5, including retention indexes; executor
+  child tables cascade from their parent execution.
+- Planner compilations persist waves, graph, startup projection, explanations, and diagram exports
+  as JSONB.
+- Retention enforcement for the `events` and `telemetry` families.
+- Pooled connections expire (30m lifetime, 5m idle) so a CNPG failover cannot strand them.
+- `OD-6` closed both halves: the shutdown-time spool and `audit.ReplaySpool`, which drains it on the
+  first reconcile that can write again.
+- Spool journal bounded by `spec.storage.auditSpool.maxSize`; a full journal reports `AuditSpoolFull`
+  rather than growing or failing the reconcile.
+- Spool and replay metrics (`nutoperator_audit_spool_*`), documented in `docs/metrics.md`.
+- Coverage: outage-and-recovery round trip and a capped journal, both through real reconciliation.
+- Why this component exists at all — the deviation from the reconciliation model, its cost, and its
+  precedent — is written up in `docs/design/audit-storage-schema.md`.
 
 #### Open Work
 
-- **Spool replay tooling.** The spool writes records; nothing reads them back into PostgreSQL once
-  connectivity returns. This is explicitly called out in `resiliency-and-partitions.md` as a needed
-  implementation hook and is the clearest actionable gap in this component.
-- Controller/envtest coverage for PostgreSQL degradation (writes failing mid-reconcile), beyond the
-  spool's own unit tests.
 - Confirm the `capability_profile_verifications` schema (`OD-15`, closed in design) is actually
   populated end-to-end once the Capability Profiles drift-detection path (`RS-7`–`RS-10`) exists —
   right now the table exists ahead of its writer.
@@ -649,244 +386,28 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 
 #### Built
 
-- `observedGeneration` tracking across all nine CRDs and every controller; enum validation on
-  constrained fields; single storage version per CRD; spec/status separation.
-- Source hardening pass for ASH/Checkov findings: explicit helper admin RBAC verbs, non-default
-  leader-election RBAC namespaces, documented service-account token/digest exceptions, Kustomize
-  image placeholder repair, Dockerfile healthchecks.
-- **Manager `imagePullPolicy` changed `Always` → `IfNotPresent` (2026-08-04), reversing the prior
-  hardening pass's choice.** Root-caused the `E2E Tests` workflow failing on every run since before
-  this session: the suite builds and `kind load`s the manager image locally (no registry involved),
-  but `Always` still forced a pull attempt against the placeholder `example.com` tag, which doesn't
-  exist — guaranteed `ImagePullBackOff`. `Always` vs `IfNotPresent` makes no real freshness/safety
-  difference in this project specifically because every real deployment overrides the base image
-  with an explicit digest via Kustomize (`CKV_K8S_43`, already suppressed on this same file) — a
-  pinned digest is content-verified regardless of pull policy. Added the matching `CKV_K8S_15`
-  suppression.
-- Local AWS Labs ASH security scan configuration and `make security-scan` target.
-- Project-owned OCI images for all four operands (`nut-server`, `upsmon-agent`, `node-actuator`,
-  `operator`), multi-arch, with SBOM/provenance attestation and vulnerability scanning via the
-  `Images` GitHub Actions workflow.
-- **`F-28` fixed: manager no longer crash-loops forever when the CNPG CRD isn't installed
-  in-cluster.** Root-caused via a real E2E failure log (`test/e2e/e2e_test.go:304`, "metrics
-  endpoint" spec) after the `imagePullPolicy` fix above eliminated the prior `ImagePullBackOff` and
-  let the suite run far enough to hit this. `powermanagementcluster_controller.go`'s
-  `SetupWithManager` unconditionally registered `Watches(newCNPGClusterObject(), ...)` against the
-  unstructured `Cluster.postgresql.cnpg.io` GVK; when that CRD isn't installed, the underlying
-  `source.Kind` REST-mapping lookup retries forever inside its own poll loop, and
-  controller-runtime's default 2-minute `CacheSyncTimeout`
-  (`sigs.k8s.io/controller-runtime@v0.24.1/pkg/controller/controller.go:249`) then treats the
-  never-syncing watch as a fatal controller-start error — confirmed by reading
-  `pkg/internal/controller/controller.go` — which kills the whole manager process (`mgr.Start()`
-  returns the error, `cmd/main.go` logs "problem running manager" and calls `os.Exit(1)`). The
-  captured pod description matched exactly: container instances ran for ~2m18s before
-  `Exit Code: 1`, restarting into the identical failure via `CrashLoopBackOff`. (An earlier
-  hypothesis blamed a cert-manager/webhook-Secret startup race for this — ruled out by the same log:
-  the `webhook-server-cert` Secret was issued within ~1s of pod scheduling, long before either
-  crash.) Since CNPG is one of several optional storage backends
-  (`Disabled`/`ExternalPostgres`/`CNPG`, see Storage & Audit above), this meant *any* install of this
-  operator into a cluster without CNPG's CRDs present — regardless of whether CNPG storage was
-  actually configured — could never start. Fixed by adding `cnpgClusterCRDPresent`, a
-  `meta.RESTMapper.RESTMapping` discovery check run once in `SetupWithManager`: the CNPG `Watches()`
-  is now only registered when the CRD actually resolves; otherwise a one-line log explains the watch
-  was skipped. `PowerManagementCluster` resources using CNPG storage still reconcile via their
-  existing periodic 5-minute requeue and per-reconcile `Get`-based degradation (both already
-  resilient to a missing CRD); the tradeoff is that live watch-triggered reconciliation on CNPG
-  status changes only resumes after the manager restarts post-CRD-install, which is an acceptable
-  degradation given the alternative was total unavailability. Covered by
-  `TestCnpgClusterCRDPresentReflectsRESTMapperContents`.
-- **`F-29` fixed: E2E "metrics endpoint" spec timed out because the test's own namespace never
-  satisfied the metrics NetworkPolicy it deploys.** Surfaced immediately after the `F-28` fix above
-  eliminated the crash-loop and let the same spec run far enough to hit a different, unrelated
-  failure: the `curl-metrics` pod's connection to the metrics Service timed out
-  (`curl: (28) ... Operation timed out`, not refused) even though the manager's own log confirmed
-  `Serving metrics server {bindAddress: :8443, secure: true}` and the Service selector/port matched
-  the pod exactly — ruling out a startup or config-mismatch cause. The remaining explanation:
-  `config/network-policy/allow-metrics-traffic.yaml` (enabled via `config/default/kustomization.yaml`
-  as part of an earlier hardening pass) only admits ingress to the metrics port from namespaces
-  labeled `metrics: enabled`; `test/e2e/e2e_test.go`'s `BeforeAll` labeled the test namespace
-  `pod-security.kubernetes.io/enforce=restricted` but never `metrics: enabled`, so the curl-metrics
-  pod's own namespace never matched the policy's `namespaceSelector` and its traffic was dropped.
-  Fixed by adding the missing `kubectl label ns ... metrics=enabled` step alongside the existing
-  pod-security label. `allow-webhook-traffic.yaml` was checked and needs no equivalent fix — it
-  restricts by port only, not source namespace, by design (kube-apiserver's source identity is
-  CNI-specific).
-- **CI pipeline optimized and ASH wired in (2026-08-04).** Verified before this pass: `make
-  security-scan` (ASH) was local-only, invoked nowhere under `.github/workflows/`; the only automated
-  scanning in CI was Trivy on published images in `Images`, which ran *after* push (so a CRITICAL/HIGH
-  finding failed the job without un-publishing the already-pushed image) and only on non-PR events (PRs
-  got zero vulnerability signal at all). Across `lint.yml`/`test.yml`/`test-e2e.yml`/`images.yml`, also
-  confirmed: no `concurrency` cancellation (demonstrated wasteful this session — 5 rapid-fire pushes
-  each ran full CI to completion independently), no `paths-ignore` (a docs-only commit triggered the
-  full multi-arch `Images` build+push+scan pipeline, also demonstrated this session), no caching for
-  envtest binaries or the custom-plugin `golangci-lint` build, no `timeout-minutes` on any job, and
-  `go mod tidy` ran silently before tests with any drift discarded rather than failing the build. Fixed
-  all of it: added `concurrency`/`paths-ignore`/`timeout-minutes` to all workflows; added a single
-  `actions/cache` on `bin/` (keyed on `Makefile`+`.custom-gcl.yml`) covering the custom-plugin
-  `golangci-lint` binary, envtest assets, `controller-gen`, and `kustomize` at once, since all of the
-  Makefile's `go-install-tool` targets share that directory; replaced the silent `go mod tidy` with a
-  `tidy` + `git diff --exit-code` drift check; split `images.yml`'s build step so PR events get their
-  own single-platform (native arch), `load: true` build scanned *before* anything is ever pushed —
-  closing the PR-coverage gap and dropping the previously-wasted arm64/QEMU build on PRs that produced
-  nothing scannable anyway (a multi-platform manifest list can't be `docker load`ed); non-PR
-  build-then-push-then-scan ordering is unchanged and the residual risk window is documented in the
-  workflow, not silently accepted — genuinely closing it would mean scanning per-platform images before
-  assembling the manifest, meaningfully more machinery for a path only ever exercised by this repo's
-  own maintainer commits, not external changes. New `security.yml` installs `uv` (cached, keyed on the
-  pinned ASH version), runs `make security-scan` on every push/PR, and uploads the full report
-  (markdown/html/sarif/flat-json) as a build artifact. Confirmed locally: zero new `actionlint`
-  findings from any of the additions, ASH itself completes in ~12s so the 15-minute job timeout is
-  headroom, not a tight fit.
-- **`F-30` fixed: the controller-manager now protects itself from its own orchestrated shutdown
-  actions (2026-08-04).** `internal/kubeactions.Runner.protectedNamespaces` (the mechanism behind
-  `F-14`) previously resolved only `NodePowerAgent` operand namespaces, never the manager's own —
-  meaning a `ShutdownFlow` group whose selector happened to match the manager's own node or namespace
-  could evict (`DrainNodes`), scale to zero (`ScaleWorkload`), or preempt/disrupt it
-  (`config/manager/manager.yaml` had no `priorityClassName` or `PodDisruptionBudget`, unlike every
-  operand the manager itself renders). Fixed on both layers: `manager.yaml` now sets
-  `priorityClassName: system-cluster-critical` (matching `F-18`'s pattern for `NUTServer`) and
-  `config/manager/manager_pdb.yaml` adds a `minAvailable: 1` PDB, which — paired with `replicas: 1` —
-  blocks voluntary eviction the same way `F-18` already does for the NUT server pod. A new
-  `POD_NAMESPACE` downward-API env var lets `Runner.ManagerNamespace` (new field) resolve the
-  manager's own install namespace at runtime, wired through `cmd/main.go` and folded into
-  `protectedNamespaces` alongside the existing `NodePowerAgent` namespaces — so `DrainNodes` and
-  `ScaleWorkload` reject the manager's own namespace through the exact same code path `F-14` already
-  proved correct, not a parallel special case. `CordonNodes` was deliberately left alone: cordoning
-  only blocks new scheduling, it doesn't evict a pod already running, so it isn't a liveness threat to
-  the manager the way eviction/scale-to-zero are. Covered by
-  `TestRunnerScaleWorkloadsExcludesManagerNamespace` and `TestRunnerDrainNodesExcludesManagerNamespace`.
-- **`F-1` fixed: `NUTServerReconciler` and `NodePowerAgentReconciler` now carry finalizers
-  (2026-08-04).** Verified first, carefully, before implementing: owner-reference garbage collection
-  already correctly deletes the rendered child resources (Deployment/DaemonSet, ConfigMap, Secrets,
-  Service, NetworkPolicy, PDB) for a cluster-scoped owner with namespaced dependents — that part of
-  the original finding's framing didn't hold up under direct verification, and building a finalizer to
-  "fix" already-working GC would have been finalizers for their own sake. What deletion genuinely never
-  had: any observable record it happened at all. This operator's whole interface model is status,
-  Kubernetes Events, and PostgreSQL audit records (`GP-7`), and a deleted `NUTServer`/`NodePowerAgent`
-  previously left none of the three. `power.zalud.io/nutserver-cleanup` and
-  `power.zalud.io/nodepoweragent-cleanup` finalizers now make deletion an explicit, blocking step: on
-  delete, each reconciler emits a Kubernetes `OperandTeardown` Event (new `Recorder record.EventRecorder`
-  field on both reconcilers, wired via `mgr.GetEventRecorderFor(...)` in `cmd/main.go`; RBAC for
-  `events create;patch` added) before removing the finalizer. RBAC for the finalizer itself needed no
-  manifest change — kubebuilder had already scaffolded `*/finalizers` `update` on all 9 CRDs from the
-  start. Covered by new envtest specs asserting finalizer presence after create and actual object
-  deletion after a second reconcile pass (`should finalize and actually delete on deletion`, both
-  controllers) — existing tests that delete-and-clean-up in `AfterEach` were updated to reconcile once
-  more after `Delete` so the finalizer's own removal is exercised, not just added.
-- **`F-4` fixed: operand-namespace fields now reject reserved Kubernetes namespaces
-  (2026-08-04).** The `namespaces` `create`/`update`/`patch` RBAC verb genuinely can't be narrowed by
-  name — Kubernetes RBAC only supports `resourceNames` on verbs acting on an object that already
-  exists, not `create` — so the original "narrow to what's actually needed" framing wasn't achievable
-  at the RBAC layer. Investigating *why* it mattered surfaced a real, more concrete gap it was gesturing
-  at: `NUTServerSpec.Namespace`/`NodePowerAgentSpec.Namespace`/`PowerManagementCluster.spec
-  .operandNamespace.name` are user-settable on cluster-scoped CRDs with zero validation beyond DNS-label
-  syntax — nothing stopped a `NUTServer`/`NodePowerAgent` CR from pointing its operand namespace at
-  `kube-system` and having the operator `CreateOrUpdate`-relabel it, or later render Deployments/
-  Secrets/ConfigMaps into it. Fixed by rejecting `default`/`kube-system`/`kube-public`/
-  `kube-node-lease` at both layers: `validateOptionalNamespace` (webhook, the primary defense — rejects
-  the request at admission time, covers all three fields via one shared helper) and
-  `rejectReservedOperandNamespace` (`internal/controller`, belt-and-suspenders for objects that predate
-  the webhook or reach the controller with it disabled). The two are intentionally duplicated rather
-  than shared across packages — same accepted pattern as `isSupportedInventoryEntityKind`. `serviceaccounts`
-  RBAC breadth (the other half of the original finding) was already confirmed defused in the same
-  2026-08-04 audit pass: no `AutomountServiceAccountToken`, no `rolebindings`/`clusterrolebindings`
-  RBAC at all.
-- **Real private-IP leak found and fixed in the process of building the new CI check below
-  (2026-08-04).** `internal/controller/nutserver_render_test.go` had a literal private IPv4 address as
-  a test fixture `Endpoint.Host` value — the real IP of a device from this session's private-repo alpha
-  deployment work, committed to this *public* repo in `70bb81f`. Self-introduced, caught while
-  designing the automated check below (a manual `grep` against the current tree, run before writing
-  the CI job, to see what it would actually need to handle), not by any existing tooling — confirms the
-  gap the new check closes was real, not hypothetical. Fixed by replacing it with the project's own
-  established convention (`*.example.net`, already used throughout `config/samples/` and
-  `docs/examples/`); the test doesn't assert on the host value so behavior is unaffected. Still visible
-  in git history at `70bb81f` — scrubbing that would mean a history rewrite and force-push, out of
-  scope unless explicitly requested. New `security.yml` job `private-ip-scan` greps all tracked files
-  for RFC1918 IPv4 literals (`.devcontainer/` excluded — its one RFC1918 usage is a generic Docker
-  network-config value, not site-specific infrastructure) and fails the build on any match; confirmed
-  clean against the current tree, including this fix. No RFC1918 secret/pattern is embedded in the
-  check itself — deliberately generic, so the check's own config can't become a second leak of exactly
-  what it's guarding against.
-- **`F-31` fixed: all 9 controllers now write status via `Status().Patch()`, not `Status().Update()`
-  (2026-08-04).** Confirmed via grep before fixing: all 9 reconcilers called `Status().Update()`
-  exactly once each; zero used `Status().Patch()`. Reproduced the exact production failure mode (10h
-  log, 744 `ShutdownFlow` conflicts) as a real regression test rather than assuming the mechanism:
-  `resourceVersionRaceInjectingClient` in `shutdownflow_controller_test.go` lets the reconciler's own
-  `Get` return normally, then — on a separate fetch that never touches the object the reconciler holds
-  — advances that same object's `resourceVersion` on the (real, envtest) API server before the
-  reconciler reaches its status write, simulating a concurrent write landing between a cache-backed
-  read and the eventual write. Verified both directions: temporarily reverted to
-  `Status().Update()` and confirmed the test fails with the exact same `409 Conflict` / "the object has
-  been modified" error from the production log; restored `Status().Patch(ctx, obj,
-  client.MergeFrom(base))` (with `base` captured via `DeepCopy()` immediately after the initial `Get`,
-  before any mutation) and confirmed it passes. A merge patch has no `resourceVersion` precondition, so
-  it applies cleanly against whatever the live object actually is instead of racing a stale read. Fixed
-  identically across all 9 controllers, including `NUTServer`/`NodePowerAgent` where the finalizer-add
-  `r.Update()` (a separate, unrelated metadata write) happens between the base capture and the status
-  write — harmless, since the status subresource endpoint only ever persists the `.status` diff
-  regardless of what else changed in the patch body.
-- **`F-2` fixed: leader-election code default flipped `false` → `true` (2026-08-04).** Every real
-  deployment was already effectively running with leader election active (`config/manager/manager.yaml`
-  passes bare `--leader-elect`, which Go's `flag` package treats as `true`) — this closes the
-  defense-in-depth gap where a future manifest change dropping that arg would have silently regressed
-  to no leader election. Verified the flip doesn't break local iteration: controller-runtime's leader
-  election requires an in-cluster-detected namespace when enabled, which a `go run` process against a
-  kubeconfig doesn't have (`unable to find leader election namespace: not running in-cluster` —
-  confirmed by reading `sigs.k8s.io/controller-runtime/pkg/leaderelection`, not guessed). Fixed by
-  adding `--leader-elect=false` to the `Makefile`'s `run` target, so `make run` keeps working
-  out-of-cluster exactly as before; the in-cluster path (`config/manager/manager.yaml`, and thus every
-  real and `test-e2e.yml` deployment) is unaffected since it already passed the flag explicitly.
-- **`F-5` re-scoped and closed: documented the `argoproj.io/workflows` RBAC/`RunWorkflow` integration
-  (2026-08-04).** Added an "RBAC Scope" section to `docs/security.md` covering the two ClusterRole
-  grants broader than they look in isolation: `argoproj.io/workflows` (backs the real, used
-  `RunWorkflow` executor action in `internal/kubeactions` — creates an Argo `Workflow` referencing an
-  existing `WorkflowTemplate` by name, never inline spec; no `workflowtemplates` RBAC at all) and
-  `namespaces` `create`/`update`/`patch` (can't be narrowed by name at the RBAC layer since `create`
-  doesn't support `resourceNames`; the gap is closed at the input-validation layer by `F-4` instead,
-  referenced directly from the new section).
-- **`F-32` fixed: `NodePowerAgent`'s Pod watch no longer shares the manager's cluster-wide Pod cache
-  (2026-08-04).** The naive fix the finding suggested — `cache.Options.ByObject` on the shared manager
-  cache — turned out to be unsafe, not just simple: confirmed via direct read that
-  `internal/kubeactions.Runner.evictPodsOnNode` (the real `DrainNodes` eviction path) does
-  `r.Client.List(ctx, &pods)` with **no label or field selector at all**, filtering client-side by
-  `pod.Spec.NodeName`, and `Runner.Client` is the same `mgr.GetClient()` every controller shares.
-  Scoping that shared cache's Pod informer to `NodePowerAgent`-labeled pods would have made
-  `DrainNodes` silently stop seeing any other pod in the cluster — a safety-critical regression in the
-  operator's actual host-shutdown eviction path, not a hypothetical one. Fixed instead with a second,
-  fully independent `cache.Cache` (`cache.New`, label selector on `power.zalud.io/nodepoweragent`
-  exists, registered via `mgr.Add` and wired in with `WatchesRawSource(source.Kind(...))`) that never
-  touches `mgr.GetCache()`/`mgr.GetClient()` at all. Since `SetupWithManager` isn't exercised by the
-  existing envtest reconcile-only tests (they call `Reconcile` directly), added a new spec that starts
-  a real `ctrl.Manager` end-to-end against envtest, confirms it reconciles the existing resource on its
-  own via the manager's initial list, then creates a labeled Pod with no manual `Reconcile` call and
-  confirms the dedicated watch alone drives `Status.ReadyNodeCount` to 1 — proving the cache/watch
-  wiring actually works against a real API server, the one thing local `go build`/`go vet` can't catch
-  (this is exactly the class of bug `F-28` was, caught only via a live cluster).
-- **`F-7` fixed: added partial-failure convergence tests for both operand-rendering controllers
-  (2026-08-04).** `NUTServer` and `NodePowerAgent` are the only two controllers that render
-  Kubernetes child resources (`nutserver_render.go`, `nodepoweragent_render.go`); grepped both files
-  first to confirm every `ensure*` helper already uses `controllerutil.CreateOrUpdate` with no raw
-  `.Create()` calls anywhere, so there was no live duplicate-creation bug to find — the actual gap was
-  purely the missing test coverage the finding named. Added one spec per controller: seed a stale,
-  partial operand state (a `ConfigMap` with content from a prior spec, no other child resources yet),
-  reconcile once and assert full convergence to the current desired state (stale content corrected,
-  every operand rendered, owner references set), then reconcile again with nothing changed and assert
-  every touched object's `resourceVersion` is unchanged — proving both convergence and true
-  idempotency (no spurious rewrite loop), not just "doesn't error." Hit and fixed a real envtest
-  footgun along the way, unrelated to the controllers themselves: envtest runs no namespace
-  controller, so a `Delete()` on a namespace in one spec's `AfterEach` never actually finishes, and a
-  later spec creating the same-named namespace can 403/409 against it depending on timing. Both new
-  specs use a dedicated, uniquely-named namespace instead of the Describe block's shared one to avoid
-  depending on that cleanup ever completing.
+- `observedGeneration` across all ten CRDs, enum validation, single storage version, spec/status
+  separation.
+- Source hardening for ASH/Checkov findings; `make security-scan` runs ASH locally and in CI.
+- `F-1` finalizers with `OperandTeardown` Events; `F-2` leader election on by default; `F-4`
+  reserved operand namespaces rejected at both layers; `F-5` RBAC scope documented in
+  `docs/security.md`.
+- `F-7` convergence and idempotency tests for both rendering controllers; `F-28` CNPG watch gated on
+  CRD presence; `F-29` e2e namespace labeled for the metrics NetworkPolicy; `F-30` manager protects
+  itself from its own flows; `F-31` status writes are patches; `F-32` dedicated Pod cache for the
+  agent watch.
+- Project-owned multi-arch images for all four operands with SBOM, provenance, and scanning.
+- CI: concurrency cancellation, path filters, timeouts, shared `bin/` cache, tidy-drift check,
+  pre-push image scanning on PRs, and a `security.yml` running ASH plus an RFC1918 `private-ip-scan`.
+- Resolutions with their root causes and verification are recorded per finding in `docs/audits/`.
 
 #### Open Work
 
 - Release image signing policy, cosign verification docs, and immutable digest production examples
   (`docs/images.md` describes the target state; keyless Sigstore signing as a release gate isn't
   confirmed wired into CI yet).
-- **ASH now runs automatically on every push/PR** (`security.yml`, 2026-08-04) — "re-run ASH after
-  each hardening pass" is no longer a manual step to remember. What remains manual: triaging any new
-  unsuppressed medium-or-higher finding it surfaces.
+- Triaging new unsuppressed medium-or-higher ASH findings is still manual; the scan itself runs on
+  every push/PR.
 - Decide container-mode vs. locally-installed `grype`/`syft`/`opengrep`/`cfn-nag`/`cdk-nag` for full
   ASH coverage — confirmed still `MISSING` in the scan output, not just undecided in principle.
 
@@ -899,13 +420,11 @@ component.
 
 #### Built
 
-- Kubebuilder/controller-runtime scaffold, Apache-2.0 licensing, public project metadata.
-- Resiliency contract documented for API/PostgreSQL/NUT/telemetry/node-agent partitions: lost
-  connectivity degrades certainty, never grants optimistic action (`docs/design/resiliency-and-partitions.md`).
-- Public-safe sample manifests and the Orion example topology.
-- 2026-08-03 documentation migration: audit records, adaptive-execution design, capability/
-  device-profile docs, decision-index update, `OD-4` tier closure applied to `scope-boundaries.md`/
-  `planner-requirements.md`.
+- Component-scoped design docs under `docs/design/` with stable identifier namespaces.
+- Governing principles, scope boundaries, and the decision index (`docs/design/scope-boundaries.md`,
+  `docs/design/decision-index.md`).
+- Architecture, security, metrics, images, and shutdown-flow references under `docs/`.
+- Audit records under `docs/audits/`, each owning its findings and their resolutions.
 
 #### Open Work
 

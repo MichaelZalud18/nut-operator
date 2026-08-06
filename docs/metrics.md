@@ -42,6 +42,22 @@ Not labeled by `shutdownflow`: every action from every flow passes through the s
 | `action_attempts_total` | Counter | `action`, `mode` (`DryRun`/`Enforce`), `outcome` | Every `RunAction` call, by the executor action type (`ScaleWorkload`, `CordonNodes`, `DrainNodes`, `RunWorkflow`, `AgentShutdown`, `Notify`, `Wait`, `Gate`), mode, and outcome (`Succeeded`, `Simulated`, `Blocked`, or `Error`). |
 | `action_duration_seconds` | Histogram | `action` | Time spent on one `RunAction` call. |
 
+## `nutoperator_audit_*`
+
+The shutdown-time audit spool (`spec.storage.auditSpool`). Any non-zero rate here means PostgreSQL
+was refusing audit writes during execution — the flow continued, which is the intent (SB-11), but
+the audit trail is degraded until the journal drains.
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `spool_records_total` | Counter | `outcome` (`spooled`/`dropped`) | Audit records the fallback journal took (`spooled`) or refused because it was at its size cap (`dropped`). A `dropped` record exists nowhere: PostgreSQL rejected it and the journal would not hold it. |
+| `spool_replay_records_total` | Counter | `outcome` (`replayed`/`skipped`) | Spooled records returned to PostgreSQL. `skipped` means unparseable or of a record kind this build does not recognize, so it stays in the journal. |
+| `spool_journal_bytes` | Gauge | — | Journal size at the last spool write. Alert on this ahead of loss: records are dropped once it reaches `spec.storage.auditSpool.maxSize`. |
+
+Useful alerts: `increase(nutoperator_audit_spool_records_total{outcome="dropped"}[1h]) > 0` for lost
+evidence, and `nutoperator_audit_spool_journal_bytes` approaching the configured cap for evidence
+about to be lost.
+
 ## Design notes
 
 - Collectors live in `internal/metrics`, registered via `promauto.With(metrics.Registry)` against

@@ -49,12 +49,64 @@ the operator replaces the bundled set and never touches your resources.
 
 Where both cover the same device, yours wins. Profile matching walks a fixed precedence chain —
 exact model and firmware, then exact model, then model glob, then driver family, then the
-universal floor — and within any tier, a profile you supplied outranks a bundled one. You do not
+unidentified-device profile — and within any tier, a profile you supplied outranks a bundled one. You do not
 need to fork the catalog or disable bundled profiles to override one.
 
 The bundled catalog is deliberately small. Profiles marked `ProjectVerified` have been exercised
 against real hardware; the project cannot verify devices it does not own. If you have a device
 that is not covered, a contributed profile is welcome.
+
+## What if my UPS does not have a packaged capability profile?
+
+Most won't, and that is expected. UPS hardware varies enormously in what it reports, and the
+project can only verify devices it owns. Two steps:
+
+**1. Build one with the probe helper.** Create a `UPSCapabilityProbe` pointing at your `UPSDevice`:
+
+```yaml
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSCapabilityProbe
+metadata:
+  name: unidentified-rack-a-ups
+spec:
+  deviceRef:
+    name: rack-a-ups
+```
+
+The operator reads what the device actually reports and writes a ready-to-apply profile into
+`status.draftProfile`, along with the variables it saw, any non-standard names worth a look, and
+suggested aliases where a standard reading appears to have arrived under a different name:
+
+```sh
+kubectl get upscapabilityprobe unidentified-rack-a-ups \
+  -o jsonpath='{.status.draftProfile}' > my-ups-profile.yaml
+```
+
+Review it before applying. The draft declares only what the device demonstrably reported, and the
+actuation section is deliberately left empty — actuation commands can cut power to equipment, so
+support is declared only after it has been verified against the firmware you are running. Anything
+the helper inferred rather than observed is marked as a suggestion in a comment.
+
+**2. Send it upstream.** `status.issueReport` is the same findings formatted for a GitHub issue,
+with a verification checklist:
+
+```sh
+kubectl get upscapabilityprobe unidentified-rack-a-ups \
+  -o jsonpath='{.status.issueReport}'
+```
+
+Open an issue with that and we will add the profile to the bundled catalog, so the next person with
+your hardware does not have to repeat the work. Contributions are how the catalog grows.
+
+Probing is advisory throughout. A probe never changes how a device resolves, never feeds the
+planner, and never runs while power is failing — it reads a device and writes a draft, nothing more.
+
+**Until a profile matches, `Enforce` mode is blocked.** A device with no profile is not a device
+with reduced capability; it is a device nothing has been verified about. Dry-run still compiles and
+publishes the full plan, so you can review exactly what would happen — but the operator will not cut
+power to real nodes on an unverified device's signal. If you accept that risk deliberately, set
+`spec.safety.allowUnidentifiedDevices: true` on the flow, which records the decision in Git where it
+can be reviewed (OD-31).
 
 ## Do I need PostgreSQL?
 
@@ -67,6 +119,39 @@ degrades auditability without halting power response (SB-11, GP-3).
 CloudNativePG is the recommended in-cluster implementation. If you have PostgreSQL outside the
 cluster, `ExternalPostgres` is actually the more resilient choice for this workload, because a
 database outside the cluster is not in the shutdown path of the event it is recording.
+
+## Why does a Kubernetes operator need a database when most operators don't?
+
+Most operators don't need one because reconciliation makes history disposable: lose everything you
+knew, and the next reconcile re-derives current state from `spec` plus the live cluster. What
+happened along the way goes out as Events and metrics, and nobody misses it.
+
+That does not work here. The events worth recording happen while the cluster is going down, and what
+they leave behind is absence — there is no status to read afterward, because the nodes are off.
+Which nodes released, in what order, against what battery reading, and why a wave stopped early
+cannot be re-derived from a cluster that no longer exists. Separately, telemetry snapshots arrive
+one row per device per poll indefinitely, which is not a load etcd should carry.
+
+So Kubernetes holds desired state and current summaries, and PostgreSQL holds history (GP-3). The
+arrangement is uncommon for an operator but not unprecedented: Argo Workflows archives completed
+workflows to PostgreSQL for the same reason, and Tekton Results does the same. Full reasoning is in
+`docs/design/audit-storage-schema.md`.
+
+## What happens to audit records if PostgreSQL is down during a shutdown?
+
+Nothing stops. Power response never waits on the audit trail (SB-11).
+
+If `spec.storage.auditSpool` is enabled, records PostgreSQL refuses are appended to a local JSONL
+journal on a durable volume, and the `ShutdownFlow` reports `AuditSpoolFallback`. The next reconcile
+that successfully opens the audit store drains the journal back into PostgreSQL and deletes it. The
+records carry their original IDs and every insert is an upsert, so replaying is a no-op if part of it
+already landed.
+
+The journal is capped (`maxSize`, default `64Mi`). If it fills, the operator stops spooling and says
+so under a separate `AuditSpoolFull` reason, because losing audit records is a different problem than
+delaying them — and filling the volume during a power event would be worse than either.
+
+If the spool is not enabled, records PostgreSQL refuses are lost, and the flow still executes.
 
 ## Why doesn't it bring my cluster back up?
 

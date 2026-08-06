@@ -316,7 +316,11 @@ relationships or concurrent branches.
 
 **RB-6 · CRDs are cluster-scoped.** The resource set is `PowerManagementCluster`, `UPSDevice`,
 `PowerInfrastructure`, `PowerInventoryNode`, `PowerInventoryEdge`, `UPSCapabilityProfile`,
-`NUTServer`, `NodePowerAgent`, and `ShutdownFlow`.
+`UPSCapabilityProbe`, `NUTServer`, `NodePowerAgent`, and `ShutdownFlow`.
+
+`UPSCapabilityProbe` is the one resource that requests an action rather than declaring desired
+state. It is advisory tooling (RS-7): it reads a device, drafts a profile into its own status, and
+affects nothing else.
 
 **RB-7 · Admission webhooks mirror reconciler safety checks.** Unsafe combinations are rejected
 before persistence where admission is enabled and are still surfaced through reconciliation status
@@ -354,7 +358,6 @@ for defense in depth.
 | OD-20 | Instant command scope and gating: which NUT instant commands and writable variables enter scope, how they are gated given they can cut power to equipment, and which capability profile fields declare support. Bounded by OD-1 on anything touching power-return | Capability schema |
 | OD-21 | Driver configuration ownership: whether driver name, poll interval, and driver-specific parameters move from `UPSDevice` spec into capability profiles, or remain in spec with profiles supplying defaults and validation. Hybrid — profile default, spec override — is the likely answer (RS-5 pattern) | Capability schema |
 | OD-22 | Firmware-conditional quirks: structured quirk objects with firmware constraints, versus firmware-ranged selectors and version-scoped profiles | Capability schema |
-| OD-23 | Telemetry variable aliasing: whether alias mappings live in the profile telemetry section, and how collisions and precedence resolve when a canonical name is both aliased and natively reported | Capability schema |
 | OD-24 | Non-NUT power device actuation: second actuation path for power devices without NUT drivers, or permanently topological. Decided alongside OD-10, since both concern control surfaces outside the RB-1/SB-2a NUT-network-only posture | v2 scoping |
 | OD-25 | PDU profile kind: schema shape for the parallel PDU capability kind, and which machinery is factored out of `UPSCapabilityProfile` for shared use. Scaffolding only in v1 | PDU scaffolding |
 | OD-26 | Provenance field semantics: whether `provenance` is advisory metadata or affects resolution — for example, whether a `Community` profile requires explicit opt-in or emits a warning condition when matched | Capability schema |
@@ -371,6 +374,8 @@ for defense in depth.
 | OD-4 | Numbered shutdown tiers. See the change log entry of 2026-08-03. |
 | OD-5 | Startup ordering is an advisory projection for subscribers, not an operator-executed graph. |
 | OD-15 | Probe-history persistence uses PostgreSQL `capability_profile_verifications` rows for "last verified against firmware X" and drift evidence. |
+| OD-23 | Telemetry variable aliasing lives in the profile telemetry section. A natively reported canonical name always outranks an alias; aliasing is one-directional and total; applied and shadowed aliases are both recorded as diagnostics. |
+| OD-31 | A UPS that matches no product capability profile blocks `Enforce` mode, naming the devices, unless `spec.safety.allowUnidentifiedDevices` records acceptance. Dry-run compilation and review are unaffected. The catch-all profile is renamed from "universal floor" to the unidentified-device profile. |
 
 ---
 

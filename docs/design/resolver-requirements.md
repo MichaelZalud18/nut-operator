@@ -49,8 +49,8 @@ in its own package under planner-grade determinism discipline (PL-7). The resolv
 matching keys from the topology contract and receives matched profiles.
 
 **RS-5 · Precedence chain, restated as the resolver consumes it:** exact model+firmware → exact
-model → model glob → driver family → universal floor. CRD source over bundled within a tier.
-Highest semver within a source. Lexicographic final tiebreak. The universal floor always matches,
+model → model glob → driver family → unidentified-device profile. CRD source over bundled within a tier.
+Highest semver within a source. Lexicographic final tiebreak. The unidentified-device profile always matches,
 so resolution never fails for want of a profile — it degrades (PL-33).
 
 **RS-6 · Provider key validation (OD-8r).** Behavior on a malformed or missing model string from

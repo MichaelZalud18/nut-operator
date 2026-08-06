@@ -10,8 +10,9 @@ from F-7.
 Remediation note: F-8 through F-13 are implemented in the node-agent hard-infra pass. F-14 remains
 open as the next node-agent-specific audit item.
 
-**Update (2026-08-05): F-8 through F-14 are all closed** — see `docs/tasks.md`'s Node Agent /
-DaemonSet Built section for how each landed. A second, fresh pass against the current code (not just
+**Update (2026-08-05): F-8 through F-14 are all closed** — each fix lives at its own site
+(`internal/controller/nodepoweragent_render.go`, the webhook defaulter in
+`internal/webhook/v1alpha1`, and `internal/kubeactions/runner.go` for self-exclusion). A second, fresh pass against the current code (not just
 this file) surfaced four more findings, `F-33`–`F-36`, appended below rather than folded into the
 original findings list, which is left as the historical record it was written as.
 
@@ -130,7 +131,7 @@ SB-5 is unaffected — different trigger, different product.
 6. F-11, F-12 grace period and probes — deliberate values, with the actuator liveness hazard
    documented.
 
-All items above are closed as of 2026-08-05 — see `docs/tasks.md`.
+All items above are closed as of 2026-08-05.
 
 ## Findings — second pass, 2026-08-05
 
@@ -145,7 +146,10 @@ own staleness gating is a different, ShutdownFlow-trigger-level mechanism that d
 flow can be triggered by one device's condition while its groups release nodes covered by a different
 agent whose own devices are independently stale. A field that looks like a safety gate and silently
 does nothing is worse than not having the field: a user reading the CRD schema has every reason to
-believe it's load-bearing. Fixed — see `docs/tasks.md`.
+believe it's load-bearing. Fixed: per-agent freshness is computed once in `nodeReleasesForTarget`
+(walking `NUTServerRefs` → `SelectedDevices` → each `UPSDevice.Status.Phase`) and threaded into the
+same group-level `AgentShutdown` gate `F-14`'s readiness check already uses. Fails closed — an
+unresolvable device set counts as not fresh.
 
 **F-34 · Tier-0 DaemonSet containers had no default resource requests/limits.**
 `NodePowerAgentResources.Upsmon`/`.Actuator` are plain `corev1.ResourceRequirements{}` with nothing
@@ -153,15 +157,17 @@ defaulting them anywhere in the render or webhook path. A user who doesn't set `
 BestEffort QoS on the one pod this entire project depends on surviving node pressure — no OOM-score
 protection, no scheduler capacity reservation. `priorityClassName: system-node-critical` (`F-9`)
 protects against *preemption*; it does nothing for OOM-kill ordering, which is scored primarily off
-QoS class and requests. Fixed — see `docs/tasks.md`.
+QoS class and requests. Fixed in the webhook defaulter, where `F-9`'s `priorityClassName` default
+already lives, applied per resource key so a user-supplied value is never overwritten.
 
 **F-35 · `upsmon` had no liveness probe at all.** The original audit (`F-12`) correctly flagged that
 the actuator must never carry a liveness probe (restart mid-flow risks re-triggering or losing signal
 state) but didn't separately weigh in on `upsmon`, which carries no such hazard — it's the read-only
 monitoring container. The result: a `upsmon` process that hangs without crashing outright sits
 `NotReady` forever with no path back to healthy. Fixed with a process-existence check
-(deliberately not tied to NUT reachability, which is what the readiness probe already covers) — see
-`docs/tasks.md`.
+(deliberately not tied to NUT reachability, which is what the readiness probe already covers), via
+`pgrep -x upsmon`. The actuator's deliberate lack of a liveness probe is asserted as a test
+invariant rather than left as a comment.
 
 **F-36 · `node-actuator`'s `command` poweroff method is fully implemented but structurally
 unreachable.** `runPoweroffCommand` in `cmd/node-actuator/main.go` works and is tested, but
@@ -170,7 +176,7 @@ spec content — there's no CRD field that can ever select the other method. Pos
 narrower `CAP_SYS_BOOT`-only privilege model is what `F-13` actually recommended over a
 `systemctl`-invoking path), but that's a call the design docs should make explicitly rather than
 leaving as an accidentally-dead code path. Not fixed — needs a decision, not a unilateral API
-addition. See `docs/tasks.md`.
+addition. Tracked under Node Agent / DaemonSet Open Work in `docs/tasks.md`.
 
 **Not a finding, but worth recording: the in-cluster signal-handoff smoke test is unblocked.** `kind`
 is now installed and works cleanly against the Docker daemon in this environment (WSL2, direct docker

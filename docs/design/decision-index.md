@@ -30,13 +30,9 @@ tags which design content informs which component.
 | `executor-requirements.md` | Act | EX | Planning & Execution Logic |
 | `inventory-provider-contract.md` | Topology input contract | IN | Inventory System |
 | `faq.md` | User-facing answers | — | Cross-cutting |
-| `capability-profiles.md` | Profile catalog and SKU capability records | CR | Capability Profiles |
-| `capability-profiles-and-upsd-config.md` | Profile influence on `upsd`: configuration yes, sizing never | — | Capability Profiles; NUT Server / upsd |
-| `device-profile-scope-and-provenance.md` | Profile scope by device class, provenance, non-NUT power devices | — | Capability Profiles |
-| `telemetry-normalization.md` | NUT variable normalization boundary | Runtime telemetry facts | Telemetry & Triggers |
-| `trigger-evaluation.md` | Telemetry-to-flow trigger decisions | Runtime decision facts | Telemetry & Triggers; Planning & Execution Logic |
-| `published-planner-artifacts.md` | Kubernetes-first interface and published plan artifacts | Artifact contract | Outputs & Publishing |
-| `shutdown-flow.md` | Public shutdown-flow model | Compiled plan format | Planning & Execution Logic; Outputs & Publishing |
+| `capability-profiles.md` | Profile catalog, SKU records, aliases, probe helper, `upsd` config influence, scope and provenance | CR | Capability Profiles; NUT Server / upsd |
+| `telemetry-and-triggers.md` | NUT normalization boundary and trigger decisions | Runtime telemetry and decision facts | Telemetry & Triggers; Planning & Execution Logic |
+| `shutdown-flow.md` | Public shutdown-flow model and the published artifact contract | Compiled plan format; artifact contract | Planning & Execution Logic; Outputs & Publishing |
 | `audit-storage-schema.md` | PostgreSQL durable-state schema and writer boundary | Migration-bound | Storage & Audit |
 | `scaling-and-sizing.md` | Component scaling guidance and what actually binds | — | NUT Server / upsd; Node Agent / DaemonSet; Planning & Execution Logic |
 | `adaptive-execution-tier-pointer.md` | Mid-flow adaptation: tier pointer and timing modes | AE (provisional) | Planning & Execution Logic |
@@ -62,7 +58,7 @@ Dated audit and findings records live in `docs/audits/` and share the `F-n` find
 | GP | Governing principle | scope-boundaries | GP-1 – GP-7 |
 | SB | Scope boundary | scope-boundaries | SB-1 – SB-14 |
 | RB | Repository-derived boundary | scope-boundaries | RB-1 – RB-7 |
-| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-30, OD-8r |
+| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-31, OD-8r |
 | PL | Planner requirement | planner-requirements | PL-1 – PL-49 |
 | CR | Capability resolution rule | planner-requirements | CR-1 – CR-3 |
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
@@ -90,7 +86,6 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | OD-20 | Instant command scope and gating, and which capability profile fields declare support. Bounded by OD-1 on power-return | F-22, F-23, F-27 | Capability schema |
 | OD-21 | Driver configuration ownership: capability profile vs `UPSDevice` spec; hybrid default-plus-override likely (RS-5 pattern) | — | Capability schema |
 | OD-22 | Firmware-conditional quirks: structured quirk objects vs firmware-ranged selectors | F-26 | Capability schema |
-| OD-23 | Telemetry variable aliasing: profile-supplied alias maps and collision precedence | F-25 | Capability schema |
 | OD-24 | Non-NUT power device actuation: second actuation path or permanently topological. Decided alongside OD-10 | — | v2 scoping |
 | OD-25 | PDU profile kind: parallel capability kind schema and factored shared machinery. Scaffolding only in v1 | — | Capability schema |
 | OD-26 | Provenance field semantics: advisory metadata or resolution-affecting | — | Capability schema |
@@ -115,6 +110,8 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | OD-11 | Hybrid selector resolution: compile graph, enumerate at execution | planner Resolved |
 | OD-13 | Load shedding node-granular baseline | planner Resolved |
 | OD-17 | Executor mid-flow state persists to PostgreSQL execution and resume-state tables | executor EX-14 |
+| OD-23 | Alias maps live in the profile telemetry section. Native readings outrank aliases; aliasing is one-directional and total; every applied alias is a diagnostic | capability-profiles.md |
+| OD-31 | An unidentified device blocks Enforce mode unless explicitly accepted. Dry-run review is unaffected. "Universal floor" retired as a name | PL-33 |
 
 ## Glossary
 
@@ -150,8 +147,11 @@ own shutdown planning or host actuation.
 and behaviors/quirks (actuation section). Matched, not merged; declaration authoritative, probing
 advisory (SB-9, CR-1, CR-2).
 
-**Universal floor** — the least-specific capability profile, bundled with the operator, guaranteed
-to match. The terminal tier of the matching chain, not a special case (PL-33).
+**Unidentified-device profile** — the least-specific capability profile, bundled with the operator,
+guaranteed to match. The terminal tier of the matching chain, not a special case (PL-33). Matching it
+means nothing is known about the device, not that the device has a known minimum capability, which is
+why it blocks enforcement under OD-31. Formerly called the "universal floor"; renamed 2026-08-05
+because that name implied a capability guarantee it never provided.
 
 **Last-ditch** — the role marking services and nodes that must survive until a given shutdown
 phase; under HA, the minimum viable control plane. Concretely: tier 0 in the numbered-tier

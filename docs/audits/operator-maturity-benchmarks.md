@@ -194,9 +194,8 @@ exists to prevent elsewhere.
 
 **F-31 · `Status().Update()` (read-modify-write) is universal, not a `ShutdownFlow`-specific bug.**
 `grep -c "Status().Update("` across all 9 `*_controller.go` files returns exactly 1 in every file;
-`Status().Patch(` returns 0 everywhere. `docs/tasks.md` already documents the observed consequence
-for `ShutdownFlow` (10h production log, 744 `"the object has been modified"` conflicts) and correctly
-root-causes it to the combination of an unpredicated high-frequency watch plus `Update` instead of
+`Status().Patch(` returns 0 everywhere. The observed consequence for `ShutdownFlow` — a 10h
+production log carrying 744 `"the object has been modified"` conflicts — root-causes to the combination of an unpredicated high-frequency watch plus `Update` instead of
 `Patch`. What wasn't previously stated: the `Update`-instead-of-`Patch` half of that root cause is
 not particular to `ShutdownFlow` — every controller in the codebase has the identical
 resourceVersion race latent in it. The other 8 haven't manifested it in logs only because nothing
@@ -243,8 +242,8 @@ substantially defused.
 
 ## Not findings (re-confirmed this pass)
 
-- `F-2`, previously flagged as the top item in "Recommended order" below — corrected 2026-08-04, see
-  `docs/tasks.md`. Leader election is active in every real deployment via the manifest's bare arg;
+- `F-2`, previously flagged as the top item in "Recommended order" below — corrected 2026-08-04.
+  Leader election is active in every real deployment via the manifest's bare arg;
   the code default only matters as defense-in-depth against a future manifest regression.
 - `time.Sleep` usage: zero, confirmed by direct grep across `internal/controller`.
 - Owner-reference usage (`SetControllerReference`/`SetOwnerReference`): present and scoped correctly
@@ -272,7 +271,10 @@ substantially defused.
 
 ## Re-audit triggers (unchanged from 2026-08-03, still current)
 
-- Any new controller or CRD.
+- Any new controller or CRD. **Fired 2026-08-05**: `UPSCapabilityProbe` adds a tenth CRD and a tenth
+  controller. Built to the conventions this benchmark already establishes — `observedGeneration`
+  tracking, `Status().Patch()` rather than read-modify-write, enum validation on the phase field,
+  cluster scope, status-only observed state — but the audit itself has not been re-run against it.
 - Before `v1beta1` promotion (Benchmark 3 becomes binding).
 - After OD-1 resolves (determines whether L3 is reachable).
 - Before first release with `ActuatorPolicy: SystemdPoweroff` enabled by anyone.
@@ -280,8 +282,8 @@ substantially defused.
 ## Fixes applied — 2026-08-04 (same day)
 
 Items 1, 2, and 4 from the recommended order above were implemented and verified (build, vet, full
-test suite including new specs, `make manifests`, ASH) the same day this audit pass ran. Full detail in
-`docs/tasks.md`'s Operator Maturity & Hardening Built section; summary here for the audit trail:
+test suite including new specs, `make manifests`, ASH) the same day this audit pass ran. Recorded
+here for the audit trail:
 
 - **`F-30` fixed** — `priorityClassName`/PDB added for the manager; `POD_NAMESPACE` downward API wires
   the manager's own namespace into `kubeactions.Runner.protectedNamespaces` alongside the existing
@@ -298,15 +300,15 @@ test suite including new specs, `make manifests`, ASH) the same day this audit p
 A genuine, unrelated finding surfaced while building a new CI check during this same pass: a real
 private IP address (a device from this session's private-repo work) had been committed to this public
 repo's test fixtures in an earlier commit (`70bb81f`). Fixed in the working tree; still visible in git
-history. See `docs/tasks.md`'s Operator Maturity & Hardening Built section and `security.yml`'s new
-`private-ip-scan` job.
+history. The automated check that now prevents a recurrence is `security.yml`'s `private-ip-scan`
+job, which greps all tracked files for RFC1918 literals and fails the build on any match. The check
+embeds no RFC1918 pattern of its own, so its config cannot become a second leak of what it guards.
 
 ## Fixes applied — 2026-08-04 (later same day)
 
 `F-31`, `F-2`, and `F-5` — the three remaining items from the "Recommended order" list above other
 than `F-32`/`F-3`/`F-7` — implemented and verified (build, `make lint`, full test suite including a
-new regression spec) the same day. Full detail in `docs/tasks.md`'s Operator Maturity & Hardening
-Built section; summary here for the audit trail:
+new regression spec) the same day. Recorded here for the audit trail:
 
 - **`F-31` fixed** — all 9 controllers converted from `Status().Update()` to
   `Status().Patch(ctx, obj, client.MergeFrom(base))`. Not just converted: reproduced the exact
@@ -329,8 +331,7 @@ see `docs/tasks.md`.
 
 `F-32` and `F-7` — the last two items from the original "Recommended order" list — implemented and
 verified (build, vet, `make lint`, full test suite across 8 random seeds, `make manifests` with no RBAC
-diff, ASH) the same day. Full detail in `docs/tasks.md`'s Operator Maturity & Hardening Built section;
-summary here for the audit trail:
+diff, ASH) the same day. Recorded here for the audit trail:
 
 - **`F-32` fixed** — see the "F-32 update" note above: the finding's own suggested fix
   (`cache.Options.ByObject` on the shared manager cache) turned out to be unsafe, since
@@ -351,8 +352,8 @@ summary here for the audit trail:
 
 `F-3` — the last item from the original "Recommended order" list — implemented and verified (build,
 vet, `make lint`, full test suite including new collector and reconcile-path tests, `make manifests`
-with no RBAC diff, ASH) the same day. Full detail in `docs/tasks.md`'s Outputs & Publishing Built
-section and `docs/metrics.md`; summary here for the audit trail:
+with no RBAC diff, ASH) the same day. Full contract in `docs/metrics.md`; recorded here for the
+audit trail:
 
 - **`F-3` fixed** — see the "F-3 update" note above. All seven highest-value candidates the audit
   named are registered: `compile_total`/`compile_duration_seconds`, `plan_hash_changes_total`,

@@ -29,6 +29,9 @@ The API group is `power.zalud.io/v1alpha1`.
 - `PowerInventoryNode` attaches planner-relevant power metadata to Kubernetes node names without replacing the Kubernetes `Node` as the canonical identity.
 - `PowerInventoryEdge` declares provider-neutral `Feeds` and `Carries` topology relations between UPS devices, nodes, and infrastructure entities.
 - `UPSCapabilityProfile` declares reusable product/SKU capability records: authoritative NUT telemetry variables, UPS actuation behaviors, quirks, and deterministic match selectors. These are not per-site inventory records.
+- `UPSCapabilityProbe` reads what a UPS actually reports and drafts a `UPSCapabilityProfile` from it,
+  for hardware the bundled catalog does not cover. Advisory only: it never changes how a device
+  resolves and never runs on the failure path.
 - `NUTServer` renders and operates one logical `upsd` server instance for selected UPS devices.
 - `NodePowerAgent` manages the per-node monitoring and actuation DaemonSet. It separates `MonitorOnly`, `DryRun`, and `Actuate` modes.
 - `ShutdownFlow` defines dependency-graph shutdown policy compiled into ordered waves. Enforced flows require an explicit approval annotation.
@@ -66,6 +69,7 @@ spec:
     auditSpool:
       enabled: true
       path: /var/lib/nut-operator/audit-spool
+      maxSize: 64Mi
 ```
 
 External PostgreSQL is also modeled for non-CNPG clusters. `Disabled` exists for local development only.
@@ -188,13 +192,9 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [NUT usage and fidelity audit](docs/audits/nut-usage-audit.md)
 - [Quirk handling, aliasing, and firmware gating](docs/audits/quirks-aliasing-firmware.md)
 - [Capability profiles](docs/design/capability-profiles.md)
-- [Capability profiles and upsd configuration](docs/design/capability-profiles-and-upsd-config.md)
-- [Device profile scope and provenance](docs/design/device-profile-scope-and-provenance.md)
 - [Upstream NUT relay](docs/design/upstream-nut-relay.md)
 - [Audit storage schema](docs/design/audit-storage-schema.md)
-- [Telemetry normalization](docs/design/telemetry-normalization.md)
-- [Trigger evaluation](docs/design/trigger-evaluation.md)
-- [Published planner artifacts](docs/design/published-planner-artifacts.md)
+- [Telemetry and triggers](docs/design/telemetry-and-triggers.md)
 - [Resiliency and partitions](docs/design/resiliency-and-partitions.md)
 - [Design decision index](docs/design/decision-index.md)
 - [Scope boundaries](docs/design/scope-boundaries.md)

@@ -36,6 +36,16 @@ firmware. This verification-gated posture is correct and should be preserved.
 
 ## Findings
 
+**F-25 is fixed (2026-08-05).** Alias maps are part of the profile telemetry section, applied by the
+normalizer, and both applied and shadowed aliases surface as telemetry diagnostics. OD-23's
+precedence question is closed with the rules in `capability-profiles.md`. The `battery.low` quirk
+that motivated this finding now has a real alias behind it. The original finding follows.
+
+**F-26's firmware-scoping question remains open**, but the two bundled quirks that field testing
+disproved (`built-in-nut-server`, `snmp-not-supported-by-ups`) were corrected to firmware-scoped
+statements of what was actually observed, following the `firmware-before-1.4.18` precedent already in
+the catalog. That is a data correction, not an answer to OD-22.
+
 **F-25 · Variable aliasing has no mechanism, and the quirk that needs it is already recorded.**
 `internal/telemetry/normalize.go` reads NUT variables by literal name and does not consume
 capability profiles at all — no profile, match result, or alias map appears in the package. The
