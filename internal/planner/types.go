@@ -32,6 +32,29 @@ type StructuralInputs struct {
 	Groups            []Group    `json:"groups,omitempty"`
 	Steps             []Step     `json:"steps,omitempty"`
 	AbortBehavior     string     `json:"abortBehavior,omitempty"`
+	// DeviceCapabilities carries the resolver's matched capability profiles,
+	// one per UPS device, so trigger definitions can be validated against what
+	// the devices actually report (PL-19). Empty means the caller supplied no
+	// capability context and trigger-capability validation is skipped.
+	DeviceCapabilities []DeviceCapability `json:"deviceCapabilities,omitempty"`
+	// PowerDomains is the resolver's derived domain membership, used to decide
+	// which devices a domain-scoped trigger is validated against.
+	PowerDomains []PowerDomainMembership `json:"powerDomains,omitempty"`
+}
+
+// DeviceCapability is one UPS device's resolved telemetry capability, reduced
+// to what the planner needs. The planner never performs profile matching.
+type DeviceCapability struct {
+	DeviceID           string   `json:"deviceID"`
+	ProfileID          string   `json:"profileID,omitempty"`
+	Unidentified       bool     `json:"unidentified,omitempty"`
+	TelemetryVariables []string `json:"telemetryVariables,omitempty"`
+}
+
+// PowerDomainMembership names the UPS devices derived into one power domain.
+type PowerDomainMembership struct {
+	Name       string   `json:"name"`
+	UPSDevices []string `json:"upsDevices,omitempty"`
 }
 
 // TierPolicy assigns default shutdown tiers for groups that do not carry an

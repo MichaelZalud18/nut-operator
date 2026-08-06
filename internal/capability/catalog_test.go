@@ -66,7 +66,7 @@ func TestBundledProfilesMatchUbiquitiUPSTypes(t *testing.T) {
 			if result.Tier != MatchTierModelGlob {
 				t.Fatalf("expected model glob match, got tier %q", result.Tier)
 			}
-			if result.Fallback {
+			if result.Unidentified {
 				t.Fatalf("expected Ubiquiti profile match not to be fallback, got %#v", result)
 			}
 		})
@@ -76,12 +76,12 @@ func TestBundledProfilesMatchUbiquitiUPSTypes(t *testing.T) {
 func TestBundledProfilesIncludeUniversalFloor(t *testing.T) {
 	result, diagnostics, err := Match(Device{ID: "unknown", Model: "Unknown Model"}, BundledProfiles())
 	if err != nil {
-		t.Fatalf("expected bundled universal floor to match, got %v with diagnostics %#v", err, diagnostics)
+		t.Fatalf("expected the bundled unidentified-device profile to match, got %v with diagnostics %#v", err, diagnostics)
 	}
-	if result.ProfileID != BundledUniversalFloorProfileID {
-		t.Fatalf("expected bundled universal floor profile, got %#v", result)
+	if result.ProfileID != BundledUnidentifiedProfileID {
+		t.Fatalf("expected the bundled unidentified-device profile, got %#v", result)
 	}
-	if !result.Fallback {
+	if !result.Unidentified {
 		t.Fatalf("expected unknown model to fall back, got %#v", result)
 	}
 }

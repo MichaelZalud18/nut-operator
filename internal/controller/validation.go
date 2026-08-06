@@ -21,10 +21,12 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
+	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 )
 
@@ -292,6 +294,72 @@ func validateShutdownFlow(obj *powerv1alpha1.ShutdownFlow) validationResult {
 	}
 
 	return accepted("shutdown flow contract accepted")
+}
+
+// validateShutdownFlowDeviceIdentification blocks Enforce mode when a UPS the
+// flow depends on matched no product capability profile.
+//
+// An unidentified device is not a device with reduced capability. It is a
+// device nothing is known about: some NUT driver answered, and that is all. UPS
+// hardware differs too much for that to be a safe basis for powering real nodes
+// off, so enforcement is refused until either a profile matches or an operator
+// records acceptance in Git via spec.safety.allowUnidentifiedDevices.
+//
+// This is a configuration-time refusal, deliberately: it is visible in status
+// and in review long before an outage, which is the opposite of the mid-outage
+// refusal PL-31 warns against.
+func validateShutdownFlowDeviceIdentification(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle) validationResult {
+	if obj.Spec.Mode != powerv1alpha1.ShutdownFlowModeEnforce {
+		return accepted("shutdown flow contract accepted")
+	}
+	if obj.Spec.Safety.AllowUnidentifiedDevices != nil && *obj.Spec.Safety.AllowUnidentifiedDevices {
+		return accepted("shutdown flow contract accepted")
+	}
+
+	scope := shutdownFlowDeviceScope(obj, bundle)
+	var unidentified []string
+	for _, match := range bundle.CapabilityMatches {
+		if !match.Unidentified {
+			continue
+		}
+		if _, inScope := scope[match.DeviceID]; !inScope && len(scope) > 0 {
+			continue
+		}
+		unidentified = append(unidentified, match.DeviceID)
+	}
+	if len(unidentified) == 0 {
+		return accepted("shutdown flow contract accepted")
+	}
+	sort.Strings(unidentified)
+
+	return rejected("UnidentifiedUPSDevice",
+		"Enforce mode is blocked because %s matched no capability profile. "+
+			"Nothing has been verified about what these devices report, so the operator will not power nodes off on their signal. "+
+			"Create a UPSCapabilityProbe to draft a profile, or set spec.safety.allowUnidentifiedDevices to accept the risk",
+		strings.Join(unidentified, ", "))
+}
+
+// shutdownFlowDeviceScope resolves which UPS devices this flow's triggers
+// depend on. An empty result means the flow names neither devices nor domains,
+// in which case every device is in scope.
+func shutdownFlowDeviceScope(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle) map[string]struct{} {
+	scope := map[string]struct{}{}
+	domains := map[string][]string{}
+	for _, domain := range bundle.Topology.Domains {
+		domains[domain.Name] = domain.UPSDevices
+	}
+
+	for _, trigger := range obj.Spec.Triggers {
+		for _, device := range trigger.UPSDeviceRefs {
+			scope[device.Name] = struct{}{}
+		}
+		for _, name := range trigger.PowerDomains {
+			for _, device := range domains[name] {
+				scope[device] = struct{}{}
+			}
+		}
+	}
+	return scope
 }
 
 func validatePowerInfrastructure(obj *powerv1alpha1.PowerInfrastructure) validationResult {

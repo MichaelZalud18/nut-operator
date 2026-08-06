@@ -109,9 +109,23 @@ func capabilityProfileFromUPSCapabilityProfile(obj *powerv1alpha1.UPSCapabilityP
 			Universal:    boolPointerValue(selector.Universal),
 		},
 		TelemetryVariables: append([]string(nil), obj.Spec.Telemetry.Variables...),
+		TelemetryAliases:   copyStringMap(obj.Spec.Telemetry.Aliases),
 		ActuationBehaviors: append([]string(nil), obj.Spec.Actuation.Behaviors...),
 		Quirks:             append([]string(nil), obj.Spec.Quirks...),
 	}
+}
+
+// copyStringMap defensively copies an alias map so a cached API object can
+// never be mutated through the profile the resolver hands downstream.
+func copyStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	copied := make(map[string]string, len(values))
+	for key, value := range values {
+		copied[key] = value
+	}
+	return copied
 }
 
 func boolPointerValue(value *bool) bool {

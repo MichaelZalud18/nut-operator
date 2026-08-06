@@ -17,6 +17,7 @@ limitations under the License.
 package audit
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -95,5 +96,31 @@ func TestMigrationsRejectEmptyQuotedIdentifier(t *testing.T) {
 	_, err := quotePostgresIdentifier("")
 	if err == nil {
 		t.Fatal("expected empty PostgreSQL identifier to be rejected")
+	}
+}
+
+func TestEveryRetentionTargetHasAnObservedAtIndex(t *testing.T) {
+	migrations, err := Migrations("power")
+	if err != nil {
+		t.Fatalf("Migrations: %v", err)
+	}
+	var schema strings.Builder
+	for _, migration := range migrations {
+		schema.WriteString(migration.SQL)
+	}
+	sql := schema.String()
+
+	// EnforceRetention deletes with WHERE observed_at < $1. A composite index
+	// whose leading column is something else cannot serve that as a range seek,
+	// so each retention target needs observed_at indexed on its own.
+	targets := append([]string{"ups_telemetry_snapshots"}, eventRetentionTables...)
+	for _, table := range targets {
+		// Ascending or descending both range-scan for observed_at < $1; what
+		// matters is that observed_at leads the index.
+		leading := fmt.Sprintf("ON \"power\".%s (observed_at)", table)
+		leadingDesc := fmt.Sprintf("ON \"power\".%s (observed_at DESC)", table)
+		if !strings.Contains(sql, leading) && !strings.Contains(sql, leadingDesc) {
+			t.Errorf("retention deletes from %s by observed_at, but no index leads with that column", table)
+		}
 	}
 }

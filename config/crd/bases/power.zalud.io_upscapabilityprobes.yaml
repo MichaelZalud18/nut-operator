@@ -1,0 +1,233 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: upscapabilityprobes.power.zalud.io
+spec:
+  group: power.zalud.io
+  names:
+    kind: UPSCapabilityProbe
+    listKind: UPSCapabilityProbeList
+    plural: upscapabilityprobes
+    singular: upscapabilityprobe
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.deviceRef.name
+      name: Device
+      type: string
+    - jsonPath: .status.identity.model
+      name: Model
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.probedAt
+      name: Probed
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: UPSCapabilityProbe is the Schema for the upscapabilityprobes
+          API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of UPSCapabilityProbe
+            properties:
+              deviceRef:
+                description: |-
+                  deviceRef names the UPSDevice to probe. The device must already be
+                  selected by a ready NUTServer, since the probe reads through the same
+                  NUT endpoint telemetry polling uses.
+                properties:
+                  name:
+                    description: name is the UPSDevice name.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              profileName:
+                description: |-
+                  profileName is the metadata.name to use in the drafted profile. Defaults
+                  to a name derived from the reported manufacturer and model.
+                type: string
+              refreshInterval:
+                description: |-
+                  refreshInterval re-runs the probe on a schedule. Leave unset for a
+                  one-shot probe that only re-runs when the spec changes.
+                type: string
+            required:
+            - deviceRef
+            type: object
+          status:
+            description: status defines the observed state of UPSCapabilityProbe
+            properties:
+              conditions:
+                description: conditions represent the current state of the UPSCapabilityProbe
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              currentMatch:
+                description: |-
+                  currentMatch records which profile this device resolves to today, so the
+                  gap the probe is filling is visible without a second lookup.
+                properties:
+                  profileID:
+                    description: profileID is the profile the device resolves to today.
+                    type: string
+                  tier:
+                    description: tier is the precedence tier that matched.
+                    type: string
+                  unidentified:
+                    description: |-
+                      unidentified is true when the device matched no product profile and fell
+                      through to the unidentified-device profile.
+                    type: boolean
+                type: object
+              draftProfile:
+                description: |-
+                  draftProfile is a ready-to-apply UPSCapabilityProfile manifest. Review it
+                  before applying: the actuation section is intentionally empty.
+                type: string
+              identity:
+                description: |-
+                  identity is the product identity the device reported. Serial numbers are
+                  deliberately not recorded: they identify one unit, not a product model.
+                properties:
+                  firmware:
+                    description: firmware is the reported ups.firmware value.
+                    type: string
+                  manufacturer:
+                    description: manufacturer is the reported ups.mfr value.
+                    type: string
+                  model:
+                    description: model is the reported ups.model value and the profile's
+                      match key.
+                    type: string
+                type: object
+              issueReport:
+                description: |-
+                  issueReport is the same findings formatted for pasting into a GitHub
+                  issue, so a verified profile can be contributed back to the catalog.
+                type: string
+              nonStandardVariables:
+                description: |-
+                  nonStandardVariables are reported names that are not standard NUT names.
+                  They are worth a human look and may deserve an alias or a quirk.
+                items:
+                  type: string
+                type: array
+              observedGeneration:
+                description: observedGeneration is the last generation reconciled
+                  by the controller.
+                format: int64
+                type: integer
+              phase:
+                description: phase summarizes probe progress.
+                enum:
+                - Pending
+                - Probed
+                - Failed
+                type: string
+              probedAt:
+                description: probedAt is when the device was last read.
+                format: date-time
+                type: string
+              reportedVariables:
+                description: reportedVariables are the NUT variable names the device
+                  exposed.
+                items:
+                  type: string
+                type: array
+              suggestedAliases:
+                additionalProperties:
+                  type: string
+                description: |-
+                  suggestedAliases are proposed alias mappings, keyed by the non-standard
+                  name the device reported, where a standard reading appears to have arrived
+                  under it. Suggestions only, in the same shape spec.telemetry.aliases takes.
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

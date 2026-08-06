@@ -559,3 +559,92 @@ func hasExplanationReason(explanations []Explanation, reason string) bool {
 	}
 	return false
 }
+
+func triggerCapabilityInput(devices []DeviceCapability) StructuralInputs {
+	timeout := Duration{Duration: 5 * time.Minute}
+	return StructuralInputs{
+		SourceID: "shutdownflows.power.zalud.io/test",
+		Triggers: []Trigger{
+			{Type: "RuntimeBelow", PowerDomains: []string{"core"}},
+		},
+		Groups: []Group{
+			{Name: "applications", Action: "ScaleWorkload", Timeout: timeout, Target: Target{NamespaceSelector: true}},
+		},
+		DeviceCapabilities: devices,
+		PowerDomains: []PowerDomainMembership{
+			{Name: "core", UPSDevices: deviceIDs(devices)},
+		},
+	}
+}
+
+func deviceIDs(devices []DeviceCapability) []string {
+	ids := make([]string, 0, len(devices))
+	for _, device := range devices {
+		ids = append(ids, device.DeviceID)
+	}
+	return ids
+}
+
+func TestCompileRejectsTriggerNoDeviceCanSatisfy(t *testing.T) {
+	input := triggerCapabilityInput([]DeviceCapability{
+		{DeviceID: "ups-1", ProfileID: "floor", Unidentified: true, TelemetryVariables: []string{"ups.status"}},
+		{DeviceID: "ups-2", ProfileID: "floor", Unidentified: true, TelemetryVariables: []string{"ups.status"}},
+	})
+
+	_, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err == nil {
+		t.Fatal("a RuntimeBelow trigger no device can report must not compile")
+	}
+	if !hasPlannerDiagnostic(diagnostics, "TriggerUnsupportedByAllDevices") {
+		t.Fatalf("expected TriggerUnsupportedByAllDevices, got %#v", diagnostics)
+	}
+}
+
+func TestCompileDegradesTriggerSomeDevicesCannotSatisfy(t *testing.T) {
+	input := triggerCapabilityInput([]DeviceCapability{
+		{DeviceID: "ups-1", ProfileID: "product", TelemetryVariables: []string{"battery.runtime", "ups.status"}},
+		{DeviceID: "ups-2", ProfileID: "floor", Unidentified: true, TelemetryVariables: []string{"ups.status"}},
+	})
+
+	_, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("a partially supported trigger must still compile, got %v", err)
+	}
+	if !hasPlannerDiagnostic(diagnostics, "TriggerDegradedByDeviceCapability") {
+		t.Fatalf("expected TriggerDegradedByDeviceCapability, got %#v", diagnostics)
+	}
+}
+
+func TestCompileAcceptsTriggerEveryDeviceSatisfies(t *testing.T) {
+	input := triggerCapabilityInput([]DeviceCapability{
+		{DeviceID: "ups-1", ProfileID: "product", TelemetryVariables: []string{"battery.runtime", "ups.status"}},
+		{DeviceID: "ups-2", ProfileID: "product", TelemetryVariables: []string{"battery.runtime", "ups.status"}},
+	})
+
+	_, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if hasPlannerDiagnostic(diagnostics, "TriggerDegradedByDeviceCapability") ||
+		hasPlannerDiagnostic(diagnostics, "TriggerUnsupportedByAllDevices") {
+		t.Fatalf("fully supported triggers must raise no capability diagnostic, got %#v", diagnostics)
+	}
+}
+
+func TestCompileSkipsTriggerValidationWithoutCapabilityContext(t *testing.T) {
+	input := triggerCapabilityInput(nil)
+	input.PowerDomains = nil
+
+	if _, _, err := Compile(input, TelemetryInputs{}); err != nil {
+		t.Fatalf("no capability context means no capability verdict, got %v", err)
+	}
+}
+
+func hasPlannerDiagnostic(diagnostics []Diagnostic, reason string) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Reason == reason {
+			return true
+		}
+	}
+	return false
+}

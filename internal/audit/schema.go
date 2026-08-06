@@ -30,7 +30,7 @@ const (
 	DefaultSchema = "power"
 
 	// CurrentSchemaVersion is the latest bundled migration version.
-	CurrentSchemaVersion = 4
+	CurrentSchemaVersion = 5
 )
 
 // Migration is one ordered PostgreSQL migration.
@@ -68,7 +68,50 @@ func Migrations(schema string) ([]Migration, error) {
 			Name:    "planner_artifact_schema",
 			SQL:     plannerArtifactSchemaSQL(quotedSchema),
 		},
+		{
+			Version: 5,
+			Name:    "retention_index_schema",
+			SQL:     retentionIndexSchemaSQL(quotedSchema),
+		},
 	}, nil
+}
+
+// retentionIndexSchemaSQL indexes the column retention actually filters on.
+//
+// EnforceRetention deletes with `WHERE observed_at < $1`. Every retention
+// target except power_events had observed_at only as the trailing column of a
+// composite index -- (ups_device, observed_at DESC) and friends -- which
+// PostgreSQL cannot use for a range seek on the trailing column alone. Retention
+// therefore fell back to sequential scans on precisely the tables that grow
+// fastest: ups_telemetry_snapshots takes one row per device per poll, every
+// 5-15 seconds, forever.
+//
+// The composite indexes are kept: they serve the per-device and per-flow history
+// queries they were built for. These are additive, and CREATE INDEX IF NOT
+// EXISTS makes the migration safe to re-run.
+func retentionIndexSchemaSQL(schema string) string {
+	return fmt.Sprintf(`CREATE INDEX IF NOT EXISTS ups_telemetry_snapshots_observed_at_idx
+  ON %[1]s.ups_telemetry_snapshots (observed_at);
+
+CREATE INDEX IF NOT EXISTS capability_profile_matches_observed_at_idx
+  ON %[1]s.capability_profile_matches (observed_at);
+
+CREATE INDEX IF NOT EXISTS capability_profile_verifications_observed_at_idx
+  ON %[1]s.capability_profile_verifications (observed_at);
+
+CREATE INDEX IF NOT EXISTS shutdownflow_compilations_observed_at_idx
+  ON %[1]s.shutdownflow_compilations (observed_at);
+
+CREATE INDEX IF NOT EXISTS shutdownflow_decisions_observed_at_idx
+  ON %[1]s.shutdownflow_decisions (observed_at);
+
+CREATE INDEX IF NOT EXISTS shutdownflow_executions_observed_at_idx
+  ON %[1]s.shutdownflow_executions (observed_at);
+
+INSERT INTO %[1]s.audit_schema_migrations (version, name)
+VALUES (5, 'retention_index_schema')
+ON CONFLICT (version) DO NOTHING;
+`, schema)
 }
 
 func defaultSchema(schema string) string {

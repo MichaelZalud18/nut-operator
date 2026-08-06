@@ -109,6 +109,36 @@ var (
 		Help:      "Time spent on one action-runner attempt.",
 		Buckets:   prometheus.DefBuckets,
 	}, []string{"action"})
+
+	// AuditSpoolRecordsTotal counts audit records handled by the shutdown-time fallback journal, by
+	// outcome: "spooled" (PostgreSQL refused the write and the journal took it) or "dropped" (the
+	// journal was at its size cap, so the record exists nowhere). Any non-zero rate means PostgreSQL
+	// was failing writes during execution; a non-zero "dropped" rate means audit evidence was lost.
+	AuditSpoolRecordsTotal = promauto.With(metrics.Registry).NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "audit",
+		Name:      "spool_records_total",
+		Help:      "Total audit records written to or refused by the shutdown-time spool journal, by outcome.",
+	}, []string{"outcome"})
+
+	// AuditSpoolReplayRecordsTotal counts records drained from the journal back into PostgreSQL, by
+	// outcome: "replayed" (accepted by the primary writer) or "skipped" (unparseable or of a record
+	// kind this build does not recognize, so left in the journal).
+	AuditSpoolReplayRecordsTotal = promauto.With(metrics.Registry).NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "audit",
+		Name:      "spool_replay_records_total",
+		Help:      "Total spooled audit records returned to PostgreSQL, by outcome.",
+	}, []string{"outcome"})
+
+	// AuditSpoolJournalBytes is the journal size observed at the last spool write. It is the metric to
+	// alert on ahead of loss: records are dropped once it reaches spec.storage.auditSpool.maxSize.
+	AuditSpoolJournalBytes = promauto.With(metrics.Registry).NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "audit",
+		Name:      "spool_journal_bytes",
+		Help:      "Size in bytes of the shutdown-time audit spool journal at the last spool write.",
+	})
 )
 
 // BoolToFloat renders a boolean as a Prometheus gauge value (1 for true, 0 for false).

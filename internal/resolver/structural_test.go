@@ -134,10 +134,10 @@ func TestResolveStructuralPropagatesCapabilityWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected structural resolve to succeed, got %v with diagnostics %#v", err, diagnostics)
 	}
-	if len(bundle.CapabilityMatches) != 1 || !bundle.CapabilityMatches[0].Fallback {
-		t.Fatalf("expected universal floor fallback match, got %#v", bundle.CapabilityMatches)
+	if len(bundle.CapabilityMatches) != 1 || !bundle.CapabilityMatches[0].Unidentified {
+		t.Fatalf("expected an unidentified-device match, got %#v", bundle.CapabilityMatches)
 	}
-	if !hasResolverDiagnostic(diagnostics, DiagnosticSourceCapability, "UniversalFloorMatched") {
+	if !hasResolverDiagnostic(diagnostics, DiagnosticSourceCapability, "DeviceUnidentified") {
 		t.Fatalf("expected capability fallback diagnostic, got %#v", diagnostics)
 	}
 }

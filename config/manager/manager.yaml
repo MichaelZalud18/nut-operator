@@ -74,6 +74,11 @@ spec:
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:main
+        # IfNotPresent, not Always: the e2e suite builds the image and `kind load`s it locally with no
+        # registry involved, and Always forces a pull against the placeholder tag that does not exist
+        # (guaranteed ImagePullBackOff). Freshness is not what this setting buys here -- every real
+        # deployment overrides the image with an explicit digest via Kustomize, and a pinned digest is
+        # content-verified regardless of pull policy. CKV_K8S_15 is suppressed for this reason.
         imagePullPolicy: IfNotPresent
         name: manager
         env:

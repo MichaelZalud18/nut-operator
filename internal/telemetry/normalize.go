@@ -72,6 +72,10 @@ type Sample struct {
 	NUTName    string
 	ObservedAt time.Time
 	Variables  map[string]string
+	// Aliases come from the device's matched capability profile. Each key is a
+	// non-standard name the device reports; each value is the canonical NUT
+	// name it should be read as. Applied before any derived field is parsed.
+	Aliases map[string]string
 }
 
 // Snapshot is the normalized telemetry view used by status, policy, and audit
@@ -114,6 +118,8 @@ type Diagnostic struct {
 func Normalize(sample Sample) Snapshot {
 	var diagnostics []Diagnostic
 	variables := copyVariables(sample.Variables)
+	aliasDiagnostics := applyAliases(variables, sample.Aliases)
+	diagnostics = append(diagnostics, aliasDiagnostics...)
 	status := strings.TrimSpace(variables[VariableUPSStatus])
 	symbols, statusDiagnostics := normalizeStatusSymbols(status)
 	diagnostics = append(diagnostics, statusDiagnostics...)
@@ -247,6 +253,67 @@ func parseRuntimeSeconds(variables map[string]string, name string) (*int64, []Di
 
 func finiteFloat(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+// applyAliases resolves profile-declared variable aliases in place. The rule is
+// fixed and one-directional: a canonical name the device reports natively
+// always wins over an alias, so a profile can never mask a real reading. The
+// aliased source name is left in the variable map, so nothing is lost, and both
+// the applied and shadowed cases are recorded as diagnostics rather than
+// happening silently.
+func applyAliases(variables map[string]string, aliases map[string]string) []Diagnostic {
+	if len(variables) == 0 || len(aliases) == 0 {
+		return nil
+	}
+
+	// Sorted so a device reporting several aliasable names produces the same
+	// diagnostics every poll, regardless of Go's randomized map iteration.
+	sources := make([]string, 0, len(aliases))
+	for source := range aliases {
+		sources = append(sources, source)
+	}
+	sort.Strings(sources)
+
+	var diagnostics []Diagnostic
+	applied := map[string]string{}
+	for _, source := range sources {
+		target := aliases[source]
+		alias := struct{ From, To string }{From: source, To: target}
+		if alias.From == "" || alias.To == "" || alias.From == alias.To {
+			continue
+		}
+		reported, exists := variables[alias.From]
+		if !exists {
+			continue
+		}
+		if _, native := variables[alias.To]; native {
+			diagnostics = append(diagnostics, Diagnostic{
+				Severity: DiagnosticWarning,
+				Reason:   "AliasShadowedByNativeVariable",
+				Subject:  alias.To,
+				Message:  fmt.Sprintf("NUT variable %s is reported natively, so the profile alias from %s was not applied", alias.To, alias.From),
+			})
+			continue
+		}
+		if previous, taken := applied[alias.To]; taken {
+			diagnostics = append(diagnostics, Diagnostic{
+				Severity: DiagnosticWarning,
+				Reason:   "AliasCollision",
+				Subject:  alias.To,
+				Message:  fmt.Sprintf("NUT variable %s was already aliased from %s, so the alias from %s was not applied", alias.To, previous, alias.From),
+			})
+			continue
+		}
+		variables[alias.To] = reported
+		applied[alias.To] = alias.From
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity: DiagnosticWarning,
+			Reason:   "AliasApplied",
+			Subject:  alias.To,
+			Message:  fmt.Sprintf("NUT variable %s arrived under the non-standard name %s and was resolved by the matched capability profile", alias.To, alias.From),
+		})
+	}
+	return diagnostics
 }
 
 func copyVariables(variables map[string]string) map[string]string {

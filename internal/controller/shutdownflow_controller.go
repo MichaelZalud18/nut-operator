@@ -99,6 +99,11 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 	if result.accepted {
+		// Runs after resolution because it needs the capability matches: a flow
+		// cannot enforce against a UPS nothing is known about.
+		result = validateShutdownFlowDeviceIdentification(&flow, bundle)
+	}
+	if result.accepted {
 		cluster, err := r.getManagementCluster(ctx, &flow)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
@@ -306,6 +311,10 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 		return errors.Join(err, closeErr)
 	}
 
+	// The store opened, so PostgreSQL is reachable: return anything the spool
+	// captured while it was not, before writing this reconcile's own records.
+	r.drainAuditSpool(ctx, cluster, store)
+
 	observedAt := r.now()
 	recordErr := writer.RecordShutdownFlowCompilation(ctx, audit.ShutdownFlowCompilation{
 		CompilationID:      uuid.NewString(),
@@ -332,8 +341,11 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 				ProfileVersion: match.ProfileVersion,
 				ProfileSource:  string(match.ProfileSource),
 				MatchTier:      string(match.Tier),
-				Fallback:       match.Fallback,
-				Diagnostics:    auditDiagnosticsForCapabilityMatch(diagnostics, match.DeviceID),
+				// The audit column stays `fallback`: it is persisted
+				// PostgreSQL schema, and renaming it for vocabulary alone would
+				// mean a migration over existing records for no behavior change.
+				Fallback:    match.Unidentified,
+				Diagnostics: auditDiagnosticsForCapabilityMatch(diagnostics, match.DeviceID),
 			})
 			if err != nil {
 				recordErr = errors.Join(recordErr, err)
@@ -343,15 +355,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 		recordErr = errors.Join(recordErr, r.recordShutdownFlowExecution(ctx, writer, flow, observedAt, bundle.Hash, configHash, triggerEvaluation))
 	}
 	if spoolWriter != nil {
-		stats := spoolWriter.Stats()
-		if stats.FallbackWrites > 0 {
-			message := fmt.Sprintf("%d audit records were spooled to %s after PostgreSQL audit writes failed", stats.FallbackWrites, stats.LastSpoolPath)
-			setDegradedCondition(&flow.Status.Conditions, flow.Generation, true, "AuditSpoolFallback", message)
-			if triggerEvaluation != nil && triggerEvaluation.Eligible && flow.Status.LastExecution != nil && flow.Status.LastExecution.TriggerActive {
-				setExecutionReadyCondition(&flow.Status.Conditions, flow.Generation, true, "AuditSpoolFallback", message)
-				flow.Status.LastExecution.Message = message
-			}
-		}
+		r.reportAuditSpoolFallback(flow, spoolWriter.Stats(), triggerEvaluation)
 	}
 	closeErr := store.Close()
 	if recordErr != nil || closeErr != nil {
@@ -371,11 +375,88 @@ func shutdownAuditWriter(cluster *powerv1alpha1.PowerManagementCluster, store au
 	if err != nil {
 		return nil, nil, err
 	}
-	writer, err := audit.NewSpoolWriter(store, audit.SpoolOptions{Directory: backend.AuditSpool.Path})
+	writer, err := audit.NewSpoolWriter(store, audit.SpoolOptions{
+		Directory: backend.AuditSpool.Path,
+		MaxBytes:  backend.AuditSpool.MaxBytes,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return writer, writer, nil
+}
+
+// reportAuditSpoolFallback surfaces what the fallback journal did this
+// reconcile.
+//
+// Two outcomes, deliberately distinct. A spooled record is degraded but intact:
+// PostgreSQL refused it and the journal holds it until replay. A dropped record
+// is gone -- the journal was at its size cap -- and that is reported under its
+// own reason rather than folded into the same condition, because "the audit
+// trail is delayed" and "the audit trail has a hole in it" are different
+// operator problems.
+func (r *ShutdownFlowReconciler) reportAuditSpoolFallback(
+	flow *powerv1alpha1.ShutdownFlow,
+	stats audit.SpoolStats,
+	triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus,
+) {
+	if stats.FallbackWrites == 0 && stats.DroppedWrites == 0 {
+		return
+	}
+	metrics.AuditSpoolRecordsTotal.WithLabelValues("spooled").Add(float64(stats.FallbackWrites))
+	metrics.AuditSpoolRecordsTotal.WithLabelValues("dropped").Add(float64(stats.DroppedWrites))
+	metrics.AuditSpoolJournalBytes.Set(float64(stats.JournalBytes))
+
+	reason := "AuditSpoolFallback"
+	message := fmt.Sprintf("%d audit records were spooled to %s after PostgreSQL audit writes failed", stats.FallbackWrites, stats.LastSpoolPath)
+	switch {
+	case stats.DroppedWrites > 0 && stats.FallbackWrites == 0:
+		reason = "AuditSpoolFull"
+		message = fmt.Sprintf("PostgreSQL audit writes failed and the spool journal at %s is at its size cap, so %d audit records were dropped and are not recorded anywhere",
+			stats.LastSpoolPath, stats.DroppedWrites)
+	case stats.DroppedWrites > 0:
+		reason = "AuditSpoolFull"
+		message = fmt.Sprintf("%s; %d further records were dropped because the journal reached its size cap and are not recorded anywhere",
+			message, stats.DroppedWrites)
+	}
+
+	setDegradedCondition(&flow.Status.Conditions, flow.Generation, true, reason, message)
+	if triggerEvaluation != nil && triggerEvaluation.Eligible && flow.Status.LastExecution != nil && flow.Status.LastExecution.TriggerActive {
+		setExecutionReadyCondition(&flow.Status.Conditions, flow.Generation, true, reason, message)
+		flow.Status.LastExecution.Message = message
+	}
+}
+
+// drainAuditSpool returns spooled records to PostgreSQL once it is reachable
+// again, closing the other half of OD-6.
+//
+// Called on the reconcile path with a healthy store in hand, which is the only
+// point the operator reliably knows the database is accepting writes. A drain
+// failure is logged, never returned: replay is evidence recovery, and failing a
+// power-management reconcile because a historical record could not be re-filed
+// would invert the priority the whole spool design exists to protect (SB-11).
+func (r *ShutdownFlowReconciler) drainAuditSpool(ctx context.Context, cluster *powerv1alpha1.PowerManagementCluster, store audit.Store) {
+	if cluster == nil || store == nil || !cluster.Spec.Storage.AuditSpool.Enabled {
+		return
+	}
+	backend, err := storageconfig.Resolve(cluster.Spec.Storage)
+	if err != nil {
+		return
+	}
+
+	log := logf.FromContext(ctx)
+	stats, err := audit.ReplaySpool(ctx, store, audit.ReplayOptions{Directory: backend.AuditSpool.Path})
+	// Counted before the error check: a partial drain still returned records to
+	// PostgreSQL, and those are exactly the ones worth seeing when the drain as
+	// a whole did not succeed.
+	metrics.AuditSpoolReplayRecordsTotal.WithLabelValues("replayed").Add(float64(stats.Replayed))
+	metrics.AuditSpoolReplayRecordsTotal.WithLabelValues("skipped").Add(float64(stats.Skipped))
+	if err != nil {
+		log.Error(err, "Could not drain audit spool", "replayed", stats.Replayed, "skipped", stats.Skipped)
+		return
+	}
+	if stats.Replayed > 0 || stats.Skipped > 0 {
+		log.Info("Drained audit spool", "read", stats.Read, "replayed", stats.Replayed, "skipped", stats.Skipped)
+	}
 }
 
 func (r *ShutdownFlowReconciler) getManagementCluster(ctx context.Context, flow *powerv1alpha1.ShutdownFlow) (*powerv1alpha1.PowerManagementCluster, error) {

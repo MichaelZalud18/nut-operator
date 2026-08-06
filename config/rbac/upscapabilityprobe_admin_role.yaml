@@ -1,0 +1,39 @@
+# This rule is not used by the project nut-operator itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants explicit administrative permissions over power.zalud.io.
+#
+# The verbs below are listed explicitly on purpose. `kubebuilder create api` scaffolds these helper
+# admin roles with `verbs: ['*']`, which ASH flags as CKV_K8S_49 and which contradicts the
+# explicit-verb convention every other admin role in this directory follows. Expect the scaffold to
+# reintroduce the wildcard on the next `create api` -- replace it again rather than suppressing it.
+# This role is intended for users authorized to modify roles and bindings within the cluster,
+# enabling them to delegate specific permissions to other users or groups as needed.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: upscapabilityprobe-admin-role
+rules:
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - upscapabilityprobes
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - upscapabilityprobes/status
+  verbs:
+  - get

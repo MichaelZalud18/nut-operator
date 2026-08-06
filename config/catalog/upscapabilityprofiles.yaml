@@ -8,9 +8,9 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
     power.zalud.io/catalog: bundled
     power.zalud.io/vendor: nut
-  name: nut-bundled-universal-floor
+  name: nut-bundled-unidentified-device
 spec:
-  version: "0.1.0"
+  version: "1.0.0"
   selector:
     universal: true
   telemetry:
@@ -28,12 +28,13 @@ metadata:
     power.zalud.io/vendor: ubiquiti
   name: ubiquiti-unifi-ups-tower
 spec:
-  version: "0.1.0"
+  version: "1.0.0"
   selector:
     modelGlob: TOWER_*VA_*V
   telemetry:
     variables:
       - battery.charge
+      - battery.charge.low
       - battery.low
       - battery.runtime
       - battery.voltage
@@ -58,9 +59,11 @@ spec:
       - ups.test.result
       - ups.type
       - ups.temperature
+    aliases:
+      battery.low: battery.charge.low
   quirks:
-    - built-in-nut-server
-    - snmp-not-supported-by-ups
+    - built-in-nut-server-not-reachable-on-firmware-1.6.1
+    - snmpv3-only-no-community-string-on-firmware-1.6.1
     - firmware-before-1.4.18-had-nut-protocol-response-bugs
     - instant-commands-not-confirmed
     - reports-battery.low-instead-of-battery.charge.low
@@ -78,12 +81,13 @@ metadata:
     power.zalud.io/vendor: ubiquiti
   name: ubiquiti-unifi-ups-2u
 spec:
-  version: "0.1.0"
+  version: "1.0.0"
   selector:
     modelGlob: 2U_*VA_*V
   telemetry:
     variables:
       - battery.charge
+      - battery.charge.low
       - battery.low
       - battery.runtime
       - battery.voltage
@@ -107,9 +111,11 @@ spec:
       - ups.test.interval
       - ups.test.result
       - ups.type
+    aliases:
+      battery.low: battery.charge.low
   quirks:
-    - built-in-nut-server
-    - snmp-not-supported-by-ups
+    - built-in-nut-server-not-reachable-on-firmware-1.6.1
+    - snmpv3-only-no-community-string-on-firmware-1.6.1
     - firmware-before-1.4.18-had-nut-protocol-response-bugs
     - instant-commands-not-confirmed
     - reports-battery.low-instead-of-battery.charge.low

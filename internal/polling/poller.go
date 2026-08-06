@@ -46,6 +46,10 @@ type Target struct {
 	NUTName   string
 	Host      string
 	Port      int
+	// TelemetryAliases come from the device's matched capability profile and
+	// are applied during normalization, so a device reporting a non-standard
+	// variable name still produces canonical derived fields.
+	TelemetryAliases map[string]string
 }
 
 // Options configure a telemetry poller.
@@ -105,6 +109,7 @@ func (p *Poller) Poll(ctx context.Context, target Target) (Result, error) {
 		NUTName:    target.NUTName,
 		ObservedAt: p.now(),
 		Variables:  variables,
+		Aliases:    target.TelemetryAliases,
 	})
 	return Result{
 		Target:   target,

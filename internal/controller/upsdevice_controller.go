@@ -264,6 +264,13 @@ func (r *UPSDeviceReconciler) resolveTelemetryTarget(ctx context.Context, device
 	}
 	sort.Strings(resolution.ServerRefs)
 	if targetFound {
+		// The matched capability profile supplies variable aliases, so a device
+		// reporting a non-standard name still produces canonical derived
+		// fields. A matching failure must not take telemetry down with it: the
+		// device still polls, just without alias resolution.
+		if match, err := resolveDeviceCapabilityMatch(ctx, r.Client, device); err == nil {
+			target.TelemetryAliases = telemetryAliasesFromMatch(match)
+		}
 		return target, telemetryTargetResolution{
 			Found:                 true,
 			Reason:                "TelemetryTargetResolved",

@@ -360,6 +360,18 @@ spec:
                         description: enabled allows execution to continue when PostgreSQL
                           writes fail after the audit store was opened.
                         type: boolean
+                      maxSize:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: |-
+                          maxSize caps the spool journal, expressed as a Kubernetes quantity such as 64Mi.
+                          A PostgreSQL outage has no bounded duration, so an uncapped journal grows until the
+                          durable volume behind spec.storage.auditSpool.path is full. Once the cap is reached the
+                          operator stops spooling and reports the loss on the ShutdownFlow rather than filling the
+                          volume during a power event. Defaults to 64Mi.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
                       path:
                         description: path is the absolute in-container directory where
                           JSONL spool records are appended.

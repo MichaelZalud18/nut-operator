@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/resource"
+
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 )
@@ -34,6 +36,17 @@ type BackendKind string
 const (
 	BackendDisabled   BackendKind = "Disabled"
 	BackendPostgreSQL BackendKind = "PostgreSQL"
+)
+
+const (
+	// DefaultAuditSpoolMaxBytes caps the fallback journal when the user does not
+	// pick a size. 64Mi holds a long shutdown episode's worth of execution
+	// evidence while staying small enough to be a realistic volume request.
+	DefaultAuditSpoolMaxBytes int64 = 64 << 20
+
+	// MinimumAuditSpoolMaxBytes is the smallest cap that can hold a real record.
+	// Compiled plans and dependency graphs are spooled as whole JSON payloads.
+	MinimumAuditSpoolMaxBytes int64 = 1 << 20
 )
 
 // Backend is the resolved storage contract used by controllers and future
@@ -51,8 +64,9 @@ type Backend struct {
 // AuditSpoolBackend records the local fallback journal path for shutdown-time
 // audit records generated after PostgreSQL becomes unavailable.
 type AuditSpoolBackend struct {
-	Enabled bool
-	Path    string
+	Enabled  bool
+	Path     string
+	MaxBytes int64
 }
 
 // ExternalPostgresBackend points at an existing PostgreSQL DSN Secret.
@@ -141,7 +155,30 @@ func resolveAuditSpool(spec powerv1alpha1.AuditSpoolSpec, mode powerv1alpha1.Pow
 	if !filepath.IsAbs(path) {
 		return AuditSpoolBackend{}, fmt.Errorf("spec.storage.auditSpool.path must be absolute")
 	}
-	return AuditSpoolBackend{Enabled: true, Path: filepath.Clean(path)}, nil
+	maxBytes, err := resolveAuditSpoolMaxBytes(spec.MaxSize)
+	if err != nil {
+		return AuditSpoolBackend{}, err
+	}
+	return AuditSpoolBackend{Enabled: true, Path: filepath.Clean(path), MaxBytes: maxBytes}, nil
+}
+
+// resolveAuditSpoolMaxBytes converts the configured journal cap to bytes.
+//
+// A cap smaller than one record is indistinguishable from a disabled spool at
+// runtime -- every write would be dropped -- so it is rejected at configuration
+// time instead of failing silently during the outage it was meant to survive.
+func resolveAuditSpoolMaxBytes(maxSize *resource.Quantity) (int64, error) {
+	if maxSize == nil {
+		return DefaultAuditSpoolMaxBytes, nil
+	}
+	value, ok := maxSize.AsInt64()
+	if !ok {
+		return 0, fmt.Errorf("spec.storage.auditSpool.maxSize %q is not a whole number of bytes", maxSize.String())
+	}
+	if value < MinimumAuditSpoolMaxBytes {
+		return 0, fmt.Errorf("spec.storage.auditSpool.maxSize must be at least %d bytes", MinimumAuditSpoolMaxBytes)
+	}
+	return value, nil
 }
 
 func containsControlCharacter(value string) bool {

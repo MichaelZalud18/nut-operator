@@ -43,6 +43,19 @@ const (
 	defaultPingTimeout  = 5 * time.Second
 	defaultMaxOpenConns = 4
 	defaultMaxIdleConns = 2
+
+	// A pooled connection is retired after this long even when healthy.
+	//
+	// This matters specifically because the recommended backing store is CNPG.
+	// A CNPG failover or switchover moves the primary to a different pod, and
+	// the rw Service follows it -- but an already-established TCP connection
+	// does not. Without a lifetime cap, idle pooled connections can stay bound
+	// to a demoted instance and fail writes long after the cluster recovered.
+	// A bounded lifetime forces periodic re-resolution through the Service.
+	defaultConnMaxLifetime = 30 * time.Minute
+	// Idle connections are dropped sooner, so a pool that goes quiet after an
+	// event does not hold sessions open against the database for half an hour.
+	defaultConnMaxIdleTime = 5 * time.Minute
 )
 
 var sslModePattern = regexp.MustCompile(`(?:^|\s)sslmode\s*=\s*'?([^'\s]+)'?`)
@@ -64,10 +77,12 @@ type SQLOpener func(driverName, dsn string) (Database, error)
 
 // ConnectorOptions configure Kubernetes-backed audit store construction.
 type ConnectorOptions struct {
-	Open         SQLOpener
-	PingTimeout  time.Duration
-	MaxOpenConns int
-	MaxIdleConns int
+	Open            SQLOpener
+	PingTimeout     time.Duration
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+	ConnMaxIdleTime time.Duration
 }
 
 // KubernetesConnector resolves storage Secrets with the Kubernetes API and
@@ -280,8 +295,18 @@ func configureSQLDB(db Database, opts ConnectorOptions) {
 	if maxIdle == 0 {
 		maxIdle = defaultMaxIdleConns
 	}
+	maxLifetime := opts.ConnMaxLifetime
+	if maxLifetime == 0 {
+		maxLifetime = defaultConnMaxLifetime
+	}
+	maxIdleTime := opts.ConnMaxIdleTime
+	if maxIdleTime == 0 {
+		maxIdleTime = defaultConnMaxIdleTime
+	}
 	sqlDB.SetMaxOpenConns(maxOpen)
 	sqlDB.SetMaxIdleConns(maxIdle)
+	sqlDB.SetConnMaxLifetime(maxLifetime)
+	sqlDB.SetConnMaxIdleTime(maxIdleTime)
 }
 
 func ping(ctx context.Context, db Database, timeout time.Duration) error {

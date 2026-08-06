@@ -17,9 +17,11 @@ limitations under the License.
 package storage
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -175,5 +177,55 @@ func TestResolveRejectsIncompleteStorage(t *testing.T) {
 		},
 	}); err == nil {
 		t.Fatal("expected relative audit spool path to be rejected")
+	}
+}
+
+// spoolSpec builds an ExternalPostgres storage spec with the audit spool
+// enabled, so the cap tests below differ only in the field under test.
+func spoolSpec(maxSize *resource.Quantity) powerv1alpha1.PowerStorageSpec {
+	return powerv1alpha1.PowerStorageSpec{
+		Mode: powerv1alpha1.PowerStorageExternalPostgres,
+		ExternalPostgres: &powerv1alpha1.ExternalPostgresStorageSpec{
+			DSNSecretKeyRef: powerv1alpha1.SecretKeyReference{
+				Namespace: "power-system",
+				Name:      "power-postgres",
+				Key:       "dsn",
+			},
+		},
+		AuditSpool: powerv1alpha1.AuditSpoolSpec{
+			Enabled: true,
+			Path:    "/var/lib/nut-operator/audit-spool",
+			MaxSize: maxSize,
+		},
+	}
+}
+
+func TestResolveAuditSpoolDefaultsItsCap(t *testing.T) {
+	backend, err := Resolve(spoolSpec(nil))
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if backend.AuditSpool.MaxBytes != DefaultAuditSpoolMaxBytes {
+		t.Fatalf("expected the default spool cap, got %d", backend.AuditSpool.MaxBytes)
+	}
+}
+
+func TestResolveAuditSpoolAcceptsAQuantity(t *testing.T) {
+	backend, err := Resolve(spoolSpec(resource.NewQuantity(256<<20, resource.BinarySI)))
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if backend.AuditSpool.MaxBytes != 256<<20 {
+		t.Fatalf("expected a 256Mi spool cap, got %d", backend.AuditSpool.MaxBytes)
+	}
+}
+
+// A cap below one record drops every write, which is a disabled spool wearing an
+// enabled spool's configuration. Reject it while the user can still see the
+// error, not during the outage it was meant to survive.
+func TestResolveAuditSpoolRejectsACapSmallerThanARecord(t *testing.T) {
+	_, err := Resolve(spoolSpec(resource.NewQuantity(4096, resource.BinarySI)))
+	if err == nil || !strings.Contains(err.Error(), "maxSize") {
+		t.Fatalf("expected an undersized spool cap rejection, got %v", err)
 	}
 }

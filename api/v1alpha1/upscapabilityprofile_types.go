@@ -82,7 +82,7 @@ type UPSCapabilityProfileSelector struct {
 	// +optional
 	DriverFamily string `json:"driverFamily,omitempty"`
 
-	// universal marks this profile as the universal floor fallback.
+	// universal marks this profile as the unidentified-device fallback.
 	// +kubebuilder:default=false
 	// +optional
 	Universal *bool `json:"universal,omitempty"`
@@ -93,6 +93,17 @@ type UPSCapabilityTelemetrySpec struct {
 	// variables are authoritative NUT variable names exposed by matching devices.
 	// +optional
 	Variables []string `json:"variables,omitempty"`
+
+	// aliases map a non-standard variable name the device reports (the key) onto
+	// the canonical NUT name it should be read as (the value). A canonical name
+	// the device reports natively always wins over an alias, and every applied
+	// alias is recorded in telemetry diagnostics.
+	//
+	// A map rather than a list of pairs: a reported name can only ever resolve
+	// one way, so making a duplicate key unrepresentable is better than
+	// validating against it.
+	// +optional
+	Aliases map[string]string `json:"aliases,omitempty"`
 }
 
 // UPSCapabilityActuationSpec declares UPS control behaviors.

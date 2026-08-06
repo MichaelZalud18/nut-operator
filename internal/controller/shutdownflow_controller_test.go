@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -44,6 +46,7 @@ import (
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
+	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 )
 
 const (
@@ -971,8 +974,146 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(strings.Count(string(content), "\n")).To(BeNumerically(">=", 1))
 		})
 
+		It("returns spooled records to PostgreSQL on the first reconcile that can write again", func() {
+			observedAt := time.Date(2026, 8, 3, 16, 0, 0, 0, time.UTC)
+			spoolDir := GinkgoT().TempDir()
+			journalPath := filepath.Join(spoolDir, "audit-spool.jsonl")
+
+			createSpoolingPowerCluster(ctx, spoolDir, nil)
+			attachShutdownFlowToPowerCluster(ctx, typeNamespacedName)
+			putUPSDeviceOnBattery(ctx, observedAt)
+
+			By("spooling execution evidence while PostgreSQL refuses writes")
+			failing := &fakeAuditStore{writeErr: errors.New("postgres write failed")}
+			_, err := newSpoolingShutdownFlowReconciler(failing, observedAt).
+				Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(failing.shutdownFlowExecutions).To(BeEmpty())
+			Expect(journalPath).To(BeAnExistingFile())
+
+			By("draining the journal once a healthy store is in hand")
+			replayedBefore := testutil.ToFloat64(metrics.AuditSpoolReplayRecordsTotal.WithLabelValues("replayed"))
+			healthy := &fakeAuditStore{}
+			_, err = newSpoolingShutdownFlowReconciler(healthy, observedAt.Add(time.Minute)).
+				Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			// The evidence PostgreSQL rejected the first time is now in PostgreSQL,
+			// and the journal is gone because the drain was clean.
+			Expect(healthy.shutdownFlowExecutions).NotTo(BeEmpty())
+			Expect(healthy.actionAttempts).NotTo(BeEmpty())
+			Expect(journalPath).NotTo(BeAnExistingFile())
+			Expect(testutil.ToFloat64(metrics.AuditSpoolReplayRecordsTotal.WithLabelValues("replayed"))).
+				To(BeNumerically(">", replayedBefore))
+
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			degraded := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionDegraded)
+			Expect(degraded).NotTo(BeNil())
+			Expect(degraded.Reason).NotTo(Equal("AuditSpoolFallback"))
+		})
+
+		It("reports lost records rather than growing past the spool cap", func() {
+			observedAt := time.Date(2026, 8, 3, 16, 0, 0, 0, time.UTC)
+			spoolDir := GinkgoT().TempDir()
+			journalPath := filepath.Join(spoolDir, "audit-spool.jsonl")
+
+			// A journal left at its cap by an earlier outage. The record kind is one
+			// no build recognizes, so the drain leaves it in place instead of
+			// clearing the very condition under test.
+			capBytes := storageconfig.MinimumAuditSpoolMaxBytes
+			filler := fmt.Sprintf(`{"kind":"unrecognized","key":"filler","payload":{"pad":%q}}`+"\n",
+				strings.Repeat("x", int(capBytes)))
+			Expect(os.WriteFile(journalPath, []byte(filler), 0o600)).To(Succeed())
+
+			createSpoolingPowerCluster(ctx, spoolDir, resource.NewQuantity(capBytes, resource.BinarySI))
+			attachShutdownFlowToPowerCluster(ctx, typeNamespacedName)
+			putUPSDeviceOnBattery(ctx, observedAt)
+
+			droppedBefore := testutil.ToFloat64(metrics.AuditSpoolRecordsTotal.WithLabelValues("dropped"))
+			store := &fakeAuditStore{writeErr: errors.New("postgres write failed")}
+			_, err := newSpoolingShutdownFlowReconciler(store, observedAt).
+				Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			info, err := os.Stat(journalPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.Size()).To(BeNumerically("<=", capBytes+int64(len(filler))))
+			Expect(testutil.ToFloat64(metrics.AuditSpoolRecordsTotal.WithLabelValues("dropped"))).
+				To(BeNumerically(">", droppedBefore))
+
+			// Lost evidence gets its own reason: a delayed audit trail and a
+			// permanently incomplete one are different operator problems.
+			flow := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
+			degraded := meta.FindStatusCondition(flow.Status.Conditions, powerv1alpha1.ConditionDegraded)
+			Expect(degraded).NotTo(BeNil())
+			Expect(degraded.Status).To(Equal(metav1.ConditionTrue))
+			Expect(degraded.Reason).To(Equal("AuditSpoolFull"))
+			Expect(degraded.Message).To(ContainSubstring("dropped"))
+		})
+
 	})
 })
+
+// createSpoolingPowerCluster creates a ready ExternalPostgres cluster with the
+// audit spool enabled at spoolDir.
+func createSpoolingPowerCluster(ctx context.Context, spoolDir string, maxSize *resource.Quantity) {
+	GinkgoHelper()
+	cluster := &powerv1alpha1.PowerManagementCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestPowerClusterName},
+		Spec: powerv1alpha1.PowerManagementClusterSpec{
+			Storage: powerv1alpha1.PowerStorageSpec{
+				Mode: powerv1alpha1.PowerStorageExternalPostgres,
+				ExternalPostgres: &powerv1alpha1.ExternalPostgresStorageSpec{
+					DSNSecretKeyRef: powerv1alpha1.SecretKeyReference{
+						Namespace: "power-system",
+						Name:      "power-postgres",
+						Key:       "dsn",
+					},
+				},
+				AuditSpool: powerv1alpha1.AuditSpoolSpec{
+					Enabled: true,
+					Path:    spoolDir,
+					MaxSize: maxSize,
+				},
+			},
+		},
+	}
+	Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
+	cluster.Status.Storage = powerv1alpha1.StorageStatus{
+		Mode:  powerv1alpha1.PowerStorageExternalPostgres,
+		Ready: true,
+	}
+	Expect(k8sClient.Status().Update(ctx, cluster)).To(Succeed())
+}
+
+func attachShutdownFlowToPowerCluster(ctx context.Context, name types.NamespacedName) {
+	GinkgoHelper()
+	flow := &powerv1alpha1.ShutdownFlow{}
+	Expect(k8sClient.Get(ctx, name, flow)).To(Succeed())
+	flow.Spec.ManagementClusterRef = &powerv1alpha1.ObjectNameReference{Name: shutdownFlowTestPowerClusterName}
+	Expect(k8sClient.Update(ctx, flow)).To(Succeed())
+}
+
+func putUPSDeviceOnBattery(ctx context.Context, observedAt time.Time) {
+	GinkgoHelper()
+	pollTime := metav1.NewTime(observedAt.Add(-10 * time.Second))
+	device := &powerv1alpha1.UPSDevice{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+	device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery
+	device.Status.LastPollTime = &pollTime
+	Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+}
+
+func newSpoolingShutdownFlowReconciler(store *fakeAuditStore, now time.Time) *ShutdownFlowReconciler {
+	return &ShutdownFlowReconciler{
+		Client:           k8sClient,
+		Scheme:           k8sClient.Scheme(),
+		StorageConnector: &fakeAuditConnector{store: store},
+		Clock:            func() time.Time { return now },
+	}
+}
 
 func createShutdownFlowResolverFixture(ctx context.Context) error {
 	port := int32(161)

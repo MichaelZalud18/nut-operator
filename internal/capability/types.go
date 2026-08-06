@@ -37,13 +37,14 @@ const (
 // Profile describes declared UPS capabilities. Declarations are authoritative;
 // probes can detect drift but never rewrite this structure.
 type Profile struct {
-	ID                 string          `json:"id"`
-	Version            string          `json:"version"`
-	Source             ProfileSource   `json:"source,omitempty"`
-	Selector           ProfileSelector `json:"selector"`
-	TelemetryVariables []string        `json:"telemetryVariables,omitempty"`
-	ActuationBehaviors []string        `json:"actuationBehaviors,omitempty"`
-	Quirks             []string        `json:"quirks,omitempty"`
+	ID                 string            `json:"id"`
+	Version            string            `json:"version"`
+	Source             ProfileSource     `json:"source,omitempty"`
+	Selector           ProfileSelector   `json:"selector"`
+	TelemetryVariables []string          `json:"telemetryVariables,omitempty"`
+	TelemetryAliases   map[string]string `json:"telemetryAliases,omitempty"`
+	ActuationBehaviors []string          `json:"actuationBehaviors,omitempty"`
+	Quirks             []string          `json:"quirks,omitempty"`
 }
 
 // ProfileSelector defines the deterministic match inputs for one profile.
@@ -63,18 +64,33 @@ const (
 	MatchTierExactModel         MatchTier = "ExactModel"
 	MatchTierModelGlob          MatchTier = "ModelGlob"
 	MatchTierDriverFamily       MatchTier = "DriverFamily"
-	MatchTierUniversalFloor     MatchTier = "UniversalFloor"
+	MatchTierUnidentified       MatchTier = "Unidentified"
 )
 
 // MatchResult is the selected profile plus attribution useful to the resolver.
+// It carries the matched profile's declared content, not just its identity:
+// downstream stages consume capabilities without re-reading the profile set,
+// and the content participates in the structural hash so a profile edit changes
+// plan identity.
 type MatchResult struct {
-	DeviceID       string        `json:"deviceID,omitempty"`
-	ProfileID      string        `json:"profileID"`
-	ProfileVersion string        `json:"profileVersion"`
-	ProfileSource  ProfileSource `json:"profileSource,omitempty"`
-	ProfileHash    string        `json:"profileHash"`
-	Tier           MatchTier     `json:"tier"`
-	Fallback       bool          `json:"fallback,omitempty"`
+	DeviceID           string            `json:"deviceID,omitempty"`
+	ProfileID          string            `json:"profileID"`
+	ProfileVersion     string            `json:"profileVersion"`
+	ProfileSource      ProfileSource     `json:"profileSource,omitempty"`
+	ProfileHash        string            `json:"profileHash"`
+	Tier               MatchTier         `json:"tier"`
+	Unidentified       bool              `json:"unidentified,omitempty"`
+	TelemetryVariables []string          `json:"telemetryVariables,omitempty"`
+	TelemetryAliases   map[string]string `json:"telemetryAliases,omitempty"`
+	ActuationBehaviors []string          `json:"actuationBehaviors,omitempty"`
+	Quirks             []string          `json:"quirks,omitempty"`
+}
+
+// SupportsTriggerType reports whether the matched profile's declared telemetry
+// satisfies a trigger class, per CR-2: profiles declare variables, the operator
+// owns what those variables imply.
+func (r MatchResult) SupportsTriggerType(trigger TriggerType) bool {
+	return satisfiesTrigger(r.TelemetryVariables, trigger)
 }
 
 // TriggerType is the trigger class used for derived capability checks.

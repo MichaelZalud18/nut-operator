@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,5 +166,107 @@ func TestSpoolWriterRejectsRelativeDirectory(t *testing.T) {
 	_, err := NewSpoolWriter(NoopStore{}, SpoolOptions{Directory: "relative"})
 	if err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Fatalf("expected absolute directory rejection, got %v", err)
+	}
+}
+
+// spoolOnePowerEvent drives one fallback write through the spool and returns the
+// resulting stats, so cap tests read as a sequence of writes rather than as
+// struct plumbing.
+func spoolOnePowerEvent(t *testing.T, writer *SpoolWriter, id string) SpoolStats {
+	t.Helper()
+	if err := writer.RecordPowerEvent(context.Background(), PowerEvent{
+		EventID:    id,
+		EventType:  "ExecutionStarted",
+		Severity:   "Info",
+		SourceKind: "ShutdownFlow",
+		SourceName: "production",
+		Message:    "wave started",
+	}); err != nil {
+		t.Fatalf("RecordPowerEvent(%s) returned error: %v", id, err)
+	}
+	return writer.Stats()
+}
+
+func TestSpoolWriterStopsAtItsSizeCap(t *testing.T) {
+	dir := t.TempDir()
+	writer, err := NewSpoolWriter(failingAuditWriter{err: errors.New("postgres unavailable")}, SpoolOptions{
+		Directory:   dir,
+		DisableSync: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSpoolWriter returned error: %v", err)
+	}
+	// Size the cap from a real record so the test does not depend on the exact
+	// serialized length: two records fit, the third cannot.
+	first := spoolOnePowerEvent(t, writer, "event-a")
+	if first.FallbackWrites != 1 {
+		t.Fatalf("expected the first record to be spooled, got %+v", first)
+	}
+
+	capped, err := NewSpoolWriter(failingAuditWriter{err: errors.New("postgres unavailable")}, SpoolOptions{
+		Directory:   dir,
+		DisableSync: true,
+		MaxBytes:    first.JournalBytes * 2,
+	})
+	if err != nil {
+		t.Fatalf("NewSpoolWriter returned error: %v", err)
+	}
+	if stats := spoolOnePowerEvent(t, capped, "event-b"); stats.FallbackWrites != 1 || stats.DroppedWrites != 0 {
+		t.Fatalf("expected the second record to fit under the cap, got %+v", stats)
+	}
+	stats := spoolOnePowerEvent(t, capped, "event-c")
+	if stats.DroppedWrites != 1 {
+		t.Fatalf("expected the third record to be dropped, got %+v", stats)
+	}
+	if stats.FallbackWrites != 1 {
+		t.Fatalf("a dropped record must not count as a fallback write, got %+v", stats)
+	}
+
+	info, err := os.Stat(filepath.Join(dir, defaultSpoolFileName))
+	if err != nil {
+		t.Fatalf("stat spool journal: %v", err)
+	}
+	if info.Size() > first.JournalBytes*2 {
+		t.Fatalf("journal grew past its cap: %d > %d", info.Size(), first.JournalBytes*2)
+	}
+}
+
+// A dropped record is a reported loss, not a failed write. Returning an error
+// here would surface as a reconcile failure and put a historical record ahead of
+// power response, which is the inversion SB-11 exists to prevent.
+func TestSpoolWriterDoesNotFailTheWritePathWhenFull(t *testing.T) {
+	writer, err := NewSpoolWriter(failingAuditWriter{err: errors.New("postgres unavailable")}, SpoolOptions{
+		Directory:   t.TempDir(),
+		DisableSync: true,
+		MaxBytes:    1,
+	})
+	if err != nil {
+		t.Fatalf("NewSpoolWriter returned error: %v", err)
+	}
+	stats := spoolOnePowerEvent(t, writer, "event-a")
+	if stats.DroppedWrites != 1 || stats.FallbackWrites != 0 {
+		t.Fatalf("expected the record to be dropped, got %+v", stats)
+	}
+}
+
+func TestSpoolWriterIsUnboundedWhenNoCapIsConfigured(t *testing.T) {
+	writer, err := NewSpoolWriter(failingAuditWriter{err: errors.New("postgres unavailable")}, SpoolOptions{
+		Directory:   t.TempDir(),
+		DisableSync: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSpoolWriter returned error: %v", err)
+	}
+	for i := range 5 {
+		if stats := spoolOnePowerEvent(t, writer, fmt.Sprintf("event-%d", i)); stats.DroppedWrites != 0 {
+			t.Fatalf("expected no drops without a cap, got %+v", stats)
+		}
+	}
+}
+
+func TestSpoolWriterRejectsNegativeMaxBytes(t *testing.T) {
+	_, err := NewSpoolWriter(NoopStore{}, SpoolOptions{Directory: t.TempDir(), MaxBytes: -1})
+	if err == nil || !strings.Contains(err.Error(), "negative") {
+		t.Fatalf("expected negative max bytes rejection, got %v", err)
 	}
 }

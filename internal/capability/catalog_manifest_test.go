@@ -60,6 +60,13 @@ func TestBundledCatalogManifestMatchesCodeCatalog(t *testing.T) {
 		if !reflect.DeepEqual(manifest.Spec.Telemetry.Variables, bundled.TelemetryVariables) {
 			t.Fatalf("manifest profile %q telemetry = %#v, want %#v", bundled.ID, manifest.Spec.Telemetry.Variables, bundled.TelemetryVariables)
 		}
+		manifestAliases := manifest.Spec.Telemetry.Aliases
+		if len(manifestAliases) == 0 {
+			manifestAliases = nil
+		}
+		if !reflect.DeepEqual(manifestAliases, bundled.TelemetryAliases) {
+			t.Fatalf("manifest profile %q telemetry aliases = %#v, want %#v", bundled.ID, manifestAliases, bundled.TelemetryAliases)
+		}
 		if !reflect.DeepEqual(manifest.Spec.Actuation.Behaviors, bundled.ActuationBehaviors) {
 			t.Fatalf("manifest profile %q actuation = %#v, want %#v", bundled.ID, manifest.Spec.Actuation.Behaviors, bundled.ActuationBehaviors)
 		}
@@ -120,7 +127,8 @@ type manifestCapabilityProfile struct {
 			Universal    *bool  `yaml:"universal"`
 		} `yaml:"selector"`
 		Telemetry struct {
-			Variables []string `yaml:"variables"`
+			Variables []string          `yaml:"variables"`
+			Aliases   map[string]string `yaml:"aliases"`
 		} `yaml:"telemetry"`
 		Actuation struct {
 			Behaviors []string `yaml:"behaviors"`

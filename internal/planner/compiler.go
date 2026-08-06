@@ -86,6 +86,7 @@ func Compile(structural StructuralInputs, telemetry TelemetryInputs) (Plan, []Di
 func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 	var diagnostics []Diagnostic
 	diagnostics = append(diagnostics, validateTierPolicy(input.TierPolicy)...)
+	diagnostics = append(diagnostics, validateTriggerCapabilities(input)...)
 	if len(input.Triggers) == 0 {
 		diagnostics = append(diagnostics, Diagnostic{
 			Severity: DiagnosticError,
@@ -369,7 +370,24 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 		Triggers:          append([]Trigger(nil), input.Triggers...),
 		Groups:            append([]Group(nil), input.Groups...),
 		Steps:             append([]Step(nil), input.Steps...),
+
+		DeviceCapabilities: append([]DeviceCapability(nil), input.DeviceCapabilities...),
+		PowerDomains:       append([]PowerDomainMembership(nil), input.PowerDomains...),
 	}
+	for i := range normalized.DeviceCapabilities {
+		normalized.DeviceCapabilities[i].TelemetryVariables = append([]string(nil), normalized.DeviceCapabilities[i].TelemetryVariables...)
+		sort.Strings(normalized.DeviceCapabilities[i].TelemetryVariables)
+	}
+	sort.SliceStable(normalized.DeviceCapabilities, func(left, right int) bool {
+		return normalized.DeviceCapabilities[left].DeviceID < normalized.DeviceCapabilities[right].DeviceID
+	})
+	for i := range normalized.PowerDomains {
+		normalized.PowerDomains[i].UPSDevices = append([]string(nil), normalized.PowerDomains[i].UPSDevices...)
+		sort.Strings(normalized.PowerDomains[i].UPSDevices)
+	}
+	sort.SliceStable(normalized.PowerDomains, func(left, right int) bool {
+		return normalized.PowerDomains[left].Name < normalized.PowerDomains[right].Name
+	})
 	for i := range normalized.Triggers {
 		normalized.Triggers[i].UPSDevices = append([]string(nil), normalized.Triggers[i].UPSDevices...)
 		normalized.Triggers[i].PowerDomains = append([]string(nil), normalized.Triggers[i].PowerDomains...)

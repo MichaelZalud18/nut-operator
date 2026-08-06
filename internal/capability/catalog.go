@@ -17,22 +17,30 @@ limitations under the License.
 package capability
 
 const (
-	BundledUniversalFloorProfileID   = "nut-bundled-universal-floor"
+	BundledUnidentifiedProfileID     = "nut-bundled-unidentified-device"
 	BundledUbiquitiUPSTowerProfileID = "ubiquiti-unifi-ups-tower"
 	BundledUbiquitiUPS2UProfileID    = "ubiquiti-unifi-ups-2u"
-	bundledCapabilityProfileVersion  = "0.1.0"
-	quirkUbiquitiBuiltInNUTServer    = "built-in-nut-server"
-	quirkUbiquitiNoSNMP              = "snmp-not-supported-by-ups"
-	quirkUbiquitiPre1418ProtocolBugs = "firmware-before-1.4.18-had-nut-protocol-response-bugs"
-	quirkUbiquitiNoConfirmedInstcmds = "instant-commands-not-confirmed"
-	quirkUbiquitiNonstandardLowLevel = "reports-battery.low-instead-of-battery.charge.low"
-	quirkUbiquitiTowerPowerMayVary   = "tower-output-power-and-current-may-be-firmware-or-load-dependent"
-	quirkUbiquitiCredentialedReads   = "credentialed-upsc-reads-may-require-client-config"
+	bundledCapabilityProfileVersion  = "1.0.0"
+
+	// Quirk strings carry their own firmware scope, following the existing
+	// firmware-before-1.4.18 precedent. Two earlier quirks claimed a reachable
+	// built-in NUT server and no SNMP support at all; both were contradicted by
+	// field testing on firmware 1.6.1, so they are replaced by
+	// firmware-scoped statements of what was actually observed rather than left
+	// as unscoped claims a current device would inherit forever.
+	quirkUbiquitiBuiltInNUTServerUnreachable = "built-in-nut-server-not-reachable-on-firmware-1.6.1"
+	quirkUbiquitiSNMPv3Only                  = "snmpv3-only-no-community-string-on-firmware-1.6.1"
+	quirkUbiquitiPre1418ProtocolBugs         = "firmware-before-1.4.18-had-nut-protocol-response-bugs"
+	quirkUbiquitiNoConfirmedInstcmds         = "instant-commands-not-confirmed"
+	quirkUbiquitiNonstandardLowLevel         = "reports-battery.low-instead-of-battery.charge.low"
+	quirkUbiquitiTowerPowerMayVary           = "tower-output-power-and-current-may-be-firmware-or-load-dependent"
+	quirkUbiquitiCredentialedReads           = "credentialed-upsc-reads-may-require-client-config"
 )
 
 var (
 	ubiquitiCommonTelemetryVariables = []string{
 		"battery.charge",
+		"battery.charge.low",
 		"battery.low",
 		"battery.runtime",
 		"battery.voltage",
@@ -59,12 +67,18 @@ var (
 	}
 
 	ubiquitiCommonQuirks = []string{
-		quirkUbiquitiBuiltInNUTServer,
-		quirkUbiquitiNoSNMP,
+		quirkUbiquitiBuiltInNUTServerUnreachable,
+		quirkUbiquitiSNMPv3Only,
 		quirkUbiquitiPre1418ProtocolBugs,
 		quirkUbiquitiNoConfirmedInstcmds,
 		quirkUbiquitiNonstandardLowLevel,
 		quirkUbiquitiCredentialedReads,
+	}
+
+	// These devices report the low-battery level under a non-standard name.
+	// The alias is what makes the recorded quirk actionable instead of prose.
+	ubiquitiCommonTelemetryAliases = map[string]string{
+		"battery.low": "battery.charge.low",
 	}
 )
 
@@ -74,7 +88,7 @@ var (
 func BundledProfiles() []Profile {
 	return copyProfiles([]Profile{
 		{
-			ID:      BundledUniversalFloorProfileID,
+			ID:      BundledUnidentifiedProfileID,
 			Version: bundledCapabilityProfileVersion,
 			Source:  ProfileSourceBundled,
 			Selector: ProfileSelector{
@@ -94,6 +108,7 @@ func BundledProfiles() []Profile {
 			TelemetryVariables: append(append([]string{}, ubiquitiCommonTelemetryVariables...),
 				"ups.temperature",
 			),
+			TelemetryAliases: ubiquitiCommonTelemetryAliases,
 			Quirks: append(append([]string{}, ubiquitiCommonQuirks...),
 				quirkUbiquitiTowerPowerMayVary,
 			),
@@ -106,6 +121,7 @@ func BundledProfiles() []Profile {
 				ModelGlob: "2U_*VA_*V",
 			},
 			TelemetryVariables: ubiquitiCommonTelemetryVariables,
+			TelemetryAliases:   ubiquitiCommonTelemetryAliases,
 			Quirks:             ubiquitiCommonQuirks,
 		},
 	})
@@ -115,6 +131,7 @@ func copyProfiles(profiles []Profile) []Profile {
 	copied := make([]Profile, 0, len(profiles))
 	for _, profile := range profiles {
 		profile.TelemetryVariables = append([]string(nil), profile.TelemetryVariables...)
+		profile.TelemetryAliases = copyAliases(profile.TelemetryAliases)
 		profile.ActuationBehaviors = append([]string(nil), profile.ActuationBehaviors...)
 		profile.Quirks = append([]string(nil), profile.Quirks...)
 		copied = append(copied, profile)

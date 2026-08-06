@@ -148,6 +148,45 @@ func declarativeStructuralInputs(ctx context.Context, reader client.Reader) (res
 	}, diagnostics, nil
 }
 
+// resolveDeviceCapabilityMatch matches one UPSDevice against the same profile
+// set the structural resolver uses. Telemetry polling needs the matched
+// profile before any ShutdownFlow compiles, so this is a device-scoped lookup
+// rather than a second copy of the matching rules.
+func resolveDeviceCapabilityMatch(ctx context.Context, reader client.Reader, device *powerv1alpha1.UPSDevice) (capability.MatchResult, error) {
+	profiles := capability.BundledProfiles()
+
+	var capabilityProfiles powerv1alpha1.UPSCapabilityProfileList
+	if err := reader.List(ctx, &capabilityProfiles); err != nil {
+		return capability.MatchResult{}, fmt.Errorf("list UPSCapabilityProfile resources: %w", err)
+	}
+	for i := range capabilityProfiles.Items {
+		obj := &capabilityProfiles.Items[i]
+		if result := validateUPSCapabilityProfile(obj); !result.accepted {
+			continue
+		}
+		profiles = append(profiles, capabilityProfileFromUPSCapabilityProfile(obj))
+	}
+
+	entity := inventoryEntityFromUPSDevice(device)
+	match, _, err := capability.Match(capability.Device{
+		ID:           entity.ID,
+		Model:        entity.Model,
+		Firmware:     entity.Firmware,
+		DriverFamily: entity.DriverFamily,
+	}, profiles)
+	if err != nil {
+		return capability.MatchResult{}, err
+	}
+	return match, nil
+}
+
+// telemetryAliasesFromMatch hands the matched profile's alias map to the
+// normalizer. Both sides use the same shape, so this is a copy, not a
+// translation.
+func telemetryAliasesFromMatch(match capability.MatchResult) map[string]string {
+	return copyStringMap(match.TelemetryAliases)
+}
+
 func resolverDiagnosticFromValidation(source, kind, name string, result validationResult) resolver.Diagnostic {
 	return resolver.Diagnostic{
 		Severity: resolver.DiagnosticError,

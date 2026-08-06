@@ -539,6 +539,19 @@ type FlowSafetySpec struct {
 	// maxEstimatedDuration rejects compiled plans that exceed this budget.
 	// +optional
 	MaxEstimatedDuration *metav1.Duration `json:"maxEstimatedDuration,omitempty"`
+
+	// allowUnidentifiedDevices permits Enforce mode when a UPS in scope matched
+	// no product capability profile and fell through to the unidentified-device
+	// profile.
+	//
+	// Defaults to false, and that default is the point. An unidentified device
+	// has had nothing verified about it: the operator knows only that some NUT
+	// driver answered. UPS hardware varies too much for that to be a safe basis
+	// for cutting power to real nodes, so enforcement is blocked until either a
+	// profile matches or an operator states, in Git, that they accept it.
+	// +kubebuilder:default=false
+	// +optional
+	AllowUnidentifiedDevices *bool `json:"allowUnidentifiedDevices,omitempty"`
 }
 
 // CompiledShutdownStep is the status-visible compiled form of one flow step.

@@ -1,0 +1,19 @@
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSCapabilityProbe
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: unidentified-rack-a-ups
+spec:
+  # The UPSDevice to read. It must already be selected by a ready NUTServer,
+  # since the probe reads through the same NUT endpoint telemetry polling uses.
+  deviceRef:
+    name: rack-a-ups
+
+  # Optional. Defaults to a name derived from the reported manufacturer and model.
+  # profileName: vendor-super-1500
+
+  # Optional. Leave unset for a one-shot probe. Set it to re-read the device on a
+  # schedule, which is useful while firmware or driver configuration is changing.
+  # refreshInterval: 1h

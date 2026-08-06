@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -219,6 +220,14 @@ type AuditSpoolSpec struct {
 	// +kubebuilder:validation:MaxLength=512
 	// +optional
 	Path string `json:"path,omitempty"`
+
+	// maxSize caps the spool journal, expressed as a Kubernetes quantity such as 64Mi.
+	// A PostgreSQL outage has no bounded duration, so an uncapped journal grows until the
+	// durable volume behind spec.storage.auditSpool.path is full. Once the cap is reached the
+	// operator stops spooling and reports the loss on the ShutdownFlow rather than filling the
+	// volume during a power event. Defaults to 64Mi.
+	// +optional
+	MaxSize *resource.Quantity `json:"maxSize,omitempty"`
 }
 
 // ExternalPostgresStorageSpec configures an existing PostgreSQL database.

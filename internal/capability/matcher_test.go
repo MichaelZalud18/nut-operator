@@ -91,16 +91,16 @@ func TestMatchFallsBackToUniversalFloorWithWarning(t *testing.T) {
 
 	result, diagnostics, err := Match(device, profiles)
 	if err != nil {
-		t.Fatalf("expected universal floor match to succeed, got %v with diagnostics %#v", err, diagnostics)
+		t.Fatalf("expected unidentified-device match to succeed, got %v with diagnostics %#v", err, diagnostics)
 	}
-	if !result.Fallback {
+	if !result.Unidentified {
 		t.Fatalf("expected fallback result, got %#v", result)
 	}
-	if result.Tier != MatchTierUniversalFloor {
-		t.Fatalf("expected universal floor tier, got %q", result.Tier)
+	if result.Tier != MatchTierUnidentified {
+		t.Fatalf("expected unidentified tier, got %q", result.Tier)
 	}
-	if !hasDiagnosticReason(diagnostics, "UniversalFloorMatched") {
-		t.Fatalf("expected UniversalFloorMatched warning, got %#v", diagnostics)
+	if !hasDiagnosticReason(diagnostics, "DeviceUnidentified") {
+		t.Fatalf("expected DeviceUnidentified warning, got %#v", diagnostics)
 	}
 }
 
@@ -121,7 +121,7 @@ func TestMatchMissingModelCanUseDriverFamilyProfile(t *testing.T) {
 	if result.Tier != MatchTierDriverFamily {
 		t.Fatalf("expected driver-family tier, got %q", result.Tier)
 	}
-	if result.Fallback {
+	if result.Unidentified {
 		t.Fatalf("expected driver-family match not to be marked as fallback, got %#v", result)
 	}
 }
@@ -136,8 +136,8 @@ func TestMatchRejectsInvalidProfiles(t *testing.T) {
 	if !errors.Is(err, ErrRejected) {
 		t.Fatalf("expected ErrRejected, got %v", err)
 	}
-	if !hasDiagnosticReason(diagnostics, "UniversalFloorRequired") {
-		t.Fatalf("expected UniversalFloorRequired diagnostic, got %#v", diagnostics)
+	if !hasDiagnosticReason(diagnostics, "UnidentifiedProfileRequired") {
+		t.Fatalf("expected UnidentifiedProfileRequired diagnostic, got %#v", diagnostics)
 	}
 	if !hasDiagnosticReason(diagnostics, "InvalidModelGlob") {
 		t.Fatalf("expected InvalidModelGlob diagnostic, got %#v", diagnostics)
@@ -223,4 +223,162 @@ func hasDiagnosticReason(diagnostics []Diagnostic, reason string) bool {
 		}
 	}
 	return false
+}
+
+func TestMatchResultCarriesProfileContent(t *testing.T) {
+	profiles := []Profile{
+		{
+			ID:                 "floor",
+			Version:            "1.0.0",
+			Source:             ProfileSourceBundled,
+			Selector:           ProfileSelector{Universal: true},
+			TelemetryVariables: []string{"ups.status"},
+		},
+		{
+			ID:                 "product",
+			Version:            "1.0.0",
+			Source:             ProfileSourceBundled,
+			Selector:           ProfileSelector{ModelGlob: "2U_*VA_*V"},
+			TelemetryVariables: []string{"battery.charge.low", "battery.runtime", "ups.status"},
+			TelemetryAliases:   map[string]string{"battery.low": "battery.charge.low"},
+			ActuationBehaviors: []string{"shutdown.return"},
+			Quirks:             []string{"example-quirk"},
+		},
+	}
+
+	result, _, err := Match(Device{ID: "ups-1", Model: "2U_1500VA_230V"}, profiles)
+	if err != nil {
+		t.Fatalf("Match returned error: %v", err)
+	}
+	if result.ProfileID != "product" {
+		t.Fatalf("matched profile = %q, want product", result.ProfileID)
+	}
+	if len(result.TelemetryVariables) != 3 {
+		t.Fatalf("telemetry variables = %#v, want the profile's three", result.TelemetryVariables)
+	}
+	if len(result.TelemetryAliases) != 1 || result.TelemetryAliases["battery.low"] != "battery.charge.low" {
+		t.Fatalf("telemetry aliases = %#v, want the profile's alias", result.TelemetryAliases)
+	}
+	if len(result.ActuationBehaviors) != 1 || len(result.Quirks) != 1 {
+		t.Fatalf("actuation/quirks = %#v/%#v, want the profile's content", result.ActuationBehaviors, result.Quirks)
+	}
+	if !result.SupportsTriggerType(TriggerRuntimeBelow) {
+		t.Fatal("matched profile declares battery.runtime, so RuntimeBelow must be supported")
+	}
+	if result.SupportsTriggerType(TriggerChargeBelow) {
+		t.Fatal("matched profile omits battery.charge, so ChargeBelow must be unsupported")
+	}
+}
+
+func TestMatchWarnsWhenMissingModelCostsAProductMatch(t *testing.T) {
+	profiles := []Profile{{
+		ID:                 "floor",
+		Version:            "1.0.0",
+		Source:             ProfileSourceBundled,
+		Selector:           ProfileSelector{Universal: true},
+		TelemetryVariables: []string{"ups.status"},
+	}}
+
+	result, diagnostics, err := Match(Device{ID: "ups-1", DriverFamily: "snmp-ups"}, profiles)
+	if err != nil {
+		t.Fatalf("Match returned error: %v", err)
+	}
+	if !result.Unidentified {
+		t.Fatal("with only a floor profile available, a model-less device must fall back")
+	}
+	if !hasDiagnosticReason(diagnostics, "ProviderModelMissing") {
+		t.Fatalf("expected a ProviderModelMissing warning, got %#v", diagnostics)
+	}
+}
+
+func TestMatchStaysQuietWhenDriverFamilyProfileMatches(t *testing.T) {
+	profiles := []Profile{
+		{
+			ID:                 "floor",
+			Version:            "1.0.0",
+			Source:             ProfileSourceBundled,
+			Selector:           ProfileSelector{Universal: true},
+			TelemetryVariables: []string{"ups.status"},
+		},
+		{
+			ID:                 "snmp-family",
+			Version:            "1.0.0",
+			Source:             ProfileSourceCRD,
+			Selector:           ProfileSelector{DriverFamily: "snmp-ups"},
+			TelemetryVariables: []string{"battery.runtime", "ups.status"},
+		},
+	}
+
+	result, diagnostics, err := Match(Device{ID: "ups-1", DriverFamily: "snmp-ups"}, profiles)
+	if err != nil {
+		t.Fatalf("Match returned error: %v", err)
+	}
+	if result.Unidentified || result.ProfileID != "snmp-family" {
+		t.Fatalf("expected the driver-family profile to win, got %q fallback=%v", result.ProfileID, result.Unidentified)
+	}
+	if hasDiagnosticReason(diagnostics, "ProviderModelMissing") {
+		t.Fatalf("a device that matched a real profile lost nothing to its missing model, got %#v", diagnostics)
+	}
+}
+
+func TestValidateProfileAliasesRejectsAmbiguity(t *testing.T) {
+	floor := Profile{
+		ID:                 "floor",
+		Version:            "1.0.0",
+		Selector:           ProfileSelector{Universal: true},
+		TelemetryVariables: []string{"ups.status"},
+	}
+
+	// A duplicate source is not tested because the map shape makes it
+	// unrepresentable: a key can only appear once.
+	for name, testCase := range map[string]struct {
+		aliases map[string]string
+		reason  string
+	}{
+		"self alias": {
+			aliases: map[string]string{"battery.low": "battery.low"},
+			reason:  "InvalidTelemetryAlias",
+		},
+		"missing target": {
+			aliases: map[string]string{"battery.low": ""},
+			reason:  "InvalidTelemetryAlias",
+		},
+		"colliding target": {
+			aliases: map[string]string{
+				"battery.low": "battery.charge.low",
+				"batt.low":    "battery.charge.low",
+			},
+			reason: "CollidingTelemetryAlias",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			profile := floor
+			profile.TelemetryAliases = testCase.aliases
+			_, diagnostics, err := Match(Device{ID: "ups-1"}, []Profile{profile})
+			if err == nil {
+				t.Fatal("expected an ambiguous alias set to be rejected")
+			}
+			if !hasDiagnosticReason(diagnostics, testCase.reason) {
+				t.Fatalf("expected reason %q, got %#v", testCase.reason, diagnostics)
+			}
+		})
+	}
+}
+
+func TestValidateProfileAliasesWarnsOnUndeclaredTarget(t *testing.T) {
+	profile := Profile{
+		ID:                 "floor",
+		Version:            "1.0.0",
+		Selector:           ProfileSelector{Universal: true},
+		TelemetryVariables: []string{"ups.status"},
+		TelemetryAliases:   map[string]string{"batt.low": "battery.charge.low"},
+	}
+
+	_, diagnostics, err := Match(Device{ID: "ups-1"}, []Profile{profile})
+	if err != nil {
+		t.Fatalf("an undeclared alias target must warn, not reject: %v", err)
+	}
+	if !hasDiagnosticReason(diagnostics, "AliasTargetNotDeclared") {
+		t.Fatalf("expected an AliasTargetNotDeclared warning, got %#v", diagnostics)
+	}
 }

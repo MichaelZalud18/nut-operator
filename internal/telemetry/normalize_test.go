@@ -178,3 +178,67 @@ func hasDiagnostic(diagnostics []Diagnostic, reason, subject string) bool {
 	}
 	return false
 }
+
+func TestNormalizeAppliesProfileAliases(t *testing.T) {
+	snapshot := Normalize(Sample{
+		UPSDevice: "ups-1",
+		Variables: map[string]string{
+			"ups.status":  "OL",
+			"battery.low": "20",
+		},
+		Aliases: map[string]string{"battery.low": "battery.charge.low"},
+	})
+
+	if got := snapshot.Variables["battery.charge.low"]; got != "20" {
+		t.Fatalf("battery.charge.low = %q, want the aliased value 20", got)
+	}
+	if got := snapshot.Variables["battery.low"]; got != "20" {
+		t.Fatalf("the reported name must survive aliasing, got %q", got)
+	}
+	if !hasTelemetryDiagnostic(snapshot.Diagnostics, "AliasApplied") {
+		t.Fatalf("an applied alias must be recorded, got %#v", snapshot.Diagnostics)
+	}
+}
+
+func TestNormalizeNativeVariableWinsOverAlias(t *testing.T) {
+	snapshot := Normalize(Sample{
+		UPSDevice: "ups-1",
+		Variables: map[string]string{
+			"ups.status":         "OL",
+			"battery.low":        "20",
+			"battery.charge.low": "35",
+		},
+		Aliases: map[string]string{"battery.low": "battery.charge.low"},
+	})
+
+	if got := snapshot.Variables["battery.charge.low"]; got != "35" {
+		t.Fatalf("battery.charge.low = %q, want the native value 35 to win", got)
+	}
+	if !hasTelemetryDiagnostic(snapshot.Diagnostics, "AliasShadowedByNativeVariable") {
+		t.Fatalf("a shadowed alias must be recorded, got %#v", snapshot.Diagnostics)
+	}
+}
+
+func TestNormalizeAliasResolvesDerivedFields(t *testing.T) {
+	snapshot := Normalize(Sample{
+		UPSDevice: "ups-1",
+		Variables: map[string]string{
+			"ups.status": "OB",
+			"batt.pct":   "42",
+		},
+		Aliases: map[string]string{"batt.pct": "battery.charge"},
+	})
+
+	if snapshot.BatteryChargePercent == nil || *snapshot.BatteryChargePercent != 42 {
+		t.Fatalf("aliased battery.charge must reach the derived field, got %#v", snapshot.BatteryChargePercent)
+	}
+}
+
+func hasTelemetryDiagnostic(diagnostics []Diagnostic, reason string) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Reason == reason {
+			return true
+		}
+	}
+	return false
+}

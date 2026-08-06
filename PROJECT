@@ -117,4 +117,12 @@ resources:
     defaulting: true
     validation: true
     webhookVersion: v1
+- api:
+    crdVersion: v1
+  controller: true
+  domain: zalud.io
+  group: power
+  kind: UPSCapabilityProbe
+  path: github.com/MichaelZalud18/nut-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"

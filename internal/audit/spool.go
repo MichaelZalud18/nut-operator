@@ -36,6 +36,10 @@ type SpoolOptions struct {
 	FileName    string
 	Clock       func() time.Time
 	DisableSync bool
+	// MaxBytes caps the journal. A record that would push the file past the cap
+	// is dropped and counted rather than written. Zero means unbounded, which
+	// callers should not choose: see the cap discussion on append.
+	MaxBytes int64
 }
 
 // SpoolStats summarize fallback writes made by one writer instance.
@@ -43,6 +47,12 @@ type SpoolStats struct {
 	FallbackWrites   int
 	LastPrimaryError string
 	LastSpoolPath    string
+	// DroppedWrites counts records the journal refused because it was at its
+	// size cap. These records exist nowhere: PostgreSQL rejected them and the
+	// spool would not take them either.
+	DroppedWrites int
+	// JournalBytes is the journal size observed at the last append attempt.
+	JournalBytes int64
 }
 
 // SpoolWriter writes to a primary audit writer first and appends a replayable
@@ -53,11 +63,14 @@ type SpoolWriter struct {
 	fileName    string
 	clock       func() time.Time
 	disableSync bool
+	maxBytes    int64
 
 	mu               sync.Mutex
 	fallbackWrites   int
 	lastPrimaryError string
 	lastSpoolPath    string
+	droppedWrites    int
+	journalBytes     int64
 }
 
 // NewSpoolWriter wraps a primary audit writer with a local fallback journal.
@@ -86,12 +99,16 @@ func NewSpoolWriter(primary Writer, options SpoolOptions) (*SpoolWriter, error) 
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
+	if options.MaxBytes < 0 {
+		return nil, fmt.Errorf("audit spool max bytes must not be negative")
+	}
 	return &SpoolWriter{
 		primary:     primary,
 		directory:   filepath.Clean(directory),
 		fileName:    fileName,
 		clock:       clock,
 		disableSync: options.DisableSync,
+		maxBytes:    options.MaxBytes,
 	}, nil
 }
 
@@ -102,6 +119,8 @@ func (w *SpoolWriter) Stats() SpoolStats {
 		FallbackWrites:   w.fallbackWrites,
 		LastPrimaryError: w.lastPrimaryError,
 		LastSpoolPath:    w.lastSpoolPath,
+		DroppedWrites:    w.droppedWrites,
+		JournalBytes:     w.journalBytes,
 	}
 }
 
@@ -204,12 +223,38 @@ type spoolRecord struct {
 	Payload      any       `json:"payload"`
 }
 
+// append writes one record to the journal, subject to the size cap.
+//
+// The cap exists because a PostgreSQL outage has no bounded duration. An
+// uncapped journal on a durable volume grows until the volume is full, and a
+// full volume during a power event is a worse failure than a truncated audit
+// trail: it can take the operator's own writes down with it.
+//
+// At the cap the journal stops accepting records rather than evicting old ones.
+// The first records of a degradation explain it; the thousandth mostly repeats
+// it. A refused record is counted, surfaced on the ShutdownFlow, and never
+// quietly discarded -- but it is not returned as an error, because failing a
+// power-management reconcile over a historical record inverts the priority
+// SB-11 exists to protect.
 func (w *SpoolWriter) append(ctx context.Context, kind, key string, primaryErr error, payload any) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
+
+	record := spoolRecord{
+		Kind:         kind,
+		Key:          key,
+		SpooledAt:    w.clock().UTC(),
+		PrimaryError: primaryErr.Error(),
+		Payload:      payload,
+	}
+	line, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("encode audit spool record: %w", err)
+	}
+	line = append(line, '\n')
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -222,26 +267,35 @@ func (w *SpoolWriter) append(ctx context.Context, kind, key string, primaryErr e
 	if err != nil {
 		return fmt.Errorf("open audit spool file: %w", err)
 	}
-	record := spoolRecord{
-		Kind:         kind,
-		Key:          key,
-		SpooledAt:    w.clock().UTC(),
-		PrimaryError: primaryErr.Error(),
-		Payload:      payload,
+	info, err := file.Stat()
+	if err != nil {
+		closeErr := file.Close()
+		return fmt.Errorf("stat audit spool file: %w", errors.Join(err, closeErr))
 	}
-	encodeErr := json.NewEncoder(file).Encode(record)
+	if w.maxBytes > 0 && info.Size()+int64(len(line)) > w.maxBytes {
+		w.droppedWrites++
+		w.journalBytes = info.Size()
+		w.lastSpoolPath = path
+		if closeErr := file.Close(); closeErr != nil {
+			return fmt.Errorf("close audit spool file: %w", closeErr)
+		}
+		return nil
+	}
+
+	_, writeErr := file.Write(line)
 	var syncErr error
-	if encodeErr == nil && !w.disableSync {
+	if writeErr == nil && !w.disableSync {
 		syncErr = file.Sync()
 	}
 	closeErr := file.Close()
-	if encodeErr != nil || syncErr != nil || closeErr != nil {
-		return fmt.Errorf("append audit spool record: %w", errors.Join(encodeErr, syncErr, closeErr))
+	if writeErr != nil || syncErr != nil || closeErr != nil {
+		return fmt.Errorf("append audit spool record: %w", errors.Join(writeErr, syncErr, closeErr))
 	}
 
 	w.fallbackWrites++
 	w.lastPrimaryError = primaryErr.Error()
 	w.lastSpoolPath = path
+	w.journalBytes = info.Size() + int64(len(line))
 	return nil
 }
 

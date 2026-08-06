@@ -449,16 +449,16 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 			scheme.AddKnownTypeWithName(cnpgClusterGVK, &unstructured.Unstructured{})
 			referencingCluster := &powerv1alpha1.PowerManagementCluster{
 				ObjectMeta: metav1.ObjectMeta{
-					Namespace: "power-alpha",
-					Name:      "alpha-cnpg",
+					Namespace: "power-data",
+					Name:      "power-cnpg",
 				},
 				Spec: powerv1alpha1.PowerManagementClusterSpec{
 					Storage: powerv1alpha1.PowerStorageSpec{
 						Mode: powerv1alpha1.PowerStorageCNPG,
 						CNPG: &powerv1alpha1.CNPGStorageSpec{
 							ClusterRef: powerv1alpha1.NamespacedNameReference{
-								Namespace: "power-alpha",
-								Name:      "cluster-nut-operator-alpha",
+								Namespace: "power-data",
+								Name:      "cluster-power-audit",
 							},
 						},
 					},
@@ -466,7 +466,7 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 			}
 			ignoredCluster := &powerv1alpha1.PowerManagementCluster{
 				ObjectMeta: metav1.ObjectMeta{
-					Namespace: "power-alpha",
+					Namespace: "power-data",
 					Name:      "other-cnpg",
 				},
 				Spec: powerv1alpha1.PowerManagementClusterSpec{
@@ -474,7 +474,7 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 						Mode: powerv1alpha1.PowerStorageCNPG,
 						CNPG: &powerv1alpha1.CNPGStorageSpec{
 							ClusterRef: powerv1alpha1.NamespacedNameReference{
-								Namespace: "power-alpha",
+								Namespace: "power-data",
 								Name:      "cluster-other",
 							},
 						},
@@ -491,13 +491,13 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 			}
 			cnpgCluster := &unstructured.Unstructured{}
 			cnpgCluster.SetGroupVersionKind(cnpgClusterGVK)
-			cnpgCluster.SetNamespace("power-alpha")
-			cnpgCluster.SetName("cluster-nut-operator-alpha")
+			cnpgCluster.SetNamespace("power-data")
+			cnpgCluster.SetName("cluster-power-audit")
 
 			requests := reconciler.mapCNPGClusterToPowerManagementClusters(context.Background(), cnpgCluster)
 
 			Expect(requests).To(HaveLen(1))
-			Expect(requests[0].NamespacedName).To(Equal(types.NamespacedName{Namespace: "power-alpha", Name: "alpha-cnpg"}))
+			Expect(requests[0].NamespacedName).To(Equal(types.NamespacedName{Namespace: "power-data", Name: "power-cnpg"}))
 		})
 	})
 })

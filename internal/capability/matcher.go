@@ -45,22 +45,13 @@ func Match(device Device, profiles []Profile) (MatchResult, []Diagnostic, error)
 		return MatchResult{}, diagnostics, ErrRejected
 	}
 
-	if device.Model == "" && device.DriverFamily == "" {
-		diagnostics = append(diagnostics, Diagnostic{
-			Severity: DiagnosticWarning,
-			Reason:   "ProviderModelMissing",
-			Subject:  device.ID,
-			Message:  fmt.Sprintf("device %q has no model or driver-family key; matching falls back to the universal floor", device.ID),
-		})
-	}
-
 	candidates := matchingCandidates(device, normalized)
 	if len(candidates) == 0 {
 		diagnostics = append(diagnostics, Diagnostic{
 			Severity: DiagnosticError,
-			Reason:   "UniversalFloorMissing",
+			Reason:   "UnidentifiedProfileMissing",
 			Subject:  device.ID,
-			Message:  "no capability profile matched and no universal floor profile is available",
+			Message:  "no capability profile matched and no unidentified-device profile is available",
 		})
 		return MatchResult{}, diagnostics, ErrRejected
 	}
@@ -70,21 +61,43 @@ func Match(device Device, profiles []Profile) (MatchResult, []Diagnostic, error)
 
 	best := candidates[0]
 	result := MatchResult{
-		DeviceID:       device.ID,
-		ProfileID:      best.profile.ID,
-		ProfileVersion: best.profile.Version,
-		ProfileSource:  best.profile.Source,
-		ProfileHash:    stableHash(best.profile),
-		Tier:           best.tier,
-		Fallback:       best.tier == MatchTierUniversalFloor,
+		DeviceID:           device.ID,
+		ProfileID:          best.profile.ID,
+		ProfileVersion:     best.profile.Version,
+		ProfileSource:      best.profile.Source,
+		ProfileHash:        stableHash(best.profile),
+		Tier:               best.tier,
+		Unidentified:       best.tier == MatchTierUnidentified,
+		TelemetryVariables: append([]string(nil), best.profile.TelemetryVariables...),
+		TelemetryAliases:   copyAliases(best.profile.TelemetryAliases),
+		ActuationBehaviors: append([]string(nil), best.profile.ActuationBehaviors...),
+		Quirks:             append([]string(nil), best.profile.Quirks...),
 	}
-	if result.Fallback {
+	if result.Unidentified {
 		diagnostics = append(diagnostics, Diagnostic{
 			Severity: DiagnosticWarning,
-			Reason:   "UniversalFloorMatched",
+			Reason:   "DeviceUnidentified",
 			Subject:  device.ID,
-			Message:  fmt.Sprintf("device %q matched the universal floor capability profile", device.ID),
+			Message:  fmt.Sprintf("device %q matched no product capability profile and is unidentified", device.ID),
 		})
+		// Only report a missing model when it actually cost the device a
+		// match. The three most specific tiers all key off the model, so a
+		// model-less device that floored had no way to reach a product
+		// profile -- but one that matched by driver family lost nothing, and
+		// warning there would be noise rather than the honest signal RS-19
+		// asks for.
+		if device.Model == "" {
+			message := fmt.Sprintf("device %q declares no model key, so the model, model+firmware, and model-glob match tiers were unreachable and it is unidentified; set spec.identity.model to match a product profile", device.ID)
+			if device.DriverFamily == "" {
+				message = fmt.Sprintf("device %q has no model or driver-family key; the device cannot be identified", device.ID)
+			}
+			diagnostics = append(diagnostics, Diagnostic{
+				Severity: DiagnosticWarning,
+				Reason:   "ProviderModelMissing",
+				Subject:  device.ID,
+				Message:  message,
+			})
+		}
 	}
 
 	return result, diagnostics, nil
@@ -92,12 +105,20 @@ func Match(device Device, profiles []Profile) (MatchResult, []Diagnostic, error)
 
 // SupportsTrigger derives trigger support from declared telemetry variables.
 func SupportsTrigger(profile Profile, trigger TriggerType) bool {
+	return satisfiesTrigger(profile.TelemetryVariables, trigger)
+}
+
+// satisfiesTrigger reports whether a declared variable set covers a trigger
+// class. Aliases are deliberately not consulted here: an alias renames a
+// variable the device already reports, and the profile is expected to declare
+// the canonical name it resolves to.
+func satisfiesTrigger(declared []string, trigger TriggerType) bool {
 	required := RequiredVariablesForTrigger(trigger)
 	if len(required) == 0 {
 		return true
 	}
 	variables := map[string]struct{}{}
-	for _, variable := range profile.TelemetryVariables {
+	for _, variable := range declared {
 		variables[variable] = struct{}{}
 	}
 	for _, variable := range required {
@@ -168,7 +189,7 @@ func matchTier(device Device, selector ProfileSelector) (MatchTier, int, bool) {
 		return MatchTierDriverFamily, 3, true
 	}
 	if selector.Universal {
-		return MatchTierUniversalFloor, 4, true
+		return MatchTierUnidentified, 4, true
 	}
 	return "", 0, false
 }
@@ -226,6 +247,7 @@ func validateProfiles(profiles []Profile) []Diagnostic {
 				})
 			}
 		}
+		diagnostics = append(diagnostics, validateProfileAliases(profile)...)
 		if profile.Selector.Universal {
 			hasUniversal = true
 		}
@@ -233,17 +255,94 @@ func validateProfiles(profiles []Profile) []Diagnostic {
 	if !hasUniversal {
 		diagnostics = append(diagnostics, Diagnostic{
 			Severity: DiagnosticError,
-			Reason:   "UniversalFloorRequired",
-			Message:  "at least one universal floor capability profile is required",
+			Reason:   "UnidentifiedProfileRequired",
+			Message:  "at least one unidentified-device capability profile is required",
 		})
 	}
 	return diagnostics
+}
+
+// validateProfileAliases enforces what the map shape cannot. A map key already
+// guarantees a reported name resolves exactly one way, so the only remaining
+// ambiguity is two reported names collapsing onto one canonical name.
+func validateProfileAliases(profile Profile) []Diagnostic {
+	var diagnostics []Diagnostic
+	declared := make(map[string]struct{}, len(profile.TelemetryVariables))
+	for _, variable := range profile.TelemetryVariables {
+		declared[variable] = struct{}{}
+	}
+
+	sources := make([]string, 0, len(profile.TelemetryAliases))
+	for source := range profile.TelemetryAliases {
+		sources = append(sources, source)
+	}
+	sort.Strings(sources)
+
+	claimed := map[string]string{}
+	for _, source := range sources {
+		target := profile.TelemetryAliases[source]
+		switch {
+		case source == "" || target == "":
+			diagnostics = append(diagnostics, Diagnostic{
+				Severity: DiagnosticError,
+				Reason:   "InvalidTelemetryAlias",
+				Subject:  profile.ID,
+				Message:  fmt.Sprintf("capability profile %q has a telemetry alias with an empty name", profile.ID),
+			})
+			continue
+		case source == target:
+			diagnostics = append(diagnostics, Diagnostic{
+				Severity: DiagnosticError,
+				Reason:   "InvalidTelemetryAlias",
+				Subject:  profile.ID,
+				Message:  fmt.Sprintf("capability profile %q aliases %q to itself", profile.ID, source),
+			})
+			continue
+		}
+
+		if previous, exists := claimed[target]; exists {
+			diagnostics = append(diagnostics, Diagnostic{
+				Severity: DiagnosticError,
+				Reason:   "CollidingTelemetryAlias",
+				Subject:  profile.ID,
+				Message: fmt.Sprintf("capability profile %q aliases both %q and %q onto %q; a canonical name accepts one source",
+					profile.ID, previous, source, target),
+			})
+		}
+		claimed[target] = source
+
+		if _, exists := declared[target]; !exists {
+			diagnostics = append(diagnostics, Diagnostic{
+				Severity: DiagnosticWarning,
+				Reason:   "AliasTargetNotDeclared",
+				Subject:  profile.ID,
+				Message: fmt.Sprintf("capability profile %q aliases %q onto %q but does not declare %q as a telemetry variable, so trigger support will not see it",
+					profile.ID, source, target, target),
+			})
+		}
+	}
+	return diagnostics
+}
+
+// copyAliases deep-copies an alias map so profile normalization can never
+// mutate a caller's catalog. A nil map stays nil, which keeps hashes and
+// round-trips stable for profiles that declare no aliases.
+func copyAliases(aliases map[string]string) map[string]string {
+	if aliases == nil {
+		return nil
+	}
+	copied := make(map[string]string, len(aliases))
+	for source, target := range aliases {
+		copied[source] = target
+	}
+	return copied
 }
 
 func normalizeProfiles(profiles []Profile) []Profile {
 	normalized := append([]Profile(nil), profiles...)
 	for i := range normalized {
 		normalized[i].TelemetryVariables = append([]string(nil), normalized[i].TelemetryVariables...)
+		normalized[i].TelemetryAliases = copyAliases(normalized[i].TelemetryAliases)
 		normalized[i].ActuationBehaviors = append([]string(nil), normalized[i].ActuationBehaviors...)
 		normalized[i].Quirks = append([]string(nil), normalized[i].Quirks...)
 		sort.Strings(normalized[i].TelemetryVariables)

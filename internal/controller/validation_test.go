@@ -17,9 +17,13 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/capability"
+	"github.com/MichaelZalud18/nut-operator/internal/inventory"
+	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
 func TestValidateUPSDeviceRejectsLocalUSBDriver(t *testing.T) {
@@ -476,7 +480,7 @@ func TestValidateUPSCapabilityProfileAcceptsUniversalFloor(t *testing.T) {
 
 	result := validateUPSCapabilityProfile(profile)
 	if !result.accepted {
-		t.Fatalf("expected universal floor profile to be accepted, got %s: %s", result.reason, result.message)
+		t.Fatalf("expected the unidentified-device profile to be accepted, got %s: %s", result.reason, result.message)
 	}
 }
 
@@ -499,6 +503,106 @@ func shutdownFlowWithGroups(groups []powerv1alpha1.ShutdownGroup) *powerv1alpha1
 				{Type: powerv1alpha1.ShutdownTriggerOnBattery},
 			},
 			Groups: groups,
+		},
+	}
+}
+
+func TestValidateShutdownFlowDeviceIdentificationBlocksEnforce(t *testing.T) {
+	bundle := resolver.StructuralBundle{
+		Topology: inventory.Topology{
+			Domains: []inventory.PowerDomain{{Name: "core", UPSDevices: []string{"ups-1"}}},
+		},
+		CapabilityMatches: []capability.MatchResult{
+			{DeviceID: "ups-1", ProfileID: "nut-bundled-unidentified-device", Unidentified: true},
+		},
+	}
+	flow := enforceFlowTargeting("core")
+
+	result := validateShutdownFlowDeviceIdentification(flow, bundle)
+	if result.accepted {
+		t.Fatal("Enforce mode must not be accepted against an unidentified UPS")
+	}
+	if result.reason != "UnidentifiedUPSDevice" {
+		t.Fatalf("reason = %q, want UnidentifiedUPSDevice", result.reason)
+	}
+	if !strings.Contains(result.message, "ups-1") {
+		t.Fatalf("the rejection must name the device, got %q", result.message)
+	}
+}
+
+func TestValidateShutdownFlowDeviceIdentificationAllowsIdentifiedDevices(t *testing.T) {
+	bundle := resolver.StructuralBundle{
+		Topology: inventory.Topology{
+			Domains: []inventory.PowerDomain{{Name: "core", UPSDevices: []string{"ups-1"}}},
+		},
+		CapabilityMatches: []capability.MatchResult{
+			{DeviceID: "ups-1", ProfileID: "vendor-super-1500"},
+		},
+	}
+
+	if result := validateShutdownFlowDeviceIdentification(enforceFlowTargeting("core"), bundle); !result.accepted {
+		t.Fatalf("a matched profile must not block enforcement: %q", result.message)
+	}
+}
+
+func TestValidateShutdownFlowDeviceIdentificationIgnoresOutOfScopeDevices(t *testing.T) {
+	bundle := resolver.StructuralBundle{
+		Topology: inventory.Topology{
+			Domains: []inventory.PowerDomain{
+				{Name: "core", UPSDevices: []string{"ups-1"}},
+				{Name: "lab", UPSDevices: []string{"ups-2"}},
+			},
+		},
+		CapabilityMatches: []capability.MatchResult{
+			{DeviceID: "ups-1", ProfileID: "vendor-super-1500"},
+			{DeviceID: "ups-2", ProfileID: "nut-bundled-unidentified-device", Unidentified: true},
+		},
+	}
+
+	if result := validateShutdownFlowDeviceIdentification(enforceFlowTargeting("core"), bundle); !result.accepted {
+		t.Fatalf("an unidentified device in an untargeted domain must not block: %q", result.message)
+	}
+}
+
+func TestValidateShutdownFlowDeviceIdentificationHonorsOptIn(t *testing.T) {
+	bundle := resolver.StructuralBundle{
+		Topology: inventory.Topology{
+			Domains: []inventory.PowerDomain{{Name: "core", UPSDevices: []string{"ups-1"}}},
+		},
+		CapabilityMatches: []capability.MatchResult{
+			{DeviceID: "ups-1", ProfileID: "nut-bundled-unidentified-device", Unidentified: true},
+		},
+	}
+	flow := enforceFlowTargeting("core")
+	allow := true
+	flow.Spec.Safety.AllowUnidentifiedDevices = &allow
+
+	if result := validateShutdownFlowDeviceIdentification(flow, bundle); !result.accepted {
+		t.Fatalf("an explicit opt-in must be honored: %q", result.message)
+	}
+}
+
+func TestValidateShutdownFlowDeviceIdentificationIgnoresDryRun(t *testing.T) {
+	bundle := resolver.StructuralBundle{
+		CapabilityMatches: []capability.MatchResult{
+			{DeviceID: "ups-1", ProfileID: "nut-bundled-unidentified-device", Unidentified: true},
+		},
+	}
+	flow := enforceFlowTargeting("core")
+	flow.Spec.Mode = powerv1alpha1.ShutdownFlowModeDryRun
+
+	if result := validateShutdownFlowDeviceIdentification(flow, bundle); !result.accepted {
+		t.Fatalf("dry-run review must stay possible for unidentified hardware: %q", result.message)
+	}
+}
+
+func enforceFlowTargeting(domain string) *powerv1alpha1.ShutdownFlow {
+	return &powerv1alpha1.ShutdownFlow{
+		Spec: powerv1alpha1.ShutdownFlowSpec{
+			Mode: powerv1alpha1.ShutdownFlowModeEnforce,
+			Triggers: []powerv1alpha1.ShutdownTrigger{
+				{Type: powerv1alpha1.ShutdownTriggerOnBattery, PowerDomains: []string{domain}},
+			},
 		},
 	}
 }

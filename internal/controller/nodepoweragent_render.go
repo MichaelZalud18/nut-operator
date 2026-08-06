@@ -161,6 +161,11 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 			{APIVersion: "v1", Kind: "Namespace", Name: namespace},
 			{APIVersion: "v1", Kind: "ServiceAccount", Namespace: namespace, Name: serviceAccount.Name},
 			{APIVersion: "v1", Kind: "ConfigMap", Namespace: namespace, Name: configMap.Name, Hash: hashStringMap(configData)},
+			// Publishing a hash of Secret contents in status is safe here and deliberate (F-24): it is
+			// a one-way SHA-256 over a 32-byte random value from randomPassword(), serving the standard
+			// config-hash-triggers-rollout pattern. Recovering the password from it is infeasible. The
+			// NUTServer side reaches the opposite conclusion for its own credential Secret, where the
+			// content is user-supplied rather than randomly generated.
 			{APIVersion: "v1", Kind: "Secret", Namespace: namespace, Name: secret.Name, Hash: hashByteMap(secretData)},
 			{APIVersion: "v1", Kind: "Secret", Namespace: namespace, Name: signalSecret.Name},
 			{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: namespace, Name: networkPolicy.Name},
