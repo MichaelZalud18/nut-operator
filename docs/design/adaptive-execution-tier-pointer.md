@@ -1,7 +1,12 @@
 # Adaptive Execution — Tier Pointer Model
 
-Status: design, 2026-08-03, rev 3. Supersedes the earlier mid-flow adaptive-execution proposal and
-tier-pointer revisions 1 and 2; the superseded drafts are not retained in the repository.
+Status: design, 2026-08-03, rev 3; annotated 2026-08-06 where implemented mechanisms have since
+caught up with what this design assumed. Supersedes the earlier mid-flow adaptive-execution proposal
+and tier-pointer revisions 1 and 2; the superseded drafts are not retained in the repository.
+
+None of the model below is implemented. What changed is that three things it depends on now exist:
+compile-time capability validation, durable executor resume state, and a decided position on
+pre-shutdown hooks.
 
 Components: Planning & Execution Logic.
 
@@ -111,17 +116,41 @@ in the flow.
 - Evaluated at wave boundaries only.
 - Mode transitions are events under AE-4 and AE-5.
 
+Hooks are a timing-adaptation input, not a pointer input. A pre-shutdown hook declared on a group
+carries its own bounded timeout, and that timeout is exactly the class of value adaptation scales:
+what a system can be given in `Relaxed` is not what it can be given in `Urgent`. A hook never gates
+descent — an unfinished hook does not hold the pointer, and shutdown proceeds regardless. The hook
+mechanism itself is still being designed; see the Planning & Execution Logic section of
+`docs/tasks.md`.
+
 Capability gating applies: a device whose firmware reports a static runtime estimate cannot support
 timing adaptation. Declared in the profile telemetry section (CR-2), validated at compile time as in
 PL-19. Ungated, this is the OD-9 silent-failure class.
 
+That gate is no longer hypothetical. As of 2026-08-05 capability matches carry their declared
+telemetry content into the planner, and `validateTriggerCapabilities` already rejects or degrades a
+trigger against the devices it targets using a some/all split. Timing adaptation should reuse that
+machinery rather than inventing a parallel check: the question "do these devices actually report
+`battery.runtime`" is now answerable at compile time with existing code.
+
 The pointer model needs no such gate — it responds to power state, not runtime projections, and
-works on any device.
+works on any device. One qualification, from OD-31: a device that matched no product capability
+profile blocks `Enforce` entirely unless `spec.safety.allowUnidentifiedDevices` records the
+acceptance. The pointer model is device-agnostic; enforcement on an unverified device is a separate,
+explicit decision made before the outage.
 
 ## Executor state
 
 Pointer and timing mode must survive executor restart, or a restarted instance resumes at the wrong
 depth or silently reverts to `Nominal`. Bound to OD-17.
+
+The carrier for this already exists: `executor_resume_states` persists execution ID, plan config
+hash, current wave index, phase, and an open `state` payload, written through
+`UpsertExecutorResumeState` on an upsert keyed by execution. Pointer depth and timing mode belong in
+that record rather than in a new one. Note the durability caveat that applies to everything on this
+path: if PostgreSQL is unavailable, resume state falls to the audit spool and is only returned on
+the first reconcile that can write again, so a restart during a database outage resumes from the
+last state that actually landed.
 
 ## Open decisions
 

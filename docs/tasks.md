@@ -224,9 +224,15 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
     referenced, never inline; TLS verification stays on; and outbound endpoints likely want an
     allowlist on `PowerManagementCluster` per `GP-2`, since this would be the operator's only
     outbound egress to arbitrary hosts.
-  - Dry-run needs a deliberate answer. The runner is never invoked in dry-run
+  - Dry-run needs a deliberate answer, TBD. The runner is never invoked in dry-run
     (`internal/executor`'s `if !dryRun` guard), so hooks structurally cannot fire — correct, but it
-    means dry-run currently proves nothing about a hook. It should record what it *would* have sent.
+    means dry-run currently proves nothing about a hook: a wrong URL, a rotated credential, or an
+    endpoint that has moved is discovered during the outage. At minimum dry-run should record the
+    request it *would* have sent. The candidate worth designing against: let the hook declare its
+    own dry-run invocation alongside the real one, so the author decides what a safe rehearsal means
+    for their system — a different endpoint, the same endpoint with a rehearsal flag, or a read-only
+    call that proves reachability and auth without side effects. That keeps the operator out of
+    guessing which calls are safe to repeat, which it cannot know for a system it does not manage.
 - **Waiting on a hook is deliberately undecided (2026-08-06).** Whether the executor blocks on a
   hook's completion is TBD. What is decided: **the default is that shutdown proceeds anyway.** A
   hook that has not finished never becomes a reason to keep nodes up while battery runtime drains —
