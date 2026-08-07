@@ -111,6 +111,22 @@ Kubernetes is the primary interface:
 
 The operator publishes facts, not external commands. Other systems may consume published planner artifacts for dashboards, documentation, monitoring, recovery orchestration, or future automation. The project boundary remains: `nut-operator` owns power-event planning and shutdown execution; subscribers own what they do with the published plan.
 
+## Installation
+
+Requires cert-manager, and PostgreSQL for production use (CloudNativePG or external). Install the
+operator with the bundled manifest:
+
+```sh
+kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/dist/install.yaml
+```
+
+Everything defaults to dry-run: a `ShutdownFlow` compiles and publishes its full plan without
+touching a node until enforcement is explicitly enabled.
+
+Full prerequisites, the Kustomize path, network and firewall requirements, a configuration
+walkthrough, upgrade and uninstall order, and troubleshooting are in
+[docs/install.md](docs/install.md).
+
 ## Development
 
 Use a writable Go build cache in restricted shells:
@@ -180,6 +196,7 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 
 ## Documentation
 
+- [Installation](docs/install.md)
 - [Architecture](docs/architecture.md)
 - [System architecture diagram](docs/diagrams/system-architecture.md)
 - [Security](docs/security.md)
