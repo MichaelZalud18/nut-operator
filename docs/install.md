@@ -25,6 +25,33 @@ kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/do
 kubectl -n cert-manager rollout status deploy/cert-manager-webhook
 ```
 
+### If cert-manager is not an option
+
+cert-manager is the default because the bundled manifest wires it up, not because the operator
+depends on it. The manager reads its serving cert from a directory
+(`--webhook-cert-path=/tmp/k8s-webhook-server/serving-certs`, mounted from the `webhook-server-cert`
+Secret), so **any issuer that can produce a Secret with `tls.crt` and `tls.key` works**.
+
+To bring your own certificate:
+
+1. Create a Secret named `webhook-server-cert` in the operator's namespace containing `tls.crt` and
+   `tls.key`, with a SAN for `nut-operator-webhook-service.<namespace>.svc`.
+2. Drop the `../certmanager` resource from your overlay.
+3. Set `.webhooks[].clientConfig.caBundle` on both `MutatingWebhookConfiguration` and
+   `ValidatingWebhookConfiguration` to your base64-encoded CA. This is the step cert-manager's
+   ca-injector normally automates, and it must be repeated whenever the CA rotates.
+
+On OpenShift, the built-in service CA does both halves with annotations and no extra operator:
+`service.beta.openshift.io/serving-cert-secret-name: webhook-server-cert` on the webhook Service,
+and `service.beta.openshift.io/inject-cabundle: "true"` on the two webhook configurations.
+
+**Do not simply remove the webhooks.** Admission defaulting is load-bearing for safety: the
+`NodePowerAgent` defaulter is the only thing that sets `spec.resources.upsmon` and
+`spec.resources.actuator`, and without it the tier-0 DaemonSet pods land in BestEffort QoS with no
+OOM-score protection or scheduler reservation (F-34). It also supplies
+`spec.placement.priorityClassName`, which has no CRD-level default. Validation is duplicated in the
+controllers as a second layer, but defaulting is not.
+
 **PostgreSQL — required for production, optional for evaluation.** Kubernetes holds desired state;
 PostgreSQL holds the record of what actually happened. Three modes:
 
