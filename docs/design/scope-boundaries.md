@@ -352,7 +352,6 @@ for defense in depth.
 | OD-8r | Resolver behavior on malformed or missing model strings from the topology provider: reject, floor-match with warning, or configurable | Resolver design |
 | OD-9 | Degrade mechanics for trigger-capability mismatch — folded into capability schema doc | Capability schema doc |
 | OD-10 | USB and serial UPS support: version target and isolation model | v2 scoping |
-| OD-16 | Missing `carries` coverage — node with no modeled communication path: hard failure or explicit exemption marker. Silent-assume excluded | Inventory validation |
 | OD-18 | Tier inversion: lower-tier workload on higher-tier node. Node cannot clear under PL-20 while the workload runs. Options: compile-time validation, opt-in migration, node blocking. Node-local PVCs constrain migration | Planner tier compilation |
 | OD-19 | FSD usage: whether NUT's forced-shutdown broadcast becomes the final release signal or is deliberately declined in favor of the executor's signal file. Affects whether shutdown is observable through standard NUT tooling | Executor design |
 | OD-20 | Instant command scope and gating: which NUT instant commands and writable variables enter scope, how they are gated given they can cut power to equipment, and which capability profile fields declare support. Bounded by OD-1 on anything touching power-return | Capability schema |
@@ -374,6 +373,7 @@ for defense in depth.
 | OD-4 | Numbered shutdown tiers. See the change log entry of 2026-08-03. |
 | OD-5 | Startup ordering is an advisory projection for subscribers, not an operator-executed graph. |
 | OD-15 | Probe-history persistence uses PostgreSQL `capability_profile_verifications` rows for "last verified against firmware X" and drift evidence. |
+| OD-16 | A node with no modeled `carries` path is a warning (`CommunicationPathUnmodeled`), not a hard failure, and `communicationPathExempt` marks the deliberate cases. Silent-assume stays excluded: the gap is always stated. |
 | OD-23 | Telemetry variable aliasing lives in the profile telemetry section. A natively reported canonical name always outranks an alias; aliasing is one-directional and total; applied and shadowed aliases are both recorded as diagnostics. |
 | OD-31 | A UPS that matches no product capability profile blocks `Enforce` mode, naming the devices, unless `spec.safety.allowUnidentifiedDevices` records acceptance. Dry-run compilation and review are unaffected. The catch-all profile is renamed from "universal floor" to the unidentified-device profile. |
 
