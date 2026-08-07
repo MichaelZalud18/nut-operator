@@ -101,8 +101,6 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
   `shutdown.return` handshake and `test.battery.start`.
 - `OD-21` driver configuration ownership — profile vs. `UPSDevice` spec. A hybrid (profile default,
   spec override) matches the existing `RS-5` precedence pattern and is the likely shape.
-- `OD-23` alias collision/precedence rules (two device names mapping to one canonical name, or a
-  name both aliased and natively present).
 - `OD-24` non-NUT power device actuation (UniFi RPS-class devices) — currently topological-only by
   design; revisit alongside `OD-10` (USB support), since both concern control surfaces outside the
   NUT-network-only posture.
