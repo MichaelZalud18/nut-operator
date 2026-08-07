@@ -306,6 +306,19 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 
 #### Open Work
 
+- **`spec.tls` mounts a certificate and never tells NUT to use it.** The webhook defaults
+  `spec.tls.mode` to `Required` and validation rejects `Required` without a
+  `serverCertificateRef`; the render mounts that Secret read-only at `/etc/nut/tls`. Nothing then
+  emits `CERTFILE` into `upsd.conf`, or `CERTVERIFY`/`FORCESSL` into `upsd.conf`/`upsmon.conf` —
+  `renderNUTServerConfig` writes `upsd.conf` as a bare `LISTEN <address> <port>`, and the image's
+  entrypoint adds nothing. So a `NUTServer` that reports TLS `Required` serves plaintext NUT on
+  3493, and `upsmon.conf`'s `MONITOR <ups> 1 <user> <pass> secondary` login crosses the wire in the
+  clear. Confined to in-cluster traffic and constrained by the operand `NetworkPolicy`, but the API
+  claims a protection that is not in effect — the same "declared field that does nothing" class as
+  `F-25` and `F-33`, and the only instance of it that is security-relevant. NUT's own guidance
+  (`docs/security.txt` upstream) treats `CERTVERIFY 1` plus `FORCESSL 1` as the pair that makes TLS
+  real. Fix the render, and assert the directives in `nutserver_render_test.go` so the claim cannot
+  silently regress again.
 - **`NUTServer` reconciler doesn't watch `UPSDevice` or unowned credential `Secret`s.**
   `SetupWithManager` (`nutserver_controller.go`) only watches `NUTServer` itself plus resources it
   owns (`Owns(&corev1.Secret{})` only matches secrets with an owner reference back to it — not a
