@@ -172,6 +172,20 @@ that group's own action sequence.
 for node N cannot precede N in shutdown order. The communication path is modeled as `carries` edges
 per IN-5; OD-3 is closed.
 
+**PL-20a** · Report tier inversion. A group whose tier is lower than the tier of a node it runs on
+is scheduled to keep working after that node powers off. Compilation reports this as
+`ShutdownTierInversion`, naming the group, the node, and both tiers. It is reported rather than
+rejected: the condition is real but the remedy — retier, migrate, or accept — belongs to whoever
+authored the tiers (OD-18).
+
+**PL-20b** · Report defaulted tiers. A group that declares no tier and inherits the cluster default
+is reported informationally as `ShutdownTierDefaulted`. Defaulting is legitimate; silence about it
+is not, because a mistyped tier label is otherwise indistinguishable from a deliberate default.
+
+Planner diagnostics reach the `ShutdownFlow`: warnings degrade the flow with the diagnostic's own
+reason, and every diagnostic including informational ones is recorded in the compilation audit row
+under source `Planner`.
+
 **PL-22** · Resolve last-ditch roles into terminal ordering constraints. "Must stay until phase X"
 is a role in input and a set of edges in output. The phase taxonomy is the numbered-tier scheme
 (OD-4, closed): tier N+1 → tier N compiles to derived edges labeled per PL-15; explicit `requires`

@@ -41,6 +41,9 @@ resolver/adapter that feeds it into reconciliation. Design contract: `docs/desig
   silent when no nodes are visible at all, because there is nothing to check against.
 - **`OD-16` closed in the registry (2026-08-07)** to match the warning-plus-exemption behavior
   `internal/inventory` already implemented.
+- **Graph failures are proven through the real reconcile path (2026-08-07).** Orphan rejection and
+  duplicate-edge rejection now have envtest specs asserting the `ShutdownFlow` lands on the right
+  `Accepted` reason with no compiled plan, rather than being tested only at the compiler layer.
 
 #### Open Work
 
@@ -52,11 +55,8 @@ resolver/adapter that feeds it into reconciliation. Design contract: `docs/desig
 - `IN-16` snapshot age ceiling has no implementation (no config field, no staleness condition).
 - NetBox as a second topology provider (`SB-8`) is docs-only — zero code exists. Decide whether and
   when to build it, or drop it from the design docs if it's not actually planned.
-- `OD-18` tier inversion (lower-tier workload on a higher-tier node) has no compile-time validation,
-  opt-in migration, or blocking behavior implemented.
-- Controller-level regression tests for multi-object graph failures (orphan rejection, duplicate
-  edges) end-to-end through `ShutdownFlowReconciler` — today this is only tested at the
-  compiler/resolver layer, not proven through the actual reconcile path.
+- `OD-18` remedy is undecided: inversion is detected and reported, but opt-in migration and node
+  blocking are not built, and node-local PVCs constrain the migration path.
 
 ---
 
@@ -168,6 +168,24 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   same facts.
 - `F-31` closed operator-wide (status writes are patches). The unpredicated `UPSDevice` watch it
   exposed is still open below.
+- **Planner diagnostics reach the flow (2026-08-07).** Every caller discarded `planner.Compile`'s
+  diagnostics return value, so the planner's own findings ended at the function boundary: a rejection
+  reason, a degraded trigger, a structural warning — none of it was visible in status or audit. The
+  adapter now returns a `CompiledFlow` carrying them, planner warnings degrade the flow under their
+  own reason, and every diagnostic including informational ones is recorded in the compilation audit
+  row under source `Planner`. This is what makes the two diagnostics below observable rather than
+  dead code, and it unblocks threading real diagnostic classes into `compile_total`'s result label.
+- **`OD-18` tier inversion is detected (2026-08-07).** Tiers count down, so a node at tier 4 is meant
+  to be gone while a group at tier 2 is still working; if that group runs on that node, the plan says
+  something the cluster cannot do. Compilation now reports `ShutdownTierInversion` naming the group,
+  the node, and both tiers. Detection uses the node membership `PL-20` already resolves plus each
+  node's declared inventory tier. Reported rather than rejected on purpose: the condition is real but
+  the remedy — retier, migrate, or accept — belongs to whoever authored the tiers, and OD-18 leaves
+  opt-in migration and node blocking open.
+- **Defaulted tiers are reported (2026-08-07).** A group inheriting `defaultTier` was silent, which
+  made a mistyped tier label indistinguishable from a deliberate default — something never meant to
+  be ordinary quietly became tier 4. `ShutdownTierDefaulted` names the group and the tier applied, at
+  a new informational severity that never degrades a flow.
 - **`PL-20` node-clearance edges are derived and shape wave order (2026-08-07).** The planner could
   not previously name a node: `PlannerTarget` reduces every selector to booleans and counts, so a
   group's node membership never reached compilation and `PL-20` had nothing to derive from. Group-to-
@@ -268,20 +286,10 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   budget runs out first.
 - `OD-12` infeasible-plan policy field default and options (reject/warn/truncate), referenced by
   `EX-3`, not yet decided or implemented.
-- `OD-18` tier inversion validation (shared with Inventory System — this is the planner
-  tier-compilation half). Detection falls out of the same label scan as the defaulted-tier
-  diagnostic below: resolve every node's tier and every workload's tier, then report workloads whose
-  tier is lower than the node they sit on, since that node cannot clear under `PL-20` while they
-  run. Worth publishing as a count so it can be watched rather than only read at compile time. Note
-  what users can do about it without operator support: `nodeAffinity` accepts `Gt`/`Lt` on
-  integer-valued node labels, so a workload can already require a node at a more desirable tier.
-- **Report tiers that were defaulted rather than declared.** A group with no resolvable tier falls
-  back to `spec.shutdownTiers.defaultTier`, which is legitimate configuration and currently silent.
-  The tier compiler diagnoses malformed tiers (`ShutdownTierInvalid`, `DuplicateShutdownTier`,
-  `ShutdownTierZeroTargeted`, `ShutdownTierDefaultReserved`) but never says "this fell back," so a
-  typo'd label key is indistinguishable from a deliberate default — and something the user never
-  intended to be ordinary silently becomes tier 4. Emit an informational diagnostic naming the
-  target and why no tier resolved.
+- Publish tier inversion as a metric so it can be watched rather than only read at compile time. It
+  develops over time as workloads reschedule, so a compile-time-only view misses it. Note what users
+  can already do without operator support: `nodeAffinity` accepts `Gt`/`Lt` on integer-valued node
+  labels, so a workload can require a node at a more desirable tier.
 - **Node targeting cannot express tier ranges.** `spec.groups[].target.nodeSelector` is a
   `metav1.LabelSelector`, which supports only `In`/`NotIn`/`Exists`/`DoesNotExist` — no numeric
   comparison. `corev1.NodeSelector` (what `nodeAffinity` uses) does support `Gt`/`Lt` against

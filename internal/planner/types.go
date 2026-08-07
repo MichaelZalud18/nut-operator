@@ -46,6 +46,17 @@ type StructuralInputs struct {
 	// cannot be derived. Empty means the caller supplied no node context and
 	// clearance derivation is skipped.
 	GroupNodes []GroupNodeMembership `json:"groupNodes,omitempty"`
+	// NodeTiers is the shutdown tier declared for each node in inventory. It is
+	// what makes tier inversion detectable: a node scheduled to power off before
+	// the workloads still running on it (OD-18).
+	NodeTiers []NodeTier `json:"nodeTiers,omitempty"`
+}
+
+// NodeTier is one node's declared shutdown tier, from inventory rather than
+// from any group that happens to target it.
+type NodeTier struct {
+	Name string `json:"name"`
+	Tier int32  `json:"tier"`
 }
 
 // GroupNodeMembership is one group's relationship to real cluster nodes.

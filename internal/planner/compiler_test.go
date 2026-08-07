@@ -804,3 +804,138 @@ func TestNodeClearanceIsDeterministicAndFoldsIntoPlanIdentity(t *testing.T) {
 		t.Fatal("node membership must participate in plan identity")
 	}
 }
+
+// OD-18: tiers count down, so a node at a higher tier is meant to be gone while
+// a lower-tier group is still working. If that group runs on that node, the plan
+// says something the cluster cannot do.
+func TestCompileReportsTierInversion(t *testing.T) {
+	groupTier := int32(2)
+	_, diagnostics, err := Compile(StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{Name: "late-workload", Action: "ScaleWorkload", ShutdownTier: &groupTier},
+		},
+		GroupNodes: []GroupNodeMembership{
+			{Group: "late-workload", Acts: []string{"node-a"}},
+		},
+		NodeTiers: []NodeTier{{Name: "node-a", Tier: 4}},
+	}, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("inversion is a warning, not a rejection: %v", err)
+	}
+	if !hasDiagnosticReason(diagnostics, "ShutdownTierInversion") {
+		t.Fatalf("expected a ShutdownTierInversion diagnostic, got %#v", diagnostics)
+	}
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Reason != "ShutdownTierInversion" {
+			continue
+		}
+		if diagnostic.Severity != DiagnosticWarning {
+			t.Fatalf("expected a warning, got %q", diagnostic.Severity)
+		}
+		if !strings.Contains(diagnostic.Message, "node-a") || !strings.Contains(diagnostic.Message, "tier 4") {
+			t.Fatalf("expected the message to name the node and its tier, got %q", diagnostic.Message)
+		}
+	}
+}
+
+func TestCompileReportsNoInversionWhenNodeOutlivesItsWorkload(t *testing.T) {
+	groupTier := int32(4)
+	_, diagnostics, err := Compile(StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{Name: "early-workload", Action: "ScaleWorkload", ShutdownTier: &groupTier},
+		},
+		GroupNodes: []GroupNodeMembership{
+			{Group: "early-workload", Acts: []string{"node-a"}},
+		},
+		NodeTiers: []NodeTier{{Name: "node-a", Tier: 2}},
+	}, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if hasDiagnosticReason(diagnostics, "ShutdownTierInversion") {
+		t.Fatalf("a workload stopping before its node is the correct order, got %#v", diagnostics)
+	}
+}
+
+// A group that releases a node is not running on it afterward, so the node's own
+// tier cannot invert against it.
+func TestCompileIgnoresInversionForReleasedNodes(t *testing.T) {
+	groupTier := int32(1)
+	_, diagnostics, err := Compile(StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{Name: "release-node", Action: "AgentShutdown", ShutdownTier: &groupTier},
+		},
+		GroupNodes: []GroupNodeMembership{
+			{Group: "release-node", Releases: []string{"node-a"}},
+		},
+		NodeTiers: []NodeTier{{Name: "node-a", Tier: 4}},
+	}, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if hasDiagnosticReason(diagnostics, "ShutdownTierInversion") {
+		t.Fatalf("releasing a node is not running on it, got %#v", diagnostics)
+	}
+}
+
+// A mistyped tier label is indistinguishable from a deliberate default unless
+// the fallback is stated.
+func TestCompileReportsDefaultedShutdownTiers(t *testing.T) {
+	explicit := int32(4)
+	defaultTier := int32(3)
+	_, diagnostics, err := Compile(StructuralInputs{
+		Triggers:   []Trigger{{Type: "OnBattery"}},
+		TierPolicy: TierPolicy{DefaultTier: &defaultTier},
+		Groups: []Group{
+			{Name: "declared", Action: "ScaleWorkload", ShutdownTier: &explicit},
+			{Name: "defaulted", Action: "ScaleWorkload"},
+		},
+	}, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("defaulting is legitimate configuration, not an error: %v", err)
+	}
+
+	var found bool
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Reason != "ShutdownTierDefaulted" {
+			continue
+		}
+		found = true
+		if diagnostic.Subject != "defaulted" {
+			t.Fatalf("only the group that fell back should be named, got %q", diagnostic.Subject)
+		}
+		if diagnostic.Severity != DiagnosticInfo {
+			t.Fatalf("expected an informational severity, got %q", diagnostic.Severity)
+		}
+		if !strings.Contains(diagnostic.Message, "default tier 3") {
+			t.Fatalf("expected the message to name the tier applied, got %q", diagnostic.Message)
+		}
+	}
+	if !found {
+		t.Fatalf("expected a ShutdownTierDefaulted diagnostic, got %#v", diagnostics)
+	}
+}
+
+// Info never degrades a flow; it is reported, not escalated.
+func TestDefaultedTierDiagnosticsDoNotBlockCompilation(t *testing.T) {
+	defaultTier := int32(3)
+	plan, diagnostics, err := Compile(StructuralInputs{
+		Triggers:   []Trigger{{Type: "OnBattery"}},
+		TierPolicy: TierPolicy{DefaultTier: &defaultTier},
+		Groups:     []Group{{Name: "defaulted", Action: "ScaleWorkload"}},
+	}, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if len(plan.Waves) != 1 {
+		t.Fatalf("expected the plan to compile normally, got %#v", plan.Waves)
+	}
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity == DiagnosticError {
+			t.Fatalf("informational diagnostics must not reject, got %#v", diagnostic)
+		}
+	}
+}

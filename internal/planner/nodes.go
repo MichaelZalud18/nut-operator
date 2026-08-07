@@ -104,3 +104,91 @@ func collectNodeClearanceGraphEdges(groups []Group, membership []GroupNodeMember
 	sort.SliceStable(edges, func(left, right int) bool { return edges[left].ID < edges[right].ID })
 	return edges
 }
+
+// reportDefaultedShutdownTiers names groups whose tier came from the cluster
+// default rather than from anything the group itself declares.
+//
+// Falling back is legitimate configuration, and silent until now. That made a
+// mistyped tier label indistinguishable from a deliberate default: the group
+// simply became ordinary, and nothing said so. The tier compiler already
+// diagnoses tiers that are malformed — invalid values, duplicates, a targeted
+// tier 0 — but never one that is merely absent.
+//
+// Informational, because defaulting is not an error. The point is that it is
+// visible before an outage rather than inferred from a wave order afterward.
+func reportDefaultedShutdownTiers(input StructuralInputs) []Diagnostic {
+	defaultTier, hasDefault := effectiveDefaultShutdownTier(input.Groups, input.TierPolicy)
+	if !hasDefault {
+		return nil
+	}
+
+	var diagnostics []Diagnostic
+	for _, group := range input.Groups {
+		if group.Name == "" || group.ShutdownTier != nil {
+			continue
+		}
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity: DiagnosticInfo,
+			Reason:   "ShutdownTierDefaulted",
+			Subject:  group.Name,
+			Message: fmt.Sprintf(
+				"shutdown group %q declares no tier and was placed at the default tier %d",
+				group.Name, defaultTier),
+		})
+	}
+	return diagnostics
+}
+
+// validateTierInversion reports workloads scheduled to outlive the node running
+// them (OD-18).
+//
+// Tiers count down: a higher tier stops earlier, so a node at tier 4 is meant to
+// be gone while a group at tier 2 is still expected to be working. If that group
+// runs on that node, the arrangement cannot hold — the node powers off with work
+// still on it, or it never clears and the wave stalls. Either way the plan says
+// something the cluster cannot do.
+//
+// This warns rather than rejects. The condition is real but the remedy is a
+// choice the operator has to make — retier the workload, move it, or accept it —
+// and OD-18 leaves opt-in migration and node blocking open. Stating the gap is
+// what is required; deciding it for the user is not.
+func validateTierInversion(input StructuralInputs) []Diagnostic {
+	if len(input.GroupNodes) == 0 || len(input.NodeTiers) == 0 {
+		return nil
+	}
+	groupTiers := effectiveShutdownTiers(input.Groups, input.TierPolicy)
+	if len(groupTiers) == 0 {
+		return nil
+	}
+
+	nodeTiers := make(map[string]int32, len(input.NodeTiers))
+	for _, node := range input.NodeTiers {
+		nodeTiers[node.Name] = node.Tier
+	}
+
+	var diagnostics []Diagnostic
+	for _, entry := range input.GroupNodes {
+		groupTier, hasGroupTier := groupTiers[entry.Group]
+		if !hasGroupTier {
+			continue
+		}
+		for _, node := range entry.Acts {
+			nodeTier, hasNodeTier := nodeTiers[node]
+			if !hasNodeTier || nodeTier <= groupTier {
+				continue
+			}
+			diagnostics = append(diagnostics, Diagnostic{
+				Severity: DiagnosticWarning,
+				Reason:   "ShutdownTierInversion",
+				Subject:  entry.Group,
+				Message: fmt.Sprintf(
+					"shutdown group %q is tier %d but runs on node %q at tier %d; the node is scheduled to power off before this group stops",
+					entry.Group, groupTier, node, nodeTier),
+			})
+		}
+	}
+	sort.SliceStable(diagnostics, func(left, right int) bool {
+		return diagnostics[left].Message < diagnostics[right].Message
+	})
+	return diagnostics
+}

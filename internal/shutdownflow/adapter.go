@@ -60,14 +60,47 @@ func CompileArtifactWithResolvedInputs(obj *powerv1alpha1.ShutdownFlow, bundle r
 
 // CompileArtifactWithResolvedInputsAndTierPolicy includes resolved inventory, capability identity, and central tier policy.
 func CompileArtifactWithResolvedInputsAndTierPolicy(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string, *powerv1alpha1.PublishedPlannerArtifactStatus) {
+	compiled := CompileFlow(obj, bundle, tierPolicy)
+	return compiled.Steps, compiled.Waves, compiled.EstimatedDuration, compiled.ConfigHash, compiled.Artifact
+}
+
+// CompiledFlow is a compiled plan in Kubernetes-shaped form, together with the
+// planner diagnostics that produced it.
+//
+// The diagnostics matter as much as the plan. A tier that was defaulted rather
+// than declared, or a workload scheduled to outlive the node under it, is
+// something the planner knows and nobody could previously see: every caller
+// discarded this return value, so the planner's own findings ended at the
+// function boundary.
+type CompiledFlow struct {
+	Steps             []powerv1alpha1.CompiledShutdownStep
+	Waves             []powerv1alpha1.CompiledShutdownWave
+	EstimatedDuration *metav1.Duration
+	ConfigHash        string
+	Artifact          *powerv1alpha1.PublishedPlannerArtifactStatus
+	Diagnostics       []planner.Diagnostic
+}
+
+// CompileFlow compiles a ShutdownFlow against resolved inventory, capability
+// identity, and central tier policy, keeping the planner's diagnostics.
+func CompileFlow(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec) CompiledFlow {
 	inputs := resolver.AttachResolvedInputHash(PlannerInputsWithTierPolicy(obj, tierPolicy), bundle)
 	inputs.GroupNodes = PlannerGroupNodes(obj, bundle)
-	plan, _, err := planner.Compile(inputs, planner.TelemetryInputs{})
+	plan, diagnostics, err := planner.Compile(inputs, planner.TelemetryInputs{})
 	if err != nil {
-		return nil, nil, nil, "", nil
+		// Rejection diagnostics still travel: the reason a plan did not compile is
+		// the most useful thing the planner produced.
+		return CompiledFlow{Diagnostics: diagnostics}
 	}
 
-	return APICompiledSteps(plan.Steps), APICompiledWaves(plan.Waves), APIDuration(plan.EstimatedDuration), plan.Hash, APIPlannerArtifact(plan)
+	return CompiledFlow{
+		Steps:             APICompiledSteps(plan.Steps),
+		Waves:             APICompiledWaves(plan.Waves),
+		EstimatedDuration: APIDuration(plan.EstimatedDuration),
+		ConfigHash:        plan.Hash,
+		Artifact:          APIPlannerArtifact(plan),
+		Diagnostics:       diagnostics,
+	}
 }
 
 // PlannerInputs converts the Kubernetes API object into pure planner inputs.

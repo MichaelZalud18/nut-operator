@@ -19,6 +19,7 @@ package resolver
 import (
 	"sort"
 
+	"github.com/MichaelZalud18/nut-operator/internal/inventory"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 )
 
@@ -33,7 +34,26 @@ func AttachResolvedInputHash(flow planner.StructuralInputs, bundle StructuralBun
 	}
 	flow.DeviceCapabilities = plannerDeviceCapabilities(bundle)
 	flow.PowerDomains = plannerPowerDomains(bundle)
+	flow.NodeTiers = plannerNodeTiers(bundle)
 	return flow
+}
+
+// plannerNodeTiers carries each node's declared shutdown tier from inventory.
+// A node's tier is a property of the node, not of whichever group happens to
+// target it, which is what makes an inversion detectable at all.
+func plannerNodeTiers(bundle StructuralBundle) []planner.NodeTier {
+	var tiers []planner.NodeTier
+	for _, entity := range bundle.Topology.Entities {
+		if entity.Kind != inventory.EntityKindNode || entity.ShutdownTier == nil {
+			continue
+		}
+		tiers = append(tiers, planner.NodeTier{Name: entity.ID, Tier: *entity.ShutdownTier})
+	}
+	if len(tiers) == 0 {
+		return nil
+	}
+	sort.Slice(tiers, func(i, j int) bool { return tiers[i].Name < tiers[j].Name })
+	return tiers
 }
 
 func plannerDeviceCapabilities(bundle StructuralBundle) []planner.DeviceCapability {

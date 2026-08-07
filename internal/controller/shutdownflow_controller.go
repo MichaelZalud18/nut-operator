@@ -40,6 +40,7 @@ import (
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
+	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 )
@@ -123,10 +124,17 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var estimatedDuration *metav1.Duration
 	var configHash string
 	var publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus
+	var plannerDiagnostics []planner.Diagnostic
 	var triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus
 	if result.accepted {
 		compileStart := time.Now()
-		compiled, compiledWaves, estimatedDuration, configHash, publishedArtifact = compileShutdownFlowWithResolvedInputsAndTierPolicy(&flow, bundle, shutdownFlowTierPolicy(managementCluster))
+		compiledFlow := compileShutdownFlowWithResolvedInputsAndTierPolicy(&flow, bundle, shutdownFlowTierPolicy(managementCluster))
+		compiled = compiledFlow.Steps
+		compiledWaves = compiledFlow.Waves
+		estimatedDuration = compiledFlow.EstimatedDuration
+		configHash = compiledFlow.ConfigHash
+		publishedArtifact = compiledFlow.Artifact
+		plannerDiagnostics = compiledFlow.Diagnostics
 		metrics.ShutdownFlowCompileDurationSeconds.WithLabelValues(flow.Name).Observe(time.Since(compileStart).Seconds())
 		compileResult := "Accepted"
 		if configHash == "" {
@@ -188,6 +196,11 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			degradedReason = warning.Reason
 			degradedMessage = warning.Message
 			readyMessage = "shutdown flow compiled with resolver warnings"
+		} else if warning := firstPlannerDiagnostic(plannerDiagnostics, planner.DiagnosticWarning); warning != nil {
+			degraded = true
+			degradedReason = warning.Reason
+			degradedMessage = warning.Message
+			readyMessage = "shutdown flow compiled with planner warnings"
 		} else if diagnostic := firstTriggerDiagnostic(triggerEvaluation, "Error"); diagnostic != nil {
 			degraded = true
 			degradedReason = diagnostic.Reason
@@ -237,7 +250,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		"shutdown flow execution has not started because no trigger is eligible",
 	)
 
-	if err := r.recordShutdownFlowAudit(ctx, &flow, result, resolverDiagnostics, bundle, compiledWaves, publishedArtifact, configHash, triggerEvaluation); err != nil {
+	if err := r.recordShutdownFlowAudit(ctx, &flow, result, resolverDiagnostics, plannerDiagnostics, bundle, compiledWaves, publishedArtifact, configHash, triggerEvaluation); err != nil {
 		log.Error(err, "failed to record ShutdownFlow audit records", "shutdownflow", flow.Name)
 	}
 
@@ -283,7 +296,7 @@ func (r *ShutdownFlowReconciler) shutdownFlowRequestsForInventoryChange(ctx cont
 	return requests
 }
 
-func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, result validationResult, diagnostics []resolver.Diagnostic, bundle resolver.StructuralBundle, compiledWaves []powerv1alpha1.CompiledShutdownWave, publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus, configHash string, triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
+func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, result validationResult, diagnostics []resolver.Diagnostic, plannerDiagnostics []planner.Diagnostic, bundle resolver.StructuralBundle, compiledWaves []powerv1alpha1.CompiledShutdownWave, publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus, configHash string, triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
 	if flow == nil {
 		return nil
 	}
@@ -324,7 +337,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 		ConfigHash:         configHash,
 		InputHash:          bundle.Hash,
 		Accepted:           result.accepted,
-		Diagnostics:        auditDiagnosticsForCompilation(result, diagnostics),
+		Diagnostics:        auditDiagnosticsForCompilation(result, diagnostics, plannerDiagnostics),
 		CompiledWaves:      compiledWaves,
 		DependencyGraph:    auditDependencyGraph(publishedArtifact),
 		StartupWaves:       auditStartupWaves(publishedArtifact),
@@ -517,8 +530,36 @@ func auditDiagnosticsFromResolver(diagnostics []resolver.Diagnostic) []audit.Dia
 	return records
 }
 
-func auditDiagnosticsForCompilation(result validationResult, diagnostics []resolver.Diagnostic) []audit.DiagnosticRecord {
-	records := auditDiagnosticsFromResolver(diagnostics)
+// auditDiagnosticsFromPlanner records what the planner found while compiling.
+// Source is set explicitly so a reader can tell a structural finding about the
+// plan apart from one about the inventory that fed it.
+func auditDiagnosticsFromPlanner(diagnostics []planner.Diagnostic) []audit.DiagnosticRecord {
+	records := make([]audit.DiagnosticRecord, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		records = append(records, audit.DiagnosticRecord{
+			Severity: diagnostic.Severity,
+			Source:   "Planner",
+			Reason:   diagnostic.Reason,
+			Subject:  diagnostic.Subject,
+			Message:  diagnostic.Message,
+		})
+	}
+	return records
+}
+
+// firstPlannerDiagnostic returns the first planner diagnostic at a severity, so
+// the condition names a specific finding rather than a generic count.
+func firstPlannerDiagnostic(diagnostics []planner.Diagnostic, severity string) *planner.Diagnostic {
+	for i := range diagnostics {
+		if diagnostics[i].Severity == severity {
+			return &diagnostics[i]
+		}
+	}
+	return nil
+}
+
+func auditDiagnosticsForCompilation(result validationResult, diagnostics []resolver.Diagnostic, plannerDiagnostics []planner.Diagnostic) []audit.DiagnosticRecord {
+	records := append(auditDiagnosticsFromResolver(diagnostics), auditDiagnosticsFromPlanner(plannerDiagnostics)...)
 	if result.accepted {
 		return records
 	}

@@ -29,6 +29,10 @@ import (
 const (
 	DiagnosticError   = "Error"
 	DiagnosticWarning = "Warning"
+	// DiagnosticInfo states something true and worth seeing that is neither a
+	// failure nor a risk -- a default that was applied, for instance. It never
+	// affects acceptance or degradation.
+	DiagnosticInfo = "Info"
 
 	FeasibilityAdvisoryUnknown = "Unknown"
 	FeasibilityAdvisoryOK      = "OK"
@@ -151,6 +155,8 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 		groupNames[group.Name] = struct{}{}
 	}
 	diagnostics = append(diagnostics, validateGroupShutdownTiers(input.Groups)...)
+	diagnostics = append(diagnostics, reportDefaultedShutdownTiers(input)...)
+	diagnostics = append(diagnostics, validateTierInversion(input)...)
 	for _, group := range input.Groups {
 		for _, dependency := range append(append([]string{}, group.Requires...), append(group.Before, group.After...)...) {
 			if _, exists := groupNames[dependency]; !exists {
@@ -374,7 +380,11 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 		DeviceCapabilities: append([]DeviceCapability(nil), input.DeviceCapabilities...),
 		PowerDomains:       append([]PowerDomainMembership(nil), input.PowerDomains...),
 		GroupNodes:         append([]GroupNodeMembership(nil), input.GroupNodes...),
+		NodeTiers:          append([]NodeTier(nil), input.NodeTiers...),
 	}
+	sort.SliceStable(normalized.NodeTiers, func(left, right int) bool {
+		return normalized.NodeTiers[left].Name < normalized.NodeTiers[right].Name
+	})
 	for i := range normalized.GroupNodes {
 		normalized.GroupNodes[i].Acts = append([]string(nil), normalized.GroupNodes[i].Acts...)
 		normalized.GroupNodes[i].Releases = append([]string(nil), normalized.GroupNodes[i].Releases...)

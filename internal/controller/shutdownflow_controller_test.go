@@ -42,6 +42,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
@@ -530,6 +531,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				flow,
 				accepted("compiled"),
 				diagnostics,
+				nil,
 				bundle,
 				waves,
 				publishedArtifact,
@@ -870,6 +872,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				flow,
 				rejected("PlannerRejected", "cycle detected"),
 				nil,
+				nil,
 				resolver.StructuralBundle{},
 				nil,
 				nil,
@@ -1048,6 +1051,137 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(clearance.To).To(Equal("poweroff-rack-a"))
 			Expect(clearance.Provenance).To(Equal("Derived"))
 			Expect(clearance.Explanation).To(ContainSubstring(shutdownFlowTestNodeName))
+		})
+
+		It("rejects the flow when a node is not reachable from any UPS", func() {
+			By("adding a node no feeds path reaches")
+			orphan := &powerv1alpha1.PowerInventoryNode{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-resolver-orphan-node"},
+				Spec:       powerv1alpha1.PowerInventoryNodeSpec{NodeName: "orphan-node"},
+			}
+			Expect(k8sClient.Create(ctx, orphan)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, orphan))).To(Succeed())
+			})
+
+			controllerReconciler := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			// The orphan rule is enforced in the compiler; this proves it actually
+			// blocks acceptance through the real reconcile path rather than only in
+			// the compiler's own unit tests.
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			accepted := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionAccepted)
+			Expect(accepted).NotTo(BeNil())
+			Expect(accepted.Status).To(Equal(metav1.ConditionFalse))
+			Expect(accepted.Reason).To(Equal("PowerPlanningOrphan"))
+			Expect(accepted.Message).To(ContainSubstring("orphan-node"))
+			Expect(resource.Status.Phase).To(Equal(powerv1alpha1.ShutdownFlowPhaseError))
+			Expect(resource.Status.CompiledWaves).To(BeNil())
+			Expect(resource.Status.ConfigHash).To(BeEmpty())
+		})
+
+		It("rejects the flow when the same topology edge is declared twice", func() {
+			By("declaring a second edge between the same endpoints")
+			duplicate := &powerv1alpha1.PowerInventoryEdge{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-resolver-duplicate-edge"},
+				Spec: powerv1alpha1.PowerInventoryEdgeSpec{
+					From: powerv1alpha1.PowerInventoryEntityReference{
+						Kind: powerv1alpha1.PowerInventoryEntityUPSDevice,
+						Name: shutdownFlowTestUPSName,
+					},
+					To: powerv1alpha1.PowerInventoryEntityReference{
+						Kind: powerv1alpha1.PowerInventoryEntityNode,
+						Name: shutdownFlowTestNodeName,
+					},
+					Relation: powerv1alpha1.PowerInventoryEdgeFeeds,
+					Input:    "psu-a",
+				},
+			}
+			Expect(k8sClient.Create(ctx, duplicate)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, duplicate))).To(Succeed())
+			})
+
+			controllerReconciler := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			accepted := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionAccepted)
+			Expect(accepted).NotTo(BeNil())
+			Expect(accepted.Status).To(Equal(metav1.ConditionFalse))
+			Expect(accepted.Reason).To(Equal("DuplicateEdge"))
+			Expect(resource.Status.Phase).To(Equal(powerv1alpha1.ShutdownFlowPhaseError))
+		})
+
+		It("surfaces planner findings on the flow instead of discarding them", func() {
+			By("declaring a node that powers off before the workload running on it")
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+				Name:   shutdownFlowTestNodeName,
+				Labels: map[string]string{"power.zalud.io/rack": "a"},
+			}}
+			Expect(k8sClient.Create(ctx, node)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, node))).To(Succeed())
+			})
+
+			inventoryNode := &powerv1alpha1.PowerInventoryNode{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestNodeInventoryName}, inventoryNode)).To(Succeed())
+			nodeTier := int32(4)
+			inventoryNode.Spec.Roles.ShutdownTier = &nodeTier
+			Expect(k8sClient.Update(ctx, inventoryNode)).To(Succeed())
+
+			workloadTier := int32(2)
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.Groups = []powerv1alpha1.ShutdownGroup{{
+				Name:         "late-workload",
+				Action:       powerv1alpha1.ShutdownStepScaleWorkload,
+				ShutdownTier: &workloadTier,
+				Target: powerv1alpha1.ShutdownStepTarget{
+					NodeSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"power.zalud.io/rack": "a"},
+					},
+				},
+			}}
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			store := &fakeAuditStore{}
+			controllerReconciler := &ShutdownFlowReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				StorageConnector: &fakeAuditConnector{store: store},
+			}
+			createSpoolingPowerCluster(ctx, GinkgoT().TempDir(), nil)
+			attachShutdownFlowToPowerCluster(ctx, typeNamespacedName)
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("reporting the inversion on the flow rather than only in the planner")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			degraded := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionDegraded)
+			Expect(degraded).NotTo(BeNil())
+			Expect(degraded.Status).To(Equal(metav1.ConditionTrue))
+			Expect(degraded.Reason).To(Equal("ShutdownTierInversion"))
+			Expect(degraded.Message).To(ContainSubstring(shutdownFlowTestNodeName))
+
+			By("recording it durably, attributed to the planner")
+			Expect(store.shutdownFlowCompilations).NotTo(BeEmpty())
+			var plannerRecord *audit.DiagnosticRecord
+			for i := range store.shutdownFlowCompilations[0].Diagnostics {
+				record := &store.shutdownFlowCompilations[0].Diagnostics[i]
+				if record.Reason == "ShutdownTierInversion" {
+					plannerRecord = record
+				}
+			}
+			Expect(plannerRecord).NotTo(BeNil())
+			Expect(plannerRecord.Source).To(Equal("Planner"))
+			Expect(plannerRecord.Severity).To(Equal("Warning"))
 		})
 
 		It("returns spooled records to PostgreSQL on the first reconcile that can write again", func() {

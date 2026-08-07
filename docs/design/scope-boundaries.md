@@ -352,7 +352,7 @@ for defense in depth.
 | OD-8r | Resolver behavior on malformed or missing model strings from the topology provider: reject, floor-match with warning, or configurable | Resolver design |
 | OD-9 | Degrade mechanics for trigger-capability mismatch — folded into capability schema doc | Capability schema doc |
 | OD-10 | USB and serial UPS support: version target and isolation model | v2 scoping |
-| OD-18 | Tier inversion: lower-tier workload on higher-tier node. Node cannot clear under PL-20 while the workload runs. Options: compile-time validation, opt-in migration, node blocking. Node-local PVCs constrain migration | Planner tier compilation |
+| OD-18 | Tier inversion: lower-tier workload on higher-tier node. Node cannot clear under PL-20 while the workload runs. Compile-time detection reports it as `ShutdownTierInversion`; opt-in migration and node blocking remain open, and node-local PVCs constrain migration | Planner tier compilation |
 | OD-19 | FSD usage: whether NUT's forced-shutdown broadcast becomes the final release signal or is deliberately declined in favor of the executor's signal file. Affects whether shutdown is observable through standard NUT tooling | Executor design |
 | OD-20 | Instant command scope and gating: which NUT instant commands and writable variables enter scope, how they are gated given they can cut power to equipment, and which capability profile fields declare support. Bounded by OD-1 on anything touching power-return | Capability schema |
 | OD-21 | Driver configuration ownership: whether driver name, poll interval, and driver-specific parameters move from `UPSDevice` spec into capability profiles, or remain in spec with profiles supplying defaults and validation. Hybrid — profile default, spec override — is the likely answer (RS-5 pattern) | Capability schema |
@@ -426,9 +426,11 @@ targets them at all.
 TBD, not blocking:
 
 - Tier-inversion handling (tracked as OD-18): a lower-tier workload sitting on a higher-tier node.
-  The node cannot clear under PL-20 while the workload is still running. Options include
-  compile-time validation, opt-in migration, and node blocking; node-local PVCs constrain the
-  migration path.
+  The node cannot clear under PL-20 while the workload is still running. Compilation detects and
+  reports the condition as `ShutdownTierInversion`, naming the group, the node, and both tiers. What
+  remains open is the remedy: opt-in migration and node blocking are both undecided, and node-local
+  PVCs constrain the migration path. Reporting rather than blocking is deliberate — the fix belongs
+  to whoever authored the tiers.
 - Whether an in-cluster audit store should be protected by tier 0 or tier 1 placement in addition
   to the local spool.
 - Label key and central CR shape.
