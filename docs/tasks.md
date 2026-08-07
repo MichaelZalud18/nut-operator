@@ -173,7 +173,43 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 
 - **Consume the inventory-derived topology.** The planner still doesn't read
   `Topology.Domains`/`Topology.CommunicationOrders` from the inventory compiler — this is the
-  execution-side half of the Inventory System's top open item.
+  execution-side half of the Inventory System's top open item, and the highest-value remaining work
+  in the project.
+
+  The blocker is narrower than it looks: **the planner never learns which nodes a group covers.**
+  `PlannerTarget` reduces every selector to booleans and counts (`NodeSelector: target.NodeSelector
+  != nil`, `NamespaceCount`, `WorkloadRefCount`), and nothing anywhere expands a selector into node
+  identities. `PL-20` node-clearance edges, `PL-21` communication-path edges, and `PL-23` quorum all
+  need to name a node, so none of them can be derived from what the planner currently receives. The
+  topology data itself is already present — `StructuralBundle.Topology` carries domains, entities,
+  edges, and `CommunicationOrders`, and `plannerPowerDomains` already converts domains through.
+
+  Concrete steps, in order:
+
+  1. **Expand selectors to node names.** `declarativeStructuralInputs`
+     (`internal/controller/declarative_inventory_resolver.go`) already holds a `client.Reader` and is
+     the designated place for external reads, since `ResolveStructural` is pure. List `corev1.Node`
+     there, run each group's `target.nodeSelector` through `metav1.LabelSelectorAsSelector`, and
+     attach the result in `AttachResolvedInputHash` (`internal/resolver/planner.go`) alongside the
+     existing `DeviceCapabilities`/`PowerDomains`. Output shape: `{GroupName string, Nodes []string}`,
+     sorted.
+  2. **Extend `planner.StructuralInputs`** (`internal/planner/types.go`) with that group-to-node
+     membership and a conversion of `Topology.CommunicationOrders`.
+  3. **Copy and sort both in `normalizeStructuralInputs`** (`internal/planner/compiler.go`). This is
+     load-bearing and easy to miss: a field absent from normalization is silently dropped with no
+     error, which is exactly how `DeviceCapabilities` failed its first tests. It also earns hash
+     participation for free, since `plan.StructuralHash = stableHash(normalized)`.
+  4. **Derive the edges** in a new file alongside `tiers.go`, following the same pattern: `PL-20`
+     node-clearance edges and `PL-21` communication-path edges, emitted as real graph edges with
+     `Derived` provenance rather than left as prose the executor is trusted to honor.
+  5. **Tests:** determinism across runs, and a fixture where a `carries` edge actually changes wave
+     order — without that, there is no proof the new edges are load-bearing.
+
+  Steps 1–3 are mechanical and independently testable, but should not land alone: unconsumed planner
+  inputs are the same dead-field pattern as `F-25` and `F-33`. Step 4 is the feature. Two decisions
+  gate step 4 only: `OD-14` (whether domains constrain wave *membership* or just trigger scope) and
+  `OD-11`/`PL-43` (revalidating compile-time node membership at execution — decided in design,
+  unimplemented).
 - **Fold the provisional adaptive-execution design into real identifiers.** Tier-pointer
   descent/ascent, the three timing modes (`Relaxed`/`Nominal`/`Urgent`), and asymmetric hysteresis
   are fully specified in `adaptive-execution-tier-pointer.md` (`AE-1`–`AE-6`) but **none of it is

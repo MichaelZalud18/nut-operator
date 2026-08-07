@@ -39,23 +39,6 @@ through CRDs by default. NetBox is an optional provider that can supply the same
 your existing inventory. If you run NetBox, the operator renders a snapshot of it at reconcile
 time; it never queries NetBox live during a power event (SB-8, IN-14).
 
-## Can I add my own capability profiles, and will an upgrade overwrite them?
-
-Yes, and no.
-
-Capability profiles are `UPSCapabilityProfile` custom resources. Profiles you create live in your
-cluster as CRs; the profiles that ship with the operator live inside the operator image. Upgrading
-the operator replaces the bundled set and never touches your resources.
-
-Where both cover the same device, yours wins. Profile matching walks a fixed precedence chain —
-exact model and firmware, then exact model, then model glob, then driver family, then the
-unidentified-device profile — and within any tier, a profile you supplied outranks a bundled one. You do not
-need to fork the catalog or disable bundled profiles to override one.
-
-The bundled catalog is deliberately small. Profiles marked `ProjectVerified` have been exercised
-against real hardware; the project cannot verify devices it does not own. If you have a device
-that is not covered, a contributed profile is welcome.
-
 ## What if my UPS does not have a packaged capability profile?
 
 Most won't, and that is expected. UPS hardware varies enormously in what it reports, and the
@@ -107,6 +90,22 @@ publishes the full plan, so you can review exactly what would happen — but the
 power to real nodes on an unverified device's signal. If you accept that risk deliberately, set
 `spec.safety.allowUnidentifiedDevices: true` on the flow, which records the decision in Git where it
 can be reviewed (OD-31).
+
+## Will upgrading the operator overwrite capability profiles I wrote myself?
+
+No. Profiles you write are `UPSCapabilityProfile` custom resources living in your cluster; the
+bundled catalog ships inside the operator image. An upgrade replaces the bundled set and never
+touches your resources.
+
+Where both describe the same device, yours wins. Matching walks a fixed precedence chain — exact
+model and firmware, then exact model, then model glob, then driver family, then the
+unidentified-device profile — and within any tier a profile you supplied outranks a bundled one. So
+overriding a bundled profile takes nothing more than writing your own; there is no catalog to fork
+and nothing to disable.
+
+The bundled catalog is deliberately small. Profiles marked `ProjectVerified` have been exercised
+against real hardware, and the project cannot verify devices it does not own — which is why
+contributed profiles are how the catalog grows.
 
 ## Do I need PostgreSQL?
 
