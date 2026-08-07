@@ -163,6 +163,15 @@ Recovery orchestration is not owned by this project (SB-1, OD-1). External recov
 consume the published dependency graph and advisory startup wave projections, but `nut-operator`
 does not execute bring-up.
 
+What actually powers hardware back on is out-of-band by necessity: BIOS "restore on AC loss", PDU
+outlet delayed-start (`outlet.n.delay.start`), Wake-on-LAN, or a BMC/IPMI call. All of them work
+without a running operating system, which is the whole requirement. `status.startupWaves` gives a
+recovery system the order to apply them in.
+
+Kured is not the tool for this. It reboots nodes that are already running, so a powered-off node has
+nothing on it to act. The two are complementary but unrelated: Kured handles reboots for OS
+patching, this handles shutdown for power events, and neither brings hardware up from cold.
+
 ## Is there a UI?
 
 No dedicated UI ships in v1.
