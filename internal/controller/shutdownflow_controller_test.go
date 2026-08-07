@@ -974,6 +974,82 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(strings.Count(string(content), "\n")).To(BeNumerically(">=", 1))
 		})
 
+		It("orders node work before the poweroff that releases the same node", func() {
+			By("giving the cluster a real node and an agent that covers it")
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+				Name:   shutdownFlowTestNodeName,
+				Labels: map[string]string{"power.zalud.io/rack": "a"},
+			}}
+			Expect(k8sClient.Create(ctx, node)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, node))).To(Succeed())
+			})
+
+			agent := &powerv1alpha1.NodePowerAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-resolver-agent"},
+				Spec: powerv1alpha1.NodePowerAgentSpec{
+					NUTServerRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-a"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, agent))).To(Succeed())
+			})
+			agent.Status.SelectedNodes = []string{shutdownFlowTestNodeName}
+			Expect(k8sClient.Status().Update(ctx, agent)).To(Succeed())
+
+			By("declaring a drain and a poweroff with no ordering between them")
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.Groups = []powerv1alpha1.ShutdownGroup{
+				{
+					Name:   "drain-rack-a",
+					Action: powerv1alpha1.ShutdownStepDrainNodes,
+					Target: powerv1alpha1.ShutdownStepTarget{
+						NodeSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"power.zalud.io/rack": "a"},
+						},
+					},
+				},
+				{
+					Name:   "poweroff-rack-a",
+					Action: powerv1alpha1.ShutdownStepAgentShutdown,
+					Target: powerv1alpha1.ShutdownStepTarget{
+						AgentRefs: []powerv1alpha1.ObjectNameReference{{Name: agent.Name}},
+					},
+				},
+			}
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			controllerReconciler := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			accepted := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionAccepted)
+			Expect(accepted).NotTo(BeNil())
+			Expect(accepted.Status).To(Equal(metav1.ConditionTrue))
+
+			// The ordering is derived, not declared: nothing in the spec above says
+			// the drain comes first. Only the node they share can establish that.
+			Expect(resource.Status.CompiledWaves).To(HaveLen(2))
+			Expect(resource.Status.CompiledWaves[0].Groups).To(Equal([]string{"drain-rack-a"}))
+			Expect(resource.Status.CompiledWaves[1].Groups).To(Equal([]string{"poweroff-rack-a"}))
+
+			Expect(resource.Status.PublishedArtifact).NotTo(BeNil())
+			var clearance *powerv1alpha1.PlannerGraphEdgeStatus
+			for i := range resource.Status.PublishedArtifact.Graph.Edges {
+				if resource.Status.PublishedArtifact.Graph.Edges[i].Relation == "NodeClearance" {
+					clearance = &resource.Status.PublishedArtifact.Graph.Edges[i]
+				}
+			}
+			Expect(clearance).NotTo(BeNil())
+			Expect(clearance.From).To(Equal("drain-rack-a"))
+			Expect(clearance.To).To(Equal("poweroff-rack-a"))
+			Expect(clearance.Provenance).To(Equal("Derived"))
+			Expect(clearance.Explanation).To(ContainSubstring(shutdownFlowTestNodeName))
+		})
+
 		It("returns spooled records to PostgreSQL on the first reconcile that can write again", func() {
 			observedAt := time.Date(2026, 8, 3, 16, 0, 0, 0, time.UTC)
 			spoolDir := GinkgoT().TempDir()

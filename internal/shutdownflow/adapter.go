@@ -61,6 +61,7 @@ func CompileArtifactWithResolvedInputs(obj *powerv1alpha1.ShutdownFlow, bundle r
 // CompileArtifactWithResolvedInputsAndTierPolicy includes resolved inventory, capability identity, and central tier policy.
 func CompileArtifactWithResolvedInputsAndTierPolicy(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string, *powerv1alpha1.PublishedPlannerArtifactStatus) {
 	inputs := resolver.AttachResolvedInputHash(PlannerInputsWithTierPolicy(obj, tierPolicy), bundle)
+	inputs.GroupNodes = PlannerGroupNodes(obj, bundle)
 	plan, _, err := planner.Compile(inputs, planner.TelemetryInputs{})
 	if err != nil {
 		return nil, nil, nil, "", nil
@@ -150,6 +151,78 @@ func PlannerTierPolicy(policy powerv1alpha1.PowerShutdownTierPolicySpec) planner
 		})
 	}
 	return converted
+}
+
+// PlannerGroupNodes resolves which real cluster nodes each shutdown group
+// touches, splitting them into nodes the group acts on and nodes it powers off.
+//
+// This is the step that lets the planner name a node at all. Group targets are
+// selectors, and the planner is pure — it receives a target summary, never the
+// selector itself — so expansion happens here, against the cluster state the
+// resolver already read.
+//
+// The two sides come from different places on purpose. Nodes a group acts on
+// come from matching its node selector against real node labels. Nodes a group
+// releases come from `NodePowerAgent.status.selectedNodes` by way of
+// `target.agentRefs`, which is the same resolution the executor performs at
+// release time — deriving it any other way would let the plan disagree with
+// what execution actually does.
+func PlannerGroupNodes(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle) []planner.GroupNodeMembership {
+	if obj == nil || len(obj.Spec.Groups) == 0 {
+		return nil
+	}
+	if len(bundle.ClusterNodes) == 0 && len(bundle.AgentCoverage) == 0 {
+		return nil
+	}
+
+	coverage := make(map[string][]string, len(bundle.AgentCoverage))
+	for _, agent := range bundle.AgentCoverage {
+		coverage[agent.Name] = agent.Nodes
+	}
+
+	membership := make([]planner.GroupNodeMembership, 0, len(obj.Spec.Groups))
+	for _, group := range obj.Spec.Groups {
+		entry := planner.GroupNodeMembership{Group: group.Name}
+		if group.Action == powerv1alpha1.ShutdownStepAgentShutdown {
+			for _, ref := range group.Target.AgentRefs {
+				entry.Releases = append(entry.Releases, coverage[ref.Name]...)
+			}
+		} else {
+			entry.Acts = matchingNodeNames(group.Target.NodeSelector, bundle.ClusterNodes)
+		}
+		if len(entry.Acts) == 0 && len(entry.Releases) == 0 {
+			continue
+		}
+		membership = append(membership, entry)
+	}
+	if len(membership) == 0 {
+		return nil
+	}
+	return membership
+}
+
+// matchingNodeNames returns the nodes a selector selects.
+//
+// A nil selector selects nothing here rather than everything. Kubernetes treats
+// an empty selector as "match all", but a shutdown group with no node selector
+// is not a claim about every node in the cluster — it is a group that does not
+// target nodes at all, and reading it the other way would derive a clearance
+// edge against every node from a group that never mentions one.
+func matchingNodeNames(selector *metav1.LabelSelector, nodes []resolver.ClusterNode) []string {
+	if selector == nil {
+		return nil
+	}
+	compiled, err := metav1.LabelSelectorAsSelector(selector)
+	if err != nil {
+		return nil
+	}
+	var matched []string
+	for _, node := range nodes {
+		if compiled.Matches(labels.Set(node.Labels)) {
+			matched = append(matched, node.Name)
+		}
+	}
+	return matched
 }
 
 // PlannerShutdownTier resolves a group's explicit tier or numeric tier label.

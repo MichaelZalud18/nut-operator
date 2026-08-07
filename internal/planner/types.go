@@ -40,6 +40,26 @@ type StructuralInputs struct {
 	// PowerDomains is the resolver's derived domain membership, used to decide
 	// which devices a domain-scoped trigger is validated against.
 	PowerDomains []PowerDomainMembership `json:"powerDomains,omitempty"`
+	// GroupNodes is which cluster nodes each group touches, resolved before the
+	// planner runs because expanding a selector requires reading the cluster.
+	// Without it the planner cannot name a node, and PL-20 clearance edges
+	// cannot be derived. Empty means the caller supplied no node context and
+	// clearance derivation is skipped.
+	GroupNodes []GroupNodeMembership `json:"groupNodes,omitempty"`
+}
+
+// GroupNodeMembership is one group's relationship to real cluster nodes.
+//
+// Acts and Releases are deliberately separate. A group that drains a node acts
+// on it; a group that powers it off releases it. The distinction is the whole
+// basis of PL-20: a node is a terminal vertex, so everything acting on it must
+// finish before whatever releases it.
+type GroupNodeMembership struct {
+	Group string `json:"group"`
+	// Acts are nodes this group does work on without powering them off.
+	Acts []string `json:"acts,omitempty"`
+	// Releases are nodes this group powers off.
+	Releases []string `json:"releases,omitempty"`
 }
 
 // DeviceCapability is one UPS device's resolved telemetry capability, reduced

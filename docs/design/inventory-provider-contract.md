@@ -141,6 +141,13 @@ loud one, and the exemption marker is the honest escape hatch for genuinely unpr
 The Kubernetes node name is canonical because it is what the planner targets and what the executor
 acts on. Every other identity is a mapping onto it.
 
+Declared node names are checked against the cluster. A `PowerInventoryNode` naming a node that does
+not exist raises `InventoryNodeNotInCluster`, so a typo surfaces at reconcile time rather than as a
+power domain covering a node nothing can shut down. It warns rather than rejects, because inventory
+is legitimately authored ahead of the hardware it describes; the requirement is that the gap is
+stated, not that it blocks. With no nodes visible at all there is nothing to check against, and
+nothing is claimed.
+
 An entity the NetBox provider cannot map to a canonical key fails at **resolve** time under the
 OD-8r policy — never at planner time. Identity resolution is a provider concern; the planner receives
 resolved entities or receives nothing.

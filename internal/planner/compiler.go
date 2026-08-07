@@ -48,7 +48,7 @@ func Compile(structural StructuralInputs, telemetry TelemetryInputs) (Plan, []Di
 
 	var plan Plan
 	if len(normalized.Groups) > 0 {
-		plan.Graph = buildGroupGraph(normalized.Groups, normalized.TierPolicy)
+		plan.Graph = buildGroupGraph(normalized.Groups, normalized.TierPolicy, normalized.GroupNodes)
 		steps, waves, duration := compileGroups(normalized.Groups, plan.Graph)
 		plan.Steps = steps
 		plan.Waves = waves
@@ -163,7 +163,7 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 			}
 		}
 	}
-	if hasGroupCycle(input.Groups, input.TierPolicy) {
+	if hasGroupCycle(input.Groups, input.TierPolicy, input.GroupNodes) {
 		diagnostics = append(diagnostics, Diagnostic{
 			Severity: DiagnosticError,
 			Reason:   "DependencyCycle",
@@ -286,12 +286,12 @@ func compileSteps(steps []Step) ([]CompiledStep, time.Duration) {
 	return compiled, cumulative
 }
 
-func groupEdges(groups []Group, policy TierPolicy) map[string][]string {
-	return graphSuccessors(buildGroupGraph(groups, policy))
+func groupEdges(groups []Group, policy TierPolicy, membership []GroupNodeMembership) map[string][]string {
+	return graphSuccessors(buildGroupGraph(groups, policy, membership))
 }
 
-func hasGroupCycle(groups []Group, policy TierPolicy) bool {
-	edges := groupEdges(groups, policy)
+func hasGroupCycle(groups []Group, policy TierPolicy, membership []GroupNodeMembership) bool {
+	edges := groupEdges(groups, policy, membership)
 	visiting := map[string]bool{}
 	visited := map[string]bool{}
 
@@ -373,7 +373,17 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 
 		DeviceCapabilities: append([]DeviceCapability(nil), input.DeviceCapabilities...),
 		PowerDomains:       append([]PowerDomainMembership(nil), input.PowerDomains...),
+		GroupNodes:         append([]GroupNodeMembership(nil), input.GroupNodes...),
 	}
+	for i := range normalized.GroupNodes {
+		normalized.GroupNodes[i].Acts = append([]string(nil), normalized.GroupNodes[i].Acts...)
+		normalized.GroupNodes[i].Releases = append([]string(nil), normalized.GroupNodes[i].Releases...)
+		sort.Strings(normalized.GroupNodes[i].Acts)
+		sort.Strings(normalized.GroupNodes[i].Releases)
+	}
+	sort.SliceStable(normalized.GroupNodes, func(left, right int) bool {
+		return normalized.GroupNodes[left].Group < normalized.GroupNodes[right].Group
+	})
 	for i := range normalized.DeviceCapabilities {
 		normalized.DeviceCapabilities[i].TelemetryVariables = append([]string(nil), normalized.DeviceCapabilities[i].TelemetryVariables...)
 		sort.Strings(normalized.DeviceCapabilities[i].TelemetryVariables)

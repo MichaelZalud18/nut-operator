@@ -648,3 +648,159 @@ func hasPlannerDiagnostic(diagnostics []Diagnostic, reason string) bool {
 	}
 	return false
 }
+
+// nodeClearanceInput is a flow whose drain and poweroff groups have no declared
+// ordering between them: the only thing that can order them is the node they
+// share.
+func nodeClearanceInput(membership []GroupNodeMembership) StructuralInputs {
+	return StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{Name: "drain-rack-a", Action: "DrainNodes", Target: Target{NodeSelector: true}},
+			{Name: "poweroff-rack-a", Action: "AgentShutdown", Target: Target{AgentRefCount: 1}},
+		},
+		GroupNodes: membership,
+	}
+}
+
+func TestCompileDerivesNodeClearanceEdges(t *testing.T) {
+	plan, diagnostics, err := Compile(nodeClearanceInput([]GroupNodeMembership{
+		{Group: "drain-rack-a", Acts: []string{"node-a", "node-b"}},
+		{Group: "poweroff-rack-a", Releases: []string{"node-a", "node-b"}},
+	}), TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	edge := findGraphEdge(plan.Graph.Edges, "drain-rack-a", "poweroff-rack-a", GraphEdgeRelationNodeClearance)
+	if edge == nil {
+		t.Fatalf("expected a node-clearance edge, got %#v", plan.Graph.Edges)
+	}
+	if edge.Provenance != GraphEdgeProvenanceDerived {
+		t.Fatalf("expected derived provenance, got %q", edge.Provenance)
+	}
+	if !strings.Contains(edge.Explanation, "cannot power off until") {
+		t.Fatalf("expected a clearance explanation, got %q", edge.Explanation)
+	}
+
+	// The point of the edge: it changes execution order. Without it both groups
+	// are ready at once and land in the same wave, draining a node while it is
+	// being powered off.
+	if got, want := waveGroups(plan.Waves), [][]string{{"drain-rack-a"}, {"poweroff-rack-a"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected clearance to split the waves, got %#v", got)
+	}
+}
+
+func TestCompileWithoutNodeMembershipLeavesGroupsUnordered(t *testing.T) {
+	plan, _, err := Compile(nodeClearanceInput(nil), TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if got, want := waveGroups(plan.Waves), [][]string{{"drain-rack-a", "poweroff-rack-a"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected one unordered wave without node context, got %#v", got)
+	}
+}
+
+func TestCompileDerivesNoClearanceEdgeForUnsharedNodes(t *testing.T) {
+	plan, _, err := Compile(nodeClearanceInput([]GroupNodeMembership{
+		{Group: "drain-rack-a", Acts: []string{"node-a"}},
+		{Group: "poweroff-rack-a", Releases: []string{"node-z"}},
+	}), TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if edge := findGraphEdge(plan.Graph.Edges, "drain-rack-a", "poweroff-rack-a", GraphEdgeRelationNodeClearance); edge != nil {
+		t.Fatalf("groups sharing no node must not be ordered, got %#v", edge)
+	}
+}
+
+// A group that both works on a node and powers it off orders nothing: the edge
+// would point at itself.
+func TestCompileDerivesNoSelfClearanceEdge(t *testing.T) {
+	plan, _, err := Compile(StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups:   []Group{{Name: "release-rack-a", Action: "AgentShutdown"}},
+		GroupNodes: []GroupNodeMembership{
+			{Group: "release-rack-a", Acts: []string{"node-a"}, Releases: []string{"node-a"}},
+		},
+	}, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	for _, edge := range plan.Graph.Edges {
+		if edge.Relation == GraphEdgeRelationNodeClearance {
+			t.Fatalf("expected no clearance edge for a single group, got %#v", edge)
+		}
+	}
+}
+
+// Membership naming a group that is not in the plan is ignored rather than
+// producing an edge to a vertex that does not exist.
+func TestCompileIgnoresMembershipForUnknownGroups(t *testing.T) {
+	plan, _, err := Compile(nodeClearanceInput([]GroupNodeMembership{
+		{Group: "drain-rack-a", Acts: []string{"node-a"}},
+		{Group: "poweroff-rack-a", Releases: []string{"node-a"}},
+		{Group: "group-from-another-flow", Acts: []string{"node-a"}},
+	}), TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	for _, edge := range plan.Graph.Edges {
+		if edge.From == "group-from-another-flow" || edge.To == "group-from-another-flow" {
+			t.Fatalf("expected unknown group to be ignored, got edge %#v", edge)
+		}
+	}
+}
+
+// Derived clearance edges participate in cycle detection like any other edge:
+// two groups that each act on the node the other releases cannot be ordered.
+func TestCompileRejectsCyclesCreatedByNodeClearance(t *testing.T) {
+	_, diagnostics, err := Compile(StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{Name: "release-a", Action: "AgentShutdown"},
+			{Name: "release-b", Action: "AgentShutdown"},
+		},
+		GroupNodes: []GroupNodeMembership{
+			{Group: "release-a", Acts: []string{"node-b"}, Releases: []string{"node-a"}},
+			{Group: "release-b", Acts: []string{"node-a"}, Releases: []string{"node-b"}},
+		},
+	}, TelemetryInputs{})
+	if err == nil {
+		t.Fatal("expected a clearance cycle to be rejected")
+	}
+	if !hasDiagnosticReason(diagnostics, "DependencyCycle") {
+		t.Fatalf("expected a DependencyCycle diagnostic, got %#v", diagnostics)
+	}
+}
+
+func TestNodeClearanceIsDeterministicAndFoldsIntoPlanIdentity(t *testing.T) {
+	withNodes := nodeClearanceInput([]GroupNodeMembership{
+		{Group: "drain-rack-a", Acts: []string{"node-b", "node-a"}},
+		{Group: "poweroff-rack-a", Releases: []string{"node-a", "node-b"}},
+	})
+	shuffled := nodeClearanceInput([]GroupNodeMembership{
+		{Group: "poweroff-rack-a", Releases: []string{"node-b", "node-a"}},
+		{Group: "drain-rack-a", Acts: []string{"node-a", "node-b"}},
+	})
+
+	first, _, err := Compile(withNodes, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	second, _, err := Compile(shuffled, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if first.Hash != second.Hash {
+		t.Fatalf("membership ordering must not change plan identity: %q vs %q", first.Hash, second.Hash)
+	}
+
+	bare, _, err := Compile(nodeClearanceInput(nil), TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if first.Hash == bare.Hash {
+		t.Fatal("node membership must participate in plan identity")
+	}
+}

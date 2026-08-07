@@ -226,3 +226,60 @@ func hasResolverDiagnostic(diagnostics []Diagnostic, source, reason string) bool
 	}
 	return false
 }
+
+func TestResolveStructuralNormalizesClusterContext(t *testing.T) {
+	inputs := StructuralInputs{
+		SourceID: "test",
+		ClusterNodes: []ClusterNode{
+			{Name: "node-b", Labels: map[string]string{"rack": "b"}},
+			{Name: "node-a", Labels: map[string]string{"rack": "a"}},
+		},
+		AgentCoverage: []AgentCoverage{
+			{Name: "agent-b", Nodes: []string{"node-b"}},
+			{Name: "agent-a", Nodes: []string{"node-a2", "node-a1"}},
+		},
+	}
+
+	bundle, _, err := ResolveStructural(inputs)
+	if err != nil {
+		t.Fatalf("ResolveStructural returned error: %v", err)
+	}
+	if got, want := []string{bundle.ClusterNodes[0].Name, bundle.ClusterNodes[1].Name}, []string{"node-a", "node-b"}; got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("expected cluster nodes sorted by name, got %#v", bundle.ClusterNodes)
+	}
+	if got := bundle.AgentCoverage[0]; got.Name != "agent-a" || got.Nodes[0] != "node-a1" {
+		t.Fatalf("expected agents and their nodes sorted, got %#v", bundle.AgentCoverage)
+	}
+
+	// Node labels change for reasons unrelated to shutdown planning. Folding them
+	// into the bundle hash would recompile every plan on an unrelated label edit,
+	// so only the membership derived from them reaches plan identity.
+	relabelled := inputs
+	relabelled.ClusterNodes = []ClusterNode{
+		{Name: "node-a", Labels: map[string]string{"rack": "a", "kubernetes.io/arch": "arm64"}},
+		{Name: "node-b", Labels: map[string]string{"rack": "b"}},
+	}
+	rehashed, _, err := ResolveStructural(relabelled)
+	if err != nil {
+		t.Fatalf("ResolveStructural returned error: %v", err)
+	}
+	if bundle.Hash != rehashed.Hash {
+		t.Fatalf("node labels must not change the bundle hash: %q vs %q", bundle.Hash, rehashed.Hash)
+	}
+}
+
+func TestResolveStructuralCopiesClusterNodeLabels(t *testing.T) {
+	labels := map[string]string{"rack": "a"}
+	bundle, _, err := ResolveStructural(StructuralInputs{
+		SourceID:     "test",
+		ClusterNodes: []ClusterNode{{Name: "node-a", Labels: labels}},
+	})
+	if err != nil {
+		t.Fatalf("ResolveStructural returned error: %v", err)
+	}
+
+	labels["rack"] = "mutated"
+	if got := bundle.ClusterNodes[0].Labels["rack"]; got != "a" {
+		t.Fatalf("bundle must not alias caller-owned label maps, got %q", got)
+	}
+}

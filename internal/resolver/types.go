@@ -30,6 +30,28 @@ type StructuralInputs struct {
 	ObservedAt string               `json:"observedAt,omitempty"`
 	Inventory  inventory.Snapshot   `json:"inventory,omitempty"`
 	Profiles   []capability.Profile `json:"profiles,omitempty"`
+	// ClusterNodes are the real Kubernetes nodes, with the labels a shutdown
+	// group's node selector matches against. Declared inventory names nodes;
+	// this is what the cluster actually has.
+	ClusterNodes []ClusterNode `json:"clusterNodes,omitempty"`
+	// AgentCoverage maps each NodePowerAgent to the nodes it has selected, which
+	// is how a group learns which nodes it would actually power off.
+	AgentCoverage []AgentCoverage `json:"agentCoverage,omitempty"`
+}
+
+// ClusterNode is one Kubernetes node as the planner needs to see it: an
+// identity and the labels a selector can match.
+type ClusterNode struct {
+	Name   string            `json:"name"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// AgentCoverage records which nodes a NodePowerAgent has selected. The agent
+// controller already resolves this into status, so shutdown planning reads it
+// rather than re-deriving node membership from a DaemonSet selector.
+type AgentCoverage struct {
+	Name  string   `json:"name"`
+	Nodes []string `json:"nodes,omitempty"`
 }
 
 // StructuralBundle is the deterministic structure emitted toward the planner.
@@ -39,6 +61,13 @@ type StructuralBundle struct {
 	ObservedAt        string                   `json:"observedAt,omitempty"`
 	Topology          inventory.Topology       `json:"topology,omitempty"`
 	CapabilityMatches []capability.MatchResult `json:"capabilityMatches,omitempty"`
+	// ClusterNodes and AgentCoverage carry through unchanged for group-to-node
+	// expansion. They are deliberately absent from Hash: node labels churn for
+	// reasons unrelated to shutdown planning, and only the membership actually
+	// derived from them belongs in plan identity, which it reaches through the
+	// planner's own structural hash.
+	ClusterNodes  []ClusterNode   `json:"clusterNodes,omitempty"`
+	AgentCoverage []AgentCoverage `json:"agentCoverage,omitempty"`
 }
 
 // Diagnostic attributes a resolver warning or rejection to the source stage.

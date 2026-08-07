@@ -157,6 +157,17 @@ assigned workloads, storage operations, and cluster responsibilities have cleare
 emitted as actual graph edges, not left as prose the executor is trusted to honor. Subject to
 execution-time revalidation per OD-11.
 
+Clearance is derived from group-to-node membership resolved before compilation, since expanding a
+selector requires reading the cluster and the planner is pure. Nodes a group *acts on* come from
+matching its node selector against real node labels; nodes a group *releases* come from
+`NodePowerAgent.status.selectedNodes` through `target.agentRefs`, which is the same resolution the
+executor performs at release time — deriving it differently would let the plan disagree with what
+execution does. For each node, every group acting on it is ordered before the group releasing it.
+The edges enter the same graph wave compilation reads, so they change execution order rather than
+describing it. Absent membership, clearance derivation is skipped and declared ordering stands
+alone. A group that both acts on and releases a node yields no edge: the ordering is internal to
+that group's own action sequence.
+
 **PL-21** · Derive communication-path edges. A network device carrying the control-plane or NUT path
 for node N cannot precede N in shutdown order. The communication path is modeled as `carries` edges
 per IN-5; OD-3 is closed.

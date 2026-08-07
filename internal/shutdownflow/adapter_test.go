@@ -17,11 +17,13 @@ limitations under the License.
 package shutdownflow
 
 import (
+	"reflect"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
@@ -147,5 +149,124 @@ func TestPlannerInputsResolveShutdownTierFromCentralSelectorRule(t *testing.T) {
 
 	if got := inputs.Groups[0].ShutdownTier; got == nil || *got != 2 {
 		t.Fatalf("expected selector rule tier 2, got %#v", got)
+	}
+}
+
+// nodeExpansionFlow drains nodes labelled for one rack and powers off the same
+// rack through its agent.
+func nodeExpansionFlow() *powerv1alpha1.ShutdownFlow {
+	return &powerv1alpha1.ShutdownFlow{
+		Spec: powerv1alpha1.ShutdownFlowSpec{
+			Groups: []powerv1alpha1.ShutdownGroup{
+				{
+					Name:   "drain-rack-a",
+					Action: powerv1alpha1.ShutdownStepDrainNodes,
+					Target: powerv1alpha1.ShutdownStepTarget{
+						NodeSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"rack": "a"},
+						},
+					},
+				},
+				{
+					Name:   "poweroff-rack-a",
+					Action: powerv1alpha1.ShutdownStepAgentShutdown,
+					Target: powerv1alpha1.ShutdownStepTarget{
+						AgentRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-a-agent"}},
+					},
+				},
+			},
+		},
+	}
+}
+
+func nodeExpansionBundle() resolver.StructuralBundle {
+	return resolver.StructuralBundle{
+		ClusterNodes: []resolver.ClusterNode{
+			{Name: "node-a1", Labels: map[string]string{"rack": "a"}},
+			{Name: "node-a2", Labels: map[string]string{"rack": "a"}},
+			{Name: "node-b1", Labels: map[string]string{"rack": "b"}},
+		},
+		AgentCoverage: []resolver.AgentCoverage{
+			{Name: "rack-a-agent", Nodes: []string{"node-a1", "node-a2"}},
+		},
+	}
+}
+
+func TestPlannerGroupNodesExpandsSelectorsAndAgentCoverage(t *testing.T) {
+	membership := PlannerGroupNodes(nodeExpansionFlow(), nodeExpansionBundle())
+	if len(membership) != 2 {
+		t.Fatalf("expected membership for both groups, got %#v", membership)
+	}
+
+	byGroup := map[string]planner.GroupNodeMembership{}
+	for _, entry := range membership {
+		byGroup[entry.Group] = entry
+	}
+
+	drain := byGroup["drain-rack-a"]
+	if got, want := drain.Acts, []string{"node-a1", "node-a2"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected the selector to match only rack a, got %#v", got)
+	}
+	if len(drain.Releases) != 0 {
+		t.Fatalf("a drain group releases nothing, got %#v", drain.Releases)
+	}
+
+	release := byGroup["poweroff-rack-a"]
+	if got, want := release.Releases, []string{"node-a1", "node-a2"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected agent coverage to supply released nodes, got %#v", got)
+	}
+	if len(release.Acts) != 0 {
+		t.Fatalf("release membership comes from agent coverage alone, got %#v", release.Acts)
+	}
+}
+
+// An absent node selector is not "every node". Treating it as Kubernetes'
+// match-all would derive a clearance edge against the whole cluster from a group
+// that never mentions a node.
+func TestPlannerGroupNodesTreatsAbsentSelectorAsNoNodes(t *testing.T) {
+	flow := &powerv1alpha1.ShutdownFlow{
+		Spec: powerv1alpha1.ShutdownFlowSpec{
+			Groups: []powerv1alpha1.ShutdownGroup{{
+				Name:   "scale-apps",
+				Action: powerv1alpha1.ShutdownStepScaleWorkload,
+			}},
+		},
+	}
+	if membership := PlannerGroupNodes(flow, nodeExpansionBundle()); membership != nil {
+		t.Fatalf("expected no membership without a node selector, got %#v", membership)
+	}
+}
+
+func TestPlannerGroupNodesWithoutClusterContextIsEmpty(t *testing.T) {
+	if membership := PlannerGroupNodes(nodeExpansionFlow(), resolver.StructuralBundle{}); membership != nil {
+		t.Fatalf("expected no membership without cluster context, got %#v", membership)
+	}
+}
+
+// The expansion has to reach the compiled plan, not just exist: without the
+// derived edge these two groups compile into one wave.
+func TestCompileArtifactOrdersDrainBeforePowerOff(t *testing.T) {
+	flow := nodeExpansionFlow()
+	flow.Spec.Triggers = []powerv1alpha1.ShutdownTrigger{{Type: powerv1alpha1.ShutdownTriggerOnBattery}}
+
+	_, waves, _, _, artifact := CompileArtifactWithResolvedInputs(flow, nodeExpansionBundle())
+	if len(waves) != 2 {
+		t.Fatalf("expected drain and poweroff in separate waves, got %#v", waves)
+	}
+	if got, want := waves[0].Groups, []string{"drain-rack-a"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected the drain to run first, got %#v", got)
+	}
+	if got, want := waves[1].Groups, []string{"poweroff-rack-a"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected the poweroff to run second, got %#v", got)
+	}
+
+	var found bool
+	for _, edge := range artifact.Graph.Edges {
+		if edge.Relation == planner.GraphEdgeRelationNodeClearance {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a published node-clearance edge, got %#v", artifact.Graph.Edges)
 	}
 }

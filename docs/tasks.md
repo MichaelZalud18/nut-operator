@@ -11,7 +11,7 @@ what is built and what remains open, with design-doc identifiers (`OD-n`, `PL-n`
 findings (`F-n`) cited so the reasoning behind an item is one click away rather than re-litigated.
 Items that genuinely span two components are listed under their primary owner with a cross-reference.
 
-Last reviewed: 2026-08-05
+Last reviewed: 2026-08-07
 
 ---
 
@@ -34,29 +34,29 @@ resolver/adapter that feeds it into reconciliation. Design contract: `docs/desig
 - Compiled topology hash folds into plan identity (`IN-14`).
 - Numbered shutdown tiers on `spec.roles.shutdownTier` (`OD-4`).
 - Coverage: compiler determinism, domain derivation, orphan rules, resolver end-to-end, webhooks.
+- **Declared node names are checked against the cluster (`IN-13`, 2026-08-07).** A
+  `PowerInventoryNode` naming a node that does not exist raises `InventoryNodeNotInCluster`
+  instead of silently producing a power domain covering a node nothing can shut down. Warns
+  rather than rejects, since inventory is legitimately authored ahead of the hardware; stays
+  silent when no nodes are visible at all, because there is nothing to check against.
+- **`OD-16` closed in the registry (2026-08-07)** to match the warning-plus-exemption behavior
+  `internal/inventory` already implemented.
 
 #### Open Work
 
-- **Wire the derived topology into the planner.** Partially started 2026-08-05: `Topology.Domains`
-  now reaches the planner and is consumed by `PL-19` trigger-capability validation. What still has no
-  consumer is the part that shapes the plan itself — wave compilation does not read derived domain
-  membership, trigger *evaluation* still runs off live telemetry snapshots rather than the derived
-  closure, and `carries`-based ordering (`PL-21`) has no consumer at all. This is the single highest-value remaining item in this
-  component; see the matching entry under Planning & Execution Logic.
-- No cross-check that a `PowerInventoryNode`/edge reference names a real `corev1.Node` — identity is
-  trusted by convention (`IN-13`), never verified against the cluster.
+- **Finish wiring the derived topology into the planner.** `Topology.Domains` reaches the planner
+  and is consumed by `PL-19` trigger-capability validation, and `PL-20` node clearance now shapes
+  wave order (see Planning & Execution Logic). What still has no consumer: wave compilation does
+  not read derived *domain membership*, trigger evaluation still runs off live telemetry snapshots
+  rather than the derived closure, and `carries`-based ordering (`PL-21`) has no consumer.
 - `IN-16` snapshot age ceiling has no implementation (no config field, no staleness condition).
 - NetBox as a second topology provider (`SB-8`) is docs-only — zero code exists. Decide whether and
   when to build it, or drop it from the design docs if it's not actually planned.
-- `OD-16` (missing `carries` coverage) is effectively resolved in code as warning + exemption, but
-  `scope-boundaries.md` still lists it open — close the registry entry to match the implementation.
 - `OD-18` tier inversion (lower-tier workload on a higher-tier node) has no compile-time validation,
   opt-in migration, or blocking behavior implemented.
 - Controller-level regression tests for multi-object graph failures (orphan rejection, duplicate
   edges) end-to-end through `ShutdownFlowReconciler` — today this is only tested at the
   compiler/resolver layer, not proven through the actual reconcile path.
-- `isSupportedInventoryEntityKind` is implemented twice (`internal/controller/validation.go` and the
-  edge webhook) — worth factoring into one shared helper.
 
 ---
 
@@ -168,48 +168,41 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   same facts.
 - `F-31` closed operator-wide (status writes are patches). The unpredicated `UPSDevice` watch it
   exposed is still open below.
+- **`PL-20` node-clearance edges are derived and shape wave order (2026-08-07).** The planner could
+  not previously name a node: `PlannerTarget` reduces every selector to booleans and counts, so a
+  group's node membership never reached compilation and `PL-20` had nothing to derive from. Group-to-
+  node membership is now resolved before compiling — nodes a group *acts on* by matching its node
+  selector against real node labels, nodes a group *releases* from
+  `NodePowerAgent.status.selectedNodes` via `target.agentRefs`, which is the same resolution the
+  executor performs at release time so the plan cannot disagree with execution. For each node, every
+  group acting on it is ordered before the group releasing it.
+  The edges go into the graph wave compilation already reads, so they change execution order rather
+  than describing it. Concretely: a flow that drains rack-a and powers off rack-a with no declared
+  ordering used to compile both into one wave — draining a node while cutting its power. It now
+  compiles into two. Cluster reads live in the controller (`clusterNodeContext`), selector matching
+  in the adapter, derivation in the pure planner; the membership folds into the structural hash while
+  raw node labels deliberately do not, so an unrelated label edit cannot churn plan identity.
+  Covered end to end: derivation, wave reordering, determinism under shuffled input, no self-edges,
+  unknown groups ignored, cycles rejected, and an envtest reconcile against a real `Node` plus agent
+  coverage asserting the published `NodeClearance` edge.
 
 #### Open Work
 
-- **Consume the inventory-derived topology.** The planner still doesn't read
-  `Topology.Domains`/`Topology.CommunicationOrders` from the inventory compiler — this is the
-  execution-side half of the Inventory System's top open item, and the highest-value remaining work
-  in the project.
-
-  The blocker is narrower than it looks: **the planner never learns which nodes a group covers.**
-  `PlannerTarget` reduces every selector to booleans and counts (`NodeSelector: target.NodeSelector
-  != nil`, `NamespaceCount`, `WorkloadRefCount`), and nothing anywhere expands a selector into node
-  identities. `PL-20` node-clearance edges, `PL-21` communication-path edges, and `PL-23` quorum all
-  need to name a node, so none of them can be derived from what the planner currently receives. The
-  topology data itself is already present — `StructuralBundle.Topology` carries domains, entities,
-  edges, and `CommunicationOrders`, and `plannerPowerDomains` already converts domains through.
-
-  Concrete steps, in order:
-
-  1. **Expand selectors to node names.** `declarativeStructuralInputs`
-     (`internal/controller/declarative_inventory_resolver.go`) already holds a `client.Reader` and is
-     the designated place for external reads, since `ResolveStructural` is pure. List `corev1.Node`
-     there, run each group's `target.nodeSelector` through `metav1.LabelSelectorAsSelector`, and
-     attach the result in `AttachResolvedInputHash` (`internal/resolver/planner.go`) alongside the
-     existing `DeviceCapabilities`/`PowerDomains`. Output shape: `{GroupName string, Nodes []string}`,
-     sorted.
-  2. **Extend `planner.StructuralInputs`** (`internal/planner/types.go`) with that group-to-node
-     membership and a conversion of `Topology.CommunicationOrders`.
-  3. **Copy and sort both in `normalizeStructuralInputs`** (`internal/planner/compiler.go`). This is
-     load-bearing and easy to miss: a field absent from normalization is silently dropped with no
-     error, which is exactly how `DeviceCapabilities` failed its first tests. It also earns hash
-     participation for free, since `plan.StructuralHash = stableHash(normalized)`.
-  4. **Derive the edges** in a new file alongside `tiers.go`, following the same pattern: `PL-20`
-     node-clearance edges and `PL-21` communication-path edges, emitted as real graph edges with
-     `Derived` provenance rather than left as prose the executor is trusted to honor.
-  5. **Tests:** determinism across runs, and a fixture where a `carries` edge actually changes wave
-     order — without that, there is no proof the new edges are load-bearing.
-
-  Steps 1–3 are mechanical and independently testable, but should not land alone: unconsumed planner
-  inputs are the same dead-field pattern as `F-25` and `F-33`. Step 4 is the feature. Two decisions
-  gate step 4 only: `OD-14` (whether domains constrain wave *membership* or just trigger scope) and
-  `OD-11`/`PL-43` (revalidating compile-time node membership at execution — decided in design,
-  unimplemented).
+- **`PL-21` communication-path edges have no actuation target yet.** `Topology.CommunicationOrders`
+  is computed by the inventory compiler and reaches nothing. The constraint it expresses — a network
+  device carrying node N's control-plane or NUT path cannot shut down before N — is only meaningful
+  once the operator can actuate a network device, which today it cannot: switches are topological-only
+  by design (`OD-24`). Wiring the data through now would add a planner input with no consumer, the
+  same dead-field shape as `F-25` and `F-33`. Revisit alongside PDU outlet control (`OD-25`), which is
+  what would make a network device a shutdown target in the first place.
+- **Wave compilation still ignores derived domain membership.** `PL-20` clearance is derived per node;
+  domain membership shapes nothing in the compiled plan. Blocked on `OD-14` (whether a partial-domain
+  outage compiles a cluster-wide or domain-scoped plan), which decides the semantics before the wiring
+  is worth doing.
+- **Node clearance is derived at compile time and not revalidated at execution (`OD-11`, `PL-43`).**
+  Group-to-node membership is resolved when the plan compiles; pods move afterward. The design already
+  says clearance is revalidated at execution alongside instance resolution — that revalidation is not
+  implemented.
 - **Fold the provisional adaptive-execution design into real identifiers.** Tier-pointer
   descent/ascent, the three timing modes (`Relaxed`/`Nominal`/`Urgent`), and asymmetric hysteresis
   are fully specified in `adaptive-execution-tier-pointer.md` (`AE-1`–`AE-6`) but **none of it is
@@ -567,8 +560,6 @@ component.
   numbered tier scheme closed under `OD-4`. Numbered tiers take precedence, but named tags like
   `storage`/`data` may still occur in practice and need a defined mapping or coexistence rule rather
   than silently colliding.
-- `OD-16` registry cleanup: mark closed in `scope-boundaries.md` to match what `internal/inventory`
-  already implements (see Inventory System).
 
 ---
 

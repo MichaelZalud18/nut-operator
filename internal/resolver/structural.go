@@ -58,6 +58,8 @@ func ResolveStructural(inputs StructuralInputs) (StructuralBundle, []Diagnostic,
 		ObservedAt:        inputs.ObservedAt,
 		Topology:          topology,
 		CapabilityMatches: matches,
+		ClusterNodes:      normalizeClusterNodes(inputs.ClusterNodes),
+		AgentCoverage:     normalizeAgentCoverage(inputs.AgentCoverage),
 	}
 	bundle.Hash = stableHash(struct {
 		SourceID          string                   `json:"sourceID,omitempty"`
@@ -125,6 +127,46 @@ func resolverCapabilityDiagnostics(diagnostics []capability.Diagnostic) []Diagno
 		})
 	}
 	return converted
+}
+
+// normalizeClusterNodes copies and orders cluster nodes so the same cluster
+// produces the same bundle regardless of List ordering.
+func normalizeClusterNodes(nodes []ClusterNode) []ClusterNode {
+	if len(nodes) == 0 {
+		return nil
+	}
+	normalized := make([]ClusterNode, 0, len(nodes))
+	for _, node := range nodes {
+		copied := ClusterNode{Name: node.Name}
+		if len(node.Labels) > 0 {
+			copied.Labels = make(map[string]string, len(node.Labels))
+			for key, value := range node.Labels {
+				copied.Labels[key] = value
+			}
+		}
+		normalized = append(normalized, copied)
+	}
+	sort.Slice(normalized, func(i, j int) bool { return normalized[i].Name < normalized[j].Name })
+	return normalized
+}
+
+// normalizeAgentCoverage copies and orders agent-to-node coverage, including the
+// node lists, for the same determinism reason.
+func normalizeAgentCoverage(coverage []AgentCoverage) []AgentCoverage {
+	if len(coverage) == 0 {
+		return nil
+	}
+	normalized := make([]AgentCoverage, 0, len(coverage))
+	for _, agent := range coverage {
+		copied := AgentCoverage{Name: agent.Name}
+		if len(agent.Nodes) > 0 {
+			copied.Nodes = append([]string(nil), agent.Nodes...)
+			sort.Strings(copied.Nodes)
+		}
+		normalized = append(normalized, copied)
+	}
+	sort.Slice(normalized, func(i, j int) bool { return normalized[i].Name < normalized[j].Name })
+	return normalized
 }
 
 func stableHash(value any) string {
