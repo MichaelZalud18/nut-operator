@@ -183,6 +183,16 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   mode selection, and hysteresis logic is the actual engineering work.
 - `OD-27`–`OD-30`: hysteresis count/margin, relationship to `OD-12`, tier-ascent trigger condition,
   and cadence intervals — all open parameters the adaptive-execution build needs decided first.
+- **`Wait` and `Gate` are declared API actions that execute as no-ops.** The enum accepts them,
+  `spec.groups[].duration` documents itself as "used by Wait steps", and `spec.groups[].timeout`
+  exists — but `kubeactions.Runner.runAction` returns `noop: true` for `Notify`/`Wait`/`Gate` and no
+  executor code reads either duration. Same "looks load-bearing, does nothing" shape as `F-25` and
+  `F-33`. Related: `RunWorkflow` creates the Argo `Workflow` and returns without waiting for it, so
+  a plan cannot currently express "start this hook, and do not proceed until it finishes." That
+  combination is what a pre-shutdown database snapshot needs: fire a long-running job at a high
+  tier, keep the workload up, and hold the wave until the job reports done. Decide whether waiting
+  belongs in the executor (blocking, needs a bounded timeout on the failure path) or as an explicit
+  `Gate` the operator satisfies by observing the hook's own status, then implement one of them.
 - `OD-12` infeasible-plan policy field default and options (reject/warn/truncate), referenced by
   `EX-3`, not yet decided or implemented.
 - `OD-18` tier inversion validation (shared with Inventory System — this is the planner
@@ -403,6 +413,16 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 
 #### Open Work
 
+- **Drop the hard cert-manager dependency using `open-policy-agent/cert-controller`, with an opt-out
+  for operators who already have PKI.** Two stages, in order: first validate it is a usable path
+  (does it own the serving cert and reconcile `caBundle` into both webhook configurations, what RBAC
+  on `*webhookconfigurations` it needs, whether its known caBundle-sync issues are current, and how
+  it behaves alongside an existing cert-manager install), then adopt it as the default with a flag
+  that hands cert ownership back to cert-manager or a user-supplied Secret. Motivation: "install
+  cert-manager first" is a real adoption tax for an operator someone installs once, and Gatekeeper
+  demonstrates the pattern at scale. Note the constraint documented in `docs/install.md`: removing
+  the webhooks entirely is not an alternative, because the `NodePowerAgent` defaulter is the only
+  thing that sets `spec.resources` and `spec.placement.priorityClassName`.
 - Release image signing policy, cosign verification docs, and immutable digest production examples
   (`docs/images.md` describes the target state; keyless Sigstore signing as a release gate isn't
   confirmed wired into CI yet).
