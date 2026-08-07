@@ -187,16 +187,50 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   `spec.groups[].duration` documents itself as "used by Wait steps", and `spec.groups[].timeout`
   exists — but `kubeactions.Runner.runAction` returns `noop: true` for `Notify`/`Wait`/`Gate` and no
   executor code reads either duration. Same "looks load-bearing, does nothing" shape as `F-25` and
-  `F-33`. Related: `RunWorkflow` creates the Argo `Workflow` and returns without waiting for it, so
-  a plan cannot currently express "start this hook, and do not proceed until it finishes." That
-  combination is what a pre-shutdown database snapshot needs: fire a long-running job at a high
-  tier, keep the workload up, and hold the wave until the job reports done. Decide whether waiting
-  belongs in the executor (blocking, needs a bounded timeout on the failure path) or as an explicit
-  `Gate` the operator satisfies by observing the hook's own status, then implement one of them.
+  `F-33`. Either implement them or remove them from the enum; a declared action that silently does
+  nothing is worse than an unsupported one.
+- **Make the pre-shutdown hook engine-neutral, and write the scope limit down.** The user-facing
+  need is ordinary: run a workload's own pre-shutdown routine (a database snapshot, a quiesce) at a
+  high tier while the workload keeps serving, and shut it down at a lower tier. Ordering already
+  expresses this — two groups at two tiers. What does not hold up is the hook itself.
+  `workflowObject` parameterizes the GVK (`workflow.apiVersion`/`workflow.kind`, defaulting to
+  `argoproj.io/v1alpha1 Workflow`) but always builds an Argo-shaped body —
+  `workflowTemplateRef`, `entrypoint`, `serviceAccountName`, `arguments.parameters` — and RBAC only
+  grants `argoproj.io/workflows`. So a non-Argo target is nominally addressable and practically
+  unusable. Owning workflow orchestration is out of scope (`GP-4`, `GP-7`): the operator should
+  invoke a hook and publish the fact, never become the engine that runs it. Options: let the group
+  supply the whole object body (from params or a referenced manifest) so any CRD works; and/or
+  support plain `batch/v1` `Job`, which needs no engine at all. This boundary should become a
+  numbered scope entry (`SB-15` is next) rather than living only in a task note.
+- **Waiting on a hook is deliberately undecided (2026-08-06).** Whether the executor blocks on a
+  hook's completion is TBD. What is decided: **the default is that shutdown proceeds anyway.** A
+  hook that has not finished never becomes a reason to keep nodes up while battery runtime drains —
+  a one-hour snapshot may simply not be affordable during the outage it was meant to protect
+  against. Any future waiting mechanism is opt-in, bounded, and must state what happens when the
+  budget runs out first.
 - `OD-12` infeasible-plan policy field default and options (reject/warn/truncate), referenced by
   `EX-3`, not yet decided or implemented.
 - `OD-18` tier inversion validation (shared with Inventory System — this is the planner
-  tier-compilation half).
+  tier-compilation half). Detection falls out of the same label scan as the defaulted-tier
+  diagnostic below: resolve every node's tier and every workload's tier, then report workloads whose
+  tier is lower than the node they sit on, since that node cannot clear under `PL-20` while they
+  run. Worth publishing as a count so it can be watched rather than only read at compile time. Note
+  what users can do about it without operator support: `nodeAffinity` accepts `Gt`/`Lt` on
+  integer-valued node labels, so a workload can already require a node at a more desirable tier.
+- **Report tiers that were defaulted rather than declared.** A group with no resolvable tier falls
+  back to `spec.shutdownTiers.defaultTier`, which is legitimate configuration and currently silent.
+  The tier compiler diagnoses malformed tiers (`ShutdownTierInvalid`, `DuplicateShutdownTier`,
+  `ShutdownTierZeroTargeted`, `ShutdownTierDefaultReserved`) but never says "this fell back," so a
+  typo'd label key is indistinguishable from a deliberate default — and something the user never
+  intended to be ordinary silently becomes tier 4. Emit an informational diagnostic naming the
+  target and why no tier resolved.
+- **Node targeting cannot express tier ranges.** `spec.groups[].target.nodeSelector` is a
+  `metav1.LabelSelector`, which supports only `In`/`NotIn`/`Exists`/`DoesNotExist` — no numeric
+  comparison. `corev1.NodeSelector` (what `nodeAffinity` uses) does support `Gt`/`Lt` against
+  integer-valued labels. Consider accepting node-selector *requirements* for node targeting so a
+  group can say "every node above tier 2" directly instead of enumerating values or restating the
+  range in `spec.shutdownTiers.selectorRules`. Namespace and workload targeting cannot gain this —
+  Kubernetes has no `Gt`/`Lt` for those selector types.
 - `OD-14` partial-domain outage plan scope (shared with Telemetry & Triggers).
 - Controller/envtest coverage for executor resume behavior (restart mid-flow) — asserted by design
   (`EX-14`) but not covered by an actual restart test yet.
