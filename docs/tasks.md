@@ -198,10 +198,35 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   `workflowTemplateRef`, `entrypoint`, `serviceAccountName`, `arguments.parameters` — and RBAC only
   grants `argoproj.io/workflows`. So a non-Argo target is nominally addressable and practically
   unusable. Owning workflow orchestration is out of scope (`GP-4`, `GP-7`): the operator should
-  invoke a hook and publish the fact, never become the engine that runs it. Options: let the group
-  supply the whole object body (from params or a referenced manifest) so any CRD works; and/or
-  support plain `batch/v1` `Job`, which needs no engine at all. This boundary should become a
-  numbered scope entry (`SB-15` is next) rather than living only in a task note.
+  invoke a hook and publish the fact, never become the engine that runs it. This boundary should
+  become a numbered scope entry (`SB-15` is next) rather than living only in a task note.
+
+  **Direction decided 2026-08-06: prefer a transport-generic hook over Kubernetes-native ones.**
+  Custom hooks are most likely to target things the operator does not manage and Kubernetes cannot
+  address — a NAS, a bare-metal database, a hypervisor, a switch. None of those have a CRD, so a
+  Kubernetes-object hook cannot reach the systems that most need one. Proposed shape, to be designed
+  before building:
+
+  - A dedicated `ShutdownHook` resource referenced by name from a group, rather than today's
+    `params` map. Reusable across flows, reviewable in Git on its own, and it keeps `ShutdownFlow`
+    readable — the "write the invocation elsewhere and reference it" shape.
+  - HTTP delivery with a CloudEvents-shaped body as the primary transport, carrying execution ID,
+    plan hash, flow, group, tier, wave, and trigger context. This is the interop lingua franca:
+    Tekton emits CloudEvents to a configured sink, Alertmanager posts to webhook receivers, Argo
+    Events consumes them. Anything that accepts an HTTP POST becomes reachable, in or out of the
+    cluster.
+  - A Kubernetes-object transport kept as a second option, taking a user-supplied object body so any
+    GVK works — `batch/v1` `Job` needs no engine at all, and Argo becomes one example rather than
+    the assumption.
+  - Failure-path constraints, which are what separate this from an ordinary notifier: hooks are
+    declared ahead of time (`GP-5`, nothing discovered mid-outage); every call is bounded by a short
+    timeout; a failed or slow hook degrades and is recorded but never holds the wave; secrets are
+    referenced, never inline; TLS verification stays on; and outbound endpoints likely want an
+    allowlist on `PowerManagementCluster` per `GP-2`, since this would be the operator's only
+    outbound egress to arbitrary hosts.
+  - Dry-run needs a deliberate answer. The runner is never invoked in dry-run
+    (`internal/executor`'s `if !dryRun` guard), so hooks structurally cannot fire — correct, but it
+    means dry-run currently proves nothing about a hook. It should record what it *would* have sent.
 - **Waiting on a hook is deliberately undecided (2026-08-06).** Whether the executor blocks on a
   hook's completion is TBD. What is decided: **the default is that shutdown proceeds anyway.** A
   hook that has not finished never becomes a reason to keep nodes up while battery runtime drains —
