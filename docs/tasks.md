@@ -535,14 +535,17 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 
 #### Open Work
 
-- **CI never installs the operator, so its startup path is untested.** `F-38` — the manager
-  crash-looping on a duplicate controller registration — survived every unit and envtest gate because
-  the suites wire reconcilers individually and never execute `cmd/main.go`. A source-shape guard is
-  in place (`TestMainRegistersEachReconcilerOnce`), but the general gap remains: nothing applies a
-  bundled manifest and waits for `rollout status`. The e2e suite should install
-  `dist/install-byo-cert.yaml` (no external dependency, so it needs nothing extra in CI), run
-  `hack/webhook-cert.sh`, wait for readiness, and assert a webhook rejection — the same four steps
-  used to find `F-38` by hand.
+- **A failing E2E Tests workflow does not block merges to `main`.** `F-38` shipped over a red e2e
+  run that had correctly caught it — the suite runs `make deploy` and waits for controller pod
+  readiness, which is exactly the check that failure trips, and it was red for at least two
+  consecutive commits. The missing piece is enforcement, not coverage: E2E Tests is not a required
+  status check, and four green badges next to one red one read as flake. Make it required, or gate
+  pushes on it.
+- The e2e suite installs via `config/default`, so it only ever exercises the cert-manager path.
+  `dist/install-byo-cert.yaml` is now the recommended install and has no CI coverage. Adding a spec
+  that applies it, runs `hack/webhook-cert.sh`, waits for readiness, and asserts a webhook rejection
+  would cover it — those are the four steps used to verify it by hand, and the bundle needs no
+  external dependency in CI.
 - Certificate rotation for the no-cert-manager path is a manual `hack/webhook-cert.sh` re-run. The
   1-year serving certificate makes that infrequent, but nothing warns as expiry approaches. Consider
   a metric or a `PowerManagementCluster` condition sourced from the mounted certificate's `NotAfter`.

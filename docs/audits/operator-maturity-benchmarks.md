@@ -385,12 +385,18 @@ the other controllers, once again after the webhook block, immediately before th
 multiple controllers reporting the same metric"), `main` calls `os.Exit(1)`, and the pod enters
 `CrashLoopBackOff`. The operator could not start in any cluster.
 
-What makes this worth recording is not the mistake but why nothing caught it. Every envtest suite
+What makes this worth recording is not the mistake but how it reached `main`. Every envtest suite
 wires reconcilers individually against its own manager, so the suite proves each controller works
 while never executing `main.go`'s wiring. `go build` and `golangci-lint` both pass — duplicate
-registration is valid Go. Nothing in CI deploys the bundled manifest and waits for readiness, so the
-one gate that would have caught it did not exist. The whole verification stack was green against an
+registration is valid Go. So Tests, Lint, Security Scan, and Images were all green against an
 operator that had never successfully started.
+
+The e2e suite did catch it. It runs `make deploy` and waits three minutes for the controller pod to
+report Ready (`test/e2e/e2e_test.go`), which is exactly the check this failure trips, and the E2E
+Tests workflow was consequently red on `main` for at least two consecutive commits before the fix.
+The gap is therefore not a missing test — it is that a red required-signal workflow did not stop
+anything. E2E Tests is not configured as a required status check, so `main` accepted commits over a
+failing install gate, and the four green badges made the red one easy to read as flaky.
 
 Fixed by removing the duplicate. Guarded by `TestMainRegistersEachReconcilerOnce` in
 `cmd/main_wiring_test.go`, which parses `main.go` and fails when any reconciler type appears in more
