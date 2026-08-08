@@ -521,8 +521,12 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
   pre-push image scanning on PRs, and a `security.yml` running ASH plus an RFC1918 `private-ip-scan`.
 - `F-38` duplicate reconciler registration fixed; `cmd/main_wiring_test.go` guards it.
 - Each workflow's job carries a distinct check name. They were all `Run on Ubuntu`, which made the
-  checks indistinguishable to branch protection and impossible to require individually. `main` is
-  now protected with all five required.
+  checks indistinguishable to branch protection and impossible to require individually.
+- `main` is protected with all five checks required **and `enforce_admins` on**, so nothing lands
+  over a red gate — the path that let `F-38` through is closed, not just narrowed. Every change goes
+  through a pull request; reviews are not required, so a passing PR can be merged by its author.
+  Settings live in `.github/branch-protection.json` and the emergency-bypass procedure is in
+  `CONTRIBUTING.md`, so lifting protection is deliberate and reversible in one command.
 - The e2e suite restores `config/manager/kustomization.yaml`. `make deploy IMG=...` edits that
   tracked file in place and nothing put it back, so a suite run left the repository holding
   `example.com/nut-operator:v0.0.1` as the published operator image.
@@ -537,13 +541,6 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 
 #### Open Work
 
-- **Branch protection on `main` exempts admins, so the sole maintainer can still push over a red
-  gate.** `F-38` shipped over an e2e run that had correctly caught it — the suite runs `make deploy`
-  and waits for controller pod readiness, which is exactly the check that failure trips, and it was
-  red for at least two consecutive commits. Enforcement, not coverage, was the gap. `main` is now
-  protected with all five checks required, but `enforce_admins` is off to keep direct pushes
-  working, which means the specific path that produced `F-38` is still open. Turning it on before
-  `v1` closes it, at the cost of a PR per change.
 - The e2e suite installs via `config/default`, so it only ever exercises the cert-manager path.
   `dist/install-byo-cert.yaml` is now the recommended install and has no CI coverage. Adding a spec
   that applies it, runs `hack/webhook-cert.sh`, waits for readiness, and asserts a webhook rejection

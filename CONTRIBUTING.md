@@ -37,6 +37,41 @@ Before opening a pull request:
 - Confirm generated manifests are current after API changes.
 - Confirm examples do not contain private infrastructure details.
 
+## Landing Changes
+
+`main` is a protected branch and the protection applies to administrators too. Direct pushes to
+`main` are rejected — every change lands through a pull request whose checks pass:
+
+```sh
+git switch -c your-change
+# ... work ...
+git push -u origin your-change
+gh pr create --fill
+gh pr checks --watch
+gh pr merge --squash --delete-branch
+```
+
+Five checks are required: `Unit and envtest suites`, `E2E on Kind`, `golangci-lint`,
+`ASH security scan`, and `Scan for private IP literals`. Reviews are not required, so a passing PR
+can be merged by its author.
+
+This exists because of `F-38`. The E2E gate had correctly caught a bug that made the operator
+crash-loop on startup, the workflow sat red for two consecutive commits, and work kept landing on
+`main` anyway because nothing enforced the result. Four green badges next to one red one read as
+flake. The test was never the problem; the missing piece was that a red gate stopped nothing.
+
+**If CI itself is broken** and you genuinely need to land a fix that its own gate blocks, lift the
+protection deliberately and put it straight back — do not leave it off:
+
+```sh
+gh api -X DELETE repos/:owner/:repo/branches/main/protection
+# land the fix
+gh api -X PUT repos/:owner/:repo/branches/main/protection --input .github/branch-protection.json
+```
+
+`.github/branch-protection.json` holds the settings, so restoring them is a single command rather
+than a click-path someone has to remember.
+
 ## Commit Style
 
 Use concise conventional commits when practical:
