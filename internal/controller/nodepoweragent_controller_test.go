@@ -343,7 +343,11 @@ var _ = Describe("NodePowerAgent Controller", func() {
 				Name:  "POWER_SIGNAL_PATHS",
 				Value: "/run/power-agent/shutdown.json,/var/lib/power-agent/signals/$(POWER_NODE_NAME).json",
 			}))
-			Expect(daemonSet.Spec.Template.Spec.Containers[1].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_POWEROFF_METHOD", Value: "reboot-syscall"}))
+			// F-36: the poweroff mechanism is fixed to the reboot(2) syscall and is not configurable.
+			// No env var should be able to redirect it to an arbitrary host command.
+			for _, variable := range daemonSet.Spec.Template.Spec.Containers[1].Env {
+				Expect(variable.Name).NotTo(HavePrefix("POWER_POWEROFF_"))
+			}
 			Expect(daemonSet.Spec.Template.Spec.Containers[1].VolumeMounts).To(ContainElement(corev1.VolumeMount{
 				Name:      "power-agent-signals",
 				MountPath: "/var/lib/power-agent/signals",
@@ -499,7 +503,9 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(actuator.SecurityContext.SeccompProfile.Type).To(Equal(corev1.SeccompProfileTypeUnconfined))
 			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_AGENT_MODE", Value: "Actuate"}))
 			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_ACTUATOR_POLICY", Value: "SystemdPoweroff"}))
-			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_POWEROFF_METHOD", Value: "reboot-syscall"}))
+			for _, variable := range actuator.Env {
+				Expect(variable.Name).NotTo(HavePrefix("POWER_POWEROFF_"))
+			}
 		})
 
 		It("reconciles via a real running manager and reacts to a labeled Pod through the dedicated watch (F-32)", func() {

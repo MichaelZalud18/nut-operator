@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -14,13 +13,20 @@ import (
 
 var version = "dev"
 
+// Powering the node off is a single, fixed operation: the reboot(2) syscall with
+// LINUX_REBOOT_CMD_POWER_OFF. There is deliberately no way to configure a different mechanism.
+//
+// An earlier build also accepted an arbitrary command (POWER_POWEROFF_COMMAND, defaulting to
+// systemctl poweroff) but nothing could ever select it, so it was removed rather than exposed
+// (F-36). Exposing it would have meant a CRD field that runs an operator-chosen executable as root
+// on every node, and it would have widened the container's privileges: the syscall needs
+// CAP_SYS_BOOT alone, which is what F-13 argued for, while shelling out to systemctl needs host
+// PID/dbus access. Fewer privileges and no configurable command is the better trade for the one
+// operation whose blast radius is the whole machine.
 const (
 	policyDisabled        = "Disabled"
 	policyStub            = "Stub"
 	policySystemdPoweroff = "SystemdPoweroff"
-
-	poweroffMethodCommand       = "command"
-	poweroffMethodRebootSyscall = "reboot-syscall"
 )
 
 func main() {
@@ -44,19 +50,16 @@ func main() {
 	mode := env("POWER_AGENT_MODE", "DryRun")
 	policy := env("POWER_ACTUATOR_POLICY", policyStub)
 	config := actuatorConfig{
-		Mode:            mode,
-		Policy:          policy,
-		NodeName:        env("POWER_NODE_NAME", ""),
-		SignalPath:      env("POWER_SIGNAL_PATH", "/run/power-agent/shutdown.json"),
-		SignalPaths:     signalPaths(env("POWER_SIGNAL_PATHS", ""), env("POWER_SIGNAL_PATH", "/run/power-agent/shutdown.json")),
-		SignalTTL:       parseDuration(env("POWER_SIGNAL_TTL", "2m"), 2*time.Minute),
-		Interval:        parseDuration(env("POWER_ACTUATOR_INTERVAL", "5s"), 5*time.Second),
-		PoweroffMethod:  env("POWER_POWEROFF_METHOD", poweroffMethodRebootSyscall),
-		PoweroffCommand: env("POWER_POWEROFF_COMMAND", "/usr/bin/systemctl"),
-		PoweroffArgs:    commandArgs(env("POWER_POWEROFF_ARGS", "poweroff")),
+		Mode:        mode,
+		Policy:      policy,
+		NodeName:    env("POWER_NODE_NAME", ""),
+		SignalPath:  env("POWER_SIGNAL_PATH", "/run/power-agent/shutdown.json"),
+		SignalPaths: signalPaths(env("POWER_SIGNAL_PATHS", ""), env("POWER_SIGNAL_PATH", "/run/power-agent/shutdown.json")),
+		SignalTTL:   parseDuration(env("POWER_SIGNAL_TTL", "2m"), 2*time.Minute),
+		Interval:    parseDuration(env("POWER_ACTUATOR_INTERVAL", "5s"), 5*time.Second),
 	}
 
-	logger.Printf("starting mode=%s policy=%s node=%s signalPaths=%s signalTTL=%s poweroffMethod=%s", config.Mode, config.Policy, config.NodeName, strings.Join(config.SignalPaths, ","), config.SignalTTL, config.PoweroffMethod)
+	logger.Printf("starting mode=%s policy=%s node=%s signalPaths=%s signalTTL=%s poweroff=reboot-syscall(POWER_OFF)", config.Mode, config.Policy, config.NodeName, strings.Join(config.SignalPaths, ","), config.SignalTTL)
 
 	switch policy {
 	case policyDisabled, "":
@@ -75,16 +78,13 @@ func main() {
 }
 
 type actuatorConfig struct {
-	Mode            string
-	Policy          string
-	NodeName        string
-	SignalPath      string
-	SignalPaths     []string
-	SignalTTL       time.Duration
-	Interval        time.Duration
-	PoweroffMethod  string
-	PoweroffCommand string
-	PoweroffArgs    []string
+	Mode        string
+	Policy      string
+	NodeName    string
+	SignalPath  string
+	SignalPaths []string
+	SignalTTL   time.Duration
+	Interval    time.Duration
 }
 
 type actuatorFunc func(*log.Logger, actuatorConfig, nodeagent.SignalStatus) error
@@ -106,10 +106,6 @@ func parseDuration(value string, fallback time.Duration) time.Duration {
 		return time.Duration(seconds) * time.Second
 	}
 	return fallback
-}
-
-func commandArgs(value string) []string {
-	return strings.Fields(value)
 }
 
 func signalPaths(value, fallback string) []string {
@@ -179,32 +175,15 @@ func systemdPoweroffActuator(logger *log.Logger, config actuatorConfig, status n
 		logger.Printf("systemd actuator observed dry-run signal executionID=%s node=%s", status.Payload.ExecutionID, status.Payload.NodeName)
 		return nil
 	}
-	logger.Printf("systemd actuator executing poweroff method=%s executionID=%s node=%s flow=%s", config.PoweroffMethod, status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow)
-	return runPoweroff(config)
+	logger.Printf("systemd actuator executing poweroff executionID=%s node=%s flow=%s", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow)
+	return runPoweroff()
 }
 
-func runPoweroff(config actuatorConfig) error {
-	switch config.PoweroffMethod {
-	case "", poweroffMethodRebootSyscall:
-		if err := rebootPoweroff(); err != nil {
-			return fmt.Errorf("run reboot poweroff syscall: %w", err)
-		}
-		return nil
-	case poweroffMethodCommand:
-		return runPoweroffCommand(config.PoweroffCommand, config.PoweroffArgs)
-	default:
-		return fmt.Errorf("unsupported POWER_POWEROFF_METHOD %q", config.PoweroffMethod)
-	}
-}
-
-func runPoweroffCommand(command string, args []string) error {
-	if command == "" {
-		return fmt.Errorf("POWER_POWEROFF_COMMAND is required")
-	}
-	cmd := exec.Command(command, args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("run poweroff command: %w: %s", err, strings.TrimSpace(string(output)))
+// runPoweroff powers the machine off. Despite the syscall's name, reboot(2) with
+// LINUX_REBOOT_CMD_POWER_OFF halts and cuts power; it does not restart.
+func runPoweroff() error {
+	if err := rebootPoweroff(); err != nil {
+		return fmt.Errorf("run reboot poweroff syscall: %w", err)
 	}
 	return nil
 }

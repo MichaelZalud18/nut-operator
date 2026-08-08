@@ -3,52 +3,50 @@ package main
 import (
 	"log"
 	"os"
-	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
-func TestRunPoweroffExecutesCommandMethod(t *testing.T) {
-	dir := t.TempDir()
-	marker := filepath.Join(dir, "marker")
-	script := filepath.Join(dir, "poweroff")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s' \"$1\" > \"$2\"\n"), 0755); err != nil {
-		t.Fatalf("write script: %v", err)
+// stubRebootPoweroff swaps the syscall for a recorder, returning a pointer to the call count. The
+// syscall is the single irreversible act in this binary, so tests assert on whether it was reached
+// rather than on any observable side effect.
+func stubRebootPoweroff(t *testing.T) *int {
+	t.Helper()
+	calls := 0
+	previous := rebootPoweroff
+	rebootPoweroff = func() error {
+		calls++
+		return nil
 	}
+	t.Cleanup(func() { rebootPoweroff = previous })
+	return &calls
+}
 
-	if err := runPoweroff(actuatorConfig{
-		PoweroffMethod:  poweroffMethodCommand,
-		PoweroffCommand: script,
-		PoweroffArgs:    []string{"requested", marker},
-	}); err != nil {
+func TestRunPoweroffInvokesTheSyscall(t *testing.T) {
+	calls := stubRebootPoweroff(t)
+
+	if err := runPoweroff(); err != nil {
 		t.Fatalf("runPoweroff returned error: %v", err)
 	}
-	data, err := os.ReadFile(marker)
-	if err != nil {
-		t.Fatalf("read marker: %v", err)
-	}
-	if string(data) != "requested" {
-		t.Fatalf("expected marker content requested, got %q", string(data))
+	if *calls != 1 {
+		t.Fatalf("expected exactly one poweroff syscall, got %d", *calls)
 	}
 }
 
-func TestRunPoweroffUsesSyscallMethod(t *testing.T) {
-	called := false
-	previous := rebootPoweroff
-	rebootPoweroff = func() error {
-		called = true
-		return nil
+// F-36: the actuator once accepted POWER_POWEROFF_COMMAND, an arbitrary executable run as root on
+// the host, which no CRD field could reach. It was removed rather than exposed. Nothing should
+// reintroduce a configurable poweroff mechanism without revisiting that decision.
+func TestPoweroffTakesNoConfiguration(t *testing.T) {
+	config := actuatorConfig{}
+	if reflect.TypeOf(config).NumField() != 7 {
+		t.Fatalf("actuatorConfig gained or lost a field; confirm no poweroff mechanism became configurable: %+v", config)
 	}
-	t.Cleanup(func() {
-		rebootPoweroff = previous
-	})
-
-	if err := runPoweroff(actuatorConfig{PoweroffMethod: poweroffMethodRebootSyscall}); err != nil {
-		t.Fatalf("runPoweroff returned error: %v", err)
-	}
-	if !called {
-		t.Fatal("expected reboot poweroff syscall path")
+	for _, field := range []string{"PoweroffMethod", "PoweroffCommand", "PoweroffArgs"} {
+		if _, present := reflect.TypeOf(config).FieldByName(field); present {
+			t.Fatalf("actuatorConfig.%s is back; the poweroff mechanism must stay fixed to the syscall", field)
+		}
 	}
 }
 
@@ -62,19 +60,43 @@ func TestSignalPathsParsesUniquePaths(t *testing.T) {
 	}
 }
 
-func TestSystemdPoweroffActuatorSkipsDryRunSignal(t *testing.T) {
-	status := nodeagent.SignalStatus{
-		Active: true,
-		Payload: nodeagent.ShutdownSignal{
-			DryRun:       true,
-			ExecutionID:  "exec-1",
-			NodeName:     "node-a",
-			ShutdownFlow: "flow-a",
-		},
+// Dry-run is the safety property this whole binary hangs on, so it is asserted against the syscall
+// itself: a dry-run signal must not reach it, and an identical non-dry-run signal must. Testing
+// both directions is what proves the DryRun flag is the thing making the difference, rather than
+// some unrelated guard happening to stop execution.
+func TestSystemdPoweroffActuatorHonorsDryRun(t *testing.T) {
+	signal := func(dryRun bool) nodeagent.SignalStatus {
+		return nodeagent.SignalStatus{
+			Active: true,
+			Payload: nodeagent.ShutdownSignal{
+				DryRun:       dryRun,
+				ExecutionID:  "exec-1",
+				NodeName:     "node-a",
+				ShutdownFlow: "flow-a",
+			},
+		}
 	}
-	config := actuatorConfig{PoweroffCommand: "/path/that/does/not/exist"}
+	logger := log.New(os.Stdout, "", 0)
 
-	if err := systemdPoweroffActuator(log.New(os.Stdout, "", 0), config, status); err != nil {
-		t.Fatalf("expected dry-run signal to skip poweroff command, got %v", err)
-	}
+	t.Run("dry-run signal never powers off", func(t *testing.T) {
+		calls := stubRebootPoweroff(t)
+
+		if err := systemdPoweroffActuator(logger, actuatorConfig{}, signal(true)); err != nil {
+			t.Fatalf("expected dry-run signal to be accepted, got %v", err)
+		}
+		if *calls != 0 {
+			t.Fatalf("dry-run signal powered the node off (%d syscalls)", *calls)
+		}
+	})
+
+	t.Run("live signal powers off", func(t *testing.T) {
+		calls := stubRebootPoweroff(t)
+
+		if err := systemdPoweroffActuator(logger, actuatorConfig{}, signal(false)); err != nil {
+			t.Fatalf("expected live signal to power off, got %v", err)
+		}
+		if *calls != 1 {
+			t.Fatalf("expected exactly one poweroff syscall, got %d", *calls)
+		}
+	})
 }

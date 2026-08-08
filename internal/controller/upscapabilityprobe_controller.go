@@ -18,19 +18,25 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
 	"github.com/MichaelZalud18/nut-operator/internal/polling"
+	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 )
 
 // probeRetryInterval backs off a probe that could not reach its device. A UPS
@@ -50,6 +56,10 @@ type UPSCapabilityProbeReconciler struct {
 	Scheme          *runtime.Scheme
 	TelemetryPoller telemetryPoller
 	Clock           func() time.Time
+	// StorageConnector opens the audit store that receives probe-history rows
+	// (OD-15). Optional: with no PostgreSQL configured the probe still drafts a
+	// profile, it just keeps no history.
+	StorageConnector storageconfig.AuditStoreConnector
 }
 
 // +kubebuilder:rbac:groups=power.zalud.io,resources=upscapabilityprobes,verbs=get;list;watch;create;update;patch;delete
@@ -120,7 +130,14 @@ func (r *UPSCapabilityProbeReconciler) runProbe(ctx context.Context, probe *powe
 		return probeRetryInterval, nil
 	}
 
-	r.recordDraft(ctx, probe, &device, pollResult)
+	// Resolved once and shared: status reports which profile the device matches
+	// today, and the verification record compares that same profile against
+	// this same read. Resolving twice could report a match in status that the
+	// verification row disagrees with.
+	match, matchErr := resolveDeviceCapabilityMatch(ctx, r.Client, &device)
+
+	r.recordDraft(probe, &device, pollResult, match, matchErr)
+	r.recordVerification(ctx, probe, &device, pollResult, match, matchErr, resolution.ManagementClusterName)
 
 	if probe.Spec.RefreshInterval != nil && probe.Spec.RefreshInterval.Duration > 0 {
 		return probe.Spec.RefreshInterval.Duration, nil
@@ -128,11 +145,132 @@ func (r *UPSCapabilityProbeReconciler) runProbe(ctx context.Context, probe *powe
 	return 0, nil
 }
 
-func (r *UPSCapabilityProbeReconciler) recordDraft(
+// recordVerification persists probe history to PostgreSQL (OD-15): what the
+// device reported, which profile version it matched, and whether that profile's
+// declared telemetry still holds. History belongs in PostgreSQL rather than CR
+// status because "last verified against firmware X" is a series, and status is
+// a single current summary that each reconcile overwrites.
+//
+// Recording is best-effort by design. A probe is advisory work (RS-7–RS-10)
+// that never runs on the failure path, so an unreachable database must not cost
+// the operator a drafted profile. It is not silent either: a write that was
+// attempted and failed lands on the Degraded condition.
+func (r *UPSCapabilityProbeReconciler) recordVerification(
 	ctx context.Context,
 	probe *powerv1alpha1.UPSCapabilityProbe,
 	device *powerv1alpha1.UPSDevice,
 	pollResult polling.Result,
+	match capability.MatchResult,
+	matchErr error,
+	clusterName string,
+) {
+	if matchErr != nil {
+		// Without a resolved match there is no profile version to tie evidence
+		// to, and a row claiming an empty profile would be worse than no row.
+		setDegradedCondition(&probe.Status.Conditions, probe.Generation, true, "CapabilityMatchFailed",
+			fmt.Sprintf("could not resolve the current capability profile for UPSDevice %q: %v", device.Name, matchErr))
+		return
+	}
+
+	verification := capability.Verify(match, pollResult.Snapshot.Variables)
+
+	// Drift is a live fact about the device in front of us, so it belongs on the
+	// condition regardless of whether the history write succeeds. A user without
+	// PostgreSQL still needs to know their profile stopped matching reality.
+	if verification.DriftDetected {
+		setDegradedCondition(&probe.Status.Conditions, probe.Generation, true, "CapabilityProfileDrift",
+			fmt.Sprintf("profile %q declares telemetry UPSDevice %q did not report: %v",
+				match.ProfileID, device.Name, verification.MissingVariables))
+	}
+
+	if err := r.writeVerification(ctx, device, pollResult, match, verification, clusterName); err != nil {
+		setDegradedCondition(&probe.Status.Conditions, probe.Generation, true, "VerificationNotRecorded",
+			fmt.Sprintf("probed UPSDevice %q but could not record probe history: %v", device.Name, err))
+	}
+}
+
+// writeVerification opens the audit store and writes one row. It returns nil
+// when there is nothing to write to: no management cluster resolved, or storage
+// not ready. Those are ordinary configurations, not failures.
+func (r *UPSCapabilityProbeReconciler) writeVerification(
+	ctx context.Context,
+	device *powerv1alpha1.UPSDevice,
+	pollResult polling.Result,
+	match capability.MatchResult,
+	verification capability.Verification,
+	clusterName string,
+) error {
+	if clusterName == "" {
+		return nil
+	}
+	var cluster powerv1alpha1.PowerManagementCluster
+	if err := r.Get(ctx, types.NamespacedName{Name: clusterName}, &cluster); err != nil {
+		return fmt.Errorf("get PowerManagementCluster %q for probe history: %w", clusterName, err)
+	}
+	if !managementClusterStorageReady(&cluster) {
+		return nil
+	}
+
+	connector := r.StorageConnector
+	if connector == nil {
+		connector = storageconfig.NewKubernetesConnector(r.Client, storageconfig.ConnectorOptions{})
+	}
+	store, err := connector.OpenAuditStore(ctx, &cluster)
+	if err != nil {
+		return err
+	}
+
+	recordErr := store.RecordCapabilityProfileVerification(ctx, audit.CapabilityProfileVerification{
+		VerificationID:      uuid.NewString(),
+		ObservedAt:          r.now(),
+		UPSDevice:           device.Name,
+		ProfileID:           match.ProfileID,
+		ProfileVersion:      match.ProfileVersion,
+		ProfileSource:       string(match.ProfileSource),
+		Model:               strings.TrimSpace(pollResult.Snapshot.Variables[capability.VariableUPSModel]),
+		Firmware:            strings.TrimSpace(pollResult.Snapshot.Variables[capability.VariableUPSFirmware]),
+		NUTDriver:           renderedUPSDriver(*device),
+		NUTServer:           pollResult.Target.NUTServer,
+		NUTName:             pollResult.Target.NUTName,
+		Verified:            verification.Verified,
+		DriftDetected:       verification.DriftDetected,
+		ProbeVariables:      pollResult.Snapshot.Variables,
+		ExpectedVariables:   verification.ExpectedVariables,
+		MissingVariables:    verification.MissingVariables,
+		UnexpectedVariables: verification.UnexpectedVariables,
+		Diagnostics:         auditDiagnosticsFromVerification(verification),
+		Details: map[string]any{
+			"matchTier":    string(match.Tier),
+			"unidentified": match.Unidentified,
+			"profileHash":  match.ProfileHash,
+		},
+	})
+	closeErr := store.Close()
+	return errors.Join(recordErr, closeErr)
+}
+
+func auditDiagnosticsFromVerification(verification capability.Verification) []audit.DiagnosticRecord {
+	if len(verification.Diagnostics) == 0 {
+		return nil
+	}
+	records := make([]audit.DiagnosticRecord, 0, len(verification.Diagnostics))
+	for _, diagnostic := range verification.Diagnostics {
+		records = append(records, audit.DiagnosticRecord{
+			Severity: diagnostic.Severity,
+			Source:   "capability",
+			Reason:   diagnostic.Code,
+			Message:  diagnostic.Message,
+		})
+	}
+	return records
+}
+
+func (r *UPSCapabilityProbeReconciler) recordDraft(
+	probe *powerv1alpha1.UPSCapabilityProbe,
+	device *powerv1alpha1.UPSDevice,
+	pollResult polling.Result,
+	match capability.MatchResult,
+	matchErr error,
 ) {
 	draft := capability.BuildDraft(capability.ProbeObservation{
 		DeviceID:  device.Name,
@@ -152,7 +290,7 @@ func (r *UPSCapabilityProbeReconciler) recordDraft(
 	probe.Status.SuggestedAliases = copyStringMap(draft.SuggestedAliases)
 	probe.Status.DraftProfile = draft.ProfileYAML()
 	probe.Status.IssueReport = draft.IssueReport()
-	probe.Status.CurrentMatch = r.currentMatch(ctx, device)
+	probe.Status.CurrentMatch = currentMatchStatus(match, matchErr)
 
 	message := fmt.Sprintf("read %d NUT variables from UPSDevice %q; review status.draftProfile before applying it",
 		len(draft.Variables), device.Name)
@@ -160,12 +298,12 @@ func (r *UPSCapabilityProbeReconciler) recordDraft(
 	setDegradedCondition(&probe.Status.Conditions, probe.Generation, false, "NotDegraded", message)
 }
 
-// currentMatch records what the device resolves to today, so the gap the probe
-// is filling is visible without a second lookup. A failure here is not worth
-// failing the probe over: the draft is still useful without it.
-func (r *UPSCapabilityProbeReconciler) currentMatch(ctx context.Context, device *powerv1alpha1.UPSDevice) powerv1alpha1.UPSCapabilityProbeMatch {
-	match, err := resolveDeviceCapabilityMatch(ctx, r.Client, device)
-	if err != nil {
+// currentMatchStatus records what the device resolves to today, so the gap the
+// probe is filling is visible without a second lookup. A match failure is not
+// worth failing the probe over: the draft is still useful without it, and the
+// failure is reported on the Degraded condition by recordVerification.
+func currentMatchStatus(match capability.MatchResult, matchErr error) powerv1alpha1.UPSCapabilityProbeMatch {
+	if matchErr != nil {
 		return powerv1alpha1.UPSCapabilityProbeMatch{}
 	}
 	return powerv1alpha1.UPSCapabilityProbeMatch{

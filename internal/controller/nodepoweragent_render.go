@@ -42,7 +42,6 @@ const (
 	nodePowerAgentProjectedSignalPath               = nodePowerAgentProjectedSignalDirectory + "/$(POWER_NODE_NAME).json"
 	nodePowerAgentSignalReason                      = "upsmon-fsd"
 	nodePowerAgentSignalWriterPath                  = "/usr/local/bin/power-signal-writer"
-	nodePowerAgentSystemdPoweroffMethod             = "reboot-syscall"
 	nodePowerAgentDefaultPriorityClassName          = "system-node-critical"
 	nodePowerAgentDefaultTerminationGracePeriodSecs = 60
 	upsmonConfigFile                                = "upsmon.conf"
@@ -846,7 +845,6 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 					{Name: "POWER_SIGNAL_PATH", Value: nodePowerAgentSignalPath(agent)},
 					{Name: "POWER_SIGNAL_PATHS", Value: nodePowerAgentSignalPath(agent) + "," + nodePowerAgentProjectedSignalPath},
 					{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
-					{Name: "POWER_POWEROFF_METHOD", Value: nodePowerAgentPoweroffMethod(agent)},
 				},
 				SecurityContext: actuatorContainerSecurityContext(hostPoweroff),
 				ReadinessProbe:  actuatorReadinessProbe(),
@@ -997,10 +995,6 @@ func nodePowerAgentShutdownFlowName(agent *powerv1alpha1.NodePowerAgent) string 
 		return agent.Spec.ShutdownFlowRef.Name
 	}
 	return "upsmon-local"
-}
-
-func nodePowerAgentPoweroffMethod(_ *powerv1alpha1.NodePowerAgent) string {
-	return nodePowerAgentSystemdPoweroffMethod
 }
 
 func durationString(duration *metav1.Duration, fallback string) string {

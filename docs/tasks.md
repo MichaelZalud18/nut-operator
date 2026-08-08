@@ -11,7 +11,7 @@ what is built and what remains open, with design-doc identifiers (`OD-n`, `PL-n`
 findings (`F-n`) cited so the reasoning behind an item is one click away rather than re-litigated.
 Items that genuinely span two components are listed under their primary owner with a cross-reference.
 
-Last reviewed: 2026-08-07
+Last reviewed: 2026-08-08
 
 ---
 
@@ -76,7 +76,9 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 - `F-25` closed: `spec.telemetry.aliases` (a map) applied at normalization, with precedence rules
   and diagnostics settled (`OD-23`).
 - `UPSCapabilityProbe`: drafts a profile and an issue report from a real device, advisory only
-  (`RS-7`–`RS-10`).
+  (`RS-7`–`RS-10`). It also verifies the device against its matched profile and writes probe history
+  to PostgreSQL (`OD-15`, see Storage & Audit); drift surfaces on the probe's Degraded condition so
+  it is visible without querying the database.
 - `OD-31` closed: unidentified devices block `Enforce` unless `spec.safety.allowUnidentifiedDevices`.
 - `ProviderModelMissing` diagnostic when a missing model actually costs a match.
 - Settled scope: profiles influence `upsd` config but never sizing; queried devices get profiles,
@@ -405,7 +407,9 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 - `power-signal-writer`: project-owned `SHUTDOWNCMD` binary writing to a projected signal Secret.
 - `internal/nodeagent`: signal validation, TTL and node-name enforcement, dry-run skip, both handoff
   paths watched.
-- `cmd/node-actuator`: syscall-backed poweroff with a non-Linux stub.
+- `cmd/node-actuator`: syscall-backed poweroff with a non-Linux stub. The mechanism is fixed, not
+  configurable — `F-36` closed by deleting the unreachable arbitrary-command path rather than adding
+  a CRD field for it.
 - `F-13` narrow privilege model: `hostPID` + `CAP_SYS_BOOT` only, no service-account token.
 - `F-14` self-exclusion enforced structurally in the executor (`protectedNamespaces`).
 - `F-24` confirmed safe, including the `upsmon.conf` Secret hash.
@@ -416,16 +420,6 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 
 #### Open Work
 
-- **`F-36` `node-actuator`'s `command` poweroff method is implemented but unreachable through the
-  CRD.** `cmd/node-actuator/main.go`'s `runPoweroff` fully supports `POWER_POWEROFF_METHOD=command`
-  (`runPoweroffCommand`, arbitrary command + args), but
-  `nodepoweragent_render.go`'s `nodePowerAgentPoweroffMethod` hardcodes `"reboot-syscall"` and ignores
-  its `*NodePowerAgent` parameter entirely — there is no `spec` field that can select the `command`
-  method. Not fixed: this needs a real design decision (a new spec field, its validation, and whether
-  exposing an arbitrary host command from a CRD is even desired) rather than a unilateral API addition.
-  The `reboot-syscall` default is also the narrower, `F-13`-preferred privilege model
-  (`CAP_SYS_BOOT` alone vs. a broader `systemctl`-invoking path), so this may be intentionally
-  unreachable rather than an oversight — needs a decision either way, not just code.
 
 ---
 
@@ -489,12 +483,14 @@ spool. Design doc: `docs/design/audit-storage-schema.md`.
 - Coverage: outage-and-recovery round trip and a capped journal, both through real reconciliation.
 - Why this component exists at all — the deviation from the reconciliation model, its cost, and its
   precedent — is written up in `docs/design/audit-storage-schema.md`.
+- `OD-15` probe history is written, not just schematized. `UPSCapabilityProbe` reconciliation
+  compares the matched profile against the device read (`capability.Verify`) and writes one
+  `capability_profile_verifications` row per probe. The table previously existed ahead of its
+  writer: schema, insert, spool path, and replay decoder were all present with no caller.
 
 #### Open Work
 
-- Confirm the `capability_profile_verifications` schema (`OD-15`, closed in design) is actually
-  populated end-to-end once the Capability Profiles drift-detection path (`RS-7`–`RS-10`) exists —
-  right now the table exists ahead of its writer.
+None.
 
 ---
 
@@ -524,6 +520,12 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 - CI: concurrency cancellation, path filters, timeouts, shared `bin/` cache, tidy-drift check,
   pre-push image scanning on PRs, and a `security.yml` running ASH plus an RFC1918 `private-ip-scan`.
 - `F-38` duplicate reconciler registration fixed; `cmd/main_wiring_test.go` guards it.
+- Each workflow's job carries a distinct check name. They were all `Run on Ubuntu`, which made the
+  checks indistinguishable to branch protection and impossible to require individually. `main` is
+  now protected with all five required.
+- The e2e suite restores `config/manager/kustomization.yaml`. `make deploy IMG=...` edits that
+  tracked file in place and nothing put it back, so a suite run left the repository holding
+  `example.com/nut-operator:v0.0.1` as the published operator image.
 - No-cert-manager install path is the recommended one: `config/byo-cert` overlay,
   `dist/install-byo-cert.yaml`, and `hack/webhook-cert.sh` for provisioning and rotation. Chosen
   because a static Secret has nothing to reconcile while the cluster is losing power. Adopting
@@ -535,12 +537,13 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 
 #### Open Work
 
-- **A failing E2E Tests workflow does not block merges to `main`.** `F-38` shipped over a red e2e
-  run that had correctly caught it — the suite runs `make deploy` and waits for controller pod
-  readiness, which is exactly the check that failure trips, and it was red for at least two
-  consecutive commits. The missing piece is enforcement, not coverage: E2E Tests is not a required
-  status check, and four green badges next to one red one read as flake. Make it required, or gate
-  pushes on it.
+- **Branch protection on `main` exempts admins, so the sole maintainer can still push over a red
+  gate.** `F-38` shipped over an e2e run that had correctly caught it — the suite runs `make deploy`
+  and waits for controller pod readiness, which is exactly the check that failure trips, and it was
+  red for at least two consecutive commits. Enforcement, not coverage, was the gap. `main` is now
+  protected with all five checks required, but `enforce_admins` is off to keep direct pushes
+  working, which means the specific path that produced `F-38` is still open. Turning it on before
+  `v1` closes it, at the cost of a PR per change.
 - The e2e suite installs via `config/default`, so it only ever exercises the cert-manager path.
   `dist/install-byo-cert.yaml` is now the recommended install and has no CI coverage. Adding a spec
   that applies it, runs `hack/webhook-cert.sh`, waits for readiness, and asserts a webhook rejection

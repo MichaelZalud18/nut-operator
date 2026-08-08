@@ -1,5 +1,17 @@
 # nut-operator
 
+> [!WARNING]
+> **This project is not finished and is not ready to use. It is pre-v1 and under active construction.**
+>
+> Nothing here is complete until there is a tagged `v1` release. Until then, expect APIs, CRD
+> schemas, defaults, and behavior to change without migration paths, and expect gaps between what
+> the documentation describes and what is wired end to end. Do not install this expecting a
+> finished operator, and do not point it at equipment you cannot afford to have shut down
+> unexpectedly.
+>
+> If you want to follow along or try pieces of it, that is welcome — just size your expectations to
+> "in-progress build", not "product".
+
 Kubernetes-native power management built around Network UPS Tools (NUT), controller-runtime, and declarative APIs.
 
 > Disclosure: this project is mostly AI-assisted/vibe-coded. Treat the implementation as requiring normal independent review, security validation, and production qualification before relying on it for real power events.

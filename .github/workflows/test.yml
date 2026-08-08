@@ -20,7 +20,7 @@ jobs:
   test:
     permissions:
       contents: read
-    name: Run on Ubuntu
+    name: Unit and envtest suites
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

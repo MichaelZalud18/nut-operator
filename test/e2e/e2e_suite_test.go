@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -55,6 +56,26 @@ var (
 	shouldCleanupCertManager = false
 )
 
+// managerKustomizationBackup holds config/manager/kustomization.yaml as it was before the suite ran.
+//
+// `make deploy IMG=...` edits that tracked file in place — that is how the kubebuilder scaffold
+// points the manifests at an image — and nothing in the deploy/undeploy pair puts it back, so a
+// suite run used to leave the repository holding example.com/nut-operator:v0.0.1 as the operator's
+// published image. Anyone committing after a local e2e run would ship that silently.
+var managerKustomizationBackup []byte
+
+// managerKustomizationPath resolves the file absolutely, every time it is needed.
+//
+// A relative path does not work here: utils.Run calls os.Chdir to the project root, so the process
+// working directory moves out from under the suite the first time it shells out to make. A path
+// that resolves correctly in BeforeSuite therefore points somewhere else entirely by AfterSuite.
+// GetProjectDir normalizes either location back to the repository root.
+func managerKustomizationPath() string {
+	root, err := utils.GetProjectDir()
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to resolve the project directory")
+	return filepath.Join(root, "config", "manager", "kustomization.yaml")
+}
+
 // TestE2E runs the e2e test suite to validate the solution in an isolated environment.
 // The default setup requires Kind and CertManager.
 //
@@ -68,9 +89,14 @@ func TestE2E(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
+	By("recording config/manager/kustomization.yaml so the suite can restore it")
+	contents, err := os.ReadFile(managerKustomizationPath())
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to read the manager kustomization")
+	managerKustomizationBackup = contents
+
 	By("building the manager image")
 	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
-	_, err := utils.Run(cmd)
+	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
 
 	// TODO(user): If you want to change the e2e test vendor from Kind,
@@ -109,7 +135,20 @@ var _ = BeforeSuite(func() {
 
 var _ = AfterSuite(func() {
 	teardownCertManager()
+	restoreManagerKustomization()
 })
+
+// restoreManagerKustomization undoes the in-place image edit `make deploy` performs, so a suite run
+// leaves the working tree as it found it. Restoring from a recorded copy rather than shelling out
+// to git keeps this working on a dirty tree and outside a checkout.
+func restoreManagerKustomization() {
+	if len(managerKustomizationBackup) == 0 {
+		return
+	}
+	By("restoring config/manager/kustomization.yaml")
+	err := os.WriteFile(managerKustomizationPath(), managerKustomizationBackup, 0o644)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to restore the manager kustomization")
+}
 
 // Disable kubectl kuberc by default for test isolation.
 // This prevents local kubectl configurations from affecting test behavior.

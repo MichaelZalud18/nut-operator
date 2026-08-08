@@ -175,8 +175,25 @@ unreachable.** `runPoweroffCommand` in `cmd/node-actuator/main.go` works and is 
 spec content — there's no CRD field that can ever select the other method. Possibly intentional (the
 narrower `CAP_SYS_BOOT`-only privilege model is what `F-13` actually recommended over a
 `systemctl`-invoking path), but that's a call the design docs should make explicitly rather than
-leaving as an accidentally-dead code path. Not fixed — needs a decision, not a unilateral API
-addition. Tracked under Node Agent / DaemonSet Open Work in `docs/tasks.md`.
+leaving as an accidentally-dead code path.
+
+*Resolved 2026-08-08 by deletion, not exposure.* `POWER_POWEROFF_METHOD`, `POWER_POWEROFF_COMMAND`,
+`POWER_POWEROFF_ARGS`, `runPoweroffCommand`, and the three `actuatorConfig` fields behind them are
+gone; `runPoweroff` now takes no argument and calls the syscall unconditionally. Exposing the command
+path would have meant a CRD field naming an executable run as root on every node, and it would have
+widened the container beyond the `CAP_SYS_BOOT`-only model `F-13` argued for, since shelling out to
+`systemctl` needs host PID and dbus access. For the one operation whose blast radius is the entire
+machine, no configuration surface is the correct amount.
+
+The render emits no `POWER_POWEROFF_*` variable at all, and both the rendered DaemonSet and
+`actuatorConfig` are asserted to carry none, so reintroducing a configurable mechanism fails a test
+rather than passing silently. Dry-run is now asserted against the syscall in both directions — a
+dry-run signal must not reach it, an otherwise identical live signal must — which proves the `DryRun`
+flag is what makes the difference rather than some unrelated guard happening to stop execution.
+
+Naming note for anyone reading the code: `reboot(2)` is the syscall used for every machine state
+change on Linux, including powering off. The actuator passes `LINUX_REBOOT_CMD_POWER_OFF`, so it
+halts and cuts power — it does not restart.
 
 **Not a finding, but worth recording: the in-cluster signal-handoff smoke test is unblocked.** `kind`
 is now installed and works cleanly against the Docker daemon in this environment (WSL2, direct docker

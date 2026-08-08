@@ -24,7 +24,7 @@ jobs:
   ash:
     permissions:
       contents: read
-    name: Run on Ubuntu
+    name: ASH security scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

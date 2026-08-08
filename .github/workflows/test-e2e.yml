@@ -20,7 +20,7 @@ jobs:
   test-e2e:
     permissions:
       contents: read
-    name: Run on Ubuntu
+    name: E2E on Kind
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
