@@ -225,18 +225,43 @@ type NUTTLSSpec struct {
 	// +optional
 	Mode NUTTLSMode `json:"mode,omitempty"`
 
-	// serverCertificateRef points at the server certificate Secret.
+	// serverCertificateRef points at the server certificate Secret. The Secret must be
+	// kubernetes.io/tls shaped: data["tls.crt"] and data["tls.key"]. upsd's CERTFILE wants a
+	// single PEM holding the chain followed by the key, so the operand assembles that file at
+	// startup rather than requiring a pre-combined Secret key.
 	// +optional
 	ServerCertificateRef *NamespacedNameReference `json:"serverCertificateRef,omitempty"`
 
-	// clientCARef points at the client CA Secret used for certificate verification.
+	// serverCARef points at the CA bundle that NUT clients use to verify this server's
+	// certificate. It is rendered as CERTPATH in upsmon.conf on every NodePowerAgent that
+	// monitors this server. Without it upsmon can encrypt but cannot authenticate the server,
+	// so CERTVERIFY stays off. The Secret must carry data["ca.crt"].
+	// +optional
+	ServerCARef *NamespacedNameReference `json:"serverCARef,omitempty"`
+
+	// clientCARef points at the CA Secret upsd uses to validate client certificates. It is
+	// rendered as CERTPATH in upsd.conf and only consulted when verifyClientCertificates is
+	// true. The Secret must carry data["ca.crt"].
 	// +optional
 	ClientCARef *NamespacedNameReference `json:"clientCARef,omitempty"`
 
-	// verifyClientCertificates enables NUT client certificate verification.
-	// +kubebuilder:default=true
+	// verifyClientCertificates renders CERTREQUEST into upsd.conf, requiring every NUT client to
+	// present a certificate signed by clientCARef.
+	//
+	// This defaults to false because the operator does not issue client certificates to upsmon.
+	// Turning it on locks out every NodePowerAgent unless the agent image is NUT 2.8.6 or newer
+	// (the first release where upsmon.conf accepts CERTFILE under OpenSSL) and an operator-external
+	// mechanism supplies each agent a client certificate. CERTREQUEST is also a no-op on OpenSSL
+	// upsd builds older than 2.8.6, so enabling it there silently grants no protection.
+	// +kubebuilder:default=false
 	// +optional
 	VerifyClientCertificates *bool `json:"verifyClientCertificates,omitempty"`
+
+	// disableWeakProtocols renders DISABLE_WEAK_SSL into upsd.conf, raising the minimum
+	// negotiated version from TLS 1.0 to TLS 1.2.
+	// +kubebuilder:default=true
+	// +optional
+	DisableWeakProtocols *bool `json:"disableWeakProtocols,omitempty"`
 }
 
 // NUTServerConfigSpec tunes generated NUT configuration.

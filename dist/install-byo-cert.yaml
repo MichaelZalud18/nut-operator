@@ -7494,51 +7494,6 @@ spec:
       app.kubernetes.io/name: nut-operator
       control-plane: controller-manager
 ---
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  labels:
-    app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: nut-operator
-  name: nut-operator-metrics-certs
-  namespace: nut-operator-system
-spec:
-  dnsNames:
-  - SERVICE_NAME.SERVICE_NAMESPACE.svc
-  - SERVICE_NAME.SERVICE_NAMESPACE.svc.cluster.local
-  issuerRef:
-    kind: Issuer
-    name: nut-operator-selfsigned-issuer
-  secretName: metrics-server-cert
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  labels:
-    app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: nut-operator
-  name: nut-operator-serving-cert
-  namespace: nut-operator-system
-spec:
-  dnsNames:
-  - nut-operator-webhook-service.nut-operator-system.svc
-  - nut-operator-webhook-service.nut-operator-system.svc.cluster.local
-  issuerRef:
-    kind: Issuer
-    name: nut-operator-selfsigned-issuer
-  secretName: webhook-server-cert
----
-apiVersion: cert-manager.io/v1
-kind: Issuer
-metadata:
-  labels:
-    app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: nut-operator
-  name: nut-operator-selfsigned-issuer
-  namespace: nut-operator-system
-spec:
-  selfSigned: {}
----
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -7586,8 +7541,6 @@ spec:
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
-  annotations:
-    cert-manager.io/inject-ca-from: nut-operator-system/nut-operator-serving-cert
   name: nut-operator-mutating-webhook-configuration
 webhooks:
 - admissionReviewVersions:
@@ -7774,8 +7727,6 @@ webhooks:
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  annotations:
-    cert-manager.io/inject-ca-from: nut-operator-system/nut-operator-serving-cert
   name: nut-operator-validating-webhook-configuration
 webhooks:
 - admissionReviewVersions:

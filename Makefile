@@ -285,6 +285,12 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
 
+.PHONY: build-installer-byo-cert
+build-installer-byo-cert: manifests generate kustomize ## Generate the consolidated YAML with no cert-manager dependency.
+	mkdir -p dist
+	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
+	"$(KUSTOMIZE)" build config/byo-cert > dist/install-byo-cert.yaml
+
 .PHONY: build-catalog
 build-catalog: kustomize ## Generate a consolidated YAML with project-maintained capability profiles.
 	mkdir -p dist
@@ -311,6 +317,16 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
 
+.PHONY: deploy-byo-cert
+deploy-byo-cert: manifests kustomize ## Deploy the controller with no cert-manager dependency, then provision the webhook certificate.
+	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
+	"$(KUSTOMIZE)" build config/byo-cert | "$(KUBECTL)" apply -f -
+	KUBECTL="$(KUBECTL)" ./hack/webhook-cert.sh
+
+.PHONY: webhook-cert
+webhook-cert: ## Mint or rotate the webhook serving certificate and inject its caBundle. See hack/webhook-cert.sh --help.
+	KUBECTL="$(KUBECTL)" ./hack/webhook-cert.sh $(WEBHOOK_CERT_ARGS)
+
 .PHONY: deploy-catalog
 deploy-catalog: kustomize ## Deploy project-maintained UPS capability profile catalog CRs.
 	"$(KUSTOMIZE)" build config/catalog | "$(KUBECTL)" apply -f -
@@ -318,6 +334,10 @@ deploy-catalog: kustomize ## Deploy project-maintained UPS capability profile ca
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+
+.PHONY: undeploy-byo-cert
+undeploy-byo-cert: kustomize ## Undeploy the no-cert-manager variant. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	"$(KUSTOMIZE)" build config/byo-cert | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: undeploy-catalog
 undeploy-catalog: kustomize ## Delete project-maintained UPS capability profile catalog CRs.

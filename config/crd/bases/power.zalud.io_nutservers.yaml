@@ -1248,8 +1248,10 @@ spec:
                 description: tls configures NUT protocol TLS.
                 properties:
                   clientCARef:
-                    description: clientCARef points at the client CA Secret used for
-                      certificate verification.
+                    description: |-
+                      clientCARef points at the CA Secret upsd uses to validate client certificates. It is
+                      rendered as CERTPATH in upsd.conf and only consulted when verifyClientCertificates is
+                      true. The Secret must carry data["ca.crt"].
                     properties:
                       name:
                         description: name is the referenced object's metadata.name.
@@ -1263,6 +1265,12 @@ spec:
                     - name
                     - namespace
                     type: object
+                  disableWeakProtocols:
+                    default: true
+                    description: |-
+                      disableWeakProtocols renders DISABLE_WEAK_SSL into upsd.conf, raising the minimum
+                      negotiated version from TLS 1.0 to TLS 1.2.
+                    type: boolean
                   mode:
                     default: Required
                     description: mode selects TLS enforcement.
@@ -1271,9 +1279,31 @@ spec:
                     - Opportunistic
                     - Required
                     type: string
+                  serverCARef:
+                    description: |-
+                      serverCARef points at the CA bundle that NUT clients use to verify this server's
+                      certificate. It is rendered as CERTPATH in upsmon.conf on every NodePowerAgent that
+                      monitors this server. Without it upsmon can encrypt but cannot authenticate the server,
+                      so CERTVERIFY stays off. The Secret must carry data["ca.crt"].
+                    properties:
+                      name:
+                        description: name is the referenced object's metadata.name.
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: namespace is the referenced object's namespace.
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
                   serverCertificateRef:
-                    description: serverCertificateRef points at the server certificate
-                      Secret.
+                    description: |-
+                      serverCertificateRef points at the server certificate Secret. The Secret must be
+                      kubernetes.io/tls shaped: data["tls.crt"] and data["tls.key"]. upsd's CERTFILE wants a
+                      single PEM holding the chain followed by the key, so the operand assembles that file at
+                      startup rather than requiring a pre-combined Secret key.
                     properties:
                       name:
                         description: name is the referenced object's metadata.name.
@@ -1288,9 +1318,16 @@ spec:
                     - namespace
                     type: object
                   verifyClientCertificates:
-                    default: true
-                    description: verifyClientCertificates enables NUT client certificate
-                      verification.
+                    default: false
+                    description: |-
+                      verifyClientCertificates renders CERTREQUEST into upsd.conf, requiring every NUT client to
+                      present a certificate signed by clientCARef.
+
+                      This defaults to false because the operator does not issue client certificates to upsmon.
+                      Turning it on locks out every NodePowerAgent unless the agent image is NUT 2.8.6 or newer
+                      (the first release where upsmon.conf accepts CERTFILE under OpenSSL) and an operator-external
+                      mechanism supplies each agent a client certificate. CERTREQUEST is also a no-op on OpenSSL
+                      upsd builds older than 2.8.6, so enabling it there silently grants no protection.
                     type: boolean
                 type: object
             type: object

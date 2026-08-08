@@ -25,13 +25,17 @@ spec:
     perNodeUsers: true
   tls:
     mode: Required
+    # kubernetes.io/tls Secret: tls.crt + tls.key. The operand assembles NUT's CERTFILE from it.
     serverCertificateRef:
       namespace: power-system
       name: rack-a-nut-server-tls
-    clientCARef:
+    # CA the agents verify this server against, rendered as CERTPATH in upsmon.conf. Without it
+    # agents encrypt but cannot authenticate upsd, and report a NUTTLSDowngraded condition.
+    serverCARef:
       namespace: power-system
-      name: rack-a-nut-client-ca
-    verifyClientCertificates: true
+      name: rack-a-nut-server-ca
+    # verifyClientCertificates (CERTREQUEST) is left off: the operator does not issue client
+    # certificates to upsmon, and NUT honors CERTREQUEST under OpenSSL only from 2.8.6 onward.
   service:
     type: ClusterIP
     port: 3493

@@ -1,0 +1,64 @@
+# Install variant with no cert-manager dependency.
+#
+# Why this exists: this operator's job is to run correctly while the cluster is losing power, and
+# during a tiered shutdown the workloads it depends on are themselves being stopped. Any component
+# that has to reconcile, issue, or inject something before admission works again is a component that
+# can be unavailable at exactly the wrong moment. A serving certificate that is nothing but a static
+# Secret has no such moment: the kubelet mounts it and the manager serves.
+#
+# This overlay builds on config/default and removes only the cert-manager pieces:
+#   - the self-signed Issuer and the two Certificate objects
+#   - the cert-manager.io/inject-ca-from annotations on both webhook configurations
+#
+# It deliberately does not supply the certificate itself. Shipping a key pair in a public repository
+# would publish the private key. Run `make webhook-cert` (hack/webhook-cert.sh) to mint the CA and
+# serving certificate, write the webhook-server-cert Secret, and patch caBundle into both webhook
+# configurations. See docs/install.md.
+
+resources:
+- ../default
+
+patches:
+# The self-signed Issuer that backed both Certificates below.
+- patch: |-
+    $patch: delete
+    apiVersion: cert-manager.io/v1
+    kind: Issuer
+    metadata:
+      name: nut-operator-selfsigned-issuer
+      namespace: nut-operator-system
+
+# The webhook serving certificate. Replaced by the Secret hack/webhook-cert.sh writes.
+- patch: |-
+    $patch: delete
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: nut-operator-serving-cert
+      namespace: nut-operator-system
+
+# The metrics certificate. Nothing consumes it in the default build — the [METRICS-WITH-CERTS]
+# patch that would mount it is commented out in config/default/kustomization.yaml — so in this
+# overlay it is a cert-manager dependency bought for nothing.
+- patch: |-
+    $patch: delete
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: nut-operator-metrics-certs
+      namespace: nut-operator-system
+
+# Without cert-manager there is no ca-injector to honor these, and leaving them in place makes the
+# webhook configurations look managed by something that is not installed.
+- target:
+    kind: MutatingWebhookConfiguration
+    name: nut-operator-mutating-webhook-configuration
+  patch: |-
+    - op: remove
+      path: /metadata/annotations/cert-manager.io~1inject-ca-from
+- target:
+    kind: ValidatingWebhookConfiguration
+    name: nut-operator-validating-webhook-configuration
+  patch: |-
+    - op: remove
+      path: /metadata/annotations/cert-manager.io~1inject-ca-from

@@ -134,3 +134,48 @@ observable through standard NUT tooling.
 **OD-20 · Instant command scope and gating.** Which commands enter scope, how they are gated given
 they can cut power to equipment, and which capability profile fields declare support. Bounded by
 OD-1 on anything touching power-return.
+
+## Findings — second pass, 2026-08-08
+
+Re-read of the protocol-TLS path specifically, prompted by tracing what `spec.tls` reaches. Static
+reading against NUT's `upsd.conf(5)`, `upsmon.conf(5)`, and `server/netssl.c`. Continues the `F-n`
+namespace from `F-36`.
+
+**F-37 · `spec.tls` mounted a certificate and never told NUT to use it.** The webhook defaulted
+`spec.tls.mode` to `Required` and rejected `Required` without a `serverCertificateRef`; the render
+mounted that Secret read-only at `/etc/nut/tls`. Nothing then emitted a single TLS directive:
+`renderNUTServerConfig` wrote `upsd.conf` as a bare `LISTEN <address> <port>`, and the operand image
+entrypoint adds nothing. `upsd` negotiates STARTTLS only when `CERTFILE` (OpenSSL builds) names a
+usable key pair, so a `NUTServer` reporting TLS `Required` served **plaintext** NUT on 3493 —
+including the `MONITOR <ups> 1 <user> <pass> secondary` login every `upsmon` sends on connect.
+Confined to in-cluster traffic and constrained by the operand `NetworkPolicy`, but the API claimed a
+protection that was not in effect: the same "declared field that does nothing" class as `F-25` and
+`F-33`, and the only instance of it that was security-relevant.
+
+Fixed on both sides of the connection. `upsd.conf` now renders `CERTFILE`, plus `DISABLE_WEAK_SSL`
+(TLS 1.2 floor) and `CERTPATH`/`CERTREQUEST` when client certificate validation is enabled;
+`upsmon.conf` renders `CERTPATH`, `CERTVERIFY`, and `FORCESSL`. Directive presence and the
+Disabled-mode absence are both asserted in `internal/controller/nut_tls_render_test.go`.
+
+Three constraints surfaced while fixing it, each of which shaped the result:
+
+- **`CERTFILE` takes one file, a Kubernetes TLS Secret projects two.** NUT documents the file as the
+  subject certificate, then intermediates, then the private key last. An init container running the
+  same operand image concatenates `tls.crt` and `tls.key` into a memory-backed `emptyDir`, because
+  the operand image is caller-supplied and the operator does not control its entrypoint.
+  cert-manager's `CombinedPEM` output format was rejected as the mechanism: it writes key-first,
+  which OpenSSL happens to tolerate and NSS builds do not use at all.
+- **Client certificate validation is not deliverable today, so it stopped being a default.**
+  `verifyClientCertificates` defaulted to `true` and forced `clientCARef` to be set. NUT honors
+  `CERTREQUEST` under OpenSSL only from 2.8.6 onward, and `upsmon` can present a client certificate
+  only via `CERTFILE` (also 2.8.6+) or an NSS database the operator does not build. Rendering
+  `CERTREQUEST 2` under the old default would have locked out every `NodePowerAgent`. Now defaults
+  to `false`; the remaining work is tracked in `docs/tasks.md`.
+- **`CERTVERIFY`/`FORCESSL` are process-global in `upsmon`.** An agent monitoring several
+  `NUTServer`s cannot hold a different posture per server without `CERTHOST` (NUT 2.8.5+). Mixed
+  modes therefore render the weakest common posture and set a `NUTTLSDowngraded` Degraded condition,
+  rather than either cutting off the laxer server or silently under-securing the strict one.
+
+A new field, `spec.tls.serverCARef`, carries the CA that clients verify `upsd` against. It is
+distinct from `clientCARef`, which is the CA `upsd` verifies clients against — NUT keeps both under
+the name `CERTPATH`, in different files, which is what made the original conflation easy.

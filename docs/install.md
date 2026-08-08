@@ -15,35 +15,118 @@ for the same objects. If you need to customize the install, use the Kustomize pa
 `networking.k8s.io/v1`, so 1.21 is the structural floor. No CEL validation rules are used. Older
 versions are untested.
 
-**cert-manager — required.** The operator serves admission webhooks, and the bundled manifest
-includes a `cert-manager.io/v1` `Certificate` and `Issuer` for the webhook serving cert. Without
-cert-manager installed, that `Certificate` never issues, the webhook Secret is never created, and
-the manager pod will not become ready.
+**A webhook serving certificate.** The operator serves admission webhooks, and admission is
+load-bearing for safety here (see below). There are two supported ways to provide the certificate,
+and which one you pick has consequences during an outage.
+
+### Choosing a certificate path
+
+Admission webhook certificates are not validated against any public or cluster trust store. The API
+server validates the webhook's certificate against `.webhooks[].clientConfig.caBundle` on the webhook
+configuration object, which only a cluster administrator can write. A privately issued CA is
+therefore the correct shape here, not a compromise — the bundled `config/certmanager/issuer.yaml` is
+itself a `selfSigned: {}` `Issuer`. **Both paths below have the same trust model.** What differs is
+what has to be working for admission to work.
+
+| | `dist/install-byo-cert.yaml` (recommended) | `dist/install.yaml` |
+| --- | --- | --- |
+| Cluster dependency | None | cert-manager (CRDs + 3 Deployments) |
+| Serving certificate | Static Secret, minted by `hack/webhook-cert.sh` | Issued by cert-manager |
+| `caBundle` injection | The same script, at provisioning time | cert-manager ca-injector, continuously |
+| Renewal | Re-run the script | Automatic |
+
+**The recommendation is the bring-your-own path, and the reason is this operator's job.** It has to
+work while the cluster is losing power, and during a tiered shutdown the workloads it depends on are
+themselves being stopped — cert-manager among them, if it is not pinned to a late tier. A serving
+certificate that is only a static Secret has nothing to reconcile, nothing to issue, and nothing to
+inject: the kubelet mounts it and the manager serves. That property is worth more here than automatic
+renewal is.
+
+Keep this in proportion. No webhook rule matches the `/status` subresource, so a broken or missing
+webhook certificate does not stop an in-flight `ShutdownFlow` from recording progress. What it blocks
+is changes to resource *specs* — a human overriding a flow or adjusting a tier mid-event. That is the
+intervention path, not the execution path, and it is exactly the path you want available during an
+incident.
+
+The cost of the recommended path is that nobody rotates the certificate for you. That is a
+normal-operations discipline problem, not an outage problem, which is why it does not change the
+recommendation.
+
+#### Path A — no cert-manager (recommended)
+
+```sh
+kubectl apply -f https://github.com/MichaelZalud18/nut-operator/releases/latest/download/install-byo-cert.yaml
+./hack/webhook-cert.sh
+```
+
+The manager pod stays in `ContainerCreating` until the script runs — the `webhook-server-cert` Secret
+is a non-optional volume — and becomes ready immediately after. From a clone, `make deploy-byo-cert`
+does both steps.
+
+The script mints a long-lived CA (10 years, stored in the `nut-operator-webhook-ca` Secret) and a
+serving certificate from it (1 year), writes `webhook-server-cert`, and patches `caBundle` into both
+webhook configurations. It is idempotent and it is also the rotation procedure: re-run it. The CA is
+reused, so `caBundle` stays valid and only the serving certificate changes; the manager picks that up
+live through its controller-runtime `certwatcher`, with no restart. `--help` lists the flags,
+including `--ca-cert`/`--ca-key` to sign from an existing CA without storing its key in the cluster.
+
+Storing the generated CA key in a cluster Secret is the same exposure model cert-manager and
+`cert-controller` both have: read access to that Secret is enough to mint a certificate this
+webhook's `caBundle` trusts. Use `--ca-cert`/`--ca-key` if you would rather that key never live in
+the cluster.
+
+#### Path B — cert-manager
 
 ```sh
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
 kubectl -n cert-manager rollout status deploy/cert-manager-webhook
+kubectl apply -f https://github.com/MichaelZalud18/nut-operator/releases/latest/download/install.yaml
 ```
 
-### If cert-manager is not an option
+Pick this if you already run cert-manager and want the renewal automated. Applying `install.yaml`
+without cert-manager present fails outright, because its `Certificate` and `Issuer` CRDs do not
+exist. If you go this route, pin cert-manager to a tier that outlives the operator so a shutdown does
+not take it down first.
 
-cert-manager is the default because the bundled manifest wires it up, not because the operator
-depends on it. The manager reads its serving cert from a directory
+#### Any other issuer
+
+The manager reads its serving cert from a directory
 (`--webhook-cert-path=/tmp/k8s-webhook-server/serving-certs`, mounted from the `webhook-server-cert`
-Secret), so **any issuer that can produce a Secret with `tls.crt` and `tls.key` works**.
+Secret), so **any issuer that can produce a Secret with `tls.crt` and `tls.key` works**. Start from
+the `config/byo-cert` overlay, which already removes all cert-manager wiring, supply the Secret
+yourself, and set `.webhooks[].clientConfig.caBundle` on both webhook configurations to your
+base64-encoded CA.
 
-To bring your own certificate:
+On OpenShift the built-in service CA does both halves with annotations and no extra operator:
+`service.beta.openshift.io/serving-cert-secret-name: webhook-server-cert` on the webhook Service, and
+`service.beta.openshift.io/inject-cabundle: "true"` on the two webhook configurations.
 
-1. Create a Secret named `webhook-server-cert` in the operator's namespace containing `tls.crt` and
-   `tls.key`, with a SAN for `nut-operator-webhook-service.<namespace>.svc`.
-2. Drop the `../certmanager` resource from your overlay.
-3. Set `.webhooks[].clientConfig.caBundle` on both `MutatingWebhookConfiguration` and
-   `ValidatingWebhookConfiguration` to your base64-encoded CA. This is the step cert-manager's
-   ca-injector normally automates, and it must be repeated whenever the CA rotates.
+#### In-process certificate rotation
 
-On OpenShift, the built-in service CA does both halves with annotations and no extra operator:
-`service.beta.openshift.io/serving-cert-secret-name: webhook-server-cert` on the webhook Service,
-and `service.beta.openshift.io/inject-cabundle: "true"` on the two webhook configurations.
+Some operators generate and rotate their own serving certificate in-process, most commonly with
+[`open-policy-agent/cert-controller`](https://github.com/open-policy-agent/cert-controller) — the
+library Gatekeeper, Kueue, JobSet, LeaderWorkerSet, MetalLB, KEDA, Azure Workload Identity, and the
+Kubeflow operators all use for exactly this. **This operator does not do that, deliberately.**
+
+It is a legitimate, widely deployed option; the reasons it is not the default here are specific to
+this operator rather than objections to the library:
+
+- **The certificate is generated after the pod starts.** That is a window (Kueue documents 10–30
+  seconds) in which the webhook is not yet serving HTTPS. Every webhook here is
+  `failurePolicy: Fail`, so during it, creates and updates of this operator's custom resources are
+  rejected — and a manager pod rescheduled mid-outage hits that window at the worst possible time.
+  With a static Secret the pod does not start at all until a valid certificate exists: the failure
+  is loud and up front rather than a brief, quiet rejection window.
+- **It requires granting the operator cluster-scoped write on admission configuration.** Injecting
+  `caBundle` in-process means `update` on `validatingwebhookconfigurations` and
+  `mutatingwebhookconfigurations`. That can be narrowed with `resourceNames` to this operator's own
+  two objects, but it is still a privilege the operator does not hold today, and admission
+  configuration is a high-value target.
+- **The trust model is identical.** In-process generation would not weaken anything — but it would
+  not strengthen anything either, so a removed dependency is the whole of what is being bought.
+
+Path A removes the same install-time dependency without the startup window or the extra RBAC, which
+is why it is the recommendation rather than this.
 
 **Do not simply remove the webhooks.** Admission defaulting is load-bearing for safety: the
 `NodePowerAgent` defaulter is the only thing that sets `spec.resources.upsmon` and
@@ -73,22 +156,28 @@ not in the shutdown path of the event it is recording. See
 ### Bundled manifest
 
 ```sh
+# Recommended: no cert-manager dependency.
+kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/dist/install-byo-cert.yaml
+./hack/webhook-cert.sh
+
+# Or, if you already run cert-manager:
 kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/dist/install.yaml
 ```
 
-This creates the `nut-operator-system` namespace, all 10 CRDs, RBAC, the webhook configuration and
-its cert-manager `Certificate`, a metrics `Service`, two `NetworkPolicy` objects, and the
-controller-manager `Deployment` (1 replica, leader election enabled).
+Either creates the `nut-operator-system` namespace, all 10 CRDs, RBAC, the webhook configuration, a
+metrics `Service`, two `NetworkPolicy` objects, and the controller-manager `Deployment` (1 replica,
+leader election enabled). `install.yaml` additionally creates a cert-manager `Issuer` and
+`Certificate`; `install-byo-cert.yaml` contains no cert-manager objects at all.
 
 ### Kustomize
 
 Use this when you need a different namespace, a pinned image digest, or your own patches. Point a
-kustomization at the repository's `config/default`:
+kustomization at `config/byo-cert` (no cert-manager) or `config/default` (cert-manager):
 
 ```yaml
 # kustomization.yaml
 resources:
-  - github.com/MichaelZalud18/nut-operator/config/default?ref=main
+  - github.com/MichaelZalud18/nut-operator/config/byo-cert?ref=main
 images:
   - name: controller
     newName: ghcr.io/michaelzalud18/nut-operator
@@ -97,18 +186,38 @@ images:
 
 ```sh
 kubectl apply -k .
+./hack/webhook-cert.sh    # config/byo-cert only
 ```
 
 ### Verify
 
 ```sh
+kubectl -n nut-operator-system get secret webhook-server-cert
 kubectl -n nut-operator-system rollout status deploy/nut-operator-controller-manager
 kubectl get crd | grep power.zalud.io          # expect 10
-kubectl -n nut-operator-system get secret webhook-server-cert   # created by cert-manager
 ```
 
-A manager pod that restarts roughly every two minutes with no obvious error is almost always the
-webhook cert never being issued. Check that cert-manager is running.
+A manager pod sitting in `ContainerCreating` is almost always the `webhook-server-cert` Secret not
+existing yet: run `hack/webhook-cert.sh`, or check that cert-manager issued it.
+
+Confirm admission is actually reachable — this is the part a bad `caBundle` breaks, and it fails
+silently until someone writes a resource:
+
+```sh
+kubectl apply --dry-run=server -f - <<'EOF'
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  name: webhook-probe
+spec:
+  namespace: power-system
+  tls:
+    mode: Required
+EOF
+```
+
+Expect a rejection naming `spec.deviceRefs` and `spec.tls.serverCertificateRef`. Any `x509` or
+`failed calling webhook` error instead means the certificate or `caBundle` is wrong.
 
 ## Images
 
@@ -180,6 +289,26 @@ SNMPv3 credentials go in the Secret, not the spec.
 
 **4. `NUTServer`** — renders `upsd` and the NUT drivers for a set of devices, selected by label.
 
+`spec.tls.mode` defaults to `Required`, which means a `NUTServer` needs a certificate before it
+will be accepted. NUT's own protocol TLS is a separate concern from the webhook certificate above,
+and the operand wires it as follows:
+
+| Field | Renders |
+| --- | --- |
+| `serverCertificateRef` | `CERTFILE` in `upsd.conf`. Point it at a `kubernetes.io/tls` Secret in the operand namespace; an init container concatenates `tls.crt` and `tls.key` into the single chain-then-key PEM NUT expects. |
+| `serverCARef` | `CERTPATH` in every monitoring agent's `upsmon.conf`, plus `CERTVERIFY 1` and `FORCESSL 1`. Without it agents encrypt but cannot authenticate `upsd`, and report a `NUTTLSDowngraded` condition. |
+| `verifyClientCertificates` | `CERTREQUEST 2` in `upsd.conf`. Off by default — see below. |
+| `disableWeakProtocols` | `DISABLE_WEAK_SSL true`, raising the floor from TLS 1.0 to TLS 1.2. On by default. |
+
+Two constraints are worth knowing before turning on `verifyClientCertificates`. NUT honors
+`CERTREQUEST` under OpenSSL only from 2.8.6 onward — on older `upsd` builds it is silently a no-op —
+and the operator does not issue client certificates to `upsmon`, so enabling it locks out every
+`NodePowerAgent` unless something outside the operator supplies them.
+
+Because `CERTVERIFY` and `FORCESSL` are process-global in `upsmon`, an agent that monitors several
+`NUTServer`s settles on the weakest of their modes and reports the downgrade rather than cutting off
+the laxer server. Keep `spec.tls.mode` consistent across the servers a single agent monitors.
+
 **5. Topology** — `PowerInventoryNode` (requires `nodeName`) and `PowerInventoryEdge` (requires
 `from`, `to`, `relation`). This is what tells the planner which UPS feeds which node. An invalid or
 incomplete graph blocks `ShutdownFlow` acceptance, by design.
@@ -233,12 +362,14 @@ kubectl delete nutserver --all
 kubectl delete upsdevice,powerinventoryedge,powerinventorynode,powerinfrastructure --all
 kubectl delete powermanagementcluster --all
 
-# 2. Then the operator.
-kubectl delete -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/dist/install.yaml
+# 2. Then the operator. Use whichever bundle you installed.
+kubectl delete -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/dist/install-byo-cert.yaml
 ```
 
 Step 2 removes the CRDs, and with them any remaining custom resources. PostgreSQL audit data is not
-touched — it outlives the operator on purpose.
+touched — it outlives the operator on purpose. Deleting the namespace also removes the
+`webhook-server-cert` and `nut-operator-webhook-ca` Secrets, so a later reinstall needs
+`hack/webhook-cert.sh` run again.
 
 If something is already stuck in `Terminating`, reinstall the operator and let it finish, or clear
 the finalizer by hand:
@@ -251,7 +382,10 @@ kubectl patch nutserver <name> --type=merge -p '{"metadata":{"finalizers":[]}}'
 
 | Symptom | Cause |
 | --- | --- |
-| Manager pod restarts every ~2 minutes | cert-manager missing, so the webhook cert never issued. |
+| `kubectl apply` of `install.yaml` fails on `Certificate`/`Issuer` | cert-manager is not installed, so its CRDs do not exist. Use `install-byo-cert.yaml` instead. |
+| Manager pod stuck in `ContainerCreating` with `FailedMount` on `webhook-certs` | The `webhook-server-cert` Secret does not exist. Run `hack/webhook-cert.sh`, or check that cert-manager issued it. |
+| API rejects CR creates with `failed calling webhook ... x509` | `caBundle` on the webhook configurations does not match the serving certificate's CA. Re-run `hack/webhook-cert.sh`. |
+| Manager `CrashLoopBackOff` with `controller with name ... already exists` | A reconciler is registered twice in `cmd/main.go` (F-38). Guarded by `TestMainRegistersEachReconcilerOnce`. |
 | `ImagePullBackOff` on the manager | Image tag unreachable, or GHCR credentials needed. |
 | `NUTServer`/`NodePowerAgent` rejected for a missing image repository | No operand image set on the resource or on `PowerManagementCluster.spec.images`. |
 | Prometheus scrapes time out (rather than refuse) | Scraping namespace is missing the `metrics: enabled` label. |

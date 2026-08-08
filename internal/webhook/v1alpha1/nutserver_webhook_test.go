@@ -96,11 +96,37 @@ var _ = Describe("NUTServer Webhook", func() {
 		It("Should reject required TLS without a client CA when client verification is enabled", func() {
 			obj.Spec = secureNUTServerSpec()
 			obj.Spec.TLS.ClientCARef = nil
-			obj.Spec.TLS.VerifyClientCertificates = nil
+			obj.Spec.TLS.VerifyClientCertificates = ptrBool(true)
 
 			_, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("spec.tls.clientCARef"))
+		})
+
+		// Unset means off, matching the CRD default. The operator does not issue client
+		// certificates to upsmon, so a defaulted-on CERTREQUEST would lock out every agent.
+		It("Should accept required TLS without a client CA when client verification is unset", func() {
+			obj.Spec = secureNUTServerSpec()
+			obj.Spec.TLS.ClientCARef = nil
+			obj.Spec.TLS.VerifyClientCertificates = nil
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should reject a server CA reference when TLS is disabled", func() {
+			obj.Spec = secureNUTServerSpec()
+			obj.Spec.TLS = powerv1alpha1.NUTTLSSpec{
+				Mode: powerv1alpha1.NUTTLSDisabled,
+				ServerCARef: &powerv1alpha1.NamespacedNameReference{
+					Namespace: "power-system",
+					Name:      "rack-a-nut-server-ca",
+				},
+			}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.tls.serverCARef"))
 		})
 
 		It("Should reject a replica count other than 1", func() {
@@ -149,11 +175,10 @@ func secureNUTServerSpec() powerv1alpha1.NUTServerSpec {
 				Namespace: "power-system",
 				Name:      "rack-a-nut-server-tls",
 			},
-			ClientCARef: &powerv1alpha1.NamespacedNameReference{
+			ServerCARef: &powerv1alpha1.NamespacedNameReference{
 				Namespace: "power-system",
-				Name:      "rack-a-nut-client-ca",
+				Name:      "rack-a-nut-server-ca",
 			},
-			VerifyClientCertificates: ptrBool(true),
 		},
 	}
 }

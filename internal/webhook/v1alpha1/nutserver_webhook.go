@@ -210,6 +210,9 @@ func validateNUTTLS(path *field.Path, tls powerv1alpha1.NUTTLSSpec) field.ErrorL
 		if tls.ServerCertificateRef != nil {
 			errs = append(errs, field.Forbidden(path.Child("serverCertificateRef"), "cannot be set when TLS mode is Disabled"))
 		}
+		if tls.ServerCARef != nil {
+			errs = append(errs, field.Forbidden(path.Child("serverCARef"), "cannot be set when TLS mode is Disabled"))
+		}
 		if tls.ClientCARef != nil {
 			errs = append(errs, field.Forbidden(path.Child("clientCARef"), "cannot be set when TLS mode is Disabled"))
 		}
@@ -219,6 +222,9 @@ func validateNUTTLS(path *field.Path, tls powerv1alpha1.NUTTLSSpec) field.ErrorL
 			string(powerv1alpha1.NUTTLSOpportunistic),
 			string(powerv1alpha1.NUTTLSRequired),
 		}))
+	}
+	if tls.Mode != powerv1alpha1.NUTTLSDisabled {
+		errs = append(errs, validateOptionalNamespacedNameReference(path.Child("serverCARef"), tls.ServerCARef)...)
 	}
 	if tls.Mode != powerv1alpha1.NUTTLSDisabled && verifyClientCertificatesEnabled(tls) {
 		if tls.ClientCARef == nil {
@@ -230,8 +236,12 @@ func validateNUTTLS(path *field.Path, tls powerv1alpha1.NUTTLSSpec) field.ErrorL
 	return errs
 }
 
+// verifyClientCertificatesEnabled treats an unset field as false, matching the CRD default. NUT
+// client certificate validation needs an upsd built from NUT 2.8.6 or newer to be honored at all
+// under OpenSSL, and needs every upsmon to hold a client certificate the operator does not issue,
+// so it is opt-in rather than a default the cluster silently inherits.
 func verifyClientCertificatesEnabled(tls powerv1alpha1.NUTTLSSpec) bool {
-	return tls.VerifyClientCertificates == nil || *tls.VerifyClientCertificates
+	return tls.VerifyClientCertificates != nil && *tls.VerifyClientCertificates
 }
 
 func validateNUTServerConfig(path *field.Path, config powerv1alpha1.NUTServerConfigSpec) field.ErrorList {

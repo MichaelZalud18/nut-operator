@@ -45,10 +45,10 @@ Dated audit and findings records live in `docs/audits/` and share the `F-n` find
 
 | Doc | Scope | Findings | Component(s) |
 | --- | --- | --- | --- |
-| `operator-maturity-benchmarks.md` | External maturity standards and the recurring audit | F-1 – F-7 | Operator Maturity & Hardening |
-| `node-agent-daemonset-audit.md` | Node agent DaemonSet render | F-8 – F-14 | Node Agent / DaemonSet |
+| `operator-maturity-benchmarks.md` | External maturity standards and the recurring audit | F-1 – F-7, F-30 – F-32, F-38 | Operator Maturity & Hardening |
+| `node-agent-daemonset-audit.md` | Node agent DaemonSet render | F-8 – F-14, F-33 – F-36 | Node Agent / DaemonSet |
 | `nutserver-pod-audit.md` | `NUTServer` CRD and the `upsd` Deployment it renders | F-15 – F-19, F-23 | NUT Server / upsd |
-| `nut-usage-audit.md` | Cross-component NUT mechanism usage and fidelity | F-20 – F-22, F-24 | NUT Server / upsd; Node Agent / DaemonSet; Telemetry & Triggers |
+| `nut-usage-audit.md` | Cross-component NUT mechanism usage and fidelity | F-20 – F-22, F-24, F-37 | NUT Server / upsd; Node Agent / DaemonSet; Telemetry & Triggers |
 | `quirks-aliasing-firmware.md` | Quirk handling, variable aliasing, firmware gating | F-25 – F-27 | Capability Profiles |
 
 ## Identifier Namespaces
@@ -64,7 +64,7 @@ Dated audit and findings records live in `docs/audits/` and share the `F-n` find
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
 | EX | Executor requirement | executor-requirements | EX-1 – EX-21 |
 | IN | Inventory contract rule | inventory-provider-contract | IN-1 – IN-16 |
-| F | Audit finding | audit records (`docs/audits/`) | F-1 – F-27 (2026-08-03) |
+| F | Audit finding | audit records (`docs/audits/`) | F-1 – F-38 (2026-08-08) |
 | AE | Adaptive execution (provisional; folds into PL and EX) | adaptive-execution-tier-pointer | AE-1 – AE-6 |
 
 Identifiers are stable: never reused, never renumbered. Superseded items are marked in place.

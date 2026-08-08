@@ -333,6 +333,11 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   (`docs/audits/nut-usage-audit.md`, `docs/audits/nutserver-pod-audit.md`); `F-24` confirmed no
   credential leak path.
 - `UPSDevice.spec.credentialSecretRef` wired; `ups.conf` moved into a dedicated Secret.
+- NUT protocol TLS actually rendered: `CERTFILE`/`CERTPATH`/`CERTREQUEST`/`DISABLE_WEAK_SSL` in
+  `upsd.conf`, `CERTPATH`/`CERTVERIFY`/`FORCESSL` in `upsmon.conf`. Previously `spec.tls` mounted a
+  certificate and emitted nothing, so `mode: Required` served plaintext NUT including the `MONITOR`
+  password. `verifyClientCertificates` now defaults off (was on) — it needs client certificates the
+  operator does not issue, and NUT honors `CERTREQUEST` under OpenSSL only from 2.8.6.
 - Scripted `dummy-ups` transitions via `spec.simulation.sequenceConfigMapRef`
   (`docs/examples/simulation/`), plus an `snmpsim` driver-conformance fixture
   (`images/snmpsim-fixture/`).
@@ -343,19 +348,15 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 
 #### Open Work
 
-- **`spec.tls` mounts a certificate and never tells NUT to use it.** The webhook defaults
-  `spec.tls.mode` to `Required` and validation rejects `Required` without a
-  `serverCertificateRef`; the render mounts that Secret read-only at `/etc/nut/tls`. Nothing then
-  emits `CERTFILE` into `upsd.conf`, or `CERTVERIFY`/`FORCESSL` into `upsd.conf`/`upsmon.conf` —
-  `renderNUTServerConfig` writes `upsd.conf` as a bare `LISTEN <address> <port>`, and the image's
-  entrypoint adds nothing. So a `NUTServer` that reports TLS `Required` serves plaintext NUT on
-  3493, and `upsmon.conf`'s `MONITOR <ups> 1 <user> <pass> secondary` login crosses the wire in the
-  clear. Confined to in-cluster traffic and constrained by the operand `NetworkPolicy`, but the API
-  claims a protection that is not in effect — the same "declared field that does nothing" class as
-  `F-25` and `F-33`, and the only instance of it that is security-relevant. NUT's own guidance
-  (`docs/security.txt` upstream) treats `CERTVERIFY 1` plus `FORCESSL 1` as the pair that makes TLS
-  real. Fix the render, and assert the directives in `nutserver_render_test.go` so the claim cannot
-  silently regress again.
+- **Issue client certificates to `upsmon` so `verifyClientCertificates` is usable.** `CERTREQUEST`
+  now renders, but the operator provisions no client identity, so turning it on locks out every
+  agent. Needs a per-agent certificate and `CERTFILE` in `upsmon.conf` (OpenSSL, NUT 2.8.6+) or an
+  NSS database via `CERTIDENT`. Gated on deciding whether the operator issues those itself or
+  consumes a user-supplied Secret per `NodePowerAgent`.
+- **Per-server TLS posture via `CERTHOST` (NUT 2.8.5+).** Today an agent monitoring servers with
+  different `spec.tls.mode` values falls back to the weakest and reports `NUTTLSDowngraded`, because
+  `CERTVERIFY`/`FORCESSL` are process-global. `CERTHOST` would let each `MONITOR` line carry its own
+  verification and SSL-enforcement flags. Requires knowing the agent image's NUT version.
 - **`NUTServer` reconciler doesn't watch `UPSDevice` or unowned credential `Secret`s.**
   `SetupWithManager` (`nutserver_controller.go`) only watches `NUTServer` itself plus resources it
   owns (`Owns(&corev1.Secret{})` only matches secrets with an owner reference back to it — not a
@@ -522,20 +523,29 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 - Project-owned multi-arch images for all four operands with SBOM, provenance, and scanning.
 - CI: concurrency cancellation, path filters, timeouts, shared `bin/` cache, tidy-drift check,
   pre-push image scanning on PRs, and a `security.yml` running ASH plus an RFC1918 `private-ip-scan`.
+- `F-38` duplicate reconciler registration fixed; `cmd/main_wiring_test.go` guards it.
+- No-cert-manager install path is the recommended one: `config/byo-cert` overlay,
+  `dist/install-byo-cert.yaml`, and `hack/webhook-cert.sh` for provisioning and rotation. Chosen
+  because a static Secret has nothing to reconcile while the cluster is losing power. Adopting
+  `open-policy-agent/cert-controller` was evaluated and declined — reasoning in
+  [docs/install.md](install.md). Verified end to end on `kind`: apply with no cert-manager present,
+  provision, manager ready, webhook rejects and defaults, rotation with caBundle stable and no
+  restart.
 - Resolutions with their root causes and verification are recorded per finding in `docs/audits/`.
 
 #### Open Work
 
-- **Drop the hard cert-manager dependency using `open-policy-agent/cert-controller`, with an opt-out
-  for operators who already have PKI.** Two stages, in order: first validate it is a usable path
-  (does it own the serving cert and reconcile `caBundle` into both webhook configurations, what RBAC
-  on `*webhookconfigurations` it needs, whether its known caBundle-sync issues are current, and how
-  it behaves alongside an existing cert-manager install), then adopt it as the default with a flag
-  that hands cert ownership back to cert-manager or a user-supplied Secret. Motivation: "install
-  cert-manager first" is a real adoption tax for an operator someone installs once, and Gatekeeper
-  demonstrates the pattern at scale. Note the constraint documented in `docs/install.md`: removing
-  the webhooks entirely is not an alternative, because the `NodePowerAgent` defaulter is the only
-  thing that sets `spec.resources` and `spec.placement.priorityClassName`.
+- **CI never installs the operator, so its startup path is untested.** `F-38` — the manager
+  crash-looping on a duplicate controller registration — survived every unit and envtest gate because
+  the suites wire reconcilers individually and never execute `cmd/main.go`. A source-shape guard is
+  in place (`TestMainRegistersEachReconcilerOnce`), but the general gap remains: nothing applies a
+  bundled manifest and waits for `rollout status`. The e2e suite should install
+  `dist/install-byo-cert.yaml` (no external dependency, so it needs nothing extra in CI), run
+  `hack/webhook-cert.sh`, wait for readiness, and assert a webhook rejection — the same four steps
+  used to find `F-38` by hand.
+- Certificate rotation for the no-cert-manager path is a manual `hack/webhook-cert.sh` re-run. The
+  1-year serving certificate makes that infrequent, but nothing warns as expiry approaches. Consider
+  a metric or a `PowerManagementCluster` condition sourced from the mounted certificate's `NotAfter`.
 - Release image signing policy, cosign verification docs, and immutable digest production examples
   (`docs/images.md` describes the target state; keyless Sigstore signing as a release gate isn't
   confirmed wired into CI yet).

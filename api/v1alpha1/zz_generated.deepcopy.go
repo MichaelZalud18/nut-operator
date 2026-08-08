@@ -513,6 +513,11 @@ func (in *NUTTLSSpec) DeepCopyInto(out *NUTTLSSpec) {
 		*out = new(NamespacedNameReference)
 		**out = **in
 	}
+	if in.ServerCARef != nil {
+		in, out := &in.ServerCARef, &out.ServerCARef
+		*out = new(NamespacedNameReference)
+		**out = **in
+	}
 	if in.ClientCARef != nil {
 		in, out := &in.ClientCARef, &out.ClientCARef
 		*out = new(NamespacedNameReference)
@@ -520,6 +525,11 @@ func (in *NUTTLSSpec) DeepCopyInto(out *NUTTLSSpec) {
 	}
 	if in.VerifyClientCertificates != nil {
 		in, out := &in.VerifyClientCertificates, &out.VerifyClientCertificates
+		*out = new(bool)
+		**out = **in
+	}
+	if in.DisableWeakProtocols != nil {
+		in, out := &in.DisableWeakProtocols, &out.DisableWeakProtocols
 		*out = new(bool)
 		**out = **in
 	}

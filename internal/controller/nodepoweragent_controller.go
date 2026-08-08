@@ -144,7 +144,18 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				message = "Node power agent operands rendered, but one or more selected nodes lack a ready agent pod"
 			}
 			setReadyCondition(&agent.Status.Conditions, agent.Generation, ready, reason, message)
-			setDegradedCondition(&agent.Status.Conditions, agent.Generation, rendered.UnavailableNodeCount > 0, reason, message)
+
+			// A TLS downgrade does not block readiness — upsmon still monitors, which is the whole
+			// point of the agent — but it is a divergence from declared intent and has to show up
+			// somewhere. Pod unavailability outranks it as a Degraded reason because it means the
+			// node has no monitoring at all.
+			degradedReason, degradedMessage := reason, message
+			if rendered.UnavailableNodeCount == 0 && rendered.TLSDowngradeReason != "" {
+				degradedReason = "NUTTLSDowngraded"
+				degradedMessage = "upsmon.conf is less strict than the monitored NUTServers request: " + rendered.TLSDowngradeReason
+			}
+			degraded := rendered.UnavailableNodeCount > 0 || rendered.TLSDowngradeReason != ""
+			setDegradedCondition(&agent.Status.Conditions, agent.Generation, degraded, degradedReason, degradedMessage)
 		}
 	} else {
 		agent.Status.Phase = powerv1alpha1.NodePowerAgentPhaseError

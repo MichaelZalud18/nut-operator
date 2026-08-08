@@ -371,3 +371,34 @@ All items from the original "Recommended order" list in this audit are now close
 (2026-08-03/04), `F-30`/`F-1` (2026-08-04), `F-31`/`F-32`/`F-7`/`F-3` (2026-08-04). Open work remaining
 anywhere in Operator Maturity & Hardening: image signing and the container-scanner tooling decision —
 see `docs/tasks.md`.
+
+## Findings — fifth pass, 2026-08-08
+
+Found while verifying the no-cert-manager install path against a live `kind` cluster, not by reading
+code. Continues the `F-n` namespace from `F-37`.
+
+**F-38 · The manager crash-looped on every startup: a reconciler was registered twice.**
+`cmd/main.go` called `SetupWithManager` on `UPSCapabilityProbeReconciler` in two places — once with
+the other controllers, once again after the webhook block, immediately before the
+`+kubebuilder:scaffold:builder` marker. controller-runtime rejects the second registration
+("controller with name upscapabilityprobe already exists. Controller names must be unique to avoid
+multiple controllers reporting the same metric"), `main` calls `os.Exit(1)`, and the pod enters
+`CrashLoopBackOff`. The operator could not start in any cluster.
+
+What makes this worth recording is not the mistake but why nothing caught it. Every envtest suite
+wires reconcilers individually against its own manager, so the suite proves each controller works
+while never executing `main.go`'s wiring. `go build` and `golangci-lint` both pass — duplicate
+registration is valid Go. Nothing in CI deploys the bundled manifest and waits for readiness, so the
+one gate that would have caught it did not exist. The whole verification stack was green against an
+operator that had never successfully started.
+
+Fixed by removing the duplicate. Guarded by `TestMainRegistersEachReconcilerOnce` in
+`cmd/main_wiring_test.go`, which parses `main.go` and fails when any reconciler type appears in more
+than one `SetupWithManager` call. It is a source-shape test rather than a behavioral one because the
+wiring is inlined in `main()` and needs a real API server to execute; the same approach the inventory
+entity-kind drift tests already use. Verified by reintroducing the duplicate and watching the test
+fail, then removing it again.
+
+The durable lesson is broader than the guard: an operator whose install has never been exercised
+end-to-end in CI has an untested startup path regardless of unit coverage. Tracked in `docs/tasks.md`
+as an e2e gap.

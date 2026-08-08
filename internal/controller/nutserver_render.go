@@ -51,6 +51,24 @@ const (
 	upsdReadinessPeriodSeconds       = 10
 	upsdReadinessTimeoutSeconds      = 5
 	upsdReadinessFailureThreshold    = 3
+
+	// NUT TLS paths inside the upsd operand. The kubernetes.io/tls Secret is projected read-only
+	// at nutServerCertificateMountPath; the init container concatenates it into a single PEM on a
+	// writable emptyDir because upsd's CERTFILE takes one file holding chain-then-key.
+	nutServerCertificateMountPath = "/etc/nut/tls"
+	nutServerClientCAMountPath    = "/etc/nut/client-ca"
+	nutServerCombinedCertDir      = "/run/nut-tls"
+	nutServerCombinedCertPath     = nutServerCombinedCertDir + "/nut-server.pem"
+	nutServerClientCAPath         = nutServerClientCAMountPath + "/ca.crt"
+
+	nutServerTLSCertificateKey = "tls.crt"
+	nutServerTLSPrivateKeyKey  = "tls.key"
+	nutServerCABundleKey       = "ca.crt"
+
+	nutServerTLSInitContainerName = "nut-tls-assemble"
+	nutServerTLSVolumeName        = "nut-tls"
+	nutServerClientCAVolumeName   = "nut-client-ca"
+	nutServerCombinedTLSVolume    = "nut-tls-assembled"
 )
 
 type renderedNUTServer struct {
@@ -95,6 +113,9 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	}
 	simulationFixtures, err := resolveUPSDeviceSimulationFixtures(ctx, r.Client, namespace, devices)
 	if err != nil {
+		return renderedNUTServer{}, err
+	}
+	if err := r.validateNUTServerTLSSecrets(ctx, server, namespace); err != nil {
 		return renderedNUTServer{}, err
 	}
 	configData, err := renderNUTServerConfig(server, devices, credentials, simulationFixtures)
@@ -283,7 +304,7 @@ func renderNUTServerConfig(server *powerv1alpha1.NUTServer, devices []powerv1alp
 	config := map[string]string{
 		"nut.conf":  "MODE=netserver\n",
 		"ups.conf":  upsConf,
-		"upsd.conf": fmt.Sprintf("LISTEN %s %d\n", listenAddress(server), servicePort(server)),
+		"upsd.conf": renderUPSDConf(server),
 	}
 	for _, device := range devices {
 		if filename, ok, err := dummyUPSSimulationFileName(device); err != nil {
@@ -309,6 +330,47 @@ func renderNUTServerConfig(server *powerv1alpha1.NUTServer, devices []powerv1alp
 		}
 	}
 	return config, nil
+}
+
+// renderUPSDConf emits upsd.conf. LISTEN alone only opens a plaintext socket: upsd negotiates
+// STARTTLS solely when CERTFILE (OpenSSL builds) names a usable key pair, so a spec.tls block
+// that mounts a certificate without emitting CERTFILE serves cleartext NUT — including the
+// MONITOR password every upsmon sends on connect.
+func renderUPSDConf(server *powerv1alpha1.NUTServer) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "LISTEN %s %d\n", listenAddress(server), servicePort(server))
+	if !nutServerTLSEnabled(server) {
+		return out.String()
+	}
+
+	// NUT wants the chain first and the private key last in one file; the init container
+	// assembles it because a kubernetes.io/tls Secret projects tls.crt and tls.key separately.
+	fmt.Fprintf(&out, "CERTFILE %s\n", nutServerCombinedCertPath)
+	if nutServerDisableWeakProtocols(server) {
+		out.WriteString("DISABLE_WEAK_SSL true\n")
+	}
+	if nutServerVerifiesClientCertificates(server) {
+		fmt.Fprintf(&out, "CERTPATH %s\n", nutServerClientCAPath)
+		out.WriteString("CERTREQUEST 2\n")
+	}
+	return out.String()
+}
+
+// nutServerTLSEnabled reports whether upsd should be configured to offer TLS at all. Both
+// Required and Opportunistic serve the same certificate; the modes differ in what clients are
+// told to accept, which is an upsmon.conf concern rather than an upsd.conf one.
+func nutServerTLSEnabled(server *powerv1alpha1.NUTServer) bool {
+	return server.Spec.TLS.Mode != powerv1alpha1.NUTTLSDisabled && server.Spec.TLS.ServerCertificateRef != nil
+}
+
+func nutServerVerifiesClientCertificates(server *powerv1alpha1.NUTServer) bool {
+	return server.Spec.TLS.VerifyClientCertificates != nil &&
+		*server.Spec.TLS.VerifyClientCertificates &&
+		server.Spec.TLS.ClientCARef != nil
+}
+
+func nutServerDisableWeakProtocols(server *powerv1alpha1.NUTServer) bool {
+	return server.Spec.TLS.DisableWeakProtocols == nil || *server.Spec.TLS.DisableWeakProtocols
 }
 
 func renderUPSConf(devices []powerv1alpha1.UPSDevice, credentials map[string]map[string]string) (string, error) {
@@ -1043,25 +1105,129 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				},
 			},
 		}
-		if server.Spec.TLS.Mode != "" && server.Spec.TLS.Mode != powerv1alpha1.NUTTLSDisabled && server.Spec.TLS.ServerCertificateRef != nil {
-			deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
-				Name: "nut-tls",
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName:  server.Spec.TLS.ServerCertificateRef.Name,
-						DefaultMode: ptrInt32(0440),
-					},
-				},
-			})
-			deployment.Spec.Template.Spec.Containers[0].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
-				Name:      "nut-tls",
-				MountPath: "/etc/nut/tls",
-				ReadOnly:  true,
-			})
-		}
+		applyNUTServerTLSOperand(deployment, server, image, pullPolicy)
 		return controllerutil.SetControllerReference(server, deployment, r.Scheme)
 	})
 	return deployment, err
+}
+
+// validateNUTServerTLSSecrets fails the reconcile before the Deployment is written when the
+// referenced TLS Secrets cannot produce a working upsd. Without it the only symptom is an init
+// container that crash-loops on a missing file, or worse, an upsd that starts and quietly falls
+// back to plaintext, which is exactly the failure this whole code path exists to prevent.
+func (r *NUTServerReconciler) validateNUTServerTLSSecrets(ctx context.Context, server *powerv1alpha1.NUTServer, namespace string) error {
+	if !nutServerTLSEnabled(server) {
+		return nil
+	}
+	if err := r.requireSecretKeys(ctx, namespace, *server.Spec.TLS.ServerCertificateRef, "spec.tls.serverCertificateRef",
+		nutServerTLSCertificateKey, nutServerTLSPrivateKeyKey); err != nil {
+		return err
+	}
+	if !nutServerVerifiesClientCertificates(server) {
+		return nil
+	}
+	return r.requireSecretKeys(ctx, namespace, *server.Spec.TLS.ClientCARef, "spec.tls.clientCARef", nutServerCABundleKey)
+}
+
+// requireSecretKeys enforces both that the Secret carries the expected keys and that it lives in
+// the operand namespace. The namespace check is not redundant with the webhook: a pod can only
+// mount Secrets from its own namespace, so a ref naming another namespace would otherwise render
+// a volume silently pointed at a same-named Secret that may not exist or may be someone else's.
+func (r *NUTServerReconciler) requireSecretKeys(ctx context.Context, namespace string, ref powerv1alpha1.NamespacedNameReference, fieldPath string, keys ...string) error {
+	if ref.Namespace != "" && ref.Namespace != namespace {
+		return fmt.Errorf("%s must name a Secret in operand namespace %q, got %q", fieldPath, namespace, ref.Namespace)
+	}
+	var secret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: ref.Name}, &secret); err != nil {
+		return fmt.Errorf("get Secret %s/%s for %s: %w", namespace, ref.Name, fieldPath, err)
+	}
+	for _, key := range keys {
+		if len(secret.Data[key]) == 0 {
+			return fmt.Errorf("secret %s/%s for %s requires a non-empty data[%q]", namespace, ref.Name, fieldPath, key)
+		}
+	}
+	return nil
+}
+
+// applyNUTServerTLSOperand attaches everything upsd needs to actually terminate TLS: the
+// certificate Secret, an init container that concatenates it into CERTFILE's expected
+// chain-then-key layout, and the client CA when certificate-based client validation is on.
+//
+// The concatenation is an init container rather than an entrypoint change because the upsd image
+// is caller-supplied (spec.image) and the operator does not control its entrypoint. It reuses the
+// same image so no second image has to be pulled or trusted, and writes to an emptyDir because
+// the operand runs with a read-only root filesystem.
+func applyNUTServerTLSOperand(deployment *appsv1.Deployment, server *powerv1alpha1.NUTServer, image string, pullPolicy corev1.PullPolicy) {
+	if !nutServerTLSEnabled(server) {
+		return
+	}
+	podSpec := &deployment.Spec.Template.Spec
+
+	podSpec.Volumes = append(podSpec.Volumes,
+		corev1.Volume{
+			Name: nutServerTLSVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName:  server.Spec.TLS.ServerCertificateRef.Name,
+					DefaultMode: ptrInt32(0440),
+				},
+			},
+		},
+		corev1.Volume{
+			Name: nutServerCombinedTLSVolume,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{
+					Medium:    corev1.StorageMediumMemory,
+					SizeLimit: resource.NewQuantity(1*1024*1024, resource.BinarySI),
+				},
+			},
+		},
+	)
+	podSpec.InitContainers = append(podSpec.InitContainers, corev1.Container{
+		Name:            nutServerTLSInitContainerName,
+		Image:           image,
+		ImagePullPolicy: pullPolicy,
+		Command:         []string{"sh", "-c", nutServerTLSAssembleScript()},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptrBool(false),
+			ReadOnlyRootFilesystem:   ptrBool(true),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: nutServerTLSVolumeName, MountPath: nutServerCertificateMountPath, ReadOnly: true},
+			{Name: nutServerCombinedTLSVolume, MountPath: nutServerCombinedCertDir},
+		},
+	})
+	podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts,
+		corev1.VolumeMount{Name: nutServerCombinedTLSVolume, MountPath: nutServerCombinedCertDir, ReadOnly: true},
+	)
+
+	if !nutServerVerifiesClientCertificates(server) {
+		return
+	}
+	podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
+		Name: nutServerClientCAVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName:  server.Spec.TLS.ClientCARef.Name,
+				DefaultMode: ptrInt32(0440),
+			},
+		},
+	})
+	podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts,
+		corev1.VolumeMount{Name: nutServerClientCAVolumeName, MountPath: nutServerClientCAMountPath, ReadOnly: true},
+	)
+}
+
+// nutServerTLSAssembleScript writes the CERTFILE upsd expects. Order matters: NUT documents the
+// subject certificate first, then any intermediates, then the matching private key last.
+func nutServerTLSAssembleScript() string {
+	return fmt.Sprintf(
+		"set -e; umask 077; cat %s/%s %s/%s > %s",
+		nutServerCertificateMountPath, nutServerTLSCertificateKey,
+		nutServerCertificateMountPath, nutServerTLSPrivateKeyKey,
+		nutServerCombinedCertPath,
+	)
 }
 
 // ensureNUTServerPodDisruptionBudget renders a PDB with minAvailable 1 (F-18). Paired with the

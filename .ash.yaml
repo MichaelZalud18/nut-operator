@@ -25,11 +25,20 @@ global_settings:
       path: "dist/install.yaml"
       reason: "Generated install bundle contains Kubernetes secretName fields, not secret material."
     - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "dist/install-byo-cert.yaml"
+      reason: "Generated install bundle contains Kubernetes secretName fields, not secret material."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "hack/webhook-cert.sh"
+      reason: "Default Secret object names the script creates (webhook-server-cert, nut-operator-webhook-ca). Key material is generated at runtime into a mktemp directory and never written to the repository."
+    - rule_id: "SECRET-SECRET-KEYWORD"
       path: "internal/controller/nodepoweragent_render.go"
       reason: "Code references Kubernetes Secret refs; it does not contain secret values."
     - rule_id: "SECRET-SECRET-KEYWORD"
       path: "internal/controller/nutserver_render.go"
       reason: "Code references Kubernetes Secret refs; it does not contain secret values."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/controller/nut_tls_render_test.go"
+      reason: "Asserts the Secret data keys (tls.crt, tls.key, ca.crt) the NUT TLS render requires; the fixture values are literal placeholders, not secret material."
     - rule_id: "SECRET-SECRET-KEYWORD"
       path: "internal/controller/nutserver_render_test.go"
       reason: "Test fixture literals (e.g. real-auth-pass) asserting credentialSecretRef values merge into rendered ups.conf; not real secret material."
@@ -65,6 +74,8 @@ scanners:
         - kustomize
       skip_path:
         - path: "dist/install.yaml"
+          reason: "Generated release bundle; source manifests are scanned."
+        - path: "dist/install-byo-cert.yaml"
           reason: "Generated release bundle; source manifests are scanned."
 reporters:
   html:

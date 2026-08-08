@@ -46,6 +46,13 @@ const (
 	nodePowerAgentDefaultPriorityClassName          = "system-node-critical"
 	nodePowerAgentDefaultTerminationGracePeriodSecs = 60
 	upsmonConfigFile                                = "upsmon.conf"
+
+	// nodePowerAgentServerCAFile is the key in the agent's rendered Secret holding the
+	// concatenated CA bundle for every NUTServer this agent monitors, and the path upsmon's
+	// CERTPATH points at. OpenSSL accepts either a hashed directory or a single multi-certificate
+	// PEM here; the file form is used because a projected Secret cannot carry c_rehash symlinks.
+	nodePowerAgentServerCAFile = "server-ca.pem"
+	nodePowerAgentServerCAPath = "/etc/nut/" + nodePowerAgentServerCAFile
 )
 
 type renderedNodePowerAgent struct {
@@ -58,6 +65,11 @@ type renderedNodePowerAgent struct {
 	NodeStatuses           []powerv1alpha1.NodePowerAgentNodeStatus
 	ConfigHash             string
 	ManagedResources       []powerv1alpha1.ManagedResourceStatus
+	// TLSDowngradeReason is set when the rendered upsmon.conf is less strict than the monitored
+	// NUTServers asked for. It is reported rather than treated as a render failure: refusing to
+	// render would leave the node with no UPS monitoring at all, which is strictly worse than
+	// monitoring over a weaker channel, but it must not pass silently either.
+	TLSDowngradeReason string
 }
 
 type agentMonitorTarget struct {
@@ -66,6 +78,79 @@ type agentMonitorTarget struct {
 	Port      int32
 	Username  string
 	Password  string
+	TLSMode   powerv1alpha1.NUTTLSMode
+	ServerCA  []byte
+}
+
+// agentTLSPosture is the upsmon-side TLS configuration derived from the NUTServers this agent
+// monitors. CERTVERIFY and FORCESSL are process-global in upsmon (per-host overrides need
+// CERTHOST, NUT 2.8.5+), so an agent monitoring servers with different spec.tls.mode values has
+// to settle on the weakest common posture or it would break the laxer servers outright.
+type agentTLSPosture struct {
+	CABundle   []byte
+	ForceSSL   bool
+	CertVerify bool
+	// DowngradeReason is empty when the rendered posture is as strict as the monitored servers
+	// asked for. When set it names why upsmon was configured more loosely than spec.tls.mode
+	// implies, so the caller can surface it instead of silently under-securing the link.
+	DowngradeReason string
+}
+
+func (p agentTLSPosture) enabled() bool {
+	return p.ForceSSL || p.CertVerify || len(p.CABundle) > 0
+}
+
+// deriveAgentTLSPosture folds the monitored servers' TLS modes into one upsmon configuration.
+func deriveAgentTLSPosture(targets []agentMonitorTarget) agentTLSPosture {
+	var posture agentTLSPosture
+	if len(targets) == 0 {
+		return posture
+	}
+
+	seen := map[string]struct{}{}
+	anyRequired := false
+	allRequired := true
+	anyTLS := false
+	for _, target := range targets {
+		switch target.TLSMode {
+		case powerv1alpha1.NUTTLSRequired:
+			anyRequired = true
+			anyTLS = true
+		case powerv1alpha1.NUTTLSOpportunistic:
+			allRequired = false
+			anyTLS = true
+		default:
+			allRequired = false
+		}
+		if len(target.ServerCA) == 0 {
+			continue
+		}
+		if _, duplicate := seen[string(target.ServerCA)]; duplicate {
+			continue
+		}
+		seen[string(target.ServerCA)] = struct{}{}
+		posture.CABundle = append(posture.CABundle, target.ServerCA...)
+		if len(target.ServerCA) > 0 && target.ServerCA[len(target.ServerCA)-1] != '\n' {
+			posture.CABundle = append(posture.CABundle, '\n')
+		}
+	}
+
+	if !anyTLS {
+		return agentTLSPosture{}
+	}
+	switch {
+	case anyRequired && !allRequired:
+		posture.DowngradeReason = "one or more monitored NUTServers do not set spec.tls.mode Required, " +
+			"and upsmon applies FORCESSL to every MONITOR line"
+	case allRequired && len(posture.CABundle) == 0:
+		posture.ForceSSL = true
+		posture.DowngradeReason = "no monitored NUTServer sets spec.tls.serverCARef, so upsmon encrypts " +
+			"but cannot authenticate the server certificate"
+	case allRequired:
+		posture.ForceSSL = true
+		posture.CertVerify = true
+	}
+	return posture
 }
 
 func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.Context, agent *powerv1alpha1.NodePowerAgent) (renderedNodePowerAgent, error) {
@@ -96,8 +181,9 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		return renderedNodePowerAgent{}, err
 	}
 
+	tlsPosture := deriveAgentTLSPosture(targets)
 	configData := renderNodePowerAgentConfig()
-	secretData, err := renderNodePowerAgentSecret(agent, targets)
+	secretData, err := renderNodePowerAgentSecret(agent, targets, tlsPosture)
 	if err != nil {
 		return renderedNodePowerAgent{}, err
 	}
@@ -134,6 +220,7 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		ActuatorPullPolicy: actuatorPullPolicy,
 		SignalSecretName:   signalSecret.Name,
 		SelectedUPSDevices: nodePowerAgentSelectedUPSDevices(targets),
+		MountServerCA:      len(tlsPosture.CABundle) > 0,
 	})
 	if err != nil {
 		return renderedNodePowerAgent{}, err
@@ -157,6 +244,7 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		UnavailableNodeCount:   unavailableNodeCount,
 		NodeStatuses:           nodeStatuses,
 		ConfigHash:             configHash,
+		TLSDowngradeReason:     tlsPosture.DowngradeReason,
 		ManagedResources: []powerv1alpha1.ManagedResourceStatus{
 			{APIVersion: "v1", Kind: "Namespace", Name: namespace},
 			{APIVersion: "v1", Kind: "ServiceAccount", Namespace: namespace, Name: serviceAccount.Name},
@@ -315,6 +403,11 @@ func (r *NodePowerAgentReconciler) resolveAgentMonitorTargets(ctx context.Contex
 			return nil, nil, fmt.Errorf("NUTServer %q selected no UPSDevice resources", server.Name)
 		}
 
+		serverCA, err := r.serverCABundle(ctx, &server, serverNamespace)
+		if err != nil {
+			return nil, nil, err
+		}
+
 		serverDNS := nutServerDNSName(&server, serverNamespace)
 		for _, device := range devices {
 			targets = append(targets, agentMonitorTarget{
@@ -323,6 +416,8 @@ func (r *NodePowerAgentReconciler) resolveAgentMonitorTargets(ctx context.Contex
 				Port:      servicePort(&server),
 				Username:  "monitor",
 				Password:  password,
+				TLSMode:   monitoredServerTLSMode(&server),
+				ServerCA:  serverCA,
 			})
 		}
 
@@ -371,6 +466,37 @@ func (r *NodePowerAgentReconciler) monitorPassword(ctx context.Context, server *
 	return password, nil
 }
 
+// monitoredServerTLSMode reports the TLS posture upsd will actually present. A mode of Required
+// with no certificate to serve is a server that cannot terminate TLS, so it is reported as
+// Disabled rather than taken at its word — otherwise the agent would render FORCESSL against a
+// plaintext server and refuse to monitor it at all.
+func monitoredServerTLSMode(server *powerv1alpha1.NUTServer) powerv1alpha1.NUTTLSMode {
+	if !nutServerTLSEnabled(server) {
+		return powerv1alpha1.NUTTLSDisabled
+	}
+	return server.Spec.TLS.Mode
+}
+
+// serverCABundle loads the CA that upsmon should trust for this server's certificate.
+func (r *NodePowerAgentReconciler) serverCABundle(ctx context.Context, server *powerv1alpha1.NUTServer, namespace string) ([]byte, error) {
+	ref := server.Spec.TLS.ServerCARef
+	if ref == nil || !nutServerTLSEnabled(server) {
+		return nil, nil
+	}
+	if ref.Namespace != "" && ref.Namespace != namespace {
+		return nil, fmt.Errorf("NUTServer %q spec.tls.serverCARef must name a Secret in operand namespace %q, got %q", server.Name, namespace, ref.Namespace)
+	}
+	var secret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: ref.Name}, &secret); err != nil {
+		return nil, fmt.Errorf("get Secret %s/%s for NUTServer %q spec.tls.serverCARef: %w", namespace, ref.Name, server.Name, err)
+	}
+	bundle := secret.Data[nutServerCABundleKey]
+	if len(bundle) == 0 {
+		return nil, fmt.Errorf("secret %s/%s for NUTServer %q spec.tls.serverCARef requires a non-empty data[%q]", namespace, ref.Name, server.Name, nutServerCABundleKey)
+	}
+	return bundle, nil
+}
+
 func nutServerDNSName(server *powerv1alpha1.NUTServer, namespace string) string {
 	for _, endpoint := range server.Status.ServiceEndpoints {
 		if endpoint.DNSName != "" {
@@ -386,7 +512,7 @@ func renderNodePowerAgentConfig() map[string]string {
 	}
 }
 
-func renderNodePowerAgentSecret(agent *powerv1alpha1.NodePowerAgent, targets []agentMonitorTarget) (map[string][]byte, error) {
+func renderNodePowerAgentSecret(agent *powerv1alpha1.NodePowerAgent, targets []agentMonitorTarget, posture agentTLSPosture) (map[string][]byte, error) {
 	var out strings.Builder
 	out.WriteString("MINSUPPLIES 1\n")
 	fmt.Fprintf(&out, "SHUTDOWNCMD %s\n", shellQuotedNUTValue(nodePowerAgentSignalWriterPath))
@@ -418,9 +544,32 @@ func renderNodePowerAgentSecret(agent *powerv1alpha1.NodePowerAgent, targets []a
 		fmt.Fprintf(&out, "MONITOR %s 1 %s %s secondary\n", system, target.Username, target.Password)
 	}
 
-	return map[string][]byte{
+	// The TLS block is emitted only when at least one monitored server actually offers TLS. NUT
+	// compiles CERTPATH/CERTVERIFY/FORCESSL in conditionally (WITH_SSL), so writing them
+	// unconditionally would hand a parse error to any upsmon image built without SSL support —
+	// including every deployment that legitimately runs spec.tls.mode Disabled.
+	if posture.enabled() {
+		if len(posture.CABundle) > 0 {
+			fmt.Fprintf(&out, "CERTPATH %s\n", nodePowerAgentServerCAPath)
+		}
+		fmt.Fprintf(&out, "CERTVERIFY %s\n", nutBoolean(posture.CertVerify))
+		fmt.Fprintf(&out, "FORCESSL %s\n", nutBoolean(posture.ForceSSL))
+	}
+
+	data := map[string][]byte{
 		upsmonConfigFile: []byte(out.String()),
-	}, nil
+	}
+	if len(posture.CABundle) > 0 {
+		data[nodePowerAgentServerCAFile] = posture.CABundle
+	}
+	return data, nil
+}
+
+func nutBoolean(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
 }
 
 func nodePowerAgentSelectedUPSDevices(targets []agentMonitorTarget) []string {
@@ -557,6 +706,7 @@ type nodePowerAgentDaemonSetSpec struct {
 	ActuatorPullPolicy corev1.PullPolicy
 	SignalSecretName   string
 	SelectedUPSDevices []string
+	MountServerCA      bool
 }
 
 func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Context, agent *powerv1alpha1.NodePowerAgent, namespace string, spec nodePowerAgentDaemonSetSpec) (*appsv1.DaemonSet, error) {
@@ -658,11 +808,25 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				Env:             nodePowerAgentSignalEnv(agent, spec.ConfigHash, spec.SelectedUPSDevices),
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "nut-client-config", MountPath: "/etc/nut/nut.conf", SubPath: nodePowerAgentConfigFile, ReadOnly: true},
-					{Name: "upsmon-config", MountPath: "/etc/nut/upsmon.conf", SubPath: upsmonConfigFile, ReadOnly: true},
+					{Name: "upsmon-config", MountPath: "/etc/nut/" + upsmonConfigFile, SubPath: upsmonConfigFile, ReadOnly: true},
 					{Name: "upsmon-run", MountPath: "/run"},
 					{Name: "power-agent-run", MountPath: "/run/power-agent"},
 				},
 			},
+		}
+		if spec.MountServerCA {
+			// Same Secret as upsmon.conf, second subPath: CERTPATH must resolve to a real file
+			// inside the container, and a subPath mount of a key that is not present fails the
+			// pod outright, so this mount only appears when the render actually wrote the key.
+			daemonSet.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+				daemonSet.Spec.Template.Spec.Containers[0].VolumeMounts,
+				corev1.VolumeMount{
+					Name:      "upsmon-config",
+					MountPath: nodePowerAgentServerCAPath,
+					SubPath:   nodePowerAgentServerCAFile,
+					ReadOnly:  true,
+				},
+			)
 		}
 		if spec.ActuatorImage != "" {
 			daemonSet.Spec.Template.Spec.Containers = append(daemonSet.Spec.Template.Spec.Containers, corev1.Container{
