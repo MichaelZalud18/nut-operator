@@ -112,37 +112,6 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 
 ---
 
-### Telemetry & Triggers
-
-Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`), poll composition
-(`internal/polling`), and trigger evaluation (`internal/trigger`). Design docs:
-`telemetry-and-triggers.md`, `resiliency-and-partitions.md`.
-
-#### Built
-
-- `internal/nut`: real NUT protocol client (`LIST VAR` framing, `ERR` handling), not an `upsc` wrapper.
-- `internal/telemetry`: pure normalization to phase, charge, runtime, load, plus diagnostics.
-  Profile-declared aliases resolve here (`F-25` runtime half).
-- `internal/polling`: transport + normalizer per target, with the `ups_telemetry_snapshots` adapter.
-- `internal/trigger`: pure evaluator — eligibility, selected devices, hold state, diagnostics.
-- `UPSDevice` reconciliation polls, updates status, and records snapshots when storage is ready.
-- `ShutdownFlow` trigger evaluation wired end to end, deduplicated by `deduplicationKey`.
-- `dummy-ups` repeater mode for upstream NUT appliances (`spec.upstreamNUT`), correcting `F-22`.
-
-#### Open Work
-
-- `PL-19` trigger-capability degrade mechanics (`OD-9`): the reject-vs-degrade split (some devices
-  vs. all devices in a domain) is decided in principle, but the actual coarser-trigger substitution
-  table isn't built.
-- `OD-14` partial-domain outage plan scope (cluster-wide vs. domain-scoped) — blocks how trigger
-  firing should interact with multi-domain topology once inventory-derived domains are wired into
-  the planner (shared with Inventory System and Planning & Execution Logic).
-- `AE-6` capability gating for mid-flow adaptive execution needs a declared "firmware recomputes
-  runtime against present load" capability check before the tier-pointer/timing-mode work in
-  Planning & Execution Logic can safely turn adaptation on for a given device.
-
----
-
 ### Planning & Execution Logic
 
 Owns: `internal/planner` (pure compile), `internal/executor` (wave execution/evidence),
@@ -497,7 +466,8 @@ None.
 ## Cross-Cutting
 
 Work that doesn't belong to one component — either because it spans several, or because it's about
-the operator as a whole.
+the operator as a whole. Components whose remaining work is entirely blocked on another section are
+parked here too, so the tracker reads front to back in roughly the order work can actually be done.
 
 ### Operator Maturity & Hardening
 
@@ -556,6 +526,40 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
   every push/PR.
 - Decide container-mode vs. locally-installed `grype`/`syft`/`opengrep`/`cfn-nag`/`cdk-nag` for full
   ASH coverage — confirmed still `MISSING` in the scan output, not just undecided in principle.
+
+---
+
+### Telemetry & Triggers
+
+*Sequenced last: every open item here waits on Planning & Execution Logic or Inventory
+System landing first, so the section is placed at the end of the tracker deliberately.*
+
+Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`), poll composition
+(`internal/polling`), and trigger evaluation (`internal/trigger`). Design docs:
+`telemetry-and-triggers.md`, `resiliency-and-partitions.md`.
+
+#### Built
+
+- `internal/nut`: real NUT protocol client (`LIST VAR` framing, `ERR` handling), not an `upsc` wrapper.
+- `internal/telemetry`: pure normalization to phase, charge, runtime, load, plus diagnostics.
+  Profile-declared aliases resolve here (`F-25` runtime half).
+- `internal/polling`: transport + normalizer per target, with the `ups_telemetry_snapshots` adapter.
+- `internal/trigger`: pure evaluator — eligibility, selected devices, hold state, diagnostics.
+- `UPSDevice` reconciliation polls, updates status, and records snapshots when storage is ready.
+- `ShutdownFlow` trigger evaluation wired end to end, deduplicated by `deduplicationKey`.
+- `dummy-ups` repeater mode for upstream NUT appliances (`spec.upstreamNUT`), correcting `F-22`.
+
+#### Open Work
+
+- `PL-19` trigger-capability degrade mechanics (`OD-9`): the reject-vs-degrade split (some devices
+  vs. all devices in a domain) is decided in principle, but the actual coarser-trigger substitution
+  table isn't built.
+- `OD-14` partial-domain outage plan scope (cluster-wide vs. domain-scoped) — blocks how trigger
+  firing should interact with multi-domain topology once inventory-derived domains are wired into
+  the planner (shared with Inventory System and Planning & Execution Logic).
+- `AE-6` capability gating for mid-flow adaptive execution needs a declared "firmware recomputes
+  runtime against present load" capability check before the tier-pointer/timing-mode work in
+  Planning & Execution Logic can safely turn adaptation on for a given device.
 
 ---
 
