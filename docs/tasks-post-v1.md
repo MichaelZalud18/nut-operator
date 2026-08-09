@@ -67,6 +67,9 @@ because only the first is ours.
 
 ### NUT forced-shutdown broadcast, FSD (`OD-19`)
 
+The decision half of this was tracked separately under Capability Profiles; both halves live here
+now, since the decision cannot land before the implementation it gates.
+
 NUT's native FSD broadcast is the conventional way a primary tells its secondaries to shut down.
 The operator uses its own signal file instead, which is deliberate: the signal file carries flow
 identity, a timestamp, and a reason, and is staleness-checked on read. FSD carries none of that.

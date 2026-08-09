@@ -291,3 +291,43 @@ type StorageStatus struct {
 	// +optional
 	Message string `json:"message,omitempty"`
 }
+
+// CapabilityQuirk declares a behavior-affecting device defect, optionally scoped
+// to the firmware that actually has it (OD-22).
+//
+// A bare name cannot expire. The bundled catalog used to carry scope inside the
+// string -- "built-in-nut-server-not-reachable-on-firmware-1.6.1" -- which reads
+// correctly to a human and enforces nothing, so a device on newer firmware
+// inherited every historical defect of its model family permanently (F-26).
+type CapabilityQuirk struct {
+	// name identifies the quirk. It describes the defect only; firmware scope
+	// belongs in the firmware field, where the matcher can act on it.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// firmware limits this quirk to the firmware versions that have it. Omitted
+	// means the quirk applies to every device the profile matches, which stays
+	// the default because most quirks are properties of a model rather than of a
+	// build.
+	// +optional
+	Firmware *CapabilityQuirkFirmware `json:"firmware,omitempty"`
+}
+
+// CapabilityQuirkFirmware scopes a quirk to firmware versions.
+type CapabilityQuirkFirmware struct {
+	// matches are glob patterns compared against the device's reported firmware.
+	// Globs rather than ranges, because vendor firmware strings are not generally
+	// orderable: "1.6.1" looks like a version and "EL-2.3b" does not, and
+	// pretending otherwise mis-scopes silently.
+	// +optional
+	Matches []string `json:"matches,omitempty"`
+
+	// below applies the quirk to firmware strictly below this dotted-numeric
+	// version, for defects with a known fix release. Only dotted-numeric firmware
+	// can be compared; a device whose firmware cannot be placed keeps the quirk
+	// and the condition says so, because the alternative is dropping a real defect
+	// on a guess.
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)*$`
+	// +optional
+	Below string `json:"below,omitempty"`
+}

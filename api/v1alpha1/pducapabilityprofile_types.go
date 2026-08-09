@@ -52,8 +52,10 @@ type PDUCapabilityProfileSpec struct {
 	Telemetry PDUCapabilityTelemetrySpec `json:"telemetry,omitempty"`
 
 	// quirks records behavior-affecting quirks consumed by planner or executor policy.
+	// +listType=map
+	// +listMapKey=name
 	// +optional
-	Quirks []string `json:"quirks,omitempty"`
+	Quirks []CapabilityQuirk `json:"quirks,omitempty"`
 }
 
 // PDUCapabilityProfileSelector defines deterministic profile match keys.

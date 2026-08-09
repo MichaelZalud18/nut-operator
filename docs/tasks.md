@@ -81,6 +81,25 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 `docs/design/capability-profiles.md`.
 
 #### Built
+- **`F-26`/`OD-22` closed: quirks carry firmware scope as a field (2026-08-09).** `Quirks` was a
+  flat `[]string`, so the bundled catalog spelled scope into the name —
+  `built-in-nut-server-not-reachable-on-firmware-1.6.1`, `firmware-before-1.4.18-had-...`. That
+  reads correctly to a person and enforces nothing: a device on current firmware inherited every
+  historical defect of its model family permanently.
+
+  Quirks are now `{name, firmware}`, and the matcher resolves scope against the device that actually
+  matched, so `MatchResult.Quirks` is the set in force rather than the family's whole history.
+  `firmware.matches` takes globs and `firmware.below` takes a dotted-numeric fix release. Ranges are
+  deliberately not general: vendor firmware strings are not orderable — `1.6.1` looks like a version
+  and `EL-2.3b` does not — so `below` accepts only dotted-numeric versions and a device whose
+  firmware cannot be placed keeps the quirk with a `QuirkFirmwareNotComparable` diagnostic. Same for
+  a device reporting no firmware at all: it keeps scoped quirks, because an unknown build cannot be
+  shown to be exempt, and dropping a real defect is worse than carrying a stale one.
+
+  Malformed scope is rejected at admission and at match time. A scope the matcher cannot evaluate
+  looks like protection and silently is not, which is the failure mode this whole item exists to
+  remove. The bundled Ubiquiti profiles are restructured accordingly, and a test asserts directly
+  that a 2.0.0 device no longer inherits the 1.6.1-era quirks while unscoped model defects survive.
 - **`OD-25` PDU capability profile scaffolding is built (2026-08-09).** `PDUCapabilityProfile` is a
   parallel cluster-scoped kind, not an extension of `UPSCapabilityProfile`: sharing one kind would
   have made its name progressively dishonest, with every UPS-specific field becoming
@@ -121,21 +140,9 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 
 #### Open Work
 
-- **`F-26` firmware-gated quirks can't expire.** `Quirks` is a flat `[]string` with no firmware
-  constraint, so a device on current firmware inherits every historical quirk of its model family
-  permanently. Decide between structured quirk objects and firmware-ranged selectors (`OD-22`).
-  The concrete case that exposed it (2026-08-04, see `docs/design/capability-profiles.md` Field
-  Verification) has since had its *data* corrected — see Built above — but the structural question
-  is untouched: quirk strings still carry firmware scope only by naming convention, and nothing
-  validates or enforces it. Needs a decision, not just another data fix.
 - **`F-27` verification lifecycle is undefined** for actuation commands: what counts as verified,
   where the result is recorded, how a verified result becomes a profile change, and whether a
   locally-verified user profile can declare support without a catalog release.
-- `OD-19` FSD usage decision (declare non-use explicitly, or adopt as the release signal) —
-  implementation would live in NUT Server / upsd, but the decision belongs to the capability/actuation
-  design.
-- `OD-20` instant-command scope and gating (`upscmd`/`upsrw` surface), starting with the
-  `shutdown.return` handshake and `test.battery.start`.
 - `OD-21` driver configuration ownership — profile vs. `UPSDevice` spec. A hybrid (profile default,
   spec override) matches the existing `RS-5` precedence pattern and is the likely shape.
 - `OD-26` provenance field semantics — advisory metadata today; decide whether it should ever gate

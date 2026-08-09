@@ -46,7 +46,7 @@ type PDUProfile struct {
 	// TelemetryAliases map a reported name onto the canonical NUT name, with the
 	// same one-directional, native-wins semantics as UPS profiles (OD-23).
 	TelemetryAliases map[string]string `json:"telemetryAliases,omitempty"`
-	Quirks           []string          `json:"quirks,omitempty"`
+	Quirks           []Quirk           `json:"quirks,omitempty"`
 }
 
 // PDUOutlets describes an outlet layout without implying control over it.
@@ -130,6 +130,9 @@ func MatchPDU(device Device, profiles []PDUProfile) (PDUMatchResult, []Diagnosti
 		return PDUMatchResult{DeviceID: device.ID}, diagnostics, nil
 	}
 
+	resolvedQuirks, quirkDiagnostics := resolveQuirks(device, best.profile.ID, best.profile.Quirks)
+	diagnostics = append(diagnostics, quirkDiagnostics...)
+
 	return PDUMatchResult{
 		DeviceID:           device.ID,
 		ProfileID:          best.profile.ID,
@@ -141,7 +144,7 @@ func MatchPDU(device Device, profiles []PDUProfile) (PDUMatchResult, []Diagnosti
 		Outlets:            best.profile.Outlets,
 		TelemetryVariables: append([]string(nil), best.profile.TelemetryVariables...),
 		TelemetryAliases:   copyAliases(best.profile.TelemetryAliases),
-		Quirks:             append([]string(nil), best.profile.Quirks...),
+		Quirks:             resolvedQuirks,
 	}, diagnostics, nil
 }
 
@@ -180,6 +183,7 @@ func validatePDUProfiles(profiles []PDUProfile) []Diagnostic {
 			universals++
 		}
 		diagnostics = append(diagnostics, validatePDUOutlets(profile)...)
+		diagnostics = append(diagnostics, validateQuirkDeclarations(profile.ID, profile.Quirks)...)
 	}
 	if universals > 1 {
 		diagnostics = append(diagnostics, Diagnostic{
@@ -237,8 +241,7 @@ func normalizePDUProfiles(profiles []PDUProfile) []PDUProfile {
 		copied := profile
 		copied.TelemetryVariables = append([]string(nil), profile.TelemetryVariables...)
 		sort.Strings(copied.TelemetryVariables)
-		copied.Quirks = append([]string(nil), profile.Quirks...)
-		sort.Strings(copied.Quirks)
+		copied.Quirks = copyQuirks(profile.Quirks)
 		copied.TelemetryAliases = copyAliases(profile.TelemetryAliases)
 		copied.Outlets.Switchable = append([]string(nil), profile.Outlets.Switchable...)
 		sort.Strings(copied.Outlets.Switchable)

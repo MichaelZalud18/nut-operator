@@ -44,7 +44,37 @@ type Profile struct {
 	TelemetryVariables []string          `json:"telemetryVariables,omitempty"`
 	TelemetryAliases   map[string]string `json:"telemetryAliases,omitempty"`
 	ActuationBehaviors []string          `json:"actuationBehaviors,omitempty"`
-	Quirks             []string          `json:"quirks,omitempty"`
+	Quirks             []Quirk           `json:"quirks,omitempty"`
+}
+
+// Quirk is a behavior-affecting device defect, optionally scoped to the firmware
+// that actually has it (OD-22).
+//
+// A bare name cannot expire. The bundled catalog carried scope in the string --
+// "built-in-nut-server-not-reachable-on-firmware-1.6.1" -- which reads correctly
+// and enforces nothing, so a device on newer firmware inherited every historical
+// defect of its model family forever (F-26). Scope has to be a field for anything
+// to act on it.
+type Quirk struct {
+	Name string `json:"name"`
+	// Firmware limits the quirk to the firmware that has it. Nil means the quirk
+	// applies to every device the profile matches, which stays the default: most
+	// quirks are properties of a model, not of a build.
+	Firmware *QuirkFirmware `json:"firmware,omitempty"`
+}
+
+// QuirkFirmware scopes a quirk to firmware versions.
+type QuirkFirmware struct {
+	// Matches are glob patterns compared against the device's firmware string.
+	// Globs rather than ranges because vendor firmware strings are not generally
+	// orderable -- "1.6.1" looks like a version and "EL-2.3b" does not, and
+	// pretending otherwise mis-scopes silently.
+	Matches []string `json:"matches,omitempty"`
+	// Below applies the quirk to firmware strictly below this dotted-numeric
+	// version. Only dotted-numeric firmware can be compared; anything else is
+	// reported rather than guessed at, because the alternative is applying a
+	// "fixed in 1.4.18" quirk to a device whose firmware string cannot be placed.
+	Below string `json:"below,omitempty"`
 }
 
 // ProfileSelector defines the deterministic match inputs for one profile.
@@ -83,7 +113,10 @@ type MatchResult struct {
 	TelemetryVariables []string          `json:"telemetryVariables,omitempty"`
 	TelemetryAliases   map[string]string `json:"telemetryAliases,omitempty"`
 	ActuationBehaviors []string          `json:"actuationBehaviors,omitempty"`
-	Quirks             []string          `json:"quirks,omitempty"`
+	// Quirks are the quirk names that apply to this device after firmware scoping.
+	// Names rather than structures: scope is resolved here, so nothing downstream
+	// has to re-decide whether a quirk is in force.
+	Quirks []string `json:"quirks,omitempty"`
 }
 
 // SupportsTriggerType reports whether the matched profile's declared telemetry

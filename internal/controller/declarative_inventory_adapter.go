@@ -111,7 +111,7 @@ func capabilityProfileFromUPSCapabilityProfile(obj *powerv1alpha1.UPSCapabilityP
 		TelemetryVariables: append([]string(nil), obj.Spec.Telemetry.Variables...),
 		TelemetryAliases:   copyStringMap(obj.Spec.Telemetry.Aliases),
 		ActuationBehaviors: append([]string(nil), obj.Spec.Actuation.Behaviors...),
-		Quirks:             append([]string(nil), obj.Spec.Quirks...),
+		Quirks:             capabilityQuirksFromCRD(obj.Spec.Quirks),
 	}
 }
 
@@ -135,8 +135,28 @@ func pduCapabilityProfileFromCRD(obj *powerv1alpha1.PDUCapabilityProfile) capabi
 		},
 		TelemetryVariables: append([]string(nil), obj.Spec.Telemetry.Variables...),
 		TelemetryAliases:   copyStringMap(obj.Spec.Telemetry.Aliases),
-		Quirks:             append([]string(nil), obj.Spec.Quirks...),
+		Quirks:             capabilityQuirksFromCRD(obj.Spec.Quirks),
 	}
+}
+
+// capabilityQuirksFromCRD converts declared quirks, carrying firmware scope
+// through so the matcher can decide which ones are in force (F-26).
+func capabilityQuirksFromCRD(quirks []powerv1alpha1.CapabilityQuirk) []capability.Quirk {
+	if len(quirks) == 0 {
+		return nil
+	}
+	converted := make([]capability.Quirk, 0, len(quirks))
+	for _, quirk := range quirks {
+		next := capability.Quirk{Name: quirk.Name}
+		if quirk.Firmware != nil {
+			next.Firmware = &capability.QuirkFirmware{
+				Matches: append([]string(nil), quirk.Firmware.Matches...),
+				Below:   quirk.Firmware.Below,
+			}
+		}
+		converted = append(converted, next)
+	}
+	return converted
 }
 
 // copyStringMap defensively copies an alias map so a cached API object can

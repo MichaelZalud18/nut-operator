@@ -70,8 +70,23 @@ func TestBundledCatalogManifestMatchesCodeCatalog(t *testing.T) {
 		if !reflect.DeepEqual(manifest.Spec.Actuation.Behaviors, bundled.ActuationBehaviors) {
 			t.Fatalf("manifest profile %q actuation = %#v, want %#v", bundled.ID, manifest.Spec.Actuation.Behaviors, bundled.ActuationBehaviors)
 		}
-		if !reflect.DeepEqual(manifest.Spec.Quirks, bundled.Quirks) {
-			t.Fatalf("manifest profile %q quirks = %#v, want %#v", bundled.ID, manifest.Spec.Quirks, bundled.Quirks)
+		manifestQuirks := make([]Quirk, 0, len(manifest.Spec.Quirks))
+		for _, quirk := range manifest.Spec.Quirks {
+			converted := Quirk{Name: quirk.Name}
+			if quirk.Firmware != nil {
+				converted.Firmware = &QuirkFirmware{
+					Matches: append([]string(nil), quirk.Firmware.Matches...),
+					Below:   quirk.Firmware.Below,
+				}
+			}
+			manifestQuirks = append(manifestQuirks, converted)
+		}
+		// Compared after the same normalization the matcher applies, so ordering in
+		// the YAML is free while content still has to agree exactly. Firmware scope
+		// is part of that content: a manifest that drops a scope would otherwise
+		// silently reintroduce F-26.
+		if !reflect.DeepEqual(copyQuirks(manifestQuirks), copyQuirks(bundled.Quirks)) {
+			t.Fatalf("manifest profile %q quirks = %#v, want %#v", bundled.ID, manifestQuirks, bundled.Quirks)
 		}
 	}
 }
@@ -133,6 +148,12 @@ type manifestCapabilityProfile struct {
 		Actuation struct {
 			Behaviors []string `yaml:"behaviors"`
 		} `yaml:"actuation"`
-		Quirks []string `yaml:"quirks"`
+		Quirks []struct {
+			Name     string `yaml:"name"`
+			Firmware *struct {
+				Matches []string `yaml:"matches"`
+				Below   string   `yaml:"below"`
+			} `yaml:"firmware"`
+		} `yaml:"quirks"`
 	} `yaml:"spec"`
 }

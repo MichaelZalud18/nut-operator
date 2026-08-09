@@ -130,9 +130,43 @@ func validateUPSCapabilityProfileAdmission(obj *powerv1alpha1.UPSCapabilityProfi
 	}
 	errs = append(errs, validateStringSet(specPath.Child("telemetry").Child("variables"), obj.Spec.Telemetry.Variables)...)
 	errs = append(errs, validateStringSet(specPath.Child("actuation").Child("behaviors"), obj.Spec.Actuation.Behaviors)...)
-	errs = append(errs, validateStringSet(specPath.Child("quirks"), obj.Spec.Quirks)...)
+	errs = append(errs, validateCapabilityQuirks(specPath.Child("quirks"), obj.Spec.Quirks)...)
 
 	return newInvalidAdmissionError("UPSCapabilityProfile", obj, errs)
+}
+
+// validateCapabilityQuirks rejects quirk declarations the matcher cannot evaluate.
+//
+// Firmware scope is only worth having if a malformed scope is caught at admission
+// rather than discovered as a quirk that silently never applies (F-26).
+func validateCapabilityQuirks(quirksPath *field.Path, quirks []powerv1alpha1.CapabilityQuirk) field.ErrorList {
+	var errs field.ErrorList
+	seen := map[string]struct{}{}
+	for i, quirk := range quirks {
+		quirkPath := quirksPath.Index(i)
+		if quirk.Name == "" {
+			errs = append(errs, field.Required(quirkPath.Child("name"), "quirk name is required"))
+			continue
+		}
+		if _, duplicate := seen[quirk.Name]; duplicate {
+			errs = append(errs, field.Duplicate(quirkPath.Child("name"), quirk.Name))
+		}
+		seen[quirk.Name] = struct{}{}
+		if quirk.Firmware == nil {
+			continue
+		}
+		for j, pattern := range quirk.Firmware.Matches {
+			if pattern == "" {
+				errs = append(errs, field.Required(quirkPath.Child("firmware", "matches").Index(j), "firmware glob cannot be empty"))
+				continue
+			}
+			if _, err := path.Match(pattern, "probe"); err != nil {
+				errs = append(errs, field.Invalid(quirkPath.Child("firmware", "matches").Index(j), pattern,
+					"must be a valid path.Match glob"))
+			}
+		}
+	}
+	return errs
 }
 
 func validateStringSet(path *field.Path, values []string) field.ErrorList {

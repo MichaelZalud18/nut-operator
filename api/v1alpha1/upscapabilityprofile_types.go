@@ -39,8 +39,10 @@ type UPSCapabilityProfileSpec struct {
 	Actuation UPSCapabilityActuationSpec `json:"actuation,omitempty"`
 
 	// quirks records behavior-affecting quirks consumed by planner or executor policy.
+	// +listType=map
+	// +listMapKey=name
 	// +optional
-	Quirks []string `json:"quirks,omitempty"`
+	Quirks []CapabilityQuirk `json:"quirks,omitempty"`
 }
 
 // UPSCapabilityProfileStatus defines the observed state of UPSCapabilityProfile.

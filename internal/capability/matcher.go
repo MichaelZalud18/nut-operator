@@ -60,6 +60,11 @@ func Match(device Device, profiles []Profile) (MatchResult, []Diagnostic, error)
 	})
 
 	best := candidates[0]
+	// Quirk scope is resolved here, against the device that actually matched, so
+	// downstream consumers get the quirks in force rather than the model family's
+	// full history (F-26).
+	resolvedQuirks, quirkDiagnostics := resolveQuirks(device, best.profile.ID, best.profile.Quirks)
+	diagnostics = append(diagnostics, quirkDiagnostics...)
 	result := MatchResult{
 		DeviceID:           device.ID,
 		ProfileID:          best.profile.ID,
@@ -71,7 +76,7 @@ func Match(device Device, profiles []Profile) (MatchResult, []Diagnostic, error)
 		TelemetryVariables: append([]string(nil), best.profile.TelemetryVariables...),
 		TelemetryAliases:   copyAliases(best.profile.TelemetryAliases),
 		ActuationBehaviors: append([]string(nil), best.profile.ActuationBehaviors...),
-		Quirks:             append([]string(nil), best.profile.Quirks...),
+		Quirks:             resolvedQuirks,
 	}
 	if result.Unidentified {
 		diagnostics = append(diagnostics, Diagnostic{
@@ -248,6 +253,7 @@ func validateProfiles(profiles []Profile) []Diagnostic {
 			}
 		}
 		diagnostics = append(diagnostics, validateProfileAliases(profile)...)
+		diagnostics = append(diagnostics, validateQuirkDeclarations(profile.ID, profile.Quirks)...)
 		if profile.Selector.Universal {
 			hasUniversal = true
 		}
@@ -344,10 +350,9 @@ func normalizeProfiles(profiles []Profile) []Profile {
 		normalized[i].TelemetryVariables = append([]string(nil), normalized[i].TelemetryVariables...)
 		normalized[i].TelemetryAliases = copyAliases(normalized[i].TelemetryAliases)
 		normalized[i].ActuationBehaviors = append([]string(nil), normalized[i].ActuationBehaviors...)
-		normalized[i].Quirks = append([]string(nil), normalized[i].Quirks...)
+		normalized[i].Quirks = copyQuirks(normalized[i].Quirks)
 		sort.Strings(normalized[i].TelemetryVariables)
 		sort.Strings(normalized[i].ActuationBehaviors)
-		sort.Strings(normalized[i].Quirks)
 	}
 	sort.SliceStable(normalized, func(i, j int) bool {
 		left, right := normalized[i], normalized[j]

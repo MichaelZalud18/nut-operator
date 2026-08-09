@@ -242,7 +242,7 @@ func TestMatchResultCarriesProfileContent(t *testing.T) {
 			TelemetryVariables: []string{"battery.charge.low", "battery.runtime", "ups.status"},
 			TelemetryAliases:   map[string]string{"battery.low": "battery.charge.low"},
 			ActuationBehaviors: []string{"shutdown.return"},
-			Quirks:             []string{"example-quirk"},
+			Quirks:             []Quirk{{Name: "example-quirk"}},
 		},
 	}
 

@@ -28,9 +28,14 @@ const (
 	// field testing on firmware 1.6.1, so they are replaced by
 	// firmware-scoped statements of what was actually observed rather than left
 	// as unscoped claims a current device would inherit forever.
-	quirkUbiquitiBuiltInNUTServerUnreachable = "built-in-nut-server-not-reachable-on-firmware-1.6.1"
-	quirkUbiquitiSNMPv3Only                  = "snmpv3-only-no-community-string-on-firmware-1.6.1"
-	quirkUbiquitiPre1418ProtocolBugs         = "firmware-before-1.4.18-had-nut-protocol-response-bugs"
+	// Quirk names no longer carry firmware scope. They used to -- names like
+	// "built-in-nut-server-not-reachable-on-firmware-1.6.1" read correctly and
+	// enforced nothing, so a device on newer firmware inherited them forever
+	// (F-26). Scope now lives in the Firmware field, where the matcher can act
+	// on it, and the names say only what the defect is.
+	quirkUbiquitiBuiltInNUTServerUnreachable = "built-in-nut-server-not-reachable"
+	quirkUbiquitiSNMPv3Only                  = "snmpv3-only-no-community-string"
+	quirkUbiquitiPre1418ProtocolBugs         = "nut-protocol-response-bugs"
 	quirkUbiquitiNoConfirmedInstcmds         = "instant-commands-not-confirmed"
 	quirkUbiquitiNonstandardLowLevel         = "reports-battery.low-instead-of-battery.charge.low"
 	quirkUbiquitiTowerPowerMayVary           = "tower-output-power-and-current-may-be-firmware-or-load-dependent"
@@ -66,13 +71,29 @@ var (
 		"ups.type",
 	}
 
-	ubiquitiCommonQuirks = []string{
-		quirkUbiquitiBuiltInNUTServerUnreachable,
-		quirkUbiquitiSNMPv3Only,
-		quirkUbiquitiPre1418ProtocolBugs,
-		quirkUbiquitiNoConfirmedInstcmds,
-		quirkUbiquitiNonstandardLowLevel,
-		quirkUbiquitiCredentialedReads,
+	ubiquitiCommonQuirks = []Quirk{
+		// Observed on 1.6.1. Scoped to that build rather than to the family: a
+		// later firmware that fixes it should stop carrying it, which is the
+		// whole point of F-26.
+		{
+			Name:     quirkUbiquitiBuiltInNUTServerUnreachable,
+			Firmware: &QuirkFirmware{Matches: []string{"1.6.1"}},
+		},
+		{
+			Name:     quirkUbiquitiSNMPv3Only,
+			Firmware: &QuirkFirmware{Matches: []string{"1.6.1"}},
+		},
+		// Fixed in 1.4.18, so it applies strictly below that.
+		{
+			Name:     quirkUbiquitiPre1418ProtocolBugs,
+			Firmware: &QuirkFirmware{Below: "1.4.18"},
+		},
+		// The remainder are unscoped on purpose: they are properties of the
+		// model as shipped, with no firmware known to fix them. Inventing a
+		// bound here would be asserting a fix nobody has verified.
+		{Name: quirkUbiquitiNoConfirmedInstcmds},
+		{Name: quirkUbiquitiNonstandardLowLevel},
+		{Name: quirkUbiquitiCredentialedReads},
 	}
 
 	// These devices report the low-battery level under a non-standard name.
@@ -109,8 +130,8 @@ func BundledProfiles() []Profile {
 				"ups.temperature",
 			),
 			TelemetryAliases: ubiquitiCommonTelemetryAliases,
-			Quirks: append(append([]string{}, ubiquitiCommonQuirks...),
-				quirkUbiquitiTowerPowerMayVary,
+			Quirks: append(append([]Quirk{}, ubiquitiCommonQuirks...),
+				Quirk{Name: quirkUbiquitiTowerPowerMayVary},
 			),
 		},
 		{
@@ -133,7 +154,7 @@ func copyProfiles(profiles []Profile) []Profile {
 		profile.TelemetryVariables = append([]string(nil), profile.TelemetryVariables...)
 		profile.TelemetryAliases = copyAliases(profile.TelemetryAliases)
 		profile.ActuationBehaviors = append([]string(nil), profile.ActuationBehaviors...)
-		profile.Quirks = append([]string(nil), profile.Quirks...)
+		profile.Quirks = copyQuirks(profile.Quirks)
 		copied = append(copied, profile)
 	}
 	return copied

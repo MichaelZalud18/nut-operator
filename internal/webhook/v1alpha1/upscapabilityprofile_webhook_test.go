@@ -60,7 +60,7 @@ var _ = Describe("UPSCapabilityProfile Webhook", func() {
 				Telemetry: powerv1alpha1.UPSCapabilityTelemetrySpec{
 					Variables: []string{"ups.status", "battery.runtime"},
 				},
-				Quirks: []string{"built-in-nut-server"},
+				Quirks: []powerv1alpha1.CapabilityQuirk{{Name: "built-in-nut-server"}},
 			}
 
 			_, err := validator.ValidateCreate(ctx, obj)
