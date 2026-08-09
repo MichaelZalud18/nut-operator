@@ -643,13 +643,25 @@ spec:
 			}
 			Eventually(verifyOnBattery, 150*time.Second, 2*time.Second).Should(Succeed())
 
+			// lastStatus is asserted by token rather than by whole string. NUT owns that field's
+			// contents and adds to them between releases: 2.8.2's dummy-ups reports "OB LB" for
+			// this fixture and 2.8.5 reports "OB LB DISCHRG", which turned an operand upgrade into
+			// a red suite even though the operator classified DISCHRG correctly the whole time.
+			// What this test is actually about is the normalization the operator owns -- OB plus LB
+			// becomes LowBattery, and the charge reading survives the round trip -- so it asserts
+			// that and lets NUT add tokens.
 			By("observing the scripted transition into LowBattery, with matching telemetry values")
 			verifyLowBattery := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "upsdevice", "simulation-e2e-ups",
-					"-o", "jsonpath={.status.phase} {.status.lastStatus} {.status.batteryChargePercent}")
+					"-o", "jsonpath={.status.phase}|{.status.lastStatus}|{.status.batteryChargePercent}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("LowBattery OB LB 8"))
+
+				fields := strings.Split(output, "|")
+				g.Expect(fields).To(HaveLen(3), "unexpected jsonpath output %q", output)
+				g.Expect(fields[0]).To(Equal("LowBattery"))
+				g.Expect(fields[2]).To(Equal("8"))
+				g.Expect(strings.Fields(fields[1])).To(ContainElements("OB", "LB"))
 			}
 			Eventually(verifyLowBattery, 150*time.Second, 2*time.Second).Should(Succeed())
 		})
@@ -772,13 +784,21 @@ spec:
 			}
 			Eventually(verifyNUTServerReady, 3*time.Minute).Should(Succeed())
 
+			// Decoded values are asserted exactly, because decoding the fixture's OIDs is what this
+			// test exists to prove. lastStatus is asserted by token for the reason in the dummy-ups
+			// test above: NUT owns that field and adds to it between releases.
 			By("confirming the telemetry poller decoded the fixture's real SNMP values correctly")
 			verifyTelemetry := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "upsdevice", "snmp-conformance-ups",
-					"-o", "jsonpath={.status.phase} {.status.lastStatus} {.status.batteryChargePercent} {.status.loadPercent} {.status.runtimeSeconds}")
+					"-o", "jsonpath={.status.phase}|{.status.lastStatus}|{.status.batteryChargePercent} {.status.loadPercent} {.status.runtimeSeconds}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Online OL 100 10 3600"))
+
+				fields := strings.Split(output, "|")
+				g.Expect(fields).To(HaveLen(3), "unexpected jsonpath output %q", output)
+				g.Expect(fields[0]).To(Equal("Online"))
+				g.Expect(fields[2]).To(Equal("100 10 3600"))
+				g.Expect(strings.Fields(fields[1])).To(ContainElement("OL"))
 			}
 			Eventually(verifyTelemetry, 90*time.Second, 2*time.Second).Should(Succeed())
 		})
