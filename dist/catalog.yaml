@@ -1,4 +1,85 @@
 apiVersion: power.zalud.io/v1alpha1
+kind: PDUCapabilityProfile
+metadata:
+  labels:
+    app.kubernetes.io/component: capability-catalog
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: nut-operator
+    power.zalud.io/catalog: bundled
+    power.zalud.io/vendor: nut
+  name: nut-bundled-unidentified-pdu
+spec:
+  selector:
+    universal: true
+  telemetry:
+    variables:
+    - device.mfr
+    - device.model
+    - device.type
+  version: 1.0.0
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PDUCapabilityProfile
+metadata:
+  labels:
+    app.kubernetes.io/component: capability-catalog
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: nut-operator
+    power.zalud.io/catalog: bundled
+    power.zalud.io/vendor: ubiquiti
+  name: ubiquiti-usp-pdu-pro
+spec:
+  outlets:
+    count: 8
+    switchable:
+    - outlet.1
+    - outlet.2
+    - outlet.3
+    - outlet.4
+    - outlet.5
+    - outlet.6
+    - outlet.7
+    - outlet.8
+  selector:
+    modelGlob: USP-PDU-Pro*
+  telemetry:
+    variables:
+    - device.mfr
+    - device.model
+    - device.serial
+    - device.type
+    - input.current
+    - input.frequency
+    - input.voltage
+    - outlet.count
+    - outlet.1.current
+    - outlet.1.power
+    - outlet.1.status
+    - outlet.2.current
+    - outlet.2.power
+    - outlet.2.status
+    - outlet.3.current
+    - outlet.3.power
+    - outlet.3.status
+    - outlet.4.current
+    - outlet.4.power
+    - outlet.4.status
+    - outlet.5.current
+    - outlet.5.power
+    - outlet.5.status
+    - outlet.6.current
+    - outlet.6.power
+    - outlet.6.status
+    - outlet.7.current
+    - outlet.7.power
+    - outlet.7.status
+    - outlet.8.current
+    - outlet.8.power
+    - outlet.8.status
+    - ups.status
+  version: 1.0.0
+---
+apiVersion: power.zalud.io/v1alpha1
 kind: UPSCapabilityProfile
 metadata:
   labels:
@@ -7,14 +88,14 @@ metadata:
     app.kubernetes.io/name: nut-operator
     power.zalud.io/catalog: bundled
     power.zalud.io/vendor: nut
-  name: nut-bundled-universal-floor
+  name: nut-bundled-unidentified-device
 spec:
   selector:
     universal: true
   telemetry:
     variables:
     - ups.status
-  version: 0.1.0
+  version: 1.0.0
 ---
 apiVersion: power.zalud.io/v1alpha1
 kind: UPSCapabilityProfile
@@ -28,8 +109,8 @@ metadata:
   name: ubiquiti-unifi-ups-2u
 spec:
   quirks:
-  - built-in-nut-server
-  - snmp-not-supported-by-ups
+  - built-in-nut-server-not-reachable-on-firmware-1.6.1
+  - snmpv3-only-no-community-string-on-firmware-1.6.1
   - firmware-before-1.4.18-had-nut-protocol-response-bugs
   - instant-commands-not-confirmed
   - reports-battery.low-instead-of-battery.charge.low
@@ -37,8 +118,11 @@ spec:
   selector:
     modelGlob: 2U_*VA_*V
   telemetry:
+    aliases:
+      battery.low: battery.charge.low
     variables:
     - battery.charge
+    - battery.charge.low
     - battery.low
     - battery.runtime
     - battery.voltage
@@ -62,7 +146,7 @@ spec:
     - ups.test.interval
     - ups.test.result
     - ups.type
-  version: 0.1.0
+  version: 1.0.0
 ---
 apiVersion: power.zalud.io/v1alpha1
 kind: UPSCapabilityProfile
@@ -76,8 +160,8 @@ metadata:
   name: ubiquiti-unifi-ups-tower
 spec:
   quirks:
-  - built-in-nut-server
-  - snmp-not-supported-by-ups
+  - built-in-nut-server-not-reachable-on-firmware-1.6.1
+  - snmpv3-only-no-community-string-on-firmware-1.6.1
   - firmware-before-1.4.18-had-nut-protocol-response-bugs
   - instant-commands-not-confirmed
   - reports-battery.low-instead-of-battery.charge.low
@@ -86,8 +170,11 @@ spec:
   selector:
     modelGlob: TOWER_*VA_*V
   telemetry:
+    aliases:
+      battery.low: battery.charge.low
     variables:
     - battery.charge
+    - battery.charge.low
     - battery.low
     - battery.runtime
     - battery.voltage
@@ -112,4 +199,4 @@ spec:
     - ups.test.result
     - ups.type
     - ups.temperature
-  version: 0.1.0
+  version: 1.0.0

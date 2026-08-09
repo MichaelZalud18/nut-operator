@@ -222,10 +222,14 @@ declarations once instant commands enter scope under OD-20.
 kind would keep the CRD count lower but make the name progressively misleading and force
 UPS-specific fields to be optional-and-ignored for PDUs. A separate kind keeps each schema honest.
 
-**Scope for v1: scaffolding only.** The kind may exist with a minimal schema and a matcher path. It
-is not a v1 feature, carries no bundled catalog entries, and no PDU actuation is implemented. The
-purpose is to establish the shape so that PDU support is an additive change later rather than a
-refactor of the UPS profile schema.
+**Scope for v1: scaffolding only.** The kind exists with a minimal schema and a matcher path, and
+no PDU actuation is implemented. The purpose is to establish the shape so that PDU support is an
+additive change later rather than a refactor of the UPS profile schema.
+
+Bundled catalog entries were originally excluded from that scope. They are included now: a schema
+with no real device in it is a schema nobody has tested, and the first real profile is what turns
+"the shape is established" from an assertion into something checkable. `spec.outlets` describes
+layout only — declaring that an outlet switches is not a claim that this operator switches it.
 
 Shared machinery that should be factored rather than duplicated when this is built: the deterministic
 precedence chain (RS-5), semver rules (SB-9), the unidentified-device profile concept (PL-33), and the

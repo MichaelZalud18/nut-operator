@@ -262,6 +262,13 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "upscapabilityprofile")
 		os.Exit(1)
 	}
+	if err := (&controller.PDUCapabilityProfileReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "pducapabilityprofile")
+		os.Exit(1)
+	}
 	if err := (&controller.UPSCapabilityProbeReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),

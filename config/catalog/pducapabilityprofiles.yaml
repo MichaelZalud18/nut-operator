@@ -1,0 +1,93 @@
+---
+# Bundled PDU capability profiles.
+#
+# The PDU kind is scaffolding in v1 (OD-25): profiles describe devices, and no PDU
+# actuation is implemented. Outlet declarations here record what the hardware can
+# do, not what this operator will do to it -- switching waits on OD-20, tracked in
+# docs/tasks-post-v1.md.
+apiVersion: power.zalud.io/v1alpha1
+kind: PDUCapabilityProfile
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/component: capability-catalog
+    app.kubernetes.io/managed-by: kustomize
+    power.zalud.io/catalog: bundled
+    power.zalud.io/vendor: nut
+  name: nut-bundled-unidentified-pdu
+spec:
+  version: "1.0.0"
+  selector:
+    universal: true
+  telemetry:
+    variables:
+      - device.mfr
+      - device.model
+      - device.type
+---
+# Ubiquiti USP-PDU-Pro. Metered and switched outlets over SNMP.
+#
+# Outlet layout is the eight switchable IEC C13 outlets; the device also carries
+# unswitched high-power outlets, which are deliberately not listed -- an outlet
+# that cannot be switched has no entry in `switchable`, and inventing identifiers
+# for them would imply control that does not exist.
+apiVersion: power.zalud.io/v1alpha1
+kind: PDUCapabilityProfile
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/component: capability-catalog
+    app.kubernetes.io/managed-by: kustomize
+    power.zalud.io/catalog: bundled
+    power.zalud.io/vendor: ubiquiti
+  name: ubiquiti-usp-pdu-pro
+spec:
+  version: "1.0.0"
+  selector:
+    modelGlob: USP-PDU-Pro*
+  outlets:
+    count: 8
+    switchable:
+      - outlet.1
+      - outlet.2
+      - outlet.3
+      - outlet.4
+      - outlet.5
+      - outlet.6
+      - outlet.7
+      - outlet.8
+  telemetry:
+    variables:
+      - device.mfr
+      - device.model
+      - device.serial
+      - device.type
+      - input.current
+      - input.frequency
+      - input.voltage
+      - outlet.count
+      - outlet.1.current
+      - outlet.1.power
+      - outlet.1.status
+      - outlet.2.current
+      - outlet.2.power
+      - outlet.2.status
+      - outlet.3.current
+      - outlet.3.power
+      - outlet.3.status
+      - outlet.4.current
+      - outlet.4.power
+      - outlet.4.status
+      - outlet.5.current
+      - outlet.5.power
+      - outlet.5.status
+      - outlet.6.current
+      - outlet.6.power
+      - outlet.6.status
+      - outlet.7.current
+      - outlet.7.power
+      - outlet.7.status
+      - outlet.8.current
+      - outlet.8.power
+      - outlet.8.status
+      - ups.status

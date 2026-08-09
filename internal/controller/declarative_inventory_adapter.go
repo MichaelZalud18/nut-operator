@@ -115,6 +115,30 @@ func capabilityProfileFromUPSCapabilityProfile(obj *powerv1alpha1.UPSCapabilityP
 	}
 }
 
+// pduCapabilityProfileFromCRD converts the PDU kind into the matcher's shape.
+func pduCapabilityProfileFromCRD(obj *powerv1alpha1.PDUCapabilityProfile) capability.PDUProfile {
+	selector := obj.Spec.Selector
+	return capability.PDUProfile{
+		ID:      obj.Name,
+		Version: obj.Spec.Version,
+		Source:  capability.ProfileSourceCRD,
+		Selector: capability.ProfileSelector{
+			Model:        selector.Model,
+			Firmware:     selector.Firmware,
+			ModelGlob:    selector.ModelGlob,
+			DriverFamily: selector.DriverFamily,
+			Universal:    boolPointerValue(selector.Universal),
+		},
+		Outlets: capability.PDUOutlets{
+			Count:      int(obj.Spec.Outlets.Count),
+			Switchable: append([]string(nil), obj.Spec.Outlets.Switchable...),
+		},
+		TelemetryVariables: append([]string(nil), obj.Spec.Telemetry.Variables...),
+		TelemetryAliases:   copyStringMap(obj.Spec.Telemetry.Aliases),
+		Quirks:             append([]string(nil), obj.Spec.Quirks...),
+	}
+}
+
 // copyStringMap defensively copies an alias map so a cached API object can
 // never be mutated through the profile the resolver hands downstream.
 func copyStringMap(values map[string]string) map[string]string {

@@ -81,6 +81,27 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 `docs/design/capability-profiles.md`.
 
 #### Built
+- **`OD-25` PDU capability profile scaffolding is built (2026-08-09).** `PDUCapabilityProfile` is a
+  parallel cluster-scoped kind, not an extension of `UPSCapabilityProfile`: sharing one kind would
+  have made its name progressively dishonest, with every UPS-specific field becoming
+  optional-and-ignored for PDUs. `internal/capability.MatchPDU` reuses the UPS precedence chain,
+  semver comparison, and source ranking by calling them rather than copying them — `OD-25` names
+  exactly that machinery as what must be factored, and the selector contract is now one
+  `validateCapabilityProfileContract` shared by both kinds.
+
+  `spec.outlets` declares layout without implying control: a count, and the outlets that switch
+  independently. A non-zero count with nothing switchable is a metered-only PDU, which is a real
+  device class rather than a malformed profile. More switchable outlets than outlets is rejected at
+  both admission and match time rather than trimmed, because silently narrowing a capability
+  declaration is how a device ends up believed less capable than it is with nothing saying so.
+
+  Actuation is deliberately absent — declaring which outlets switch is not the same as switching
+  them, and that waits on `OD-20` in [tasks-post-v1.md](tasks-post-v1.md).
+- **Bundled PDU catalog entries (2026-08-09).** An unidentified-PDU fallback, and
+  `ubiquiti-usp-pdu-pro` covering the eight switchable C13 outlets with per-outlet current, power,
+  and status telemetry. The design doc had said "no bundled catalog entries" for v1; a real profile
+  is what proves the schema holds a real device, so the doc is corrected rather than the schema left
+  untested.
 
 - `UPSCapabilityProfile` CRD and the five-tier match precedence chain.
 - Bundled catalog (`config/catalog/upscapabilityprofiles.yaml`) at `1.0.0`; Ubiquiti quirks
@@ -117,7 +138,6 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
   `shutdown.return` handshake and `test.battery.start`.
 - `OD-21` driver configuration ownership — profile vs. `UPSDevice` spec. A hybrid (profile default,
   spec override) matches the existing `RS-5` precedence pattern and is the likely shape.
-- `OD-25` PDU capability profile kind — scaffolding only, not started.
 - `OD-26` provenance field semantics — advisory metadata today; decide whether it should ever gate
   resolution (e.g. `Community` profiles requiring opt-in).
 
@@ -382,19 +402,11 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 
 #### Deferred / Declined (2026-08-03)
 
-- `OD-20` instant command scope, narrowed and deprioritized (2026-08-03): the operator's actuator
-  already owns real shutdown (nodes and workloads). The only remaining use case for NUT instant
-  commands is the tail end after the operator has already finished — `shutdown.return` stops the UPS
-  discharging into a dead load and auto-restores power when line power returns. Redundant with the
-  actuator for anything actually running in the cluster; only matters for non-cluster hardware on
-  the same UPS or battery-waste cleanup. Not pursued unless that narrow case becomes a real need.
 - SNMPv3 coverage for the `snmpsim` driver-conformance fixture (currently SNMPv2c community-auth
   only, see Built above) — would need `snmpsim`'s USM configuration wired to match a `credentialSecretRef`
   fixture Secret. Not pursued: the conformance question (OID/decode correctness) is orthogonal to the
   auth mode, and production hardware's SNMPv3 path is already exercised for real in
   `docs/audits/nut-usage-audit.md`'s alpha-hardware findings.
-- `OD-19` FSD usage — deferred. Staying on the executor's own signal file; no plan to also wire up
-  NUT's native forced-shutdown broadcast.
 - `F-17` follow-on (per-device telemetry-freshness readiness) — declined. Proving the driver
   connected (2026-08-04: `upsdReadinessProbeScript`, a real `ups.status` query) is the right
   stopping point. Tying pod readiness to live telemetry *freshness* on top of that would drop every

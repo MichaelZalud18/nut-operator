@@ -35,6 +35,80 @@ control surfaces outside the NUT-network-only posture that the security narrativ
 
 Reversing this is a scope decision, not a planning one.
 
+### PDU outlet control (`OD-25` actuation half)
+
+The PDU capability kind and its matcher path are v1 scaffolding and are built. Actually switching
+outlets is not: it needs `OD-20` to settle which NUT instant commands enter scope, and it is the
+same control-surface question as `OD-24`.
+
+A profile can declare that a model has switchable outlets. Nothing acts on that declaration, and
+`UPSCapabilityProfile.spec.actuation.behaviors` has the same dead-field shape until `OD-20` lands.
+
+---
+
+## Telemetry & Triggers
+
+### NUT instant commands, including power cycling (`OD-20`)
+
+`upscmd` and `upsrw` expose instant commands and writable variables — `shutdown.return`,
+`load.off`, `load.on`, outlet cycling. `shutdown.return` is the interesting one: it stops the UPS
+discharging into a dead load once the cluster is down, and restores power automatically when line
+power returns.
+
+**Why it is post-v1:** the operator's own actuator already owns real shutdown for nodes and
+workloads, so instant commands are redundant for anything running in the cluster. What is left is
+the tail end after the operator has finished, plus non-cluster hardware sharing the UPS. That is a
+real use case and not a v1 one.
+
+It is also the riskiest surface in NUT — these commands cut power to equipment — so it is bounded
+by `OD-1`: anything touching power *return* is recovery orchestration, which is out of project
+scope entirely. A v2 design has to separate "stop wasting battery" from "bring things back up",
+because only the first is ours.
+
+### NUT forced-shutdown broadcast, FSD (`OD-19`)
+
+NUT's native FSD broadcast is the conventional way a primary tells its secondaries to shut down.
+The operator uses its own signal file instead, which is deliberate: the signal file carries flow
+identity, a timestamp, and a reason, and is staleness-checked on read. FSD carries none of that.
+
+**Why it is post-v1:** adopting FSD as an *additional* release signal would make shutdown
+observable through standard NUT tooling, which has real operational value. It is not required for
+correctness, and two release paths need a decision about which one wins before either is wired.
+
+---
+
+## Node Agent / DaemonSet
+
+### USB and serial UPS support (`OD-10`)
+
+Local USB and serial UPS connectivity is excluded from v1 by `RB-1`. Only network-reachable devices
+are supported, and the driver allowlist enforces it.
+
+**Why it is post-v1:** this is load-bearing for the security posture, not an oversight. The absence
+of host device mounts, host device access, and privileged mode in `docs/images.md` and
+`docs/architecture.md` is justified on the grounds that UPS reachability is network-only. Most
+community NUT container images assume direct USB access and document privileged containers, which
+is precisely what `RB-1` refuses.
+
+`SB-4` already names the shape the eventual support must take: a third container or a separate
+DaemonSet with its own isolated actuation boundary and its own security rationale. It cannot be a
+flag on the existing agent.
+
+### Older NUT and UPS support via a `dummy-ups` translation layer
+
+The operands build NUT 2.8.5 from source (`OD-32`), and the API assumes a NUT new enough to carry
+the driver and TLS behavior the operator renders. Hardware or sites pinned to an older NUT, or to a
+UPS whose only viable driver is older, have no supported path today.
+
+**Why it is post-v1:** `dummy-ups` in repeater mode already proxies an upstream NUT server — that
+is how `spec.upstreamNUT` works, and it is how `F-22` was corrected. The same mechanism is the
+natural translation layer for an older or non-conforming upstream: the operator talks to a modern
+`upsd` it controls, and that server repeats from whatever the site actually runs.
+
+Nothing about this is designed yet. It is recorded because the alternative — widening the operand
+images or the driver allowlist to accommodate old versions — would undo `OD-32` and `RB-2`, and
+that trade should be made deliberately rather than discovered.
+
 ---
 
 ## NUT Server / upsd

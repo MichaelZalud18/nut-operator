@@ -416,14 +416,38 @@ func isSupportedInventoryEntityKind(kind powerv1alpha1.PowerInventoryEntityKind)
 }
 
 func validateUPSCapabilityProfile(obj *powerv1alpha1.UPSCapabilityProfile) validationResult {
-	if obj.Spec.Version == "" {
+	selector := obj.Spec.Selector
+	return validateCapabilityProfileContract("UPS", obj.Spec.Version, capabilityProfileSelectorFields{
+		Model:        selector.Model,
+		Firmware:     selector.Firmware,
+		ModelGlob:    selector.ModelGlob,
+		DriverFamily: selector.DriverFamily,
+		Universal:    selector.Universal != nil && *selector.Universal,
+	})
+}
+
+// capabilityProfileSelectorFields is the selector shape both profile kinds share.
+//
+// OD-25 calls for the precedence chain and semver rules to be factored rather than
+// duplicated when the PDU kind arrives. Two copies of "exactly one match tier, and
+// firmware only narrows a model" would agree on the day they were written and
+// diverge the first time either was corrected.
+type capabilityProfileSelectorFields struct {
+	Model        string
+	Firmware     string
+	ModelGlob    string
+	DriverFamily string
+	Universal    bool
+}
+
+func validateCapabilityProfileContract(kind string, version string, selector capabilityProfileSelectorFields) validationResult {
+	if version == "" {
 		return rejected("ProfileVersionRequired", "spec.version is required")
 	}
-	if !semanticVersionPattern.MatchString(obj.Spec.Version) {
-		return rejected("ProfileVersionInvalid", "spec.version %q must be semantic version x.y.z, optionally prefixed with v and with prerelease/build metadata", obj.Spec.Version)
+	if !semanticVersionPattern.MatchString(version) {
+		return rejected("ProfileVersionInvalid", "spec.version %q must be semantic version x.y.z, optionally prefixed with v and with prerelease/build metadata", version)
 	}
-	selector := obj.Spec.Selector
-	universal := selector.Universal != nil && *selector.Universal
+	universal := selector.Universal
 	selectorCount := 0
 	for _, value := range []string{selector.Model, selector.ModelGlob, selector.DriverFamily} {
 		if value != "" {
@@ -453,7 +477,51 @@ func validateUPSCapabilityProfile(obj *powerv1alpha1.UPSCapabilityProfile) valid
 			return rejected("InvalidModelGlob", "spec.selector.modelGlob %q is invalid", selector.ModelGlob)
 		}
 	}
-	return accepted("UPS capability profile contract accepted")
+	return accepted(kind + " capability profile contract accepted")
+}
+
+// validatePDUCapabilityProfile validates the parallel PDU kind (OD-25).
+//
+// The selector contract is shared with UPS profiles. What is not shared is the
+// outlet declaration, which has no UPS equivalent.
+func validatePDUCapabilityProfile(obj *powerv1alpha1.PDUCapabilityProfile) validationResult {
+	selector := obj.Spec.Selector
+	result := validateCapabilityProfileContract("PDU", obj.Spec.Version, capabilityProfileSelectorFields{
+		Model:        selector.Model,
+		Firmware:     selector.Firmware,
+		ModelGlob:    selector.ModelGlob,
+		DriverFamily: selector.DriverFamily,
+		Universal:    selector.Universal != nil && *selector.Universal,
+	})
+	if !result.accepted {
+		return result
+	}
+	return validatePDUOutletDeclaration(obj.Spec.Outlets)
+}
+
+// validatePDUOutletDeclaration rejects outlet declarations that contradict
+// themselves.
+//
+// More switchable outlets than outlets means the author is describing hardware
+// they have not counted. Rejected rather than trimmed, because silently narrowing
+// a capability declaration is how a device ends up believed less capable than it
+// is with nothing saying so.
+func validatePDUOutletDeclaration(outlets powerv1alpha1.PDUCapabilityOutletSpec) validationResult {
+	if outlets.Count > 0 && int(outlets.Count) < len(outlets.Switchable) {
+		return rejected("PDUOutletCountMismatch",
+			"spec.outlets declares %d switchable outlets but only %d outlets", len(outlets.Switchable), outlets.Count)
+	}
+	seen := map[string]struct{}{}
+	for _, outlet := range outlets.Switchable {
+		if outlet == "" {
+			return rejected("PDUOutletNameRequired", "spec.outlets.switchable entries cannot be empty")
+		}
+		if _, duplicate := seen[outlet]; duplicate {
+			return rejected("DuplicatePDUOutlet", "spec.outlets.switchable lists %q more than once", outlet)
+		}
+		seen[outlet] = struct{}{}
+	}
+	return accepted("PDU capability profile contract accepted")
 }
 
 // reservedOperandNamespaces mirrors internal/webhook/v1alpha1's list of namespaces this operator must
