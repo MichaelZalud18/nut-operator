@@ -47,11 +47,20 @@ const (
 	upsmonConfigFile                                = "upsmon.conf"
 
 	// nodePowerAgentServerCAFile is the key in the agent's rendered Secret holding the
-	// concatenated CA bundle for every NUTServer this agent monitors, and the path upsmon's
-	// CERTPATH points at. OpenSSL accepts either a hashed directory or a single multi-certificate
-	// PEM here; the file form is used because a projected Secret cannot carry c_rehash symlinks.
+	// concatenated CA bundle for every NUTServer this agent monitors.
 	nodePowerAgentServerCAFile = "server-ca.pem"
-	nodePowerAgentServerCAPath = "/etc/nut/" + nodePowerAgentServerCAFile
+	// nodePowerAgentServerCASourcePath is where that bundle is mounted read-only.
+	nodePowerAgentServerCASourcePath = "/etc/nut/" + nodePowerAgentServerCAFile
+	// nodePowerAgentServerCAPath is what upsmon's CERTPATH points at, and it must be a
+	// directory rather than the bundle above.
+	//
+	// upsmon.conf(5) says CERTPATH accepts "a single PEM file with multiple CA
+	// certificates", but the client passes it to SSL_CTX_load_verify_locations as the
+	// CApath argument and never as CAfile (clients/upsclient.c). OpenSSL treats CApath as
+	// a directory of hash-named certificates, so a file there loads without error and then
+	// fails every verification -- CERTVERIFY plus FORCESSL turns that into a connection
+	// that cannot be established at all (F-40).
+	nodePowerAgentServerCAPath = "/etc/nut/tls/server-ca.d"
 )
 
 type renderedNodePowerAgent struct {
@@ -814,15 +823,45 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 			},
 		}
 		if spec.MountServerCA {
-			// Same Secret as upsmon.conf, second subPath: CERTPATH must resolve to a real file
-			// inside the container, and a subPath mount of a key that is not present fails the
-			// pod outright, so this mount only appears when the render actually wrote the key.
+			// CERTPATH is an OpenSSL CApath, so it has to be a directory whose entries are
+			// named by subject hash. A projected Secret cannot carry those symlinks, so an
+			// init container rehashes the bundle into an emptyDir and upsmon reads that.
+			daemonSet.Spec.Template.Spec.Volumes = append(
+				daemonSet.Spec.Template.Spec.Volumes,
+				corev1.Volume{
+					Name: "upsmon-server-ca",
+					VolumeSource: corev1.VolumeSource{
+						EmptyDir: &corev1.EmptyDirVolumeSource{
+							Medium:    corev1.StorageMediumMemory,
+							SizeLimit: resource.NewQuantity(1024*1024, resource.BinarySI),
+						},
+					},
+				},
+			)
+			daemonSet.Spec.Template.Spec.InitContainers = append(
+				daemonSet.Spec.Template.Spec.InitContainers,
+				corev1.Container{
+					Name:            "rehash-server-ca",
+					Image:           spec.UpsmonImage,
+					ImagePullPolicy: spec.UpsmonPullPolicy,
+					Command:         []string{"/bin/sh", "-c", nodePowerAgentServerCARehashScript()},
+					SecurityContext: restrictedContainerSecurityContext(),
+					VolumeMounts: []corev1.VolumeMount{
+						{
+							Name:      "upsmon-config",
+							MountPath: nodePowerAgentServerCASourcePath,
+							SubPath:   nodePowerAgentServerCAFile,
+							ReadOnly:  true,
+						},
+						{Name: "upsmon-server-ca", MountPath: nodePowerAgentServerCAPath},
+					},
+				},
+			)
 			daemonSet.Spec.Template.Spec.Containers[0].VolumeMounts = append(
 				daemonSet.Spec.Template.Spec.Containers[0].VolumeMounts,
 				corev1.VolumeMount{
-					Name:      "upsmon-config",
+					Name:      "upsmon-server-ca",
 					MountPath: nodePowerAgentServerCAPath,
-					SubPath:   nodePowerAgentServerCAFile,
 					ReadOnly:  true,
 				},
 			)
@@ -857,6 +896,22 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 		return controllerutil.SetControllerReference(agent, daemonSet, r.Scheme)
 	})
 	return daemonSet, err
+}
+
+// nodePowerAgentServerCARehashScript builds the CApath upsmon needs.
+//
+// openssl rehash writes the <subject-hash>.N symlinks OpenSSL looks for when it
+// walks a CApath. Without them the directory reads as empty and every certificate
+// verification fails, which is the F-40 failure mode. The bundle may hold several
+// CAs when an agent monitors several servers, and rehash handles that by splitting
+// on subject rather than on file.
+func nodePowerAgentServerCARehashScript() string {
+	return fmt.Sprintf(
+		"set -e; umask 022; cp %s %s/server-ca.pem; openssl rehash %s",
+		nodePowerAgentServerCASourcePath,
+		nodePowerAgentServerCAPath,
+		nodePowerAgentServerCAPath,
+	)
 }
 
 func restrictedContainerSecurityContext() *corev1.SecurityContext {

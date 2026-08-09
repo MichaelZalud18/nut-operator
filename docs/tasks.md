@@ -309,6 +309,26 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`).
 
 #### Built
+- **`F-39`/`F-40` fixed: the operands are built from source and proven to negotiate TLS
+  (2026-08-09).** `images/nut-server` and `images/upsmon-agent` were `apk add nut` on Alpine, which
+  is NUT 2.8.2 linked against **NSS**. `CERTFILE` is OpenSSL-only, so `upsd` rejected it as an
+  invalid directive and `spec.tls.mode: Required` served plaintext on 3493 with the `MONITOR`
+  password in it. Both images now build NUT 2.8.5 from a checksum-pinned tarball with
+  `--with-openssl --without-nss`, and the build fails if the resulting binary is not linked against
+  libcrypto — a base-image bump can no longer change the TLS backend underneath the operator. Only
+  the network drivers are compiled in, which matches the API already rejecting USB and serial.
+
+  `F-40` surfaced while proving the fix: `CERTPATH` was rendered as a PEM file, but NUT passes it to
+  `SSL_CTX_load_verify_locations` as OpenSSL's `CApath`, which is a directory of hash-named
+  certificates. A file there loads silently and verifies nothing, so `Required` would have taken
+  every agent monitoring that server offline. An init container now rehashes the bundle into a
+  memory-backed `emptyDir` and `CERTPATH` points at that.
+
+  `hack/nut-tls-smoke.sh` is the gate that would have caught all of this: it starts both real images
+  with the configuration the operator renders, requires `upsd` to accept `STARTTLS` and complete a
+  handshake against a pinned CA, requires a protocol command to succeed inside the session, and
+  requires `upsmon` to connect with `CERTVERIFY` and report that verification actually succeeded. It
+  runs as the `NUT TLS handshake` CI job and fails on the previous images.
 
 - `NUTServer` operand rendering: Namespace, ConfigMap, Secrets, Service, NetworkPolicy, Deployment,
   and `dummy-ups` relay mode.
@@ -337,19 +357,13 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 
 #### Open Work
 
-- **`F-39`: build the NUT operands from source at 2.8.5 with `--with-openssl`.** This is the top
-  item in this section — it is a live security gap, not a hardening nicety. `images/nut-server` is
-  `apk add nut` on `alpine:3.22`, which is NUT 2.8.2 linked against **NSS**. `CERTFILE` is
-  OpenSSL-only, so `upsd` rejects it as an invalid directive and `spec.tls.mode: Required` still
-  serves plaintext on 3493, `MONITOR` password included. Verified by running the operator's own
-  rendered config inside the image; see `docs/audits/nut-usage-audit.md`. A source build fixes it,
-  keeps every credential a PEM file the way a Kubernetes TLS Secret already projects one, and stops
-  a base-image bump from silently changing the TLS backend underneath the operator.
-- **Prove the protocol, not the render.** `nut_tls_render_test.go` asserts the operator emits
-  `CERTFILE`; nothing asserted `upsd` accepts it, and the `kind` e2e suite performs no NUT TLS
-  handshake. That gap is what let `F-39` sit behind a green suite. Needs a test that starts the
-  operand with a real certificate and completes `STARTTLS` — the same shape of gate that `F-38`
-  showed is worth having.
+- **`F-41`: `verifyClientCertificates` is inert and should say so.** `upsd` 2.8.5 ends its OpenSSL
+  initialization with `SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_NONE, NULL)` and never loads a client
+  CA, so `CERTREQUEST` and the client-CA `CERTPATH` do nothing on any released NUT built this way.
+  The field defaults to `false`, so nothing mis-serves today, but a user who sets it gets mutual TLS
+  in the API and none on the wire. Until the NUT release that implements it exists, the field's
+  documentation has to state plainly that it is inert — and admission should arguably reject `true`
+  rather than accept a setting it cannot honor.
 - **Client certificates for `upsmon` are not v1.** The operator provisions no client identity, so
   `verifyClientCertificates` locks out every agent and correctly defaults to `false`. On the
   OpenSSL path this needs `CERTFILE` in `upsmon.conf` and a working `CERTREQUEST`, both of which

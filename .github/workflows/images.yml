@@ -179,3 +179,51 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           echo "${{ matrix.image }} digest: ${{ steps.build.outputs.digest }}"
+
+  # The operand images are built and scanned individually above, which cannot answer
+  # the question F-39 turned on: whether the two of them actually complete a NUT TLS
+  # session with the configuration the operator renders. The render tests said yes
+  # for months while upsd was rejecting the directive outright, because rendering and
+  # protocol behavior were never checked against each other. This job checks them
+  # against each other, on one runner, before anything is published.
+  nut-tls:
+    name: NUT TLS handshake
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # Native architecture only and loaded into the daemon: the test has to run the
+      # images, and a multi-platform manifest list has nothing to run.
+      - name: Build the NUT server image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: images/nut-server/Dockerfile
+          push: false
+          load: true
+          tags: nut-server:tls-smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build the upsmon agent image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: images/upsmon-agent/Dockerfile
+          push: false
+          load: true
+          tags: upsmon-agent:tls-smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Negotiate NUT over TLS
+        run: hack/nut-tls-smoke.sh docker nut-server:tls-smoke upsmon-agent:tls-smoke

@@ -372,3 +372,39 @@ func TestMonitoredServerTLSModeReportsDisabledWithoutACertificate(t *testing.T) 
 		t.Fatalf("a Required server with no certificate cannot serve TLS, got %q", got)
 	}
 }
+
+// F-40: upsmon.conf(5) advertises CERTPATH as accepting a single multi-certificate
+// PEM, but clients/upsclient.c passes it to SSL_CTX_load_verify_locations as the
+// CApath argument, never as CAfile. OpenSSL walks a CApath as a directory of
+// hash-named files, so a PEM there loads without complaint and then fails every
+// verification -- with CERTVERIFY and FORCESSL set, the agent cannot connect at all.
+//
+// Asserting the rendered string against the constant cannot catch that, because the
+// constant is what changed. This asserts the shape instead.
+func TestUpsmonCertPathIsADirectoryRatherThanTheBundleFile(t *testing.T) {
+	if nodePowerAgentServerCAPath == nodePowerAgentServerCASourcePath {
+		t.Fatalf("CERTPATH must not point at the mounted bundle; both are %q", nodePowerAgentServerCAPath)
+	}
+	if strings.HasSuffix(nodePowerAgentServerCAPath, ".pem") {
+		t.Fatalf("CERTPATH is an OpenSSL CApath and must be a directory, got %q", nodePowerAgentServerCAPath)
+	}
+	if !strings.HasSuffix(nodePowerAgentServerCASourcePath, ".pem") {
+		t.Fatalf("the mounted CA bundle should be a PEM file, got %q", nodePowerAgentServerCASourcePath)
+	}
+}
+
+// The directory is only a CApath once it holds the subject-hash symlinks OpenSSL
+// looks for. Copying the bundle in without rehashing leaves it functionally empty.
+func TestServerCARehashScriptPopulatesTheCertPathDirectory(t *testing.T) {
+	script := nodePowerAgentServerCARehashScript()
+
+	if !strings.Contains(script, "openssl rehash "+nodePowerAgentServerCAPath) {
+		t.Fatalf("expected the script to rehash the CERTPATH directory, got %q", script)
+	}
+	if !strings.Contains(script, nodePowerAgentServerCASourcePath) {
+		t.Fatalf("expected the script to read the mounted bundle, got %q", script)
+	}
+	if !strings.HasPrefix(script, "set -e") {
+		t.Fatalf("a failed rehash must fail the init container, got %q", script)
+	}
+}

@@ -1,4 +1,6 @@
 ARG ALPINE_VERSION=3.22
+ARG NUT_VERSION=2.8.5
+
 FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
 
 ARG TARGETOS
@@ -13,11 +15,69 @@ COPY cmd/power-signal-writer/ cmd/power-signal-writer/
 COPY internal/nodeagent/ internal/nodeagent/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-X main.version=${VERSION}" -o power-signal-writer ./cmd/power-signal-writer
 
+# NUT is built from source for the reasons in images/nut-server/Dockerfile (F-39).
+# The agent needs the same treatment and for the same reason: the operator renders
+# CERTPATH, CERTVERIFY and FORCESSL into upsmon.conf, and which SSL backend upsmon
+# is linked against decides whether a client that is told to verify its server
+# actually does. A client that silently skips verification is the same class of
+# defect as a server that silently skips encryption.
+#
+# It matters for client certificates too. When upsmon can present an identity, the
+# OpenSSL path takes a PEM file through CERTFILE while the NSS path needs a
+# certificate database; building on OpenSSL now is what keeps that work to a
+# rendering change later rather than a rebuild of the image.
+FROM alpine:${ALPINE_VERSION} AS nut-builder
+
+ARG NUT_VERSION
+ARG NUT_SHA256=18bf32e59eb764b13da3c4fa70384926d7fa584cb31d2fe7f137a570633eeec1
+
+RUN apk add --no-cache build-base curl libtool openssl-dev libltdl
+
+WORKDIR /build
+RUN curl -fsSL -o nut.tar.gz "https://networkupstools.org/source/2.8/nut-${NUT_VERSION}.tar.gz" \
+    && echo "${NUT_SHA256}  nut.tar.gz" | sha256sum -c - \
+    && tar -xzf nut.tar.gz \
+    && rm nut.tar.gz
+
+WORKDIR /build/nut-${NUT_VERSION}
+
+# The agent is a pure client: it monitors upsd over the network and never drives a
+# device, so no driver is built into it at all.
+RUN ./configure \
+      --prefix=/usr \
+      --sysconfdir=/etc/nut \
+      --datadir=/usr/share/nut \
+      --libexecdir=/usr/lib/nut \
+      --with-drvpath=/usr/lib/nut \
+      --with-statepath=/run/nut \
+      --with-altpidpath=/run/nut \
+      --with-user=nut \
+      --with-group=nut \
+      --with-openssl \
+      --without-nss \
+      --without-snmp \
+      --without-neon \
+      --without-modbus \
+      --without-usb \
+      --without-serial \
+      --without-ipmi \
+      --without-freeipmi \
+      --without-powerman \
+      --without-avahi \
+      --without-cgi \
+      --without-wrap \
+      --without-dev \
+      --disable-static \
+    && make -j"$(nproc)" \
+    && make DESTDIR=/out install \
+    && rm -rf /out/usr/share/man /out/usr/share/doc
+
 FROM alpine:${ALPINE_VERSION}
 
 ARG VERSION=dev
 ARG REVISION=unknown
 ARG CREATED=unknown
+ARG NUT_VERSION
 ARG SOURCE=https://github.com/MichaelZalud18/nut-operator
 ARG DOCUMENTATION=https://github.com/MichaelZalud18/nut-operator/blob/main/README.md
 ARG LICENSES=Apache-2.0
@@ -31,13 +91,25 @@ LABEL org.opencontainers.image.title="NUT Operator upsmon Agent" \
       org.opencontainers.image.revision="${REVISION}" \
       org.opencontainers.image.created="${CREATED}" \
       org.opencontainers.image.licenses="${LICENSES}" \
-      org.opencontainers.image.vendor="Michael Zalud"
+      org.opencontainers.image.vendor="Michael Zalud" \
+      io.nut-operator.nut.version="${NUT_VERSION}" \
+      io.nut-operator.nut.ssl-backend="openssl"
 
-RUN apk add --no-cache nut ca-certificates \
+RUN apk add --no-cache ca-certificates openssl libltdl \
+    && addgroup -g 65532 -S nut \
+    && adduser -u 65532 -S -G nut -H -s /sbin/nologin nut \
     && mkdir -p /run/power-agent \
     && chown -R 65532:65532 /run/power-agent
 
+COPY --from=nut-builder /out/ /
 COPY --from=builder /workspace/power-signal-writer /usr/local/bin/power-signal-writer
+
+# The client-side half of the check in images/nut-server/Dockerfile: an agent told
+# to verify its server can only do so if it was linked against the backend whose
+# directives the operator renders.
+RUN upsmon -V 2>&1 | grep -q "${NUT_VERSION}" \
+    && ldd /usr/sbin/upsmon | grep -q libcrypto \
+    && ! ldd /usr/sbin/upsmon | grep -q libnss3
 
 USER 65532:65532
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD upsmon -V >/dev/null || exit 1

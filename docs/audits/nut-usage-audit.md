@@ -231,3 +231,59 @@ the source build also removes the silent-downgrade risk of a base-image bump cha
 backend underneath the operator. Client certificates and per-server `CERTHOST` posture stay out of
 v1 either way: on the OpenSSL path they need a release that does not exist, and on the NSS path they
 need cert-database plumbing that the source build exists to avoid.
+
+## Findings — fourth pass, 2026-08-09
+
+Found by building the operands from source to resolve `F-39` and then running the two
+of them against each other. Both findings are the same shape as `F-39`: a directive
+the operator renders in a form NUT does not consume.
+
+**F-40 · `CERTPATH` was rendered as a file, and OpenSSL reads it as a directory.**
+`upsmon.conf(5)` states that `CERTPATH` accepts "a directory containing CA
+certificates in PEM format, or alternatively, a single PEM file with multiple CA
+certificates." The second half is not true of the OpenSSL client. `clients/upsclient.c`
+calls:
+
+```c
+ret = SSL_CTX_load_verify_locations(ssl_ctx, NULL, certpath);
+```
+
+`certpath` is the third argument, `CApath`, and never the second, `CAfile`. OpenSSL
+walks a `CApath` as a directory of certificates named by subject hash, so pointing it
+at a PEM file loads without error — the call is lazy — and then finds no issuer for
+anything. With `CERTVERIFY 1` and `FORCESSL 1`, both of which the operator renders for
+`spec.tls.mode: Required`, that is not a silent weakening but a hard failure:
+
+```text
+upscli_sslinit: SSL_connect failed (SSL_ERROR 1)
+Can not connect to NUT server nut-server in SSL, disconnect
+UPS [smokeups@nut-server]: connect failed: SSL error
+```
+
+An agent in that state has no UPS telemetry at all, so a `NUTServer` at `Required`
+would have taken every `NodePowerAgent` monitoring it offline. Fixed by mounting the
+rendered bundle read-only, rehashing it into a memory-backed `emptyDir` with
+`openssl rehash` in an init container, and pointing `CERTPATH` at that directory. The
+projected Secret cannot carry the symlinks itself, which is why the copy exists.
+
+The original code comment asserted the man page's wording as fact. Reading the source
+would have settled it; reading the documentation did not.
+
+**F-41 · `verifyClientCertificates` cannot work on any released NUT with OpenSSL.**
+`server/netssl.c` in 2.8.5 ends its OpenSSL initialization with:
+
+```c
+SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_NONE, NULL);
+```
+
+There is no `SSL_CTX_load_verify_locations` call in that branch at all, so `upsd`
+never loads a client CA and never requests a client certificate, whatever
+`CERTREQUEST` and `CERTPATH` say. Those directives are honored under NSS, and under
+OpenSSL only after 2.8.5 — which is unreleased. The field already defaults to `false`
+after `F-37`, so nothing is currently mis-serving, but a user who sets it would get
+mutual TLS in the API and none on the wire.
+
+This is the `F-25`/`F-33`/`F-37` class again, and it is recorded rather than fixed
+because the fix is a NUT release. The remedy when that release lands is in
+`docs/tasks.md`; until then the field's documentation must say plainly that it is
+inert, which is a smaller claim than the one the API currently makes.

@@ -241,8 +241,12 @@ docker-smoke-upsmon-agent: ## Smoke test that the upsmon image contains real NUT
 docker-smoke-node-actuator: ## Smoke test the node actuator image entrypoint.
 	hack/smoke-image.sh $(CONTAINER_TOOL) node-actuator $(NODE_ACTUATOR_IMG)
 
+.PHONY: docker-smoke-nut-tls
+docker-smoke-nut-tls: ## Prove the operands negotiate NUT over TLS, not just that the operator renders the directives (F-39, F-40).
+	hack/nut-tls-smoke.sh $(CONTAINER_TOOL) $(NUT_SERVER_IMG) $(UPSMON_AGENT_IMG)
+
 .PHONY: docker-smoke-operands
-docker-smoke-operands: docker-smoke-nut-server docker-smoke-upsmon-agent docker-smoke-node-actuator ## Smoke test all project-owned operand images.
+docker-smoke-operands: docker-smoke-nut-server docker-smoke-upsmon-agent docker-smoke-node-actuator docker-smoke-nut-tls ## Smoke test all project-owned operand images.
 
 .PHONY: docker-push-operands
 docker-push-operands: ## Push all project-owned operand image tags.
