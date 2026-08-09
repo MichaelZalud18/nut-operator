@@ -41,6 +41,16 @@ resolver/adapter that feeds it into reconciliation. Design contract: `docs/desig
   silent when no nodes are visible at all, because there is nothing to check against.
 - **`OD-16` closed in the registry (2026-08-07)** to match the warning-plus-exemption behavior
   `internal/inventory` already implemented.
+- **`IN-16` snapshot age escalates rather than cutting off (2026-08-08).** Age raises the severity a
+  snapshot is reported at, through thresholds on
+  `PowerManagementCluster.spec.inventory.snapshotAgeLevels`; `Info` is recorded without changing
+  conditions, `Warning` degrades the flows compiled from it, and an unconfigured cluster gets `Info`
+  at one hour and `Warning` at six. There is no rejecting level: a ceiling would contradict `IN-15`
+  at the worst possible moment, since the outage is exactly when the provider is unreachable and the
+  shutdown still has to be planned. The declarative provider stamps no snapshot time — it is rebuilt
+  from live resources every resolve — so evaluation stays silent for it rather than inventing
+  staleness from a missing field. The escalation path therefore has no live producer until a provider
+  that renders snapshots exists, which is `SB-8` below.
 - **Graph failures are proven through the real reconcile path (2026-08-07).** Orphan rejection and
   duplicate-edge rejection now have envtest specs asserting the `ShutdownFlow` lands on the right
   `Accepted` reason with no compiled plan, rather than being tested only at the compiler layer.
@@ -52,11 +62,10 @@ resolver/adapter that feeds it into reconciliation. Design contract: `docs/desig
   wave order (see Planning & Execution Logic). What still has no consumer: wave compilation does
   not read derived *domain membership*, trigger evaluation still runs off live telemetry snapshots
   rather than the derived closure, and `carries`-based ordering (`PL-21`) has no consumer.
-- `IN-16` snapshot age ceiling has no implementation (no config field, no staleness condition).
-- NetBox as a second topology provider (`SB-8`) is docs-only — zero code exists. Decide whether and
-  when to build it, or drop it from the design docs if it's not actually planned.
-- `OD-18` remedy is undecided: inversion is detected and reported, but opt-in migration and node
-  blocking are not built, and node-local PVCs constrain the migration path.
+- NetBox as a second topology provider (`SB-8`) is deferred, not dropped. It stays in the v1 design
+  docs and is deliberately the last thing built: an integration against an external source of truth
+  is worth little until the rest of the operator is stable, and every hour spent on it is an hour not
+  spent on the paths that run during an outage. Nothing else in this section depends on it.
 
 ---
 
@@ -146,13 +155,22 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   own reason, and every diagnostic including informational ones is recorded in the compilation audit
   row under source `Planner`. This is what makes the two diagnostics below observable rather than
   dead code, and it unblocks threading real diagnostic classes into `compile_total`'s result label.
-- **`OD-18` tier inversion is detected (2026-08-07).** Tiers count down, so a node at tier 4 is meant
-  to be gone while a group at tier 2 is still working; if that group runs on that node, the plan says
-  something the cluster cannot do. Compilation now reports `ShutdownTierInversion` naming the group,
-  the node, and both tiers. Detection uses the node membership `PL-20` already resolves plus each
-  node's declared inventory tier. Reported rather than rejected on purpose: the condition is real but
-  the remedy — retier, migrate, or accept — belongs to whoever authored the tiers, and OD-18 leaves
-  opt-in migration and node blocking open.
+- **`OD-18` tier inversion is detected and blocked, and the decision is closed (2026-08-08).** Tiers
+  count down, so a node at tier 4 is meant to be gone while a group at tier 2 is still working; if
+  that group runs on that node, the plan says something the cluster cannot do. Compilation reports
+  `ShutdownTierInversion` naming the group, the node, and both tiers, and now also withholds that
+  node from power-off for the whole flow — the withheld nodes reach `status.blockedNodeReleases` and
+  are filtered out of the executor's release set, so the block changes what runs rather than only
+  what is read. Detection uses the node membership `PL-20` already resolves plus each node's declared
+  inventory tier.
+
+  Blocking is the default because its failure mode is powering off less of the cluster than intended,
+  while the alternative cuts power to work the author declared as still needed. `spec.groups[].`
+  `tierInversionPolicy: Allow` opts a single group out; the inversion is still reported, as
+  `ShutdownTierInversionAllowed`, because opting in accepts a risk rather than retiring it. One
+  dissenting group holds a node up regardless of what its neighbors chose. Migration was rejected as
+  a general remedy: node-local PVCs mean there is not always anywhere to migrate to, which is what
+  kept the decision open.
 - **Defaulted tiers are reported (2026-08-07).** A group inheriting `defaultTier` was silent, which
   made a mistyped tier label indistinguishable from a deliberate default — something never meant to
   be ordinary quietly became tier 4. `ShutdownTierDefaulted` names the group and the tier applied, at

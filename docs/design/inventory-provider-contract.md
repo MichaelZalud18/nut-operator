@@ -170,12 +170,22 @@ resolution in CR-1.
 **IN-15 · Provider outage degrades, never blocks.** A NetBox outage means planning continues against
 the last good snapshot with a staleness condition raised. It never means planning is blocked.
 
-**IN-16 · Snapshot age ceiling.** Configurable maximum snapshot age, beyond which plans are marked
-degraded per PL-34. The ceiling exists so that "last good snapshot" cannot silently mean "eight
-months ago."
+**IN-16 · Snapshot age escalates, it does not cut off.** Age raises the severity a snapshot is
+reported at, through user-configured thresholds on
+`PowerManagementCluster.spec.inventory.snapshotAgeLevels`. `Info` is recorded and published without
+changing conditions; `Warning` additionally degrades the flows compiled from that snapshot per PL-34.
+An unconfigured cluster gets `Info` at one hour and `Warning` at six.
+
+There is deliberately no rejecting level. A ceiling would contradict IN-15 at the worst possible
+moment — the outage is exactly when the provider is unreachable and the shutdown still has to be
+planned. What the rule actually protects against is silence, so escalation is the whole remedy: "last
+good snapshot" must not be able to quietly mean "eight months ago," but it must still be usable when
+it does.
 
 The CRD provider satisfies IN-14 through IN-16 trivially, which is an argument for it as default
-beyond the ones in SB-8.
+beyond the ones in SB-8. It stamps no snapshot time because it is rebuilt from live resources on
+every resolve, and age evaluation stays silent when there is nothing to measure rather than inventing
+staleness from a missing field.
 
 ---
 

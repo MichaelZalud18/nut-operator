@@ -172,6 +172,43 @@ Reconciliation performs a deterministic compile before any enforcement behavior:
 10. Emit advisory startup wave projections for external consumers.
 11. Emit a flattened operator review view in `status.compiledSteps`.
 12. Estimate total duration from each wave's longest timeout.
+13. Withhold inverted nodes from power-off and publish them in `status.blockedNodeReleases`.
+
+### Tier Inversion
+
+A group whose tier is lower than the tier of a node it runs on is scheduled to keep working after
+that node powers off. The node is withheld from power-off for the whole flow, and every group holding
+it is named:
+
+```yaml
+status:
+  blockedNodeReleases:
+    - nodeName: worker-07
+      reason: ShutdownTierInversion
+      nodeTier: 4
+      groups: [databases]
+      message: node "worker-07" is tier 4 but still runs "databases", scheduled to stop later; the node is withheld from power-off
+```
+
+Blocking is the default because its failure mode is powering off less of the cluster than intended,
+while the alternative cuts power to work that was declared as still needed. A group accepts going
+down with its node by setting `tierInversionPolicy: Allow`:
+
+```yaml
+  groups:
+    - name: cache
+      action: ScaleWorkload
+      shutdownTier: 2
+      tierInversionPolicy: Allow
+```
+
+The inversion is still reported as `ShutdownTierInversionAllowed`, because opting in accepts a risk
+rather than retiring it. One dissenting group is enough to hold a node up: if two groups run on the
+same node and only one accepts going down with it, powering the node off would still cut power to the
+other.
+
+Migrating the workload elsewhere is deliberately not offered as a remedy. Node-local storage means
+there is not always anywhere to migrate to, so it cannot be the general answer (OD-18).
 
 Example compiled status shape:
 
@@ -200,7 +237,6 @@ The planner produces artifacts that can be reviewed and consumed independently o
 dashboard product.
 
 ### Interface Boundary
-
 
 There is no dedicated UI for v1. The primary interface is Kubernetes:
 

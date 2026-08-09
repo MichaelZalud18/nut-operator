@@ -42,6 +42,25 @@ func resolveDeclarativeStructuralBundle(ctx context.Context, reader client.Reade
 	return bundle, diagnostics, err
 }
 
+// snapshotAgeLevels reads the cluster's IN-16 escalation thresholds.
+//
+// An unconfigured cluster gets the defaults rather than silence: the rule exists
+// so a stale snapshot cannot pass unnoticed, and an install that never wrote the
+// field is exactly the install that would not notice.
+func snapshotAgeLevels(cluster *powerv1alpha1.PowerManagementCluster) []resolver.SnapshotAgeLevel {
+	if cluster == nil || len(cluster.Spec.Inventory.SnapshotAgeLevels) == 0 {
+		return resolver.DefaultSnapshotAgeLevels()
+	}
+	levels := make([]resolver.SnapshotAgeLevel, 0, len(cluster.Spec.Inventory.SnapshotAgeLevels))
+	for _, level := range cluster.Spec.Inventory.SnapshotAgeLevels {
+		levels = append(levels, resolver.SnapshotAgeLevel{
+			Severity: string(level.Level),
+			After:    level.After.Duration,
+		})
+	}
+	return levels
+}
+
 func declarativeStructuralInputs(ctx context.Context, reader client.Reader) (resolver.StructuralInputs, []resolver.Diagnostic, error) {
 	var diagnostics []resolver.Diagnostic
 	snapshot := inventory.Snapshot{

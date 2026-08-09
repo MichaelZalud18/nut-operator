@@ -115,6 +115,18 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		managementCluster = cluster
 	}
+	if result.accepted {
+		// Age escalation runs here rather than inside the resolver because the
+		// thresholds are cluster policy, and the cluster is only in hand once the
+		// flow's reference resolves.
+		if aging := resolver.EvaluateSnapshotAge(
+			bundle.SnapshotObservedAt,
+			observedAt,
+			snapshotAgeLevels(managementCluster),
+		); aging != nil {
+			resolverDiagnostics = append(resolverDiagnostics, *aging)
+		}
+	}
 
 	flow.Status.ObservedGeneration = flow.Generation
 	evaluationTime := metav1.NewTime(observedAt)
@@ -125,6 +137,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var configHash string
 	var publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus
 	var plannerDiagnostics []planner.Diagnostic
+	var blockedNodeReleases []powerv1alpha1.BlockedNodeReleaseStatus
 	var triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus
 	if result.accepted {
 		compileStart := time.Now()
@@ -135,6 +148,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		configHash = compiledFlow.ConfigHash
 		publishedArtifact = compiledFlow.Artifact
 		plannerDiagnostics = compiledFlow.Diagnostics
+		blockedNodeReleases = compiledFlow.BlockedNodeReleases
 		metrics.ShutdownFlowCompileDurationSeconds.WithLabelValues(flow.Name).Observe(time.Since(compileStart).Seconds())
 		compileResult := "Accepted"
 		if configHash == "" {
@@ -157,6 +171,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		flow.Status.CompiledSteps = compiled
 		flow.Status.CompiledWaves = compiledWaves
 		flow.Status.PublishedArtifact = publishedArtifact
+		flow.Status.BlockedNodeReleases = blockedNodeReleases
 		flow.Status.EstimatedDuration = estimatedDuration
 		if configHash != "" && configHash != base.Status.ConfigHash {
 			metrics.ShutdownFlowPlanHashChangesTotal.WithLabelValues(flow.Name).Inc()
@@ -174,6 +189,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		flow.Status.CompiledSteps = nil
 		flow.Status.CompiledWaves = nil
 		flow.Status.PublishedArtifact = nil
+		flow.Status.BlockedNodeReleases = nil
 		flow.Status.EstimatedDuration = nil
 		flow.Status.ConfigHash = ""
 		flow.Status.ResolvedInputHash = ""

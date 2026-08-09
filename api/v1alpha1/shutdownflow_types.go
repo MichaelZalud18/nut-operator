@@ -81,6 +81,15 @@ type ShutdownFlowStatus struct {
 	// +optional
 	PublishedArtifact *PublishedPlannerArtifactStatus `json:"publishedArtifact,omitempty"`
 
+	// blockedNodeReleases names nodes this flow will not power off because a group still
+	// expected to be running is scheduled on them (OD-18). They are published because a
+	// flow that quietly shuts down fewer nodes than its plan implies is worse than one
+	// that says which nodes it is leaving up and why.
+	// +listType=map
+	// +listMapKey=nodeName
+	// +optional
+	BlockedNodeReleases []BlockedNodeReleaseStatus `json:"blockedNodeReleases,omitempty"`
+
 	// estimatedDuration is the cumulative expected duration of the compiled plan.
 	// +optional
 	EstimatedDuration *metav1.Duration `json:"estimatedDuration,omitempty"`
@@ -398,6 +407,16 @@ type ShutdownGroup struct {
 	// +optional
 	ShutdownTier *int32 `json:"shutdownTier,omitempty"`
 
+	// tierInversionPolicy decides what happens when this group runs on a node whose own
+	// shutdown tier would power that node off while this group is still expected to be
+	// running. Block withholds the node from power-off for the whole flow, so the flow
+	// shuts down less than planned rather than pulling power from live work. Allow powers
+	// the node off on schedule and accepts that this group goes down with it.
+	// +kubebuilder:validation:Enum=Block;Allow
+	// +kubebuilder:default=Block
+	// +optional
+	TierInversionPolicy ShutdownTierInversionPolicy `json:"tierInversionPolicy,omitempty"`
+
 	// timeout limits how long the group may run.
 	// +optional
 	Timeout *metav1.Duration `json:"timeout,omitempty"`
@@ -406,6 +425,48 @@ type ShutdownGroup struct {
 	// +optional
 	Params map[string]string `json:"params,omitempty"`
 }
+
+// BlockedNodeReleaseStatus is one node the flow will not power off, and the
+// group whose tier caused it to be held back.
+type BlockedNodeReleaseStatus struct {
+	// nodeName is the cluster node withheld from power-off.
+	// +kubebuilder:validation:MinLength=1
+	NodeName string `json:"nodeName"`
+
+	// reason is the machine-readable cause, currently always ShutdownTierInversion.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// groups names the shutdown groups running on this node that are scheduled to
+	// outlive it.
+	// +optional
+	Groups []string `json:"groups,omitempty"`
+
+	// nodeTier is the node's own declared shutdown tier.
+	// +optional
+	NodeTier int32 `json:"nodeTier,omitempty"`
+
+	// message explains the block in operator-facing terms.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// ShutdownTierInversionPolicy selects the remedy for a tier inversion: a group
+// scheduled to keep running on a node scheduled to power off first (OD-18).
+//
+// Blocking is the default because its failure mode is losing less of the cluster
+// than intended, while allowing the power-off risks cutting power to work that
+// was explicitly declared as still needed — and node-local storage means the
+// third option, migrating the workload elsewhere, is not always available.
+// +kubebuilder:validation:Enum=Block;Allow
+type ShutdownTierInversionPolicy string
+
+const (
+	// ShutdownTierInversionBlock withholds the inverted node from power-off.
+	ShutdownTierInversionBlock ShutdownTierInversionPolicy = "Block"
+	// ShutdownTierInversionAllow powers the inverted node off on schedule.
+	ShutdownTierInversionAllow ShutdownTierInversionPolicy = "Allow"
+)
 
 // ShutdownStepType defines supported flow actions.
 // +kubebuilder:validation:Enum=Notify;Wait;Gate;CordonNodes;DrainNodes;ScaleWorkload;RunWorkflow;AgentShutdown

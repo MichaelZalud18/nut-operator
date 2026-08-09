@@ -322,6 +322,18 @@ spec:
                           type: object
                           x-kubernetes-map-type: atomic
                       type: object
+                    tierInversionPolicy:
+                      default: Block
+                      description: |-
+                        tierInversionPolicy decides what happens when this group runs on a node whose own
+                        shutdown tier would power that node off while this group is still expected to be
+                        running. Block withholds the node from power-off for the whole flow, so the flow
+                        shuts down less than planned rather than pulling power from live work. Allow powers
+                        the node off on schedule and accepts that this group goes down with it.
+                      enum:
+                      - Block
+                      - Allow
+                      type: string
                     timeout:
                       description: timeout limits how long the group may run.
                       type: string
@@ -682,6 +694,46 @@ spec:
           status:
             description: status defines the observed state of ShutdownFlow
             properties:
+              blockedNodeReleases:
+                description: |-
+                  blockedNodeReleases names nodes this flow will not power off because a group still
+                  expected to be running is scheduled on them (OD-18). They are published because a
+                  flow that quietly shuts down fewer nodes than its plan implies is worse than one
+                  that says which nodes it is leaving up and why.
+                items:
+                  description: |-
+                    BlockedNodeReleaseStatus is one node the flow will not power off, and the
+                    group whose tier caused it to be held back.
+                  properties:
+                    groups:
+                      description: |-
+                        groups names the shutdown groups running on this node that are scheduled to
+                        outlive it.
+                      items:
+                        type: string
+                      type: array
+                    message:
+                      description: message explains the block in operator-facing terms.
+                      type: string
+                    nodeName:
+                      description: nodeName is the cluster node withheld from power-off.
+                      minLength: 1
+                      type: string
+                    nodeTier:
+                      description: nodeTier is the node's own declared shutdown tier.
+                      format: int32
+                      type: integer
+                    reason:
+                      description: reason is the machine-readable cause, currently
+                        always ShutdownTierInversion.
+                      type: string
+                  required:
+                  - nodeName
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - nodeName
+                x-kubernetes-list-type: map
               capabilityMatchCount:
                 description: capabilityMatchCount records how many UPS devices received
                   capability profile matches.

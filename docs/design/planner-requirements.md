@@ -172,11 +172,19 @@ that group's own action sequence.
 for node N cannot precede N in shutdown order. The communication path is modeled as `carries` edges
 per IN-5; OD-3 is closed.
 
-**PL-20a** · Report tier inversion. A group whose tier is lower than the tier of a node it runs on
-is scheduled to keep working after that node powers off. Compilation reports this as
-`ShutdownTierInversion`, naming the group, the node, and both tiers. It is reported rather than
-rejected: the condition is real but the remedy — retier, migrate, or accept — belongs to whoever
-authored the tiers (OD-18).
+**PL-20a** · Report and block tier inversion. A group whose tier is lower than the tier of a node it
+runs on is scheduled to keep working after that node powers off. Compilation reports this as
+`ShutdownTierInversion`, naming the group, the node, and both tiers, and withholds the node from
+power-off for the whole flow. The withheld nodes are emitted on the plan and published on
+`ShutdownFlow.status.blockedNodeReleases`.
+
+Blocking is the default because its failure mode is powering off less of the cluster than intended,
+while the alternative cuts power to work the author declared as still needed. A group sets
+`tierInversionPolicy: Allow` to accept going down with its node; the inversion is still reported, as
+`ShutdownTierInversionAllowed`, because opting in accepts a risk rather than retiring it. One
+dissenting group is enough to hold a node up, since powering it off would cut power to the group
+that did not accept it. Migration is declined as a general remedy: node-local storage means there is
+not always anywhere to migrate to (OD-18).
 
 **PL-20b** · Report defaulted tiers. A group that declares no tier and inherits the cluster default
 is reported informationally as `ShutdownTierDefaulted`. Defaulting is legitimate; silence about it

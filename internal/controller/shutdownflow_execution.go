@@ -192,6 +192,7 @@ func executorWavesFromFlow(compiledWaves []powerv1alpha1.CompiledShutdownWave, c
 }
 
 func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flow *powerv1alpha1.ShutdownFlow) ([]executorpkg.Group, error) {
+	blocked := blockedNodeNames(flow.Status.BlockedNodeReleases)
 	if len(flow.Spec.Groups) > 0 {
 		groups := make([]executorpkg.Group, 0, len(flow.Spec.Groups))
 		for _, group := range flow.Spec.Groups {
@@ -203,6 +204,7 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 			if err != nil {
 				return nil, err
 			}
+			releases = withholdBlockedNodeReleases(releases, blocked)
 			groups = append(groups, executorpkg.Group{
 				Name:            group.Name,
 				Action:          string(group.Action),
@@ -226,6 +228,7 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 		if err != nil {
 			return nil, err
 		}
+		releases = withholdBlockedNodeReleases(releases, blocked)
 		groups = append(groups, executorpkg.Group{
 			Name:            step.ID,
 			Action:          string(step.Type),
@@ -238,6 +241,39 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 		})
 	}
 	return groups, nil
+}
+
+// blockedNodeNames indexes the nodes the compiled plan declined to power off.
+func blockedNodeNames(blocked []powerv1alpha1.BlockedNodeReleaseStatus) map[string]struct{} {
+	if len(blocked) == 0 {
+		return nil
+	}
+	names := make(map[string]struct{}, len(blocked))
+	for _, entry := range blocked {
+		names[entry.NodeName] = struct{}{}
+	}
+	return names
+}
+
+// withholdBlockedNodeReleases drops nodes the plan blocked under OD-18.
+//
+// The filter runs here rather than inside the executor because a blocked node is
+// a planning decision, not an execution failure: the executor should never be
+// handed a release it is expected to decline. The flow still runs — it simply
+// powers off fewer nodes than an unblocked plan would, which is the intended
+// failure direction when a workload is scheduled to outlive its host.
+func withholdBlockedNodeReleases(releases []executorpkg.NodeRelease, blocked map[string]struct{}) []executorpkg.NodeRelease {
+	if len(blocked) == 0 || len(releases) == 0 {
+		return releases
+	}
+	kept := make([]executorpkg.NodeRelease, 0, len(releases))
+	for _, release := range releases {
+		if _, withheld := blocked[release.NodeName]; withheld {
+			continue
+		}
+		kept = append(kept, release)
+	}
+	return kept
 }
 
 func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, target powerv1alpha1.ShutdownStepTarget) ([]executorpkg.NodeRelease, error) {

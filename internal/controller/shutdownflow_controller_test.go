@@ -1182,6 +1182,66 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(plannerRecord).NotTo(BeNil())
 			Expect(plannerRecord.Source).To(Equal("Planner"))
 			Expect(plannerRecord.Severity).To(Equal("Warning"))
+
+			By("withholding the node from power-off rather than only reporting it (OD-18)")
+			Expect(resource.Status.BlockedNodeReleases).To(HaveLen(1))
+			blocked := resource.Status.BlockedNodeReleases[0]
+			Expect(blocked.NodeName).To(Equal(shutdownFlowTestNodeName))
+			Expect(blocked.Reason).To(Equal("ShutdownTierInversion"))
+			Expect(blocked.NodeTier).To(Equal(int32(4)))
+			Expect(blocked.Groups).To(ConsistOf("late-workload"))
+		})
+
+		It("powers the node off on schedule when the group accepts the inversion", func() {
+			By("declaring the same inversion with tierInversionPolicy Allow")
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+				Name:   shutdownFlowTestNodeName,
+				Labels: map[string]string{"power.zalud.io/rack": "a"},
+			}}
+			Expect(k8sClient.Create(ctx, node)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, node))).To(Succeed())
+			})
+
+			inventoryNode := &powerv1alpha1.PowerInventoryNode{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestNodeInventoryName}, inventoryNode)).To(Succeed())
+			nodeTier := int32(4)
+			inventoryNode.Spec.Roles.ShutdownTier = &nodeTier
+			Expect(k8sClient.Update(ctx, inventoryNode)).To(Succeed())
+
+			workloadTier := int32(2)
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.Groups = []powerv1alpha1.ShutdownGroup{{
+				Name:                "late-workload",
+				Action:              powerv1alpha1.ShutdownStepScaleWorkload,
+				ShutdownTier:        &workloadTier,
+				TierInversionPolicy: powerv1alpha1.ShutdownTierInversionAllow,
+				Target: powerv1alpha1.ShutdownStepTarget{
+					NodeSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"power.zalud.io/rack": "a"},
+					},
+				},
+			}}
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			controllerReconciler := &ShutdownFlowReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				StorageConnector: &fakeAuditConnector{store: &fakeAuditStore{}},
+			}
+			createSpoolingPowerCluster(ctx, GinkgoT().TempDir(), nil)
+			attachShutdownFlowToPowerCluster(ctx, typeNamespacedName)
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("blocking nothing while still reporting the accepted risk")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.BlockedNodeReleases).To(BeEmpty())
+			degraded := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionDegraded)
+			Expect(degraded).NotTo(BeNil())
+			Expect(degraded.Reason).To(Equal("ShutdownTierInversionAllowed"))
 		})
 
 		It("returns spooled records to PostgreSQL on the first reconcile that can write again", func() {

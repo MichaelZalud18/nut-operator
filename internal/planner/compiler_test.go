@@ -939,3 +939,144 @@ func TestDefaultedTierDiagnosticsDoNotBlockCompilation(t *testing.T) {
 		}
 	}
 }
+
+// OD-18 defaults to blocking: an inverted node is withheld from power-off rather
+// than merely reported, because reporting alone still lets the flow cut power to
+// a workload it was told to keep running.
+func TestCompileBlocksInvertedNodesByDefault(t *testing.T) {
+	groupTier := int32(2)
+	plan, _, err := Compile(StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{Name: "late-workload", Action: "ScaleWorkload", ShutdownTier: &groupTier},
+		},
+		GroupNodes: []GroupNodeMembership{
+			{Group: "late-workload", Acts: []string{"node-a"}},
+		},
+		NodeTiers: []NodeTier{{Name: "node-a", Tier: 4}},
+	}, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("blocking is not a rejection: %v", err)
+	}
+	if len(plan.BlockedNodes) != 1 {
+		t.Fatalf("expected exactly one blocked node, got %#v", plan.BlockedNodes)
+	}
+	blocked := plan.BlockedNodes[0]
+	if blocked.Name != "node-a" {
+		t.Fatalf("expected node-a to be withheld, got %q", blocked.Name)
+	}
+	if blocked.Reason != "ShutdownTierInversion" {
+		t.Fatalf("expected the block to cite the inversion, got %q", blocked.Reason)
+	}
+	if blocked.NodeTier != 4 {
+		t.Fatalf("expected the node's own tier to be recorded, got %d", blocked.NodeTier)
+	}
+	if len(blocked.Groups) != 1 || blocked.Groups[0] != "late-workload" {
+		t.Fatalf("expected the responsible group to be named, got %#v", blocked.Groups)
+	}
+}
+
+// Allow is how an author accepts going down with the node. The block disappears;
+// the warning does not, because opting in accepts a risk rather than retiring it.
+func TestCompileHonorsAllowTierInversionPolicy(t *testing.T) {
+	groupTier := int32(2)
+	plan, diagnostics, err := Compile(StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{{
+			Name:                "late-workload",
+			Action:              "ScaleWorkload",
+			ShutdownTier:        &groupTier,
+			TierInversionPolicy: TierInversionAllow,
+		}},
+		GroupNodes: []GroupNodeMembership{
+			{Group: "late-workload", Acts: []string{"node-a"}},
+		},
+		NodeTiers: []NodeTier{{Name: "node-a", Tier: 4}},
+	}, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if len(plan.BlockedNodes) != 0 {
+		t.Fatalf("Allow means the node powers off on schedule, got %#v", plan.BlockedNodes)
+	}
+	if !hasDiagnosticReason(diagnostics, "ShutdownTierInversionAllowed") {
+		t.Fatalf("expected the accepted inversion to still be reported, got %#v", diagnostics)
+	}
+	if hasDiagnosticReason(diagnostics, "ShutdownTierInversion") {
+		t.Fatalf("an accepted inversion should not also report as blocking, got %#v", diagnostics)
+	}
+}
+
+// One dissenting group holds the node up. Powering it off to satisfy the group
+// that accepted the risk would cut power to the group that did not.
+func TestCompileBlocksNodeWhenOnlyOneSharedGroupAllows(t *testing.T) {
+	groupTier := int32(2)
+	plan, _, err := Compile(StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{
+				Name:                "accepts-risk",
+				Action:              "ScaleWorkload",
+				ShutdownTier:        &groupTier,
+				TierInversionPolicy: TierInversionAllow,
+			},
+			{Name: "needs-power", Action: "ScaleWorkload", ShutdownTier: &groupTier},
+		},
+		GroupNodes: []GroupNodeMembership{
+			{Group: "accepts-risk", Acts: []string{"node-a"}},
+			{Group: "needs-power", Acts: []string{"node-a"}},
+		},
+		NodeTiers: []NodeTier{{Name: "node-a", Tier: 4}},
+	}, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if len(plan.BlockedNodes) != 1 {
+		t.Fatalf("the dissenting group should still hold the node, got %#v", plan.BlockedNodes)
+	}
+	if got := plan.BlockedNodes[0].Groups; len(got) != 1 || got[0] != "needs-power" {
+		t.Fatalf("only the group that did not accept the risk explains the block, got %#v", got)
+	}
+}
+
+// Blocked nodes are derived, so identical inputs must produce identical output
+// regardless of the order groups and nodes arrive in.
+func TestBlockedNodesAreDeterministic(t *testing.T) {
+	groupTier := int32(1)
+	inputs := StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{Name: "zulu", Action: "ScaleWorkload", ShutdownTier: &groupTier},
+			{Name: "alpha", Action: "ScaleWorkload", ShutdownTier: &groupTier},
+		},
+		GroupNodes: []GroupNodeMembership{
+			{Group: "zulu", Acts: []string{"node-b", "node-a"}},
+			{Group: "alpha", Acts: []string{"node-a"}},
+		},
+		NodeTiers: []NodeTier{{Name: "node-b", Tier: 3}, {Name: "node-a", Tier: 2}},
+	}
+	first, _, err := Compile(inputs, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	reversed := inputs
+	reversed.Groups = []Group{inputs.Groups[1], inputs.Groups[0]}
+	reversed.GroupNodes = []GroupNodeMembership{inputs.GroupNodes[1], inputs.GroupNodes[0]}
+	reversed.NodeTiers = []NodeTier{inputs.NodeTiers[1], inputs.NodeTiers[0]}
+	second, _, err := Compile(reversed, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if !reflect.DeepEqual(first.BlockedNodes, second.BlockedNodes) {
+		t.Fatalf("blocked nodes differ by input order:\n%#v\n%#v", first.BlockedNodes, second.BlockedNodes)
+	}
+	if len(first.BlockedNodes) != 2 {
+		t.Fatalf("expected both inverted nodes to be blocked, got %#v", first.BlockedNodes)
+	}
+	if first.BlockedNodes[0].Name != "node-a" || first.BlockedNodes[1].Name != "node-b" {
+		t.Fatalf("expected blocked nodes sorted by name, got %#v", first.BlockedNodes)
+	}
+	if got := first.BlockedNodes[0].Groups; len(got) != 2 || got[0] != "alpha" || got[1] != "zulu" {
+		t.Fatalf("expected the groups on node-a sorted by name, got %#v", got)
+	}
+}

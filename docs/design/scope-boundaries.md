@@ -352,7 +352,6 @@ for defense in depth.
 | OD-8r | Resolver behavior on malformed or missing model strings from the topology provider: reject, floor-match with warning, or configurable | Resolver design |
 | OD-9 | Degrade mechanics for trigger-capability mismatch — folded into capability schema doc | Capability schema doc |
 | OD-10 | USB and serial UPS support: version target and isolation model | v2 scoping |
-| OD-18 | Tier inversion: lower-tier workload on higher-tier node. Node cannot clear under PL-20 while the workload runs. Compile-time detection reports it as `ShutdownTierInversion`; opt-in migration and node blocking remain open, and node-local PVCs constrain migration | Planner tier compilation |
 | OD-19 | FSD usage: whether NUT's forced-shutdown broadcast becomes the final release signal or is deliberately declined in favor of the executor's signal file. Affects whether shutdown is observable through standard NUT tooling | Executor design |
 | OD-20 | Instant command scope and gating: which NUT instant commands and writable variables enter scope, how they are gated given they can cut power to equipment, and which capability profile fields declare support. Bounded by OD-1 on anything touching power-return | Capability schema |
 | OD-21 | Driver configuration ownership: whether driver name, poll interval, and driver-specific parameters move from `UPSDevice` spec into capability profiles, or remain in spec with profiles supplying defaults and validation. Hybrid — profile default, spec override — is the likely answer (RS-5 pattern) | Capability schema |
@@ -374,6 +373,7 @@ for defense in depth.
 | OD-5 | Startup ordering is an advisory projection for subscribers, not an operator-executed graph. |
 | OD-15 | Probe-history persistence uses PostgreSQL `capability_profile_verifications` rows for "last verified against firmware X" and drift evidence. |
 | OD-16 | A node with no modeled `carries` path is a warning (`CommunicationPathUnmodeled`), not a hard failure, and `communicationPathExempt` marks the deliberate cases. Silent-assume stays excluded: the gap is always stated. |
+| OD-18 | Tier inversion blocks the node. A node running a group scheduled to outlive it is withheld from power-off for the whole flow, and the withheld nodes are published on `status.blockedNodeReleases`. `spec.groups[].tierInversionPolicy: Allow` lets a group accept going down with its node. Migration is declined as a general remedy because node-local storage means there is not always anywhere to migrate to. |
 | OD-23 | Telemetry variable aliasing lives in the profile telemetry section. A natively reported canonical name always outranks an alias; aliasing is one-directional and total; applied and shadowed aliases are both recorded as diagnostics. |
 | OD-31 | A UPS that matches no product capability profile blocks `Enforce` mode, naming the devices, unless `spec.safety.allowUnidentifiedDevices` records acceptance. Dry-run compilation and review are unaffected. The catch-all profile is renamed from "universal floor" to the unidentified-device profile. |
 
@@ -425,12 +425,6 @@ targets them at all.
 
 TBD, not blocking:
 
-- Tier-inversion handling (tracked as OD-18): a lower-tier workload sitting on a higher-tier node.
-  The node cannot clear under PL-20 while the workload is still running. Compilation detects and
-  reports the condition as `ShutdownTierInversion`, naming the group, the node, and both tiers. What
-  remains open is the remedy: opt-in migration and node blocking are both undecided, and node-local
-  PVCs constrain the migration path. Reporting rather than blocking is deliberate — the fix belongs
-  to whoever authored the tiers.
 - Whether an in-cluster audit store should be protected by tier 0 or tier 1 placement in addition
   to the local spool.
 - Label key and central CR shape.

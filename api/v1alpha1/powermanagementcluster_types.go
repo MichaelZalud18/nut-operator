@@ -31,6 +31,10 @@ type PowerManagementClusterSpec struct {
 	// +optional
 	ShutdownTiers PowerShutdownTierPolicySpec `json:"shutdownTiers,omitempty"`
 
+	// inventory configures how declarative inventory snapshots are treated.
+	// +optional
+	Inventory PowerInventorySpec `json:"inventory,omitempty"`
+
 	// storage configures durable audit, telemetry, and flow execution state.
 	// +optional
 	Storage PowerStorageSpec `json:"storage,omitempty"`
@@ -51,6 +55,49 @@ type PowerManagementClusterSpec struct {
 const (
 	// DefaultShutdownTierLabelKey is the default label key used to read numeric shutdown tiers.
 	DefaultShutdownTierLabelKey = "power.zalud.io/shutdown-tier"
+)
+
+// PowerInventorySpec configures treatment of declarative inventory snapshots.
+type PowerInventorySpec struct {
+	// snapshotAgeLevels raise the reported severity as an inventory snapshot ages
+	// (IN-16). Age never blocks planning: a provider outage must degrade rather
+	// than stop a shutdown (IN-15), so the worst an old snapshot can do is say so
+	// loudly. The levels exist because "last good snapshot" must not be able to
+	// quietly mean "eight months ago".
+	//
+	// Thresholds are evaluated highest-first, so the oldest matching entry wins.
+	// An empty list applies the defaults: Info at one hour, Warning at six.
+	// +listType=map
+	// +listMapKey=level
+	// +optional
+	SnapshotAgeLevels []PowerSnapshotAgeLevel `json:"snapshotAgeLevels,omitempty"`
+}
+
+// PowerSnapshotAgeLevel raises one severity once a snapshot reaches an age.
+type PowerSnapshotAgeLevel struct {
+	// level is the severity reported once a snapshot is older than after. Info is
+	// recorded and published without changing conditions; Warning additionally
+	// degrades flows compiled from the snapshot.
+	Level PowerNotificationLevel `json:"level"`
+
+	// after is the snapshot age at which this level begins to apply.
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+$`
+	After metav1.Duration `json:"after"`
+}
+
+// PowerNotificationLevel is the severity attached to an advisory condition.
+//
+// There is no rejecting level on purpose. Escalation here reports harder; it
+// never stops a shutdown from planning.
+// +kubebuilder:validation:Enum=Info;Warning
+type PowerNotificationLevel string
+
+const (
+	// PowerNotificationInfo is recorded and published but changes no condition.
+	PowerNotificationInfo PowerNotificationLevel = "Info"
+	// PowerNotificationWarning degrades the resources that consumed the snapshot.
+	PowerNotificationWarning PowerNotificationLevel = "Warning"
 )
 
 // PowerShutdownTierPolicySpec configures central numbered shutdown-tier policy.

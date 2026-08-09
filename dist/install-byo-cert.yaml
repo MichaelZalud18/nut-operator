@@ -3709,6 +3709,47 @@ spec:
                         type: string
                     type: object
                 type: object
+              inventory:
+                description: inventory configures how declarative inventory snapshots
+                  are treated.
+                properties:
+                  snapshotAgeLevels:
+                    description: |-
+                      snapshotAgeLevels raise the reported severity as an inventory snapshot ages
+                      (IN-16). Age never blocks planning: a provider outage must degrade rather
+                      than stop a shutdown (IN-15), so the worst an old snapshot can do is say so
+                      loudly. The levels exist because "last good snapshot" must not be able to
+                      quietly mean "eight months ago".
+
+                      Thresholds are evaluated highest-first, so the oldest matching entry wins.
+                      An empty list applies the defaults: Info at one hour, Warning at six.
+                    items:
+                      description: PowerSnapshotAgeLevel raises one severity once
+                        a snapshot reaches an age.
+                      properties:
+                        after:
+                          description: after is the snapshot age at which this level
+                            begins to apply.
+                          pattern: ^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h))+$
+                          type: string
+                        level:
+                          description: |-
+                            level is the severity reported once a snapshot is older than after. Info is
+                            recorded and published without changing conditions; Warning additionally
+                            degrades flows compiled from the snapshot.
+                          enum:
+                          - Info
+                          - Warning
+                          type: string
+                      required:
+                      - after
+                      - level
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - level
+                    x-kubernetes-list-type: map
+                type: object
               observability:
                 description: observability configures metrics, events, and telemetry
                   export defaults.
@@ -4511,6 +4552,18 @@ spec:
                           type: object
                           x-kubernetes-map-type: atomic
                       type: object
+                    tierInversionPolicy:
+                      default: Block
+                      description: |-
+                        tierInversionPolicy decides what happens when this group runs on a node whose own
+                        shutdown tier would power that node off while this group is still expected to be
+                        running. Block withholds the node from power-off for the whole flow, so the flow
+                        shuts down less than planned rather than pulling power from live work. Allow powers
+                        the node off on schedule and accepts that this group goes down with it.
+                      enum:
+                      - Block
+                      - Allow
+                      type: string
                     timeout:
                       description: timeout limits how long the group may run.
                       type: string
@@ -4871,6 +4924,46 @@ spec:
           status:
             description: status defines the observed state of ShutdownFlow
             properties:
+              blockedNodeReleases:
+                description: |-
+                  blockedNodeReleases names nodes this flow will not power off because a group still
+                  expected to be running is scheduled on them (OD-18). They are published because a
+                  flow that quietly shuts down fewer nodes than its plan implies is worse than one
+                  that says which nodes it is leaving up and why.
+                items:
+                  description: |-
+                    BlockedNodeReleaseStatus is one node the flow will not power off, and the
+                    group whose tier caused it to be held back.
+                  properties:
+                    groups:
+                      description: |-
+                        groups names the shutdown groups running on this node that are scheduled to
+                        outlive it.
+                      items:
+                        type: string
+                      type: array
+                    message:
+                      description: message explains the block in operator-facing terms.
+                      type: string
+                    nodeName:
+                      description: nodeName is the cluster node withheld from power-off.
+                      minLength: 1
+                      type: string
+                    nodeTier:
+                      description: nodeTier is the node's own declared shutdown tier.
+                      format: int32
+                      type: integer
+                    reason:
+                      description: reason is the machine-readable cause, currently
+                        always ShutdownTierInversion.
+                      type: string
+                  required:
+                  - nodeName
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - nodeName
+                x-kubernetes-list-type: map
               capabilityMatchCount:
                 description: capabilityMatchCount records how many UPS devices received
                   capability profile matches.

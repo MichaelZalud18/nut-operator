@@ -73,12 +73,13 @@ func CompileArtifactWithResolvedInputsAndTierPolicy(obj *powerv1alpha1.ShutdownF
 // discarded this return value, so the planner's own findings ended at the
 // function boundary.
 type CompiledFlow struct {
-	Steps             []powerv1alpha1.CompiledShutdownStep
-	Waves             []powerv1alpha1.CompiledShutdownWave
-	EstimatedDuration *metav1.Duration
-	ConfigHash        string
-	Artifact          *powerv1alpha1.PublishedPlannerArtifactStatus
-	Diagnostics       []planner.Diagnostic
+	Steps               []powerv1alpha1.CompiledShutdownStep
+	Waves               []powerv1alpha1.CompiledShutdownWave
+	EstimatedDuration   *metav1.Duration
+	ConfigHash          string
+	Artifact            *powerv1alpha1.PublishedPlannerArtifactStatus
+	Diagnostics         []planner.Diagnostic
+	BlockedNodeReleases []powerv1alpha1.BlockedNodeReleaseStatus
 }
 
 // CompileFlow compiles a ShutdownFlow against resolved inventory, capability
@@ -94,13 +95,32 @@ func CompileFlow(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBund
 	}
 
 	return CompiledFlow{
-		Steps:             APICompiledSteps(plan.Steps),
-		Waves:             APICompiledWaves(plan.Waves),
-		EstimatedDuration: APIDuration(plan.EstimatedDuration),
-		ConfigHash:        plan.Hash,
-		Artifact:          APIPlannerArtifact(plan),
-		Diagnostics:       diagnostics,
+		Steps:               APICompiledSteps(plan.Steps),
+		Waves:               APICompiledWaves(plan.Waves),
+		EstimatedDuration:   APIDuration(plan.EstimatedDuration),
+		ConfigHash:          plan.Hash,
+		Artifact:            APIPlannerArtifact(plan),
+		Diagnostics:         diagnostics,
+		BlockedNodeReleases: APIBlockedNodeReleases(plan.BlockedNodes),
 	}
+}
+
+// APIBlockedNodeReleases converts the plan's withheld nodes to status form.
+func APIBlockedNodeReleases(blocked []planner.BlockedNode) []powerv1alpha1.BlockedNodeReleaseStatus {
+	if len(blocked) == 0 {
+		return nil
+	}
+	statuses := make([]powerv1alpha1.BlockedNodeReleaseStatus, 0, len(blocked))
+	for _, node := range blocked {
+		statuses = append(statuses, powerv1alpha1.BlockedNodeReleaseStatus{
+			NodeName: node.Name,
+			Reason:   node.Reason,
+			Groups:   append([]string(nil), node.Groups...),
+			NodeTier: node.NodeTier,
+			Message:  node.Message,
+		})
+	}
+	return statuses
 }
 
 // PlannerInputs converts the Kubernetes API object into pure planner inputs.
@@ -143,6 +163,8 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 			ShutdownTier: PlannerShutdownTier(group, tierPolicy),
 			Timeout:      PlannerDuration(group.Timeout),
 			Params:       copyParams(group.Params),
+
+			TierInversionPolicy: string(group.TierInversionPolicy),
 		})
 	}
 	for _, step := range obj.Spec.Steps {

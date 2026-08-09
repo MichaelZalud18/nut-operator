@@ -81,7 +81,6 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | OD-12 | Infeasible-plan policy field default and options | EX-3 | Planner design |
 | OD-14 | Partial-domain outage: cluster-wide vs domain-scoped plan (structure now available) | PL-16, PL-23, EX-10 | Planner design |
 | OD-16 | Missing `carries` coverage: error vs explicit exemption | Inventory validation | inventory contract |
-| OD-18 | Tier inversion: lower-tier workload on higher-tier node. Node cannot clear under PL-20 while the workload runs. Options: compile-time validation, opt-in migration, node blocking. Node-local PVCs constrain migration | Planner tier compilation | Planner design |
 | OD-19 | FSD usage: NUT's forced-shutdown broadcast as the final release signal, or deliberately declined in favor of the executor's signal file | F-20 | Executor design |
 | OD-20 | Instant command scope and gating, and which capability profile fields declare support. Bounded by OD-1 on power-return | F-22, F-23, F-27 | Capability schema |
 | OD-21 | Driver configuration ownership: capability profile vs `UPSDevice` spec; hybrid default-plus-override likely (RS-5 pattern) | — | Capability schema |
@@ -111,6 +110,7 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | OD-13 | Load shedding node-granular baseline | planner Resolved |
 | OD-17 | Executor mid-flow state persists to PostgreSQL execution and resume-state tables | executor EX-14 |
 | OD-23 | Alias maps live in the profile telemetry section. Native readings outrank aliases; aliasing is one-directional and total; every applied alias is a diagnostic | capability-profiles.md |
+| OD-18 | Tier inversion blocks the node by default: an inverted node is withheld from power-off for the whole flow. `spec.groups[].tierInversionPolicy: Allow` opts a group out per workload. Migration declined as a general remedy — node-local PVCs mean there is not always anywhere to move to | Planner tier compilation | Planner design |
 | OD-31 | An unidentified device blocks Enforce mode unless explicitly accepted. Dry-run review is unaffected. "Universal floor" retired as a name | PL-33 |
 
 ## Glossary

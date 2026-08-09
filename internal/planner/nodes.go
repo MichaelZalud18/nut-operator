@@ -19,6 +19,7 @@ package planner
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // collectNodeClearanceGraphEdges derives PL-20 node-clearance edges.
@@ -139,7 +140,16 @@ func reportDefaultedShutdownTiers(input StructuralInputs) []Diagnostic {
 	return diagnostics
 }
 
-// validateTierInversion reports workloads scheduled to outlive the node running
+// tierInversion is one group scheduled to outlive a node it runs on.
+type tierInversion struct {
+	Group     string
+	Node      string
+	GroupTier int32
+	NodeTier  int32
+	Policy    string
+}
+
+// detectTierInversions finds workloads scheduled to outlive the node running
 // them (OD-18).
 //
 // Tiers count down: a higher tier stops earlier, so a node at tier 4 is meant to
@@ -148,11 +158,10 @@ func reportDefaultedShutdownTiers(input StructuralInputs) []Diagnostic {
 // still on it, or it never clears and the wave stalls. Either way the plan says
 // something the cluster cannot do.
 //
-// This warns rather than rejects. The condition is real but the remedy is a
-// choice the operator has to make — retier the workload, move it, or accept it —
-// and OD-18 leaves opt-in migration and node blocking open. Stating the gap is
-// what is required; deciding it for the user is not.
-func validateTierInversion(input StructuralInputs) []Diagnostic {
+// Detection is deliberately separate from the remedy. The same finding drives
+// both the diagnostic an operator reads and the node the plan withholds, and
+// those two must never be able to disagree about what was found.
+func detectTierInversions(input StructuralInputs) []tierInversion {
 	if len(input.GroupNodes) == 0 || len(input.NodeTiers) == 0 {
 		return nil
 	}
@@ -165,8 +174,12 @@ func validateTierInversion(input StructuralInputs) []Diagnostic {
 	for _, node := range input.NodeTiers {
 		nodeTiers[node.Name] = node.Tier
 	}
+	policies := make(map[string]string, len(input.Groups))
+	for _, group := range input.Groups {
+		policies[group.Name] = effectiveTierInversionPolicy(group)
+	}
 
-	var diagnostics []Diagnostic
+	var inversions []tierInversion
 	for _, entry := range input.GroupNodes {
 		groupTier, hasGroupTier := groupTiers[entry.Group]
 		if !hasGroupTier {
@@ -177,18 +190,123 @@ func validateTierInversion(input StructuralInputs) []Diagnostic {
 			if !hasNodeTier || nodeTier <= groupTier {
 				continue
 			}
-			diagnostics = append(diagnostics, Diagnostic{
-				Severity: DiagnosticWarning,
-				Reason:   "ShutdownTierInversion",
-				Subject:  entry.Group,
-				Message: fmt.Sprintf(
-					"shutdown group %q is tier %d but runs on node %q at tier %d; the node is scheduled to power off before this group stops",
-					entry.Group, groupTier, node, nodeTier),
+			inversions = append(inversions, tierInversion{
+				Group:     entry.Group,
+				Node:      node,
+				GroupTier: groupTier,
+				NodeTier:  nodeTier,
+				Policy:    policies[entry.Group],
 			})
 		}
+	}
+	sort.SliceStable(inversions, func(left, right int) bool {
+		if inversions[left].Node != inversions[right].Node {
+			return inversions[left].Node < inversions[right].Node
+		}
+		return inversions[left].Group < inversions[right].Group
+	})
+	return inversions
+}
+
+// effectiveTierInversionPolicy resolves a group's remedy, defaulting to Block.
+//
+// Blocking is the default because its failure mode is powering off less of the
+// cluster than intended, while allowing the power-off cuts power to work the
+// author explicitly declared as still needed. Migrating the workload instead is
+// not a general answer: node-local storage means there is not always anywhere
+// else for it to go.
+func effectiveTierInversionPolicy(group Group) string {
+	if group.TierInversionPolicy == TierInversionAllow {
+		return TierInversionAllow
+	}
+	return TierInversionBlock
+}
+
+// validateTierInversion reports every inversion, whichever remedy applies.
+//
+// Allowing the power-off still warns. Opting in means accepting a known risk,
+// not declaring the condition uninteresting, and an operator reading the flow
+// should see it either way.
+func validateTierInversion(input StructuralInputs) []Diagnostic {
+	var diagnostics []Diagnostic
+	for _, inversion := range detectTierInversions(input) {
+		if inversion.Policy == TierInversionAllow {
+			diagnostics = append(diagnostics, Diagnostic{
+				Severity: DiagnosticWarning,
+				Reason:   "ShutdownTierInversionAllowed",
+				Subject:  inversion.Group,
+				Message: fmt.Sprintf(
+					"shutdown group %q is tier %d but runs on node %q at tier %d; the group sets tierInversionPolicy Allow, so the node powers off on schedule and this group goes down with it",
+					inversion.Group, inversion.GroupTier, inversion.Node, inversion.NodeTier),
+			})
+			continue
+		}
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity: DiagnosticWarning,
+			Reason:   "ShutdownTierInversion",
+			Subject:  inversion.Group,
+			Message: fmt.Sprintf(
+				"shutdown group %q is tier %d but runs on node %q at tier %d; the node is scheduled to power off before this group stops and is withheld from power-off",
+				inversion.Group, inversion.GroupTier, inversion.Node, inversion.NodeTier),
+		})
 	}
 	sort.SliceStable(diagnostics, func(left, right int) bool {
 		return diagnostics[left].Message < diagnostics[right].Message
 	})
 	return diagnostics
+}
+
+// blockedNodesFromInversions collapses inversions into the nodes the plan will
+// not power off, naming every group responsible.
+//
+// One dissenting group is enough to hold a node up. If two groups run on the
+// same node and only one accepts going down with it, powering the node off still
+// cuts power to the other, so Allow is a statement about the group that sets it
+// and never about its neighbors.
+func blockedNodesFromInversions(inversions []tierInversion) []BlockedNode {
+	if len(inversions) == 0 {
+		return nil
+	}
+
+	nodes := make([]string, 0, len(inversions))
+	groupsByNode := map[string][]string{}
+	tierByNode := map[string]int32{}
+	for _, inversion := range inversions {
+		if inversion.Policy == TierInversionAllow {
+			continue
+		}
+		if _, seen := groupsByNode[inversion.Node]; !seen {
+			nodes = append(nodes, inversion.Node)
+			tierByNode[inversion.Node] = inversion.NodeTier
+		}
+		groupsByNode[inversion.Node] = append(groupsByNode[inversion.Node], inversion.Group)
+	}
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	sort.Strings(nodes)
+	blocked := make([]BlockedNode, 0, len(nodes))
+	for _, node := range nodes {
+		groups := groupsByNode[node]
+		sort.Strings(groups)
+		blocked = append(blocked, BlockedNode{
+			Name:     node,
+			Reason:   "ShutdownTierInversion",
+			NodeTier: tierByNode[node],
+			Groups:   groups,
+			Message: fmt.Sprintf(
+				"node %q is tier %d but still runs %s, scheduled to stop later; the node is withheld from power-off",
+				node, tierByNode[node], joinQuoted(groups)),
+		})
+	}
+	return blocked
+}
+
+func joinQuoted(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, fmt.Sprintf("%q", value))
+	}
+	return strings.Join(quoted, ", ")
 }

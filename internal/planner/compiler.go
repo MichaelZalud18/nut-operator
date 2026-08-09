@@ -64,6 +64,7 @@ func Compile(structural StructuralInputs, telemetry TelemetryInputs) (Plan, []Di
 		plan.Steps = steps
 		plan.EstimatedDuration = Duration{Duration: duration}
 	}
+	plan.BlockedNodes = blockedNodesFromInversions(detectTierInversions(normalized))
 	plan.Explanations = graphExplanations(plan.Graph, len(plan.Waves), len(plan.StartupWaves))
 	plan.Diagrams = renderDiagramExports(plan.Graph)
 	plan.Feasibility = advisoryFeasibility(telemetry)

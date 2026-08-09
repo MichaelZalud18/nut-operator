@@ -61,6 +61,12 @@ type StructuralBundle struct {
 	ObservedAt        string                   `json:"observedAt,omitempty"`
 	Topology          inventory.Topology       `json:"topology,omitempty"`
 	CapabilityMatches []capability.MatchResult `json:"capabilityMatches,omitempty"`
+	// SnapshotObservedAt is when the inventory snapshot itself was taken, which
+	// is what IN-16 age escalation measures. It is distinct from ObservedAt, the
+	// time this bundle was assembled: a provider outage means those two diverge,
+	// and the gap between them is exactly the thing worth reporting. It stays out
+	// of Hash because the topology hash already covers the snapshot it came from.
+	SnapshotObservedAt string `json:"snapshotObservedAt,omitempty"`
 	// ClusterNodes and AgentCoverage carry through unchanged for group-to-node
 	// expansion. They are deliberately absent from Hash: node labels churn for
 	// reasons unrelated to shutdown planning, and only the membership actually

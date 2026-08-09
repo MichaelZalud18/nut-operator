@@ -153,7 +153,17 @@ type Group struct {
 	ShutdownTier *int32            `json:"shutdownTier,omitempty"`
 	Timeout      Duration          `json:"timeout,omitempty"`
 	Params       map[string]string `json:"params,omitempty"`
+	// TierInversionPolicy is the group's remedy for running on a node scheduled
+	// to power off before it stops (OD-18). Empty means the default, Block.
+	TierInversionPolicy string `json:"tierInversionPolicy,omitempty"`
 }
+
+// Tier inversion remedies. Block withholds the node from power-off; Allow lets
+// the node go down on schedule with the group still on it.
+const (
+	TierInversionBlock = "Block"
+	TierInversionAllow = "Allow"
+)
 
 // Step is a linear fallback action for simple installs.
 type Step struct {
@@ -193,6 +203,19 @@ type Plan struct {
 	Diagrams          DiagramExports `json:"diagrams,omitempty"`
 	EstimatedDuration Duration       `json:"estimatedDuration,omitempty"`
 	Feasibility       Feasibility    `json:"feasibility,omitempty"`
+	// BlockedNodes are nodes the plan declines to power off under OD-18. They are
+	// part of the plan rather than a diagnostic because they change what executes:
+	// a node listed here is withheld from every power-off in the flow.
+	BlockedNodes []BlockedNode `json:"blockedNodes,omitempty"`
+}
+
+// BlockedNode is one node withheld from power-off, with the groups that caused it.
+type BlockedNode struct {
+	Name     string   `json:"name"`
+	Reason   string   `json:"reason"`
+	NodeTier int32    `json:"nodeTier"`
+	Groups   []string `json:"groups,omitempty"`
+	Message  string   `json:"message"`
 }
 
 // CompiledStep is the flattened review view for status and audit surfaces.

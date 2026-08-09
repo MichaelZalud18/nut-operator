@@ -90,8 +90,9 @@ or plan participation.
 specifics stop at the provider boundary (IN-1, IN-2).
 
 **RS-12 · Snapshot rendering.** The NetBox provider renders a versioned snapshot at resolve time
-(IN-14). The resolver records snapshot version and age, enforces the configurable age ceiling
-(IN-16), and marks derived plans degraded past it (PL-34).
+(IN-14). The resolver records snapshot version and age and reports the age at the severity the
+cluster's configured thresholds assign it (IN-16), degrading derived plans once that severity reaches
+`Warning` (PL-34). Age never blocks resolution.
 
 **RS-13 · Provider outage degrades, never blocks** (IN-15). Resolution continues on the last good
 snapshot with a staleness condition. A resolver that has never obtained a snapshot from an optional

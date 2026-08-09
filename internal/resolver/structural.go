@@ -31,6 +31,10 @@ import (
 const (
 	DiagnosticError   = "Error"
 	DiagnosticWarning = "Warning"
+	// DiagnosticInfo is recorded and published without degrading anything. It
+	// exists so an advisory finding can escalate through severity rather than
+	// being either silent or a fault.
+	DiagnosticInfo = "Info"
 
 	DiagnosticSourceInventory  = "Inventory"
 	DiagnosticSourceCapability = "Capability"
@@ -54,12 +58,13 @@ func ResolveStructural(inputs StructuralInputs) (StructuralBundle, []Diagnostic,
 	}
 
 	bundle := StructuralBundle{
-		SourceID:          inputs.SourceID,
-		ObservedAt:        inputs.ObservedAt,
-		Topology:          topology,
-		CapabilityMatches: matches,
-		ClusterNodes:      normalizeClusterNodes(inputs.ClusterNodes),
-		AgentCoverage:     normalizeAgentCoverage(inputs.AgentCoverage),
+		SourceID:           inputs.SourceID,
+		ObservedAt:         inputs.ObservedAt,
+		SnapshotObservedAt: inputs.Inventory.ObservedAt,
+		Topology:           topology,
+		CapabilityMatches:  matches,
+		ClusterNodes:       normalizeClusterNodes(inputs.ClusterNodes),
+		AgentCoverage:      normalizeAgentCoverage(inputs.AgentCoverage),
 	}
 	bundle.Hash = stableHash(struct {
 		SourceID          string                   `json:"sourceID,omitempty"`
