@@ -11,7 +11,12 @@ what is built and what remains open, with design-doc identifiers (`OD-n`, `PL-n`
 findings (`F-n`) cited so the reasoning behind an item is one click away rather than re-litigated.
 Items that genuinely span two components are listed under their primary owner with a cross-reference.
 
-Last reviewed: 2026-08-08
+Work deliberately targeted after v1 lives in [tasks-post-v1.md](tasks-post-v1.md) so this file
+stays answerable to one question: what is left before v1. Items move there only when something
+outside the project gates them or scope-boundaries places them beyond v1 — never merely because
+they are hard or unscheduled.
+
+Last reviewed: 2026-08-09
 
 ---
 
@@ -112,9 +117,6 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
   `shutdown.return` handshake and `test.battery.start`.
 - `OD-21` driver configuration ownership — profile vs. `UPSDevice` spec. A hybrid (profile default,
   spec override) matches the existing `RS-5` precedence pattern and is the likely shape.
-- `OD-24` non-NUT power device actuation (UniFi RPS-class devices) — currently topological-only by
-  design; revisit alongside `OD-10` (USB support), since both concern control surfaces outside the
-  NUT-network-only posture.
 - `OD-25` PDU capability profile kind — scaffolding only, not started.
 - `OD-26` provenance field semantics — advisory metadata today; decide whether it should ever gate
   resolution (e.g. `Community` profiles requiring opt-in).
@@ -364,19 +366,6 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   in the API and none on the wire. Until the NUT release that implements it exists, the field's
   documentation has to state plainly that it is inert — and admission should arguably reject `true`
   rather than accept a setting it cannot honor.
-- **Client certificates for `upsmon` are not v1.** The operator provisions no client identity, so
-  `verifyClientCertificates` locks out every agent and correctly defaults to `false`. On the
-  OpenSSL path this needs `CERTFILE` in `upsmon.conf` and a working `CERTREQUEST`, both of which
-  land after 2.8.5 and so require a release that does not exist yet. On the NSS path it needs a
-  certificate database the source build above exists to avoid. When it does become buildable, the
-  identity should be minted by the operator's own CA into a per-agent Secret, matching
-  `hack/webhook-cert.sh`; the cert-manager CSI driver is the wider ecosystem's answer for per-pod
-  identity but is rejected here for the same reason cert-manager itself was — it has nothing to
-  reconcile while the cluster is losing power.
-- **Per-server TLS posture via `CERTHOST` is not v1**, for the same reason. `CERTVERIFY`/`FORCESSL`
-  are process-global, so an agent monitoring servers with different `spec.tls.mode` values renders
-  the weakest common posture and reports `NUTTLSDowngraded`. `CERTHOST` would give each `MONITOR`
-  line its own flags, and under OpenSSL it also lands after 2.8.5.
 - **`NUTServer` reconciler doesn't watch `UPSDevice` or unowned credential `Secret`s.**
   `SetupWithManager` (`nutserver_controller.go`) only watches `NUTServer` itself plus resources it
   owns (`Owns(&corev1.Secret{})` only matches secrets with an owner reference back to it — not a

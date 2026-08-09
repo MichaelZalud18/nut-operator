@@ -118,7 +118,10 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
+	# 30m, not go test's 10m default: BeforeSuite builds five operand images, and two of
+	# them compile NUT from source (F-39). The default budget was spent on image builds
+	# before the suite reached its first assertion.
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout=30m
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
