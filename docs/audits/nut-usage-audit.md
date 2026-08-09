@@ -166,16 +166,68 @@ Three constraints surfaced while fixing it, each of which shaped the result:
   cert-manager's `CombinedPEM` output format was rejected as the mechanism: it writes key-first,
   which OpenSSL happens to tolerate and NSS builds do not use at all.
 - **Client certificate validation is not deliverable today, so it stopped being a default.**
-  `verifyClientCertificates` defaulted to `true` and forced `clientCARef` to be set. NUT honors
-  `CERTREQUEST` under OpenSSL only from 2.8.6 onward, and `upsmon` can present a client certificate
-  only via `CERTFILE` (also 2.8.6+) or an NSS database the operator does not build. Rendering
-  `CERTREQUEST 2` under the old default would have locked out every `NodePowerAgent`. Now defaults
-  to `false`; the remaining work is tracked in `docs/tasks.md`.
+  `verifyClientCertificates` defaulted to `true` and forced `clientCARef` to be set. Rendering
+  `CERTREQUEST 2` under that default would have locked out every `NodePowerAgent`, because the
+  operator issues no client identity at all. Now defaults to `false`; the remaining work is tracked
+  in `docs/tasks.md`. **The version reasoning originally recorded here was wrong — see `F-39`.**
 - **`CERTVERIFY`/`FORCESSL` are process-global in `upsmon`.** An agent monitoring several
-  `NUTServer`s cannot hold a different posture per server without `CERTHOST` (NUT 2.8.5+). Mixed
+  `NUTServer`s cannot hold a different posture per server without `CERTHOST` (post-2.8.5 under
+  OpenSSL — see `F-39`). Mixed
   modes therefore render the weakest common posture and set a `NUTTLSDowngraded` Degraded condition,
   rather than either cutting off the laxer server or silently under-securing the strict one.
 
 A new field, `spec.tls.serverCARef`, carries the CA that clients verify `upsd` against. It is
 distinct from `clientCARef`, which is the CA `upsd` verifies clients against — NUT keeps both under
 the name `CERTPATH`, in different files, which is what made the original conflation easy.
+
+## Findings — third pass, 2026-08-08
+
+Prompted by a challenge to the version claims in `F-37`. Verified by running the operand image
+rather than by reading documentation, which is what turned a citation error into a live finding.
+
+**F-39 · The `F-37` fix is inert on the operand image, which is an NSS build.** `images/nut-server`
+is `apk add nut` on `alpine:3.22`. That package is **NUT 2.8.2 linked against NSS**, not OpenSSL:
+
+```console
+$ docker run --rm alpine:3.22 sh -c 'apk add -q nut && upsd -V && ldd /usr/sbin/upsd | grep -Ei "ssl|nss"'
+Network UPS Tools upsd 2.8.2
+	libssl3.so => /usr/lib/libssl3.so
+	libnss3.so => /usr/lib/libnss3.so
+	libnspr4.so => /usr/lib/libnspr4.so
+```
+
+`upsd.conf(5)` documents `CERTFILE` as OpenSSL-only — "No-op in NSS builds" — and NSS builds
+configure TLS through `CERTPATH` naming a three-file certificate database plus `CERTIDENT`. Feeding
+the operator's own rendered configuration to that build:
+
+```console
+upsd.conf: invalid directive CERTFILE /etc/nut/tls/combined.pem
+STARTTLS  → ERR FEATURE-NOT-CONFIGURED
+LIST UPS  → BEGIN LIST UPS ... END LIST UPS
+```
+
+So `spec.tls.mode: Required` still serves plaintext NUT on 3493, `MONITOR` password included. `F-37`
+is the same finding twice: the directive was correct for the backend the code assumed and wrong for
+the backend actually shipped, and the API still claims a protection that is not in effect.
+
+Why the existing tests missed it: `internal/controller/nut_tls_render_test.go` asserts the operator
+*renders* `CERTFILE`, which it does. Nothing asserted that `upsd` *accepts* it, and the `kind` e2e
+suite never performs a NUT TLS handshake. Rendering correctness and protocol correctness were never
+connected, so the operand was free to reject every directive without a single test noticing.
+
+The version claims recorded under `F-37` were also wrong and are corrected here. NUT 2.8.5 is the
+current stable release (2026-04-07); 2.8.6 does not exist yet, and the "since 2.8.6" notes come from
+documentation built off `master`. Those notes are real but they gate *unreleased* behavior, so
+`F-37`'s statement that `CERTREQUEST` "is honored under OpenSSL from 2.8.6 onward" describes
+something no released NUT can do. `CERTHOST` was recorded as "NUT 2.8.5+"; under OpenSSL it is also
+post-2.8.5. Under NSS, `CERTREQUEST`, `CERTIDENT`, and `CERTHOST` have all worked for far longer —
+the version gates apply to the OpenSSL backend only.
+
+Remedy, and the reason it is a build decision rather than a render decision: the operand should stop
+using the distribution package and build NUT 2.8.5 from source with `--with-openssl`. That makes
+`CERTFILE` valid, keeps every credential a PEM file — the shape a Kubernetes TLS Secret already
+projects — and avoids provisioning an NSS certificate database inside a container at all. Pinning
+the source build also removes the silent-downgrade risk of a base-image bump changing the TLS
+backend underneath the operator. Client certificates and per-server `CERTHOST` posture stay out of
+v1 either way: on the OpenSSL path they need a release that does not exist, and on the NSS path they
+need cert-database plumbing that the source build exists to avoid.

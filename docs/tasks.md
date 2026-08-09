@@ -337,15 +337,32 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 
 #### Open Work
 
-- **Issue client certificates to `upsmon` so `verifyClientCertificates` is usable.** `CERTREQUEST`
-  now renders, but the operator provisions no client identity, so turning it on locks out every
-  agent. Needs a per-agent certificate and `CERTFILE` in `upsmon.conf` (OpenSSL, NUT 2.8.6+) or an
-  NSS database via `CERTIDENT`. Gated on deciding whether the operator issues those itself or
-  consumes a user-supplied Secret per `NodePowerAgent`.
-- **Per-server TLS posture via `CERTHOST` (NUT 2.8.5+).** Today an agent monitoring servers with
-  different `spec.tls.mode` values falls back to the weakest and reports `NUTTLSDowngraded`, because
-  `CERTVERIFY`/`FORCESSL` are process-global. `CERTHOST` would let each `MONITOR` line carry its own
-  verification and SSL-enforcement flags. Requires knowing the agent image's NUT version.
+- **`F-39`: build the NUT operands from source at 2.8.5 with `--with-openssl`.** This is the top
+  item in this section — it is a live security gap, not a hardening nicety. `images/nut-server` is
+  `apk add nut` on `alpine:3.22`, which is NUT 2.8.2 linked against **NSS**. `CERTFILE` is
+  OpenSSL-only, so `upsd` rejects it as an invalid directive and `spec.tls.mode: Required` still
+  serves plaintext on 3493, `MONITOR` password included. Verified by running the operator's own
+  rendered config inside the image; see `docs/audits/nut-usage-audit.md`. A source build fixes it,
+  keeps every credential a PEM file the way a Kubernetes TLS Secret already projects one, and stops
+  a base-image bump from silently changing the TLS backend underneath the operator.
+- **Prove the protocol, not the render.** `nut_tls_render_test.go` asserts the operator emits
+  `CERTFILE`; nothing asserted `upsd` accepts it, and the `kind` e2e suite performs no NUT TLS
+  handshake. That gap is what let `F-39` sit behind a green suite. Needs a test that starts the
+  operand with a real certificate and completes `STARTTLS` — the same shape of gate that `F-38`
+  showed is worth having.
+- **Client certificates for `upsmon` are not v1.** The operator provisions no client identity, so
+  `verifyClientCertificates` locks out every agent and correctly defaults to `false`. On the
+  OpenSSL path this needs `CERTFILE` in `upsmon.conf` and a working `CERTREQUEST`, both of which
+  land after 2.8.5 and so require a release that does not exist yet. On the NSS path it needs a
+  certificate database the source build above exists to avoid. When it does become buildable, the
+  identity should be minted by the operator's own CA into a per-agent Secret, matching
+  `hack/webhook-cert.sh`; the cert-manager CSI driver is the wider ecosystem's answer for per-pod
+  identity but is rejected here for the same reason cert-manager itself was — it has nothing to
+  reconcile while the cluster is losing power.
+- **Per-server TLS posture via `CERTHOST` is not v1**, for the same reason. `CERTVERIFY`/`FORCESSL`
+  are process-global, so an agent monitoring servers with different `spec.tls.mode` values renders
+  the weakest common posture and reports `NUTTLSDowngraded`. `CERTHOST` would give each `MONITOR`
+  line its own flags, and under OpenSSL it also lands after 2.8.5.
 - **`NUTServer` reconciler doesn't watch `UPSDevice` or unowned credential `Secret`s.**
   `SetupWithManager` (`nutserver_controller.go`) only watches `NUTServer` itself plus resources it
   owns (`Owns(&corev1.Secret{})` only matches secrets with an owner reference back to it — not a
@@ -354,21 +371,25 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
   nothing until some unrelated reconcile happens to fire. `ShutdownFlow` has the opposite problem
   (watches `UPSDevice` with no predicate, reconciling far too often — see Planning & Execution
   Logic); `NUTServer` needs the predicate-scoped version of that same watch, not zero watch at all.
+- Advanced driver-specific configuration for the NUT operand render path. Credential *rotation* is
+  no longer carried as its own item: rotating a UPS password is an operations action, not an operator
+  feature. The operator's only duty is to notice the referenced Secret changed and re-render both
+  sides in an order that does not lock agents out mid-outage — which is the missing watch above, not
+  separate work.
+
+#### Deferred / Declined (2026-08-03)
+
 - `OD-20` instant command scope, narrowed and deprioritized (2026-08-03): the operator's actuator
   already owns real shutdown (nodes and workloads). The only remaining use case for NUT instant
   commands is the tail end after the operator has already finished — `shutdown.return` stops the UPS
   discharging into a dead load and auto-restores power when line power returns. Redundant with the
   actuator for anything actually running in the cluster; only matters for non-cluster hardware on
   the same UPS or battery-waste cleanup. Not pursued unless that narrow case becomes a real need.
-- Credential rotation and advanced driver-specific config for the NUT operand render path.
 - SNMPv3 coverage for the `snmpsim` driver-conformance fixture (currently SNMPv2c community-auth
   only, see Built above) — would need `snmpsim`'s USM configuration wired to match a `credentialSecretRef`
   fixture Secret. Not pursued: the conformance question (OID/decode correctness) is orthogonal to the
   auth mode, and production hardware's SNMPv3 path is already exercised for real in
   `docs/audits/nut-usage-audit.md`'s alpha-hardware findings.
-
-#### Deferred / Declined (2026-08-03)
-
 - `OD-19` FSD usage — deferred. Staying on the executor's own signal file; no plan to also wire up
   NUT's native forced-shutdown broadcast.
 - `F-17` follow-on (per-device telemetry-freshness readiness) — declined. Proving the driver
