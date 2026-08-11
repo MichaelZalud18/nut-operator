@@ -137,17 +137,21 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 `NUTServer` operand rendering with injection-validated NUT config, `credentialSecretRef` wiring, NUT
 protocol TLS proven end to end against operands built from source on OpenSSL, scripted `dummy-ups`
 simulation, and the `snmpsim` driver-conformance fixture. e2e covers `dummy-ups`, `snmp-ups`, and
-`NUTServer`; real actuation stays out of scope for `kind`.
+`NUTServer`; real actuation stays out of scope for `kind`. The reconciler watches `UPSDevice` through
+a predicate scoped to spec and labels, and maps credential `Secret` changes back to the servers whose
+selected devices reference them, so a driver, port, or credential edit re-renders instead of waiting
+for an unrelated reconcile.
 
-Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`, `F-40`, `OD-32`. `F-19` declined —
-it only matters with an HA `upsd` topology, which is not designed.
+Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`, `F-40`, `F-43`, `OD-32`. `F-19`
+declined — it only matters with an HA `upsd` topology, which is not designed.
 
 #### Open Work
 
 - `F-41` document `verifyClientCertificates` as inert, and decide whether admission should reject
   `true` ([nut-usage-audit.md](audits/nut-usage-audit.md)).
-- `F-43` add the predicate-scoped `UPSDevice` watch and a mapping watch from credential Secrets
-  ([reconciler-watch-scoping.md](audits/reconciler-watch-scoping.md)).
+- Extend the `F-43` mapping watch to `simulation.sequenceConfigMapRef` ConfigMaps. Same defect and
+  same code path as the credential `Secret` gap, but a `dummy-ups` fixture edit is a test-path
+  staleness rather than a credential one, so it was left out of the finding's own scope.
 - Advanced driver-specific configuration for the operand render path.
 
 ---

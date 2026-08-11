@@ -27,7 +27,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -203,6 +205,14 @@ func (r *NUTServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		// F-43: the render reads UPSDevice specs and the Secrets they reference, and Owns covers
+		// neither -- a user-supplied credentialSecretRef target carries no owner reference back
+		// here. Without these two watches a driver, port, or credential change silently does
+		// nothing until an unrelated reconcile fires.
+		Watches(&powerv1alpha1.UPSDevice{}, handler.EnqueueRequestsFromMapFunc(r.nutServerRequestsForUPSDevice),
+			builder.WithPredicates(nutServerRenderRelevantPredicate())).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.nutServerRequestsForSecret),
+			builder.WithPredicates(secretDataChangedPredicate())).
 		Named("nutserver").
 		Complete(r)
 }

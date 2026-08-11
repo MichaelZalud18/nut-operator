@@ -323,6 +323,18 @@ func nutServerSelectsDevice(server *powerv1alpha1.NUTServer, device *powerv1alph
 	if len(server.Status.SelectedDevices) > 0 && server.Status.ObservedGeneration == server.Generation {
 		return stringSliceContains(server.Status.SelectedDevices, device.Name), nil
 	}
+	return nutServerSpecSelectsDevice(server, device)
+}
+
+// nutServerSpecSelectsDevice answers the selection question from the spec alone,
+// ignoring whatever the last reconcile recorded.
+//
+// Split out because the two callers need different things. Reconcile prefers the
+// server's own record of what it selected, which is authoritative once the
+// generation matches. Watch mapping cannot: a device that has just been relabelled
+// into a selector is absent from that record by definition, so consulting it would
+// drop the very event that needs delivering.
+func nutServerSpecSelectsDevice(server *powerv1alpha1.NUTServer, device *powerv1alpha1.UPSDevice) (bool, error) {
 	for _, ref := range server.Spec.DeviceRefs {
 		if ref.Name == device.Name {
 			return true, nil
