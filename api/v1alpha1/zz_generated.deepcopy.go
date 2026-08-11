@@ -2110,6 +2110,10 @@ func (in *ShutdownFlowStatus) DeepCopyInto(out *ShutdownFlowStatus) {
 		in, out := &in.LastEvaluationTime, &out.LastEvaluationTime
 		*out = (*in).DeepCopy()
 	}
+	if in.LastPublishTime != nil {
+		in, out := &in.LastPublishTime, &out.LastPublishTime
+		*out = (*in).DeepCopy()
+	}
 	if in.TriggerEvaluation != nil {
 		in, out := &in.TriggerEvaluation, &out.TriggerEvaluation
 		*out = new(ShutdownTriggerEvaluationStatus)

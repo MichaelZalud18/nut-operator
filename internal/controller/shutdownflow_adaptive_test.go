@@ -306,3 +306,84 @@ func TestThePublishedPointerRoundTripsBackIntoTheNextRun(t *testing.T) {
 		t.Fatal("a suspended run must not resume into a latched pointer")
 	}
 }
+
+// AE-5 requires two independent emission paths. Change emission covers transitions; the cadence
+// heartbeat is what tells a subscriber the publisher is alive when nothing is transitioning.
+func TestPublishCadenceIsFasterWhileAFlowIsActive(t *testing.T) {
+	parameters := adaptive.DefaultParameters()
+	idle := &powerv1alpha1.ShutdownFlow{}
+	running := &powerv1alpha1.ShutdownFlow{
+		Status: powerv1alpha1.ShutdownFlowStatus{
+			LastExecution: &powerv1alpha1.ShutdownExecutionStatus{
+				Phase: powerv1alpha1.ShutdownExecutionPhaseRunning,
+			},
+		},
+	}
+
+	if publishCadence(running, parameters) >= publishCadence(idle, parameters) {
+		t.Fatalf("active cadence %s must be faster than idle %s",
+			publishCadence(running, parameters), publishCadence(idle, parameters))
+	}
+}
+
+// A suspended flow is parked partway down with a second dip able to resume it, which is exactly
+// the state a subscriber most needs kept fresh.
+func TestASuspendedFlowStillCountsAsActive(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		flow     *powerv1alpha1.ShutdownFlow
+		expected bool
+	}{
+		"nil flow":  {nil, false},
+		"never run": {&powerv1alpha1.ShutdownFlow{}, false},
+		"running":   {flowInPhase(powerv1alpha1.ShutdownExecutionPhaseRunning), true},
+		"suspended": {flowInPhase(powerv1alpha1.ShutdownExecutionPhaseSuspended), true},
+		"completed": {flowInPhase(powerv1alpha1.ShutdownExecutionPhaseCompleted), false},
+		"aborted":   {flowInPhase(powerv1alpha1.ShutdownExecutionPhaseAborted), false},
+		"eligible":  {flowWithEligibleTrigger(), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := flowIsActive(testCase.flow); got != testCase.expected {
+				t.Fatalf("flowIsActive = %v, want %v", got, testCase.expected)
+			}
+		})
+	}
+}
+
+func flowInPhase(phase powerv1alpha1.ShutdownExecutionPhase) *powerv1alpha1.ShutdownFlow {
+	return &powerv1alpha1.ShutdownFlow{
+		Status: powerv1alpha1.ShutdownFlowStatus{
+			LastExecution: &powerv1alpha1.ShutdownExecutionStatus{Phase: phase},
+		},
+	}
+}
+
+func flowWithEligibleTrigger() *powerv1alpha1.ShutdownFlow {
+	return &powerv1alpha1.ShutdownFlow{
+		Status: powerv1alpha1.ShutdownFlowStatus{
+			TriggerEvaluation: &powerv1alpha1.ShutdownTriggerEvaluationStatus{Eligible: true},
+		},
+	}
+}
+
+// The cadence is a ceiling on silence, never a floor on action: a trigger hold expiring in ten
+// seconds must not be deferred to the next heartbeat.
+func TestTheCadenceNeverDelaysASoonerRequeue(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		current   time.Duration
+		candidate time.Duration
+		expected  time.Duration
+	}{
+		"cadence is sooner":     {time.Minute, 10 * time.Second, 10 * time.Second},
+		"hold is sooner":        {10 * time.Second, time.Minute, 10 * time.Second},
+		"nothing scheduled yet": {0, time.Minute, time.Minute},
+		"no candidate":          {30 * time.Second, 0, 30 * time.Second},
+		"neither":               {0, 0, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := soonestRequeue(testCase.current, testCase.candidate); got != testCase.expected {
+				t.Fatalf("soonestRequeue(%s, %s) = %s, want %s",
+					testCase.current, testCase.candidate, got, testCase.expected)
+			}
+		})
+	}
+}

@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
@@ -273,6 +274,18 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.recordShutdownFlowAudit(ctx, &flow, result, resolverDiagnostics, plannerDiagnostics, bundle, compiledWaves, publishedArtifact, configHash, triggerEvaluation); err != nil {
 		log.Error(err, "failed to record ShutdownFlow audit records", "shutdownflow", flow.Name)
 	}
+
+	// AE-5 cadence: republish on a fixed interval whether or not anything changed, so
+	// silence from this flow means nothing is happening rather than that the operator
+	// stopped. Taken as the soonest of the two intervals, never the later one -- a
+	// trigger hold about to expire must not wait for the next heartbeat.
+	publishedAt := metav1.NewTime(r.now())
+	flow.Status.LastPublishTime = &publishedAt
+	metrics.ShutdownFlowPublishTimestampSeconds.WithLabelValues(flow.Name).Set(float64(publishedAt.Unix()))
+	reconcileResult.RequeueAfter = soonestRequeue(
+		reconcileResult.RequeueAfter,
+		publishCadence(&flow, adaptive.DefaultParameters()),
+	)
 
 	if err := r.Status().Patch(ctx, &flow, client.MergeFrom(base)); err != nil {
 		log.Error(err, "failed to update ShutdownFlow status")

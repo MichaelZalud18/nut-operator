@@ -122,6 +122,13 @@ type ShutdownFlowStatus struct {
 	// +optional
 	LastEvaluationTime *metav1.Time `json:"lastEvaluationTime,omitempty"`
 
+	// lastPublishTime is when this flow's state was last republished, whether or not
+	// anything changed (AE-5). It is the heartbeat that lets a subscriber tell
+	// "nothing is happening" from "the publisher died" — without it both look like
+	// silence. Refreshed on a cadence that is faster while a flow is active.
+	// +optional
+	LastPublishTime *metav1.Time `json:"lastPublishTime,omitempty"`
+
 	// triggerEvaluation is the most recent trigger evaluation against UPS telemetry status.
 	// +optional
 	TriggerEvaluation *ShutdownTriggerEvaluationStatus `json:"triggerEvaluation,omitempty"`

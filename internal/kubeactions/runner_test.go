@@ -32,7 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -487,7 +487,7 @@ func TestRunnerNotifyEmitsAnEventOnTheFlow(t *testing.T) {
 	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme returned error: %v", err)
 	}
-	recorder := record.NewFakeRecorder(10)
+	recorder := events.NewFakeRecorder(10)
 	runner := Runner{
 		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 			&powerv1alpha1.ShutdownFlow{ObjectMeta: metav1.ObjectMeta{Name: "conserve-power"}},

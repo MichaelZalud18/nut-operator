@@ -34,7 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -86,7 +86,7 @@ type Runner struct {
 	// Recorder emits the Kubernetes Events behind the Notify action. Nil makes Notify
 	// report Blocked rather than silently succeed: a notification nobody received is
 	// not a notification delivered.
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
 // RunAction implements executor.ActionRunner. It is a thin instrumented wrapper around runAction: every
@@ -455,10 +455,9 @@ func (r Runner) notify(ctx context.Context, action executor.Action) (executor.Ac
 	if err := r.Client.Get(ctx, types.NamespacedName{Name: action.ShutdownFlow}, &flow); err != nil {
 		return blocked(err), err
 	}
-	r.Recorder.AnnotatedEventf(&flow, map[string]string{
-		"power.zalud.io/execution":      action.ExecutionID,
-		"power.zalud.io/executor-group": action.Group.Name,
-	}, corev1.EventTypeNormal, reason, "%s", message)
+	// The new events API carries an explicit action alongside the reason, so the group
+	// name goes there: it is what was being done when the note was emitted.
+	r.Recorder.Eventf(&flow, nil, corev1.EventTypeNormal, reason, action.Group.Name, "%s", message)
 
 	return executor.ActionOutcome{
 		Outcome: executor.OutcomeSucceeded,

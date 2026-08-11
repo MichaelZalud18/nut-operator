@@ -154,6 +154,25 @@ var (
 		Help:      "Nodes currently withheld from power-off because a lower-tier group runs on them.",
 	}, []string{"shutdownflow"})
 
+	// ShutdownFlowPublishTimestampSeconds is when this flow's state was last published, as a Unix
+	// timestamp. It is the AE-5 cadence heartbeat.
+	//
+	// Change emission alone leaves a subscriber unable to distinguish "nothing is happening" from
+	// "the publisher died" -- both look like silence. This is re-published on a fixed cadence whether
+	// or not anything changed, so staleness in it means the operator stopped, not that the power did
+	// not move.
+	//
+	// A timestamp rather than a counter, so a single scrape answers "how long since this flow was
+	// last evaluated" without needing a rate over a window:
+	//
+	//	time() - nutoperator_shutdownflow_publish_timestamp_seconds > 180
+	ShutdownFlowPublishTimestampSeconds = promauto.With(metrics.Registry).NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "shutdownflow",
+		Name:      "publish_timestamp_seconds",
+		Help:      "When this shutdown flow's state was last published, as a Unix timestamp.",
+	}, []string{"shutdownflow"})
+
 	// CertificateNotAfterTimestampSeconds is the expiry of a mounted serving certificate, as a Unix
 	// timestamp. Alert on it with `... - time() < <lead time>`; a timestamp rather than a remaining
 	// duration so the value does not have to be re-published to stay accurate.

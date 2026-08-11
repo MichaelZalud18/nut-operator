@@ -42,6 +42,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
@@ -204,7 +205,9 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeZero())
+			// An eligible trigger means the flow is mid-outage, so it republishes on the AE-5
+			// active cadence rather than waiting for the next watch event.
+			Expect(result.RequeueAfter).To(Equal(adaptive.DefaultParameters().ActiveCadence))
 
 			resource := &powerv1alpha1.ShutdownFlow{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
@@ -213,6 +216,10 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.TriggerEvaluation.Reason).To(Equal("TriggerEligible"))
 			Expect(resource.Status.TriggerEvaluation.SelectedUPSDevices).To(ConsistOf(shutdownFlowTestUPSName))
 			Expect(resource.Status.TriggerEvaluation.PlanConfigHash).To(Equal(resource.Status.ConfigHash))
+			// AE-5: the heartbeat is republished every reconcile, so its absence means the
+			// operator stopped rather than that nothing happened.
+			Expect(resource.Status.LastPublishTime).NotTo(BeNil())
+			Expect(resource.Status.LastPublishTime.Time).To(BeTemporally("==", observedAt))
 			triggerEligible := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionTriggerEligible)
 			Expect(triggerEligible).NotTo(BeNil())
 			Expect(triggerEligible.Status).To(Equal(metav1.ConditionTrue))
@@ -244,7 +251,11 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(5 * time.Minute))
+			// The hold expires in five minutes, but a matched-and-holding trigger is mid-outage,
+			// so the AE-5 heartbeat requeues sooner. The cadence is a ceiling on silence, never a
+			// floor on action: it may only bring the next reconcile forward.
+			Expect(result.RequeueAfter).To(Equal(adaptive.DefaultParameters().ActiveCadence))
+			Expect(result.RequeueAfter).To(BeNumerically("<=", 5*time.Minute))
 
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
 			Expect(resource.Status.TriggerEvaluation).NotTo(BeNil())
@@ -260,7 +271,9 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeZero())
+			// The hold is satisfied, so nothing schedules the next reconcile except the
+			// heartbeat -- which is the point: an eligible flow must not go quiet.
+			Expect(result.RequeueAfter).To(Equal(adaptive.DefaultParameters().ActiveCadence))
 
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
 			Expect(resource.Status.TriggerEvaluation.Eligible).To(BeTrue())

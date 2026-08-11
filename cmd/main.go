@@ -230,7 +230,7 @@ func main() {
 		ExecutorRunner: kubeactions.Runner{
 			Client:           mgr.GetClient(),
 			ManagerNamespace: os.Getenv("POD_NAMESPACE"),
-			Recorder:         mgr.GetEventRecorderFor("shutdownflow-executor"),
+			Recorder:         mgr.GetEventRecorder("shutdownflow-executor"),
 		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "shutdownflow")

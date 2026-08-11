@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"sort"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -82,6 +83,72 @@ func compiledTierRange(waves []powerv1alpha1.CompiledShutdownWave) (int32, int32
 		first = last
 	}
 	return last, first
+}
+
+// publishCadence is the AE-5 heartbeat interval for this flow's current activity
+// (OD-30).
+//
+// The two paths AE-5 requires are not interchangeable. Change emission already
+// covers transitions; this is the other one -- a periodic republish that happens
+// whether or not anything moved, so a subscriber can tell "nothing is happening"
+// from "the publisher died". Both look like silence otherwise.
+//
+// It is expressed as a reconcile interval rather than a separate timer because
+// reconciling is what republishes status: a second loop emitting snapshots
+// alongside the reconciler could report a state the reconciler had already moved
+// past.
+func publishCadence(flow *powerv1alpha1.ShutdownFlow, parameters adaptive.Parameters) time.Duration {
+	return parameters.WithDefaults().Cadence(flowIsActive(flow))
+}
+
+// flowIsActive reports whether a flow is mid-outage, which is when a subscriber
+// is tracking progress rather than only confirming the publisher is alive.
+//
+// Two states count that might not look like it. A trigger that has matched but is
+// still serving its hold is mid-outage by definition — the condition is true and
+// the clock is running. And a suspended flow is parked partway down with a second
+// dip able to resume it, which is exactly the state a subscriber most needs kept
+// fresh.
+func flowIsActive(flow *powerv1alpha1.ShutdownFlow) bool {
+	if flow == nil {
+		return false
+	}
+	if evaluation := flow.Status.TriggerEvaluation; evaluation != nil {
+		if evaluation.Eligible {
+			return true
+		}
+		for _, decision := range evaluation.Decisions {
+			if decision.Matched {
+				return true
+			}
+		}
+	}
+	execution := flow.Status.LastExecution
+	if execution == nil {
+		return false
+	}
+	switch execution.Phase {
+	case powerv1alpha1.ShutdownExecutionPhaseRunning, powerv1alpha1.ShutdownExecutionPhaseSuspended:
+		return true
+	default:
+		return false
+	}
+}
+
+// soonestRequeue picks the earlier of two reconcile intervals, ignoring
+// non-positive ones.
+//
+// The cadence is a ceiling on how long the operator may stay quiet, never a floor
+// on how soon it may act: a trigger hold expiring in ten seconds must not be
+// deferred to the next heartbeat.
+func soonestRequeue(current, candidate time.Duration) time.Duration {
+	if candidate <= 0 {
+		return current
+	}
+	if current <= 0 || candidate < current {
+		return candidate
+	}
+	return current
 }
 
 // resumedPointerState reads back the pointer an earlier execution left behind

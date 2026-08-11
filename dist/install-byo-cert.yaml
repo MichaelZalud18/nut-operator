@@ -5559,6 +5559,14 @@ spec:
                 - dryRun
                 - triggerActive
                 type: object
+              lastPublishTime:
+                description: |-
+                  lastPublishTime is when this flow's state was last republished, whether or not
+                  anything changed (AE-5). It is the heartbeat that lets a subscriber tell
+                  "nothing is happening" from "the publisher died" — without it both look like
+                  silence. Refreshed on a cadence that is faster while a flow is active.
+                format: date-time
+                type: string
               observedGeneration:
                 description: observedGeneration is the last generation reconciled
                   by the controller.
