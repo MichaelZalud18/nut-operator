@@ -90,17 +90,17 @@ remaining declared plan. Pointer and mode persist in `executor_resume_states` an
 anything, leaving the pointer unlatched at its depth so a second dip resumes from there. `Gate` is
 removed from the action enum; `Notify` emits a Kubernetes Event. Tier inversion is published as
 `nutoperator_shutdownflow_tier_inversions`, and the AE-5 cadence heartbeat as
-`nutoperator_shutdownflow_publish_timestamp_seconds` plus `status.lastPublishTime`.
+`nutoperator_shutdownflow_publish_timestamp_seconds` plus `status.lastPublishTime`. Node clearance is
+re-derived at execution against the pods actually on the node, read uncached.
 
-Closed: `PL-19`, `PL-20`, `AE-5`, `EX-11`, `EX-14`, `EX-22`, `EX-23`, `EX-24`, `OD-4`, `OD-17`,
-`OD-18`, `F-31`, `F-42`.
+Closed: `PL-19`, `PL-20`, `PL-43`, `AE-5`, `EX-9`, `EX-11`, `EX-14`, `EX-22`, `EX-23`, `EX-24`,
+`OD-4`, `OD-11`, `OD-17`, `OD-18`, `F-31`, `F-42`.
 
 #### Open Work
 
 - `F-44` make the pre-shutdown hook engine-neutral, and record the scope limit as `SB-15`
   ([pre-shutdown-hook-transport.md](audits/pre-shutdown-hook-transport.md)). Design the `ShutdownHook`
   resource before building; the dry-run and hook-waiting questions are open there.
-- Revalidate node clearance at execution, not only at compile time (`OD-11`, `PL-43`).
 - `OD-27` confirm the adaptive defaults against a real outage. The compression amount is measured, so
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).

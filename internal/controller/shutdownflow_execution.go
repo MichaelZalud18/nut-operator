@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"time"
 
@@ -344,6 +345,15 @@ func withholdBlockedNodeReleases(releases []executorpkg.NodeRelease, blocked map
 
 func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, target powerv1alpha1.ShutdownStepTarget) ([]executorpkg.NodeRelease, error) {
 	releases := make([]executorpkg.NodeRelease, 0)
+	if len(target.AgentRefs) == 0 {
+		return releases, nil
+	}
+	// Resolved once for the whole target: the namespaces that legitimately still hold
+	// pods when a node powers off are a property of the install, not of the node.
+	protectedNamespaces, err := r.clearanceExemptNamespaces(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, ref := range target.AgentRefs {
 		var agent powerv1alpha1.NodePowerAgent
 		if err := r.Get(ctx, client.ObjectKey{Name: ref.Name}, &agent); err != nil {
@@ -367,6 +377,10 @@ func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, targ
 				readinessReason = nodeStatus.Reason
 				readinessMessage = nodeStatus.Message
 			}
+			cleared, clearanceReason, blockingWorkloads, err := r.nodeClearance(ctx, nodeName, protectedNamespaces)
+			if err != nil {
+				return nil, err
+			}
 			releases = append(releases, executorpkg.NodeRelease{
 				NodeName:              nodeName,
 				NodePowerAgent:        agent.Name,
@@ -381,10 +395,115 @@ func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, targ
 				LastHeartbeatTime:     metav1TimeToTimePtr(nodeStatus.LastHeartbeatTime),
 				TelemetryFresh:        telemetryFresh,
 				TelemetryStaleReason:  telemetryStaleReason,
+				Cleared:               cleared,
+				ClearanceReason:       clearanceReason,
+				BlockingWorkloads:     blockingWorkloads,
 			})
 		}
 	}
 	return releases, nil
+}
+
+// nodeClearance re-derives whether a node is actually empty enough to power off
+// (EX-9, PL-43).
+//
+// Compile-time clearance edges order the plan; this is the proof. They are not
+// interchangeable, because OD-11 resolves concrete workload instances at execution:
+// a pod that rescheduled onto this node after the plan compiled is invisible to
+// the graph and very visible to whoever loses it.
+//
+// The question asked is "what would still be running when the power goes", not
+// "did the drain command succeed". Three classes are excluded, each because it is
+// expected to be there right up until the node goes down:
+//
+//   - Pods in protected namespaces — the node agent that performs the shutdown, and
+//     the manager running the flow. Waiting for those to leave would deadlock.
+//   - DaemonSet pods, which eviction deliberately does not remove.
+//   - Static and mirror pods, which no controller can reschedule anyway.
+//
+// Anything else still running is reported, by name, because "the node is not
+// clear" is not actionable and "etcd-backup is still on it" is.
+func (r *ShutdownFlowReconciler) nodeClearance(ctx context.Context, nodeName string, protected map[string]struct{}) (bool, string, []string, error) {
+	var pods corev1.PodList
+	// Read straight from the API server rather than the informer cache. This is the
+	// last check before power is cut, and a cache that is a few seconds behind is
+	// exactly long enough to miss a pod that just landed. It also avoids caching every
+	// pod in the cluster for a query this operator makes rarely.
+	if err := r.reader().List(ctx, &pods, client.MatchingFields{"spec.nodeName": nodeName}); err != nil {
+		// Failing closed. An unreadable pod list is not evidence the node is empty, and
+		// this is the last check before power is cut.
+		return false, "NodeClearanceUnknown", nil, fmt.Errorf("list pods on node %q for clearance: %w", nodeName, err)
+	}
+
+	blocking := make([]string, 0)
+	for _, pod := range pods.Items {
+		if podIsTerminal(pod) || isDaemonSetPod(pod) || isMirrorPod(pod) {
+			continue
+		}
+		if _, isProtected := protected[pod.Namespace]; isProtected {
+			continue
+		}
+		blocking = append(blocking, pod.Namespace+"/"+pod.Name)
+	}
+	if len(blocking) == 0 {
+		return true, "", nil, nil
+	}
+	sort.Strings(blocking)
+	return false, "NodeNotCleared", blocking, nil
+}
+
+// clearanceExemptNamespaces resolves the namespaces whose pods legitimately outlive
+// a node's release: every NodePowerAgent's operand namespace and the manager's own.
+//
+// Excluded rather than waited for. The agent is the process that performs the
+// shutdown and the manager is the one running the flow, so a clearance check that
+// waited for them to leave would wait forever on work that is supposed to be there.
+func (r *ShutdownFlowReconciler) clearanceExemptNamespaces(ctx context.Context) (map[string]struct{}, error) {
+	var agents powerv1alpha1.NodePowerAgentList
+	if err := r.List(ctx, &agents); err != nil {
+		return nil, fmt.Errorf("list NodePowerAgents for node clearance: %w", err)
+	}
+	exempt := make(map[string]struct{}, len(agents.Items)+1)
+	if namespace := os.Getenv("POD_NAMESPACE"); namespace != "" {
+		exempt[namespace] = struct{}{}
+	}
+	for i := range agents.Items {
+		cluster, err := r.getNodePowerAgentManagementCluster(ctx, &agents.Items[i])
+		if err != nil {
+			return nil, err
+		}
+		exempt[nodePowerAgentNamespace(&agents.Items[i], cluster)] = struct{}{}
+	}
+	return exempt, nil
+}
+
+// reader prefers the uncached API reader when one is wired, falling back to the
+// cached client so unit and envtest callers work unchanged.
+func (r *ShutdownFlowReconciler) reader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
+}
+
+func podIsTerminal(pod corev1.Pod) bool {
+	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+}
+
+func isDaemonSetPod(pod corev1.Pod) bool {
+	for _, owner := range pod.OwnerReferences {
+		if owner.Kind == "DaemonSet" {
+			return true
+		}
+	}
+	return false
+}
+
+// isMirrorPod reports a static pod's API mirror. The kubelet owns these and no
+// controller can move them, so waiting for one to leave waits forever.
+func isMirrorPod(pod corev1.Pod) bool {
+	_, mirrored := pod.Annotations[corev1.MirrorPodAnnotationKey]
+	return mirrored
 }
 
 // nodePowerAgentTelemetryFreshness implements spec.shutdown.requireFreshTelemetry (defaulted true by

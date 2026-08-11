@@ -70,7 +70,20 @@ trail shows what the selectors actually matched, not what they were expected to 
 
 **EX-9 · Node-clearance revalidation** (PL-43). Before any `AgentShutdown` action, the executor
 re-derives that node's clearance against current placement. Compile-time clearance edges are the
-plan; execution-time clearance is the proof.
+plan; execution-time clearance is the proof. The two are not interchangeable, because OD-11 resolves
+concrete workload instances at execution: a pod that rescheduled onto the node after the plan
+compiled is invisible to the graph and very visible to whoever loses it.
+
+The question asked is "what would still be running when the power goes", not "did the drain command
+succeed". Three classes are excluded because each is expected to be there right up until the node
+goes down: pods in the node agent's and manager's own namespaces, `DaemonSet` pods that eviction
+deliberately does not remove, and static/mirror pods no controller can reschedule. Everything else
+still running blocks the release and is named in the record, because "the node is not clear" is not
+actionable and "etcd-backup is still on it" is.
+
+The pod list is read straight from the API server rather than the informer cache. This is the last
+check before power is cut, and a cache a few seconds behind is exactly long enough to miss a pod that
+just landed. An unreadable list fails closed: it is not evidence the node is empty.
 
 ---
 

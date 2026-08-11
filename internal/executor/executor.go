@@ -168,6 +168,20 @@ type NodeRelease struct {
 	// (internal/controller), not the executor, since only the caller has Kubernetes read access.
 	TelemetryFresh       bool
 	TelemetryStaleReason string
+
+	// Cleared is the execution-time node-clearance verdict (EX-9, PL-43). Compile-time
+	// clearance edges are the plan; this is the proof, re-derived against the pods
+	// actually on the node when the wave runs, because placement moves between
+	// compile and execution (OD-11).
+	//
+	// Computed by the caller for the same reason as TelemetryFresh: it needs to read
+	// the cluster, and this package does no I/O.
+	Cleared bool
+	// ClearanceReason names why the node is not clear.
+	ClearanceReason string
+	// BlockingWorkloads names the pods still running on the node, so the record says
+	// what to go look at rather than only that something was there.
+	BlockingWorkloads []string
 }
 
 // Action is passed to an injected action runner for non-dry-run execution.
@@ -657,7 +671,7 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 			signalPath = DefaultSignalPath
 		}
 		staleAfter := observedAt.Add(signalTTL(input.SignalTTL))
-		clearedForRelease := release.AgentReady && release.TelemetryFresh
+		clearedForRelease := release.AgentReady && release.TelemetryFresh && release.Cleared
 		released := clearedForRelease && !dryRun
 		reason := nodeReleaseReason(release, dryRun)
 		recordErr = errors.Join(recordErr, writer.RecordNodeRelease(ctx, audit.NodeReleaseRecord{
@@ -672,6 +686,9 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 			Reason:         reason,
 			Clearance: map[string]any{
 				"agentReady":           release.AgentReady,
+				"cleared":              release.Cleared,
+				"clearanceReason":      release.ClearanceReason,
+				"blockingWorkloads":    append([]string(nil), release.BlockingWorkloads...),
 				"dryRun":               dryRun,
 				"group":                group.Name,
 				"lastHeartbeatTime":    releaseHeartbeatTime(release),
@@ -743,6 +760,17 @@ func agentShutdownReadinessError(dryRun bool, group Group) error {
 				reason = "AgentTelemetryStale"
 			}
 			out = errors.Join(out, fmt.Errorf("node %q is not ready for AgentShutdown: %s", release.NodeName, reason))
+			continue
+		}
+		// EX-9: the last check before power is cut. A node whose workloads have not
+		// actually moved is at least as dangerous as one whose agent is unready, so it
+		// blocks on the same terms.
+		if !release.Cleared {
+			reason := release.ClearanceReason
+			if reason == "" {
+				reason = "NodeNotCleared"
+			}
+			out = errors.Join(out, fmt.Errorf("node %q is not ready for AgentShutdown: %s", release.NodeName, reason))
 		}
 	}
 	return out
@@ -751,7 +779,7 @@ func agentShutdownReadinessError(dryRun bool, group Group) error {
 func blockedNodeReleaseDetails(releases []NodeRelease) []map[string]any {
 	blocked := make([]map[string]any, 0)
 	for _, release := range releases {
-		if release.AgentReady && release.TelemetryFresh {
+		if release.AgentReady && release.TelemetryFresh && release.Cleared {
 			continue
 		}
 		blocked = append(blocked, map[string]any{
@@ -763,6 +791,9 @@ func blockedNodeReleaseDetails(releases []NodeRelease) []map[string]any {
 			"readinessReason":      release.ReadinessReason,
 			"telemetryFresh":       release.TelemetryFresh,
 			"telemetryStaleReason": release.TelemetryStaleReason,
+			"cleared":              release.Cleared,
+			"clearanceReason":      release.ClearanceReason,
+			"blockingWorkloads":    append([]string(nil), release.BlockingWorkloads...),
 		})
 	}
 	return blocked
@@ -780,6 +811,12 @@ func nodeReleaseReason(release NodeRelease, dryRun bool) string {
 			return release.TelemetryStaleReason
 		}
 		return "AgentTelemetryStale"
+	}
+	if !release.Cleared {
+		if release.ClearanceReason != "" {
+			return release.ClearanceReason
+		}
+		return "NodeNotCleared"
 	}
 	if dryRun {
 		return "DryRunRelease"
@@ -799,6 +836,12 @@ func nodeSignalHandoffReason(release NodeRelease, dryRun bool) string {
 			return release.TelemetryStaleReason
 		}
 		return "AgentTelemetryStale"
+	}
+	if !release.Cleared {
+		if release.ClearanceReason != "" {
+			return release.ClearanceReason
+		}
+		return "NodeNotCleared"
 	}
 	if dryRun {
 		return "DryRunSignal"

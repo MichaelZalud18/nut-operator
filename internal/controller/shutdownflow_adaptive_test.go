@@ -20,7 +20,10 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -385,5 +388,103 @@ func TestTheCadenceNeverDelaysASoonerRequeue(t *testing.T) {
 					testCase.current, testCase.candidate, got, testCase.expected)
 			}
 		})
+	}
+}
+
+func podOn(node, namespace, name string, opts ...func(*corev1.Pod)) *corev1.Pod {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec:       corev1.PodSpec{NodeName: node},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	for _, opt := range opts {
+		opt(pod)
+	}
+	return pod
+}
+
+func ownedByDaemonSet(pod *corev1.Pod) {
+	pod.OwnerReferences = []metav1.OwnerReference{{Kind: "DaemonSet", Name: "node-exporter"}}
+}
+
+func mirrored(pod *corev1.Pod) {
+	pod.Annotations = map[string]string{corev1.MirrorPodAnnotationKey: "abc123"}
+}
+
+func terminal(pod *corev1.Pod) {
+	pod.Status.Phase = corev1.PodSucceeded
+}
+
+func clearanceReconciler(t *testing.T, pods ...*corev1.Pod) *ShutdownFlowReconciler {
+	t.Helper()
+	testScheme := runtime.NewScheme()
+	if err := powerv1alpha1.AddToScheme(testScheme); err != nil {
+		t.Fatalf("build scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(testScheme); err != nil {
+		t.Fatalf("build scheme: %v", err)
+	}
+	builder := fake.NewClientBuilder().WithScheme(testScheme).
+		WithIndex(&corev1.Pod{}, "spec.nodeName", func(object client.Object) []string {
+			return []string{object.(*corev1.Pod).Spec.NodeName}
+		})
+	for _, pod := range pods {
+		builder = builder.WithObjects(pod)
+	}
+	return &ShutdownFlowReconciler{Client: builder.Build()}
+}
+
+// EX-9: compile-time clearance edges are the plan; this is the proof. A workload that rescheduled
+// onto the node after the plan compiled is invisible to the graph and very visible to whoever
+// loses it.
+func TestNodeClearanceBlocksOnAWorkloadStillRunning(t *testing.T) {
+	reconciler := clearanceReconciler(t, podOn("node-a", "apps", "web"))
+
+	cleared, reason, blocking, err := reconciler.nodeClearance(t.Context(), "node-a", nil)
+	if err != nil {
+		t.Fatalf("nodeClearance returned error: %v", err)
+	}
+	if cleared {
+		t.Fatal("a node still running a workload is not clear")
+	}
+	if reason != "NodeNotCleared" {
+		t.Fatalf("reason = %q, want NodeNotCleared", reason)
+	}
+	// Naming the pod is the point: "the node is not clear" is not actionable.
+	if len(blocking) != 1 || blocking[0] != "apps/web" {
+		t.Fatalf("blocking = %v, want [apps/web]", blocking)
+	}
+}
+
+// Three classes are expected to be on the node right up until it powers off, so waiting for them
+// would wait forever.
+func TestNodeClearanceIgnoresWorkloadsThatCannotLeave(t *testing.T) {
+	reconciler := clearanceReconciler(t,
+		podOn("node-a", "kube-system", "node-exporter", ownedByDaemonSet),
+		podOn("node-a", "kube-system", "kube-apiserver", mirrored),
+		podOn("node-a", "apps", "finished-job", terminal),
+		podOn("node-a", "power-system", "power-agent"),
+	)
+
+	cleared, _, blocking, err := reconciler.nodeClearance(
+		t.Context(), "node-a", map[string]struct{}{"power-system": {}})
+	if err != nil {
+		t.Fatalf("nodeClearance returned error: %v", err)
+	}
+	if !cleared {
+		t.Fatalf("expected a clear node, blocked by %v", blocking)
+	}
+}
+
+// Clearance is per node. A busy neighbour must not hold up a node that is genuinely empty.
+func TestNodeClearanceIsScopedToTheNodeUnderTest(t *testing.T) {
+	reconciler := clearanceReconciler(t, podOn("node-b", "apps", "web"))
+
+	cleared, _, _, err := reconciler.nodeClearance(t.Context(), "node-a", nil)
+	if err != nil {
+		t.Fatalf("nodeClearance returned error: %v", err)
+	}
+	if !cleared {
+		t.Fatal("a workload on another node must not block this one")
 	}
 }

@@ -699,8 +699,14 @@ var _ = Describe("ShutdownFlow Controller", func() {
 					},
 				},
 			}
+			Expect(corev1.AddToScheme(scheme)).To(Succeed())
 			reconciler := &ShutdownFlowReconciler{
-				Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).Build(),
+				// The clearance check selects pods by spec.nodeName, which the API server
+				// resolves natively; the fake client needs the index declared.
+				Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).
+					WithIndex(&corev1.Pod{}, "spec.nodeName", func(object client.Object) []string {
+						return []string{object.(*corev1.Pod).Spec.NodeName}
+					}).Build(),
 			}
 			flow := &powerv1alpha1.ShutdownFlow{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-flow"},
@@ -728,6 +734,9 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(releasesByNode["node-a"].SignalPath).To(Equal("/run/power-agent/shutdown.json"))
 			Expect(releasesByNode["node-a"].SignalSecretNamespace).To(Equal("power-system"))
 			Expect(releasesByNode["node-a"].SignalSecretName).To(Equal("rack-a-agents-node-signals"))
+			// EX-9: an empty node clears. The proof is re-derived here rather than trusted
+			// from the compiled plan, because placement moves between compile and execution.
+			Expect(releasesByNode["node-a"].Cleared).To(BeTrue())
 			Expect(releasesByNode["node-a"].SignalSecretKey).To(Equal("node-a.json"))
 			Expect(releasesByNode["node-a"].AgentReady).To(BeTrue())
 			Expect(releasesByNode["node-a"].ReadinessReason).To(Equal("AgentPodReady"))
@@ -747,6 +756,9 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				ReadinessReason:       "AgentPodMissing",
 				ReadinessMessage:      "no NodePowerAgent pod is currently observed on this selected node",
 				TelemetryFresh:        true,
+				// An empty node clears. Readiness and clearance are independent gates: this
+				// node has no agent pod but also nothing left to lose.
+				Cleared: true,
 			}))
 		})
 

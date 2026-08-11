@@ -53,6 +53,11 @@ type ShutdownFlowReconciler struct {
 	StorageConnector storageconfig.AuditStoreConnector
 	ExecutorRunner   executorpkg.ActionRunner
 	Clock            func() time.Time
+
+	// APIReader bypasses the informer cache for execution-time node clearance (EX-9).
+	// A cache a few seconds behind is exactly long enough to miss a pod that just
+	// landed on a node about to lose power.
+	APIReader client.Reader
 }
 
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows,verbs=get;list;watch;create;update;patch;delete

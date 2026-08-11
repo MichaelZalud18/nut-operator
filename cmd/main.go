@@ -225,8 +225,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.ShutdownFlowReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		APIReader: mgr.GetAPIReader(),
 		ExecutorRunner: kubeactions.Runner{
 			Client:           mgr.GetClient(),
 			ManagerNamespace: os.Getenv("POD_NAMESPACE"),
