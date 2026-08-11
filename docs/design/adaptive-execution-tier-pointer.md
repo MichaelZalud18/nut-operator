@@ -5,7 +5,10 @@ tier-pointer revisions 1 and 2; the superseded drafts are not retained in the re
 
 Components: Planning & Execution Logic.
 
-Provisional `AE-n` prefix; folds into `PL` and `EX` on integration into the requirement docs.
+The provisional `AE-n` prefix is retired. The six model requirements are `EX-25`–`EX-30` in
+[executor-requirements.md](executor-requirements.md); the runtime-estimate capability gate, which had
+also been carried as `AE-6`, is `CR-4` in [planner-requirements.md](planner-requirements.md). Those
+docs hold the numbered requirements; this one holds the model they came from.
 
 ## The model
 
@@ -19,7 +22,7 @@ A **tier pointer** tracks how far down the tier sequence the shutdown has progre
 The operator records where it is and what it did. It does not reconcile, does not restore, and does
 not model the power curve.
 
-## AE-1 · The operator is a recorder, not a reconciler
+## EX-25 · The operator is a recorder, not a reconciler
 
 On the recovery direction the operator stops descending and publishes. It does not:
 
@@ -31,7 +34,7 @@ On the recovery direction the operator stops descending and publishes. It does n
 Recovery is a subscriber concern (OD-1, OD-5). The recovery system is the component that has to be
 smart.
 
-## AE-2 · Shutdown actions are idempotent — required, not incidental
+## EX-26 · Shutdown actions are idempotent — required, not incidental
 
 Re-descent works because every shutdown action is a no-op when already applied: scaling an
 already-zero Deployment, cordoning a cordoned node, powering off a node that is already off.
@@ -41,11 +44,11 @@ re-descent silently, surfacing only during a second dip in a real outage.
 
 Consequence: no flapping protection is needed on descent.
 
-## AE-3 · Ascent is bookkeeping only
+## EX-27 · Ascent is bookkeeping only
 
 Moving the pointer up records that power improved. It triggers no actions. No hysteresis required.
 
-## AE-4 · The publisher emits data, events, and actions — never analysis
+## EX-28 · The publisher emits data, events, and actions — never analysis
 
 The line is between **stating what is** and **interpreting what it means**.
 
@@ -77,7 +80,7 @@ Event log shape:
 00:10:00  entered tier 3        power: OL, runtime 2100s
 ```
 
-## AE-5 · Publish on cadence and on change
+## EX-29 · Publish on cadence and on change
 
 Two independent emission paths, both required:
 
@@ -102,7 +105,7 @@ quiet, never a floor on how soon it may act — a trigger hold expiring in ten s
 to the next heartbeat. A flow counts as active while a trigger is eligible, while one has matched and
 is serving its hold, and while an execution is Running or Suspended.
 
-## AE-6 · Abort is halt, not undo
+## EX-30 · Abort is halt, not undo
 
 Abort means the operator stops descending. Nothing already shut down is restored. Safe at any point
 in the flow.
@@ -116,7 +119,7 @@ in the flow.
   membership, never edges.
 - Escalation on a single observation; relaxation requires sustained improvement.
 - Evaluated at wave boundaries only.
-- Mode transitions are events under AE-4 and AE-5.
+- Mode transitions are events under EX-28 and EX-29.
 
 Hooks are a timing-adaptation input, not a pointer input. A pre-shutdown hook declared on a group
 carries its own bounded timeout, and that timeout is exactly the class of value adaptation scales:
@@ -178,7 +181,7 @@ clock can only be tested by waiting.
 Three separable pieces, deliberately not sharing mutable state:
 
 - `parameters.go` — OD-27 through OD-30 as data, with defaults and validation.
-- `pointer.go` — AE-1 to AE-3 and AE-6: descent, ascent, halt, and re-execution reporting.
+- `pointer.go` — EX-25 to EX-27 and EX-30: descent, ascent, halt, and re-execution reporting.
 - `timing.go` — mode selection and its asymmetric hysteresis.
 
 The pointer and the timing mode are independent, as this document requires. Splitting them at the
@@ -189,17 +192,17 @@ written record. `normalize()` repairs a `Deepest` that was never set or has drif
 tier, conservatively, to the current tier: a wrong value there mislabels re-execution as new work,
 which is a reporting error at exactly the moment a subscriber is trying to understand a second dip.
 
-Unknown or untrusted runtime selects `Urgent`, never `Relaxed`. PL-32 and AE-6 converge on that: the
+Unknown or untrusted runtime selects `Urgent`, never `Relaxed`. PL-32 and CR-4 converge on that: the
 honest reading of "I don't know how long I have" while running on battery is that there is not much.
 
 ### Where the capability gate lives
 
-There is one mechanism, not two. `PowerObservation.RuntimeTrusted` carries the AE-6 declaration, and
+There is one mechanism, not two. `PowerObservation.RuntimeTrusted` carries the CR-4 declaration, and
 the mode selector does the rest: without a trusted runtime the only reachable modes are `Relaxed` on
 mains and `Urgent` on battery. `Nominal` is the graduated middle, and reaching it requires a number
 the load actually moves.
 
-That is the gate, stated exactly. What AE-6 forbids is a fixed firmware estimate driving graduated
+That is the gate, stated exactly. What CR-4 forbids is a fixed firmware estimate driving graduated
 timing decisions, and an unreachable `Nominal` is precisely that prohibition. What it does not forbid
 is responding to the binary power state, which every device reports and no capability declaration is
 needed to trust. A separate "adaptation disabled" flag would be a second mechanism for the same rule,
@@ -278,10 +281,10 @@ assumption as a reading.
 Power returning stops the flow starting further waves. The pointer ascends, nothing is restored, and
 the execution ends in a **`Suspended`** phase.
 
-`Suspended` is deliberately not `Halted`. AE-6 reserves halt for abort — a deliberate stop that
+`Suspended` is deliberately not `Halted`. EX-30 reserves halt for abort — a deliberate stop that
 latches and never resumes. Recovery is the opposite kind of event, and the model requires the flow to
 descend again from wherever the pointer sits if power degrades a second time, re-attempting the tiers
-it already ran as no-ops (AE-2). Three things follow, and all three are load-bearing:
+it already ran as no-ops (EX-26). Three things follow, and all three are load-bearing:
 
 - **The pointer is not latched.** `PointerState.Halted` stays false, so the next descent is free to
   proceed.

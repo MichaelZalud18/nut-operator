@@ -155,7 +155,7 @@ var (
 	}, []string{"shutdownflow"})
 
 	// ShutdownFlowPublishTimestampSeconds is when this flow's state was last published, as a Unix
-	// timestamp. It is the AE-5 cadence heartbeat.
+	// timestamp. It is the EX-29 cadence heartbeat.
 	//
 	// Change emission alone leaves a subscriber unable to distinguish "nothing is happening" from
 	// "the publisher died" -- both look like silence. This is re-published on a fixed cadence whether

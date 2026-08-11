@@ -433,7 +433,7 @@ func TestEveryFallbackIsSatisfiableByTheFloorProfile(t *testing.T) {
 	}
 }
 
-// AE-6: adaptation is only safe on a device whose firmware recomputes runtime against present load.
+// CR-4: adaptation is only safe on a device whose firmware recomputes runtime against present load.
 func TestSupportsTimingAdaptationRequiresAnAffirmativeDynamicDeclaration(t *testing.T) {
 	withRuntime := []string{"battery.runtime", "ups.status"}
 

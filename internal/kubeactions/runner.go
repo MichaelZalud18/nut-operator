@@ -497,15 +497,32 @@ func (r Runner) runWorkflow(ctx context.Context, action executor.Action) (execut
 	}, nil
 }
 
+// SupportedWorkflowAPIVersion and SupportedWorkflowKind are the only GVK RunWorkflow
+// can actually create (F-44).
+//
+// The parameters read as engine-neutral and are not: the body built below is
+// Argo-shaped throughout -- workflowTemplateRef, entrypoint, arguments.parameters --
+// and the operator's RBAC grants only argoproj.io/workflows. Another GVK would be
+// created with fields its CRD does not define, by a manager without permission to
+// create it, and the discovery would happen during an outage.
+//
+// Genuine transport neutrality is docs/design/shutdown-hooks.md. Until that exists,
+// admission refuses any other GVK rather than accepting one that cannot work, which
+// is the same remedy F-25 and F-33 received.
+const (
+	SupportedWorkflowAPIVersion = "argoproj.io/v1alpha1"
+	SupportedWorkflowKind       = "Workflow"
+)
+
 func workflowObject(action executor.Action, namespace string, observedAt time.Time) *unstructured.Unstructured {
 	params := action.Group.Params
 	apiVersion := params[paramWorkflowAPIVersion]
 	if apiVersion == "" {
-		apiVersion = "argoproj.io/v1alpha1"
+		apiVersion = SupportedWorkflowAPIVersion
 	}
 	kind := params[paramWorkflowKind]
 	if kind == "" {
-		kind = "Workflow"
+		kind = SupportedWorkflowKind
 	}
 	workflow := &unstructured.Unstructured{}
 	workflow.SetGroupVersionKind(schema.FromAPIVersionAndKind(apiVersion, kind))

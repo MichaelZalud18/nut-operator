@@ -820,7 +820,7 @@ func eligibleTriggerDecisionID(evaluation *powerv1alpha1.ShutdownTriggerEvaluati
 //
 // A suspended execution deliberately does not count. It stopped because power came
 // back, with the pointer left partway down, and the whole point of leaving it there
-// is that a second dip descends again from that depth (AE-2). Treating a suspension
+// is that a second dip descends again from that depth (EX-26). Treating a suspension
 // as "already executed" would make dedupe the thing that prevents re-descent --
 // during a dip-recover-dip outage, which is precisely the case the tier pointer
 // exists to handle.

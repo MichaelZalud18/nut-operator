@@ -111,7 +111,7 @@ func TestThePointerNeverReachesTheLastDitchTier(t *testing.T) {
 	}
 }
 
-// AE-1: on recovery the operator stops descending and restores nothing. Suspended is not
+// EX-25: on recovery the operator stops descending and restores nothing. Suspended is not
 // Completed -- collapsing them would make "the outage ended" read as "the cluster shut down".
 func TestPowerRecoverySuspendsTheFlowWithoutRestoringAnything(t *testing.T) {
 	writer := &fakeAuditWriter{}
@@ -142,7 +142,7 @@ func TestPowerRecoverySuspendsTheFlowWithoutRestoringAnything(t *testing.T) {
 	if phases := executionPhases(writer.executions); fmt.Sprint(phases) != "[Running Suspended]" {
 		t.Fatalf("execution phases = %v, want [Running Suspended]", phases)
 	}
-	// AE-3: ascent is bookkeeping. Nothing is un-scaled, un-cordoned, or restarted.
+	// EX-27: ascent is bookkeeping. Nothing is un-scaled, un-cordoned, or restarted.
 	if len(writer.nodeReleases) != 0 {
 		t.Fatalf("a suspension must not release nodes, got %#v", writer.nodeReleases)
 	}
@@ -151,7 +151,7 @@ func TestPowerRecoverySuspendsTheFlowWithoutRestoringAnything(t *testing.T) {
 	}
 }
 
-// AE-6 reserves halt for abort. A suspension must leave the pointer unlatched, or a second dip
+// EX-30 reserves halt for abort. A suspension must leave the pointer unlatched, or a second dip
 // could never descend again -- which is the exact case the tier pointer exists to handle.
 func TestSuspensionDoesNotLatchThePointer(t *testing.T) {
 	writer := &fakeAuditWriter{}
@@ -169,12 +169,12 @@ func TestSuspensionDoesNotLatchThePointer(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 	if result.Adaptive.Pointer.Halted {
-		t.Fatal("power recovery must not latch the pointer; halt is reserved for abort (AE-6)")
+		t.Fatal("power recovery must not latch the pointer; halt is reserved for abort (EX-30)")
 	}
 }
 
 // The whole point of leaving the pointer where it stopped: a second dip descends from that depth
-// and re-attempts the tiers it already ran as no-ops (AE-2), reported as re-execution.
+// and re-attempts the tiers it already ran as no-ops (EX-26), reported as re-execution.
 func TestASecondDipResumesFromTheSuspendedDepth(t *testing.T) {
 	first := &fakeAuditWriter{}
 	firstInput := tieredInput(onBattery(200))
@@ -546,7 +546,7 @@ func TestAnUntieredFlowStillReportsAPointerPosition(t *testing.T) {
 	}
 }
 
-// AE-2: re-descending over tiers already executed is expected, because every shutdown action is
+// EX-26: re-descending over tiers already executed is expected, because every shutdown action is
 // idempotent. It is reported so a subscriber watching a second dip can tell it from a first
 // descent without diffing history itself.
 func TestRedescentIsReportedAsReexecution(t *testing.T) {
@@ -567,7 +567,7 @@ func TestRedescentIsReportedAsReexecution(t *testing.T) {
 	}
 }
 
-// AE-4 event lines state the transition and the power observed, and never characterize the
+// EX-28 event lines state the transition and the power observed, and never characterize the
 // sequence as a dip, a flicker, or a recovery.
 func TestEventLinesAreEmittedForEachWave(t *testing.T) {
 	writer := &fakeAuditWriter{}

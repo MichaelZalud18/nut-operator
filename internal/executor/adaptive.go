@@ -58,15 +58,15 @@ type AdaptiveInput struct {
 	FinalTier int32
 
 	// StartTier is the tier the flow began at, and the highest the pointer may
-	// ascend back to. Ascent is bookkeeping only (AE-3); the limit exists so the
+	// ascend back to. Ascent is bookkeeping only (EX-27); the limit exists so the
 	// recorded position stays inside the flow's own range.
 	StartTier int32
 
 	// SuspendOnRecovery stops the flow starting further waves once power is back.
-	// AE-1: the operator stops descending and publishes, and restores nothing.
+	// EX-25: the operator stops descending and publishes, and restores nothing.
 	//
 	// Not a halt. The pointer is left where it is, unlatched, so a later degrade
-	// descends from that depth and re-attempts the tiers below it as no-ops (AE-2).
+	// descends from that depth and re-attempts the tiers below it as no-ops (EX-26).
 	SuspendOnRecovery bool
 }
 
@@ -92,7 +92,7 @@ type AdaptiveResult struct {
 	Timing  adaptive.TimingState
 	// Observation is the last power state read.
 	Observation adaptive.PowerObservation
-	// Events are the AE-4 log lines produced, in order.
+	// Events are the EX-28 log lines produced, in order.
 	Events []string
 	// Suspended records that the flow stopped descending because power recovered.
 	// The pointer is left where it stopped so a later degrade resumes from there.
@@ -155,7 +155,7 @@ func (e Executor) evaluateWave(ctx context.Context, input AdaptiveInput, wave Wa
 	case adaptive.ShouldDescend(observation):
 		pointer, state.Movement = descendToWaveTier(pointer, wave, finalTier(input))
 	case input.SuspendOnRecovery:
-		// AE-1 and AE-3: record that power improved, restore nothing, and stop
+		// EX-25 and EX-27: record that power improved, restore nothing, and stop
 		// descending. The pointer stays where it is, unlatched, so a later degrade
 		// resumes from this depth. The subscriber owns recovery.
 		pointer, state.Movement = pointer.Ascend(startTier(input, wave))
@@ -174,7 +174,7 @@ func (e Executor) evaluateWave(ctx context.Context, input AdaptiveInput, wave Wa
 // Waves are compiled in tier order, but a tier can span several waves and a tier
 // can be empty, so the pointer may need more than one step or none at all. Each
 // step is taken through Descend rather than by assignment so re-execution
-// reporting (AE-2) and the final-tier limit both stay in one place.
+// reporting (EX-26) and the final-tier limit both stay in one place.
 //
 // A wave with no tier moves the pointer only on the first descent, which is what
 // marks the flow as started. An untiered flow is a legitimate configuration --

@@ -60,7 +60,7 @@ func TestDescentStopsAtTheFloorTier(t *testing.T) {
 	}
 }
 
-// AE-3: ascent records that power improved and restores nothing. Deepest must survive it, because
+// EX-27: ascent records that power improved and restores nothing. Deepest must survive it, because
 // it is the record of how far the flow actually got.
 func TestAscentIsBookkeepingAndKeepsTheDeepestTierReached(t *testing.T) {
 	state := PointerState{Tier: 5, Started: true}
@@ -81,7 +81,7 @@ func TestAscentIsBookkeepingAndKeepsTheDeepestTierReached(t *testing.T) {
 	}
 }
 
-// AE-2: re-descending over already-executed tiers is expected and is reported as such, so a
+// EX-26: re-descending over already-executed tiers is expected and is reported as such, so a
 // subscriber can tell a second dip from a first descent without diffing history.
 func TestReDescentIsMarkedAsReexecution(t *testing.T) {
 	state := PointerState{Tier: 5, Started: true}
@@ -108,7 +108,7 @@ func TestFirstPassIntoNewTiersIsNotReexecution(t *testing.T) {
 	}
 }
 
-// AE-6: abort is halt, not undo. It stops descent and is one-way.
+// EX-30: abort is halt, not undo. It stops descent and is one-way.
 func TestHaltStopsDescentAndAscentAndDoesNotUndo(t *testing.T) {
 	state := PointerState{Tier: 3, Deepest: 3, Started: true}.Halt()
 
@@ -126,7 +126,7 @@ func TestHaltStopsDescentAndAscentAndDoesNotUndo(t *testing.T) {
 	}
 }
 
-// AE-1: the operator descends while power is lost and does not judge whether the outage is durable.
+// EX-25: the operator descends while power is lost and does not judge whether the outage is durable.
 func TestDescentAndAscentConditionsAreInverses(t *testing.T) {
 	for name, testCase := range map[string]struct {
 		observation PowerObservation
@@ -176,7 +176,7 @@ func TestPointerStaysWithinBoundsUnderAlternatingPower(t *testing.T) {
 	}
 }
 
-// AE-4: the log line states the transition and the power observed, and never interprets it.
+// EX-28: the log line states the transition and the power observed, and never interprets it.
 func TestDescribeStatesFactsWithoutInterpretation(t *testing.T) {
 	movement := PointerMovement{From: 4, To: 3, Direction: DirectionDescend}
 
@@ -189,7 +189,7 @@ func TestDescribeStatesFactsWithoutInterpretation(t *testing.T) {
 	}
 	for _, forbidden := range []string{"dip", "flicker", "recovery", "brownout"} {
 		if strings.Contains(strings.ToLower(line), forbidden) {
-			t.Fatalf("line %q interprets the sequence; AE-4 forbids it", line)
+			t.Fatalf("line %q interprets the sequence; EX-28 forbids it", line)
 		}
 	}
 }

@@ -290,6 +290,39 @@ planner artifacts. It must not become part of the core reconciliation, planning,
 
 ---
 
+## SB-15 · The operator invokes hooks; it never becomes a workflow engine
+
+*Components: Planning & Execution Logic.*
+
+A pre-shutdown hook lets a system run its own routine before it loses power — a database snapshot, a
+quiesce, a NAS flushing its cache. The operator's part is to **call it, bound it, and publish what
+happened**. Everything past that belongs to whatever the hook reaches (`GP-4`, `GP-7`).
+
+Specifically out of scope: retry policy, backoff, DAGs or fan-out between hooks, conditional
+branching, artifact passing, templating a hook body from prior results, and any notion of a hook
+"pipeline". Argo Workflows, Tekton, and Airflow already exist and are better at this. An operator that
+grew those features would be a worse version of one of them, holding the failure path.
+
+The boundary is easiest to see at the failure edge. When a hook is slow or fails, an engine's job is
+to decide what to run next; this operator's job is to record it and keep shutting the cluster down,
+because the battery does not wait for a retry budget. That difference is not a missing feature — it is
+what the component is for.
+
+Consequences that follow, rather than being separate rules:
+
+- Hooks are declared ahead of the outage (`GP-5`), never discovered or assembled during one.
+- Every call is bounded by a timeout the flow author declares, scaled like any other declared
+  duration (`EX-11`).
+- A failed or slow hook degrades and is recorded; it never holds a wave (`EX-25`).
+- The operator does not model hook success as a dependency, so there is nothing to schedule around.
+
+Reaching a real workflow engine stays fully supported — that is what the HTTP/CloudEvents transport
+in [shutdown-hooks.md](shutdown-hooks.md) is for. Argo Events consumes CloudEvents, Tekton emits them,
+Alertmanager receivers accept the same POST. The operator hands off to an engine; it does not become
+one.
+
+---
+
 ## Repository-Derived Boundaries
 
 *Components: NUT Server / upsd, Planning & Execution Logic, Operator Maturity & Hardening.*
@@ -342,6 +375,8 @@ for defense in depth.
 - Local USB and serial UPS connectivity — outside the network-first baseline, see OD-10.
 - Delegating shutdown ordering to NUT.
 - Any UPS interaction path that bypasses NUT.
+- Workflow orchestration behind a pre-shutdown hook — retries, DAGs, branching, artifact passing.
+  The operator invokes and publishes; see SB-15.
 
 ---
 
@@ -362,6 +397,8 @@ for defense in depth.
 | OD-28 | Relationship to OD-12: OD-12 decides what to do with an infeasible plan before it starts; timing adaptation re-decides during | Adaptive execution |
 | OD-29 | Tier ascent trigger: what power condition moves the tier pointer up | Adaptive execution |
 | OD-30 | Cadence intervals: publish interval during idle versus active flow, and whether it is global or per-flow | Adaptive execution |
+| OD-33 | Whether an opt-in bounded wait on a pre-shutdown hook's completion exists, and what happens when the battery budget expires before the hook does. The default is decided — shutdown proceeds — so only the opt-in mechanism is open | Shutdown hooks |
+| OD-34 | Whether a failed hook can engage `abortPolicy` or mark the flow degraded, or stays purely advisory. Distinct from HK-7, which settles that a hook never holds a wave | Shutdown hooks |
 
 ## Closed Decisions
 

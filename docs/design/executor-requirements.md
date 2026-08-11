@@ -120,9 +120,9 @@ number an operator is rehearsing to find.
 **EX-23 · Power recovery suspends the flow; it does not halt it.** When the observation at a wave
 boundary shows mains restored and no low-battery assertion, the executor stops starting waves and
 records a `Suspended` phase. Nothing already shut down is restored; recovery is a subscriber concern
-(AE-1, AE-3).
+(EX-25, EX-27).
 
-Suspension is explicitly not the AE-6 halt, which is abort: a deliberate stop that latches and never
+Suspension is explicitly not the EX-30 halt, which is abort: a deliberate stop that latches and never
 resumes. A suspended flow must remain able to descend again, so three things hold together:
 
 1. The tier pointer is **not** latched.
@@ -210,6 +210,64 @@ returned and the flow records the failed evidence path.
 
 **EX-21 · Dry-run produces full evidence.** A dry-run flow writes the same record shape with
 effects marked simulated. Rehearsals that leave no trace are not rehearsals.
+
+---
+
+## Adaptive Execution
+
+Folded in from the provisional `AE-1`–`AE-6` in `adaptive-execution-tier-pointer.md`, which remains
+the narrative account of the model. These are the numbered requirements.
+
+**EX-25 · The operator is a recorder, not a reconciler** (was EX-25). On the recovery direction the
+executor stops descending and publishes. It does not predict where a dip will bottom out, judge
+whether a recovery is durable, restore or scale up or uncordon anything, or reconcile intended state
+against actual state. Recovery is a subscriber concern (OD-1, OD-5); the recovery system is the
+component that has to be smart.
+
+**EX-26 · Shutdown actions are idempotent — required, not incidental** (was EX-26). Re-descent works
+because every shutdown action is a no-op when already applied: scaling an already-zero Deployment,
+cordoning a cordoned node, powering off a node that is already off.
+
+This is a requirement on the actions, not a property that happens to hold. A non-idempotent action
+would break re-descent silently, surfacing only during a second dip in a real outage. Consequence: no
+flapping protection is needed on the descent path.
+
+**EX-27 · Ascent is bookkeeping only** (was EX-27). Moving the pointer up records that power improved.
+It triggers no actions, and therefore needs no hysteresis — moving up on a brief flicker costs
+nothing, and the next descent simply re-crosses tiers that are already no-ops.
+
+**EX-28 · The publisher emits data, events, and actions — never analysis** (was EX-28). The line is
+between stating what is and interpreting what it means.
+
+Publishable, because each is a fact about current or recorded state: the current tier pointer, wave,
+and timing mode; progress counts against a known denominator; every state transition with its
+timestamp and the power observed at that moment; every action attempted with target, outcome, and
+duration; raw telemetry as read.
+
+Not publishable, because each is an interpretation the subscriber should own: characterizing a
+sequence as a dip, a flicker, a recovery, or a brownout; predicting where power is heading;
+estimated time to completion or any projection; health, severity, or success judgments about the flow
+as a whole.
+
+The test: if it can be computed from current state or read from a device, publish it. If it requires
+a theory about what the history means, do not.
+
+**EX-29 · Publish on cadence and on change** (was EX-29). Two independent emission paths, both
+required. Cadence is a periodic snapshot at a fixed interval emitted whether or not anything changed;
+change is immediate emission on tier transition, wave start and completion, action outcome, timing
+mode change, and power state change.
+
+Neither substitutes for the other. Cadence alone loses transitions between ticks; change alone leaves
+a subscriber unable to distinguish "nothing is happening" from "the publisher died", because both look
+like silence. The cadence is a ceiling on how long the operator may stay quiet, never a floor on how
+soon it may act.
+
+**EX-30 · Abort is halt, not undo** (was AE-6). Abort means the executor stops descending. Nothing
+already shut down is restored, which is what makes it safe at any point in the flow.
+
+Halt is reserved for abort and is a one-way latch. Power recovery is a different event and takes a
+different path (EX-23): it suspends, leaving the pointer unlatched so a later degrade resumes from
+its depth.
 
 ---
 

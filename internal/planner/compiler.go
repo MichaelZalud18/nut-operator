@@ -366,7 +366,7 @@ func advisoryFeasibility(telemetry TelemetryInputs, devices []DeviceCapability) 
 			return Feasibility{Verdict: FeasibilityAdvisoryUnknown, Reason: "TelemetryIncomplete"}
 		}
 	}
-	// A device whose firmware reports a fixed runtime estimate (AE-6) supplies a constant wearing a
+	// A device whose firmware reports a fixed runtime estimate (CR-4) supplies a constant wearing a
 	// projection's name. Feasibility exists to answer "is there enough runtime to finish", and that
 	// question cannot be answered from a number that does not fall as the cluster draws on the
 	// battery. PL-32 says missing or stale data never yields an optimistic verdict; a value that

@@ -46,7 +46,7 @@ type PowerObservation struct {
 	// RuntimeSeconds is remaining runtime. Nil means unknown, which is never read
 	// as good news.
 	RuntimeSeconds *int64
-	// RuntimeTrusted is whether runtime responds to load (AE-6). A static firmware
+	// RuntimeTrusted is whether runtime responds to load (CR-4). A static firmware
 	// estimate must not drive timing decisions.
 	RuntimeTrusted bool
 }
@@ -59,7 +59,7 @@ type PointerState struct {
 	// Tier is the tier currently being executed, or the last one executed.
 	Tier int32 `json:"tier"`
 	// Deepest is the lowest-numbered tier ever reached in this flow. It is what
-	// makes re-descent recognizable as re-descent (AE-2) rather than new work.
+	// makes re-descent recognizable as re-descent (EX-26) rather than new work.
 	//
 	// Only meaningful once Started. Zero on a started state means unset rather than
 	// "reached tier 0": tier 0 is last-ditch and cannot be targeted by a flow
@@ -68,7 +68,7 @@ type PointerState struct {
 	// Started is false before the first descent, which distinguishes "at tier 5 and
 	// waiting" from "at tier 5 and already executed it".
 	Started bool `json:"started"`
-	// Halted records that abort was requested. AE-6: abort stops descent and
+	// Halted records that abort was requested. EX-30: abort stops descent and
 	// restores nothing, so this is a one-way latch.
 	Halted bool `json:"halted"`
 }
@@ -81,7 +81,7 @@ type PointerMovement struct {
 	// Direction is Descend, Ascend, or Hold.
 	Direction string `json:"direction"`
 	// Reexecution is true when descending back over tiers already executed. The
-	// actions are idempotent (AE-2), so this is expected -- but it is published,
+	// actions are idempotent (EX-26), so this is expected -- but it is published,
 	// because a subscriber watching a second dip should be able to tell that from a
 	// first descent without diffing history itself.
 	Reexecution bool `json:"reexecution,omitempty"`
@@ -96,7 +96,7 @@ const (
 
 // Descend moves the pointer one tier deeper, toward the flow's final tier.
 //
-// AE-2 is what makes this safe to call repeatedly: every shutdown action is a
+// EX-26 is what makes this safe to call repeatedly: every shutdown action is a
 // no-op when already applied, so re-descending over executed tiers re-attempts
 // them harmlessly. That is a requirement on the actions, not a property this
 // package can check, and it is the reason no flapping protection exists on the
@@ -136,7 +136,7 @@ func (s PointerState) Descend(finalTier int32) (PointerState, PointerMovement) {
 }
 
 // Ascend records that power improved. It performs no actions and restores nothing
-// (AE-1, AE-3).
+// (EX-25, EX-27).
 //
 // Because ascent is bookkeeping, it needs no hysteresis: moving the pointer up on
 // a brief flicker costs nothing, and the next descent simply starts from higher up
@@ -174,7 +174,7 @@ func (s PointerState) Ascend(startTier int32) (PointerState, PointerMovement) {
 	return next, PointerMovement{From: s.Tier, To: next.Tier, Direction: DirectionAscend}
 }
 
-// Halt latches the abort state (AE-6). Abort is halt, not undo: descent stops and
+// Halt latches the abort state (EX-30). Abort is halt, not undo: descent stops and
 // nothing already shut down is restored, which is why it is safe at any point in
 // the flow and why there is no un-halt.
 func (s PointerState) Halt() PointerState {
@@ -184,7 +184,7 @@ func (s PointerState) Halt() PointerState {
 
 // ShouldDescend reports whether an observation justifies going deeper.
 //
-// The rule is intentionally blunt, per AE-1: the operator is a recorder, not a
+// The rule is intentionally blunt, per EX-25: the operator is a recorder, not a
 // forecaster. It descends while power is lost and does not try to judge whether
 // the outage is durable, where the curve is heading, or whether a dip is a
 // flicker. Interpretation belongs to the subscriber.
@@ -199,14 +199,14 @@ func ShouldDescend(observation PowerObservation) bool {
 // ShouldAscend reports whether an observation justifies recording improvement.
 //
 // Strictly the inverse of descent: mains is back and the device is no longer
-// asserting a low battery. Nothing is restored either way (AE-3).
+// asserting a low battery. Nothing is restored either way (EX-27).
 func ShouldAscend(observation PowerObservation) bool {
 	return !observation.OnBattery && !observation.LowBattery
 }
 
-// Describe renders a movement as one event-log line, matching the AE-4 shape.
+// Describe renders a movement as one event-log line, matching the EX-28 shape.
 //
-// AE-4 draws the line at stating what is versus interpreting what it means, so
+// EX-28 draws the line at stating what is versus interpreting what it means, so
 // this reports the transition and the power state observed at that moment, and
 // never characterizes the sequence as a dip, a flicker, or a recovery.
 func (m PointerMovement) Describe(observation PowerObservation) string {

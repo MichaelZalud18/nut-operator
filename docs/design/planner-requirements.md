@@ -351,6 +351,33 @@ operator decides what that implies.
 they are behaviorally fixes. Plans validated against the prior version may fail PL-19 under the
 corrected one.
 
+**CR-4** · A runtime figure is trustworthy only on an affirmative `Dynamic` declaration. Profiles
+declare `spec.telemetry.runtimeEstimate: Dynamic | Static`, read through
+`capability.MatchResult.SupportsTimingAdaptation()`. `Dynamic` permits a device's `battery.runtime`
+to drive graduated decisions; `Static` forbids it; **absence forbids it while asserting nothing about
+the device.**
+
+Unset is unverified, and unverified is not `Dynamic`. Both consumers reason about how much time is
+left, so both need the number to actually fall as the cluster draws on the battery — and assuming the
+good case would drive them from a constant at the one moment nobody is watching.
+
+Two consumers today, and they degrade the same way rather than refusing:
+
+- **Advisory feasibility** (PL-16) answers "is there enough runtime to finish", which a fixed estimate
+  cannot support. A domain containing a `Static` device compiles to `Unknown` with reason
+  `RuntimeEstimateStatic`, naming the device. This is PL-32 applied literally: a value that cannot
+  move is missing data with a plausible number attached.
+- **Timing compression** (EX-11) needs a measured runtime to compute against. Without trust the
+  graduated middle mode is simply unreachable, leaving only "as declared" on mains and "most urgent"
+  on battery — which *is* the prohibition, expressed through the observation rather than a second
+  mechanism that could disagree with it.
+
+Absence deliberately changes nothing about existing deployments. Every profile shipped today leaves
+it unset, and treating that as `Static` would downgrade all of them on no evidence.
+
+Previously carried as a provisional `AE-6`, which collided with the abort requirement of the same
+number; it is capability resolution, not adaptive execution, and is numbered here accordingly.
+
 ---
 
 ## Resolved Decisions

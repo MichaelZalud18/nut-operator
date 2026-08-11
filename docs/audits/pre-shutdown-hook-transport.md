@@ -1,6 +1,8 @@
 # Pre-Shutdown Hook Transport
 
-Status: findings record and design direction, 2026-08-06, extended 2026-08-09.
+Status: findings record and design direction, 2026-08-06, extended 2026-08-09. The direction below is
+now designed in [shutdown-hooks.md](../design/shutdown-hooks.md) (`HK-1`–`HK-10`), and the scope limit
+is recorded as `SB-15`.
 
 Components: Planning & Execution Logic.
 
@@ -78,5 +80,5 @@ it does not manage.
 ## Scope boundary to record
 
 Owning workflow orchestration is out of scope (`GP-4`, `GP-7`): the operator invokes a hook and
-publishes the fact, and never becomes the engine that runs it. This belongs in
-`docs/design/scope-boundaries.md` as `SB-15` rather than living only in a task note.
+publishes the fact, and never becomes the engine that runs it. Recorded as `SB-15` in
+`docs/design/scope-boundaries.md`.

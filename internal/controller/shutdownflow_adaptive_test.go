@@ -104,7 +104,7 @@ func TestAMissingRuntimeMakesTheAggregateUnknown(t *testing.T) {
 	}
 }
 
-// AE-6: every selected device must affirmatively declare a dynamic runtime estimate. One fixed
+// CR-4: every selected device must affirmatively declare a dynamic runtime estimate. One fixed
 // estimate is enough to make the aggregate untrustworthy, since the shortest runtime across the
 // set could be that constant.
 func TestRuntimeTrustRequiresEveryDeviceToDeclareDynamic(t *testing.T) {
@@ -304,13 +304,13 @@ func TestThePublishedPointerRoundTripsBackIntoTheNextRun(t *testing.T) {
 	if resumed.Tier != 4 || resumed.Deepest != 2 || !resumed.Started {
 		t.Fatalf("resumed = %#v, want tier 4 deepest 2 started", resumed)
 	}
-	// Suspension is not a halt: the resumed pointer must be free to descend again (AE-6).
+	// Suspension is not a halt: the resumed pointer must be free to descend again (EX-30).
 	if resumed.Halted {
 		t.Fatal("a suspended run must not resume into a latched pointer")
 	}
 }
 
-// AE-5 requires two independent emission paths. Change emission covers transitions; the cadence
+// EX-29 requires two independent emission paths. Change emission covers transitions; the cadence
 // heartbeat is what tells a subscriber the publisher is alive when nothing is transitioning.
 func TestPublishCadenceIsFasterWhileAFlowIsActive(t *testing.T) {
 	parameters := adaptive.DefaultParameters()

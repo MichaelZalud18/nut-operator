@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Package adaptive implements the tier-pointer and timing-mode model from
-// docs/design/adaptive-execution-tier-pointer.md (AE-1 through AE-6).
+// docs/design/adaptive-execution-tier-pointer.md (EX-25 through EX-30).
 //
 // Pure by construction, like internal/planner and internal/trigger: no I/O, no
 // Kubernetes client, no wall-clock reads. Every function takes the observations
@@ -30,7 +30,7 @@ limitations under the License.
 // The package is deliberately three separable pieces:
 //
 //   - parameters.go — the OD-27 through OD-30 values, as data
-//   - pointer.go    — AE-1 through AE-3: where the shutdown has progressed to
+//   - pointer.go    — EX-25 through EX-27: where the shutdown has progressed to
 //   - timing.go     — timing-mode selection and its asymmetric hysteresis
 //
 // The pointer and the timing mode are independent. The design is explicit that
@@ -71,7 +71,7 @@ type Parameters struct {
 	UrgentRuntimeSeconds  int64
 	NominalRuntimeSeconds int64
 
-	// IdleCadence and ActiveCadence are the AE-5 heartbeat intervals. They differ
+	// IdleCadence and ActiveCadence are the EX-29 heartbeat intervals. They differ
 	// because the value of a snapshot differs: during a flow a subscriber is
 	// tracking progress, and between flows it is only confirming the publisher is
 	// alive. (OD-30)
@@ -95,7 +95,7 @@ type Parameters struct {
 	// AssumedRuntimeUnknown is the runtime budget used when no trustworthy figure is
 	// available. It is deliberately the urgent threshold rather than a separate
 	// number: "I do not know how long I have" is treated as having exactly as much
-	// time as the point at which the flow would already be racing (PL-32, AE-6).
+	// time as the point at which the flow would already be racing (PL-32, CR-4).
 	AssumedRuntimeUnknown time.Duration
 }
 
@@ -210,7 +210,7 @@ func (p Parameters) Validate() []Diagnostic {
 		diagnostics = append(diagnostics, Diagnostic{
 			Severity: DiagnosticWarning,
 			Reason:   "CadenceSlowerDuringFlow",
-			Message: "publishing more slowly during a flow than at rest inverts AE-5: the active " +
+			Message: "publishing more slowly during a flow than at rest inverts EX-29: the active " +
 				"period is when subscribers most need current state",
 		})
 	}

@@ -80,7 +80,7 @@ type DeviceCapability struct {
 	ProfileID          string   `json:"profileID,omitempty"`
 	Unidentified       bool     `json:"unidentified,omitempty"`
 	TelemetryVariables []string `json:"telemetryVariables,omitempty"`
-	// RuntimeEstimate declares how this device's firmware produces battery.runtime (AE-6).
+	// RuntimeEstimate declares how this device's firmware produces battery.runtime (CR-4).
 	// Empty means unverified.
 	RuntimeEstimate string `json:"runtimeEstimate,omitempty"`
 }

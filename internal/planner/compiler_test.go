@@ -1197,7 +1197,7 @@ func feasibilityInput(devices []DeviceCapability) (StructuralInputs, TelemetryIn
 	}}}
 }
 
-// AE-6's live consequence. Feasibility answers "is there enough runtime to finish", and a firmware
+// CR-4's live consequence. Feasibility answers "is there enough runtime to finish", and a firmware
 // that reports a fixed estimate cannot answer it -- the number does not fall as the cluster draws on
 // the battery, so an OK verdict would be derived from a constant.
 func TestFeasibilityIsUnknownWhenADeviceReportsAStaticRuntimeEstimate(t *testing.T) {

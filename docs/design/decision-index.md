@@ -56,18 +56,24 @@ Dated audit and findings records live in `docs/audits/` and share the `F-n` find
 | Prefix | Meaning | Home | Range in use |
 | --- | --- | --- | --- |
 | GP | Governing principle | scope-boundaries | GP-1 – GP-7 |
-| SB | Scope boundary | scope-boundaries | SB-1 – SB-14 |
+| SB | Scope boundary | scope-boundaries | SB-1 – SB-15 |
 | RB | Repository-derived boundary | scope-boundaries | RB-1 – RB-7 |
-| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-31, OD-8r |
+| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-34, OD-8r |
 | PL | Planner requirement | planner-requirements | PL-1 – PL-49 |
-| CR | Capability resolution rule | planner-requirements | CR-1 – CR-3 |
+| CR | Capability resolution rule | planner-requirements | CR-1 – CR-4 |
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
-| EX | Executor requirement | executor-requirements | EX-1 – EX-21 |
+| EX | Executor requirement | executor-requirements | EX-1 – EX-30 |
+| HK | Shutdown hook requirement | shutdown-hooks | HK-1 – HK-10 |
 | IN | Inventory contract rule | inventory-provider-contract | IN-1 – IN-16 |
-| F | Audit finding | audit records (`docs/audits/`) | F-1 – F-41 (2026-08-09) |
-| AE | Adaptive execution (provisional; folds into PL and EX) | adaptive-execution-tier-pointer | AE-1 – AE-6 |
+| F | Audit finding | audit records (`docs/audits/`) | F-1 – F-44 (2026-08-10) |
 
 Identifiers are stable: never reused, never renumbered. Superseded items are marked in place.
+
+The provisional `AE` namespace is retired. `AE-1`–`AE-6` were folded into `EX-25`–`EX-30`
+(executor-requirements), and the runtime-estimate capability gate that had also been carried as
+`AE-6` became `CR-4` (planner-requirements) — it is capability resolution, not adaptive execution,
+and two requirements were sharing one number. `adaptive-execution-tier-pointer.md` remains the
+narrative account and now uses the folded numbers.
 
 ## Decision Registry
 
@@ -90,6 +96,8 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | OD-28 | Relationship to OD-12: infeasible-plan policy before start vs timing re-decisions during | — | Adaptive execution |
 | OD-29 | Tier ascent trigger: what power condition moves the pointer up | — | Adaptive execution |
 | OD-30 | Cadence intervals: publish interval during idle vs active flow; global or per-flow | — | Adaptive execution |
+| OD-33 | Hook waiting: whether an opt-in bounded wait on hook completion exists, and what happens when the runtime budget expires first. Default decided (proceed); the mechanism is not | — | Shutdown hooks |
+| OD-34 | Hook failure and abort policy: whether a failed hook can mark the flow degraded, or stays purely advisory | — | Shutdown hooks |
 
 ### Closed
 
@@ -166,7 +174,7 @@ a tier.
 
 **Tier pointer** — the executor's record of how far down the tier sequence a shutdown has
 progressed. Descends as power degrades and waves execute; ascends as bookkeeping only, restoring
-nothing (AE-1 – AE-3).
+nothing (EX-25 – EX-27).
 
 **Signal file** — the structured in-pod handoff from executor authority to host actuation:
 timestamp, reason, UPS identity, flow identity, plan hash. The actuator rejects stale files

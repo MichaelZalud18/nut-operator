@@ -41,7 +41,7 @@ func TestIndicatedModeFollowsRemainingRuntime(t *testing.T) {
 			ModeUrgent},
 		// PL-32: missing data never yields the optimistic verdict.
 		"unknown runtime on battery": {PowerObservation{OnBattery: true}, ModeUrgent},
-		// AE-6: a static firmware estimate cannot drive timing decisions.
+		// CR-4: a static firmware estimate cannot drive timing decisions.
 		"untrusted runtime on battery": {
 			PowerObservation{OnBattery: true, RuntimeSeconds: runtimeOf(3600)}, ModeUrgent},
 		// A low reading while charging is not a deadline.
@@ -284,7 +284,7 @@ func TestTheReserveIsHeldBackFromThePlan(t *testing.T) {
 	}
 }
 
-// PL-32 and AE-6: with no trustworthy runtime the budget is assumed rather than optimistic, and
+// PL-32 and CR-4: with no trustworthy runtime the budget is assumed rather than optimistic, and
 // the record says which it was so nobody reads an assumption as a measurement.
 func TestAnUnmeasuredRuntimeUsesTheAssumedBudget(t *testing.T) {
 	parameters := DefaultParameters()

@@ -280,7 +280,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		log.Error(err, "failed to record ShutdownFlow audit records", "shutdownflow", flow.Name)
 	}
 
-	// AE-5 cadence: republish on a fixed interval whether or not anything changed, so
+	// EX-29 cadence: republish on a fixed interval whether or not anything changed, so
 	// silence from this flow means nothing is happening rather than that the operator
 	// stopped. Taken as the soonest of the two intervals, never the later one -- a
 	// trigger hold about to expire must not wait for the next heartbeat.

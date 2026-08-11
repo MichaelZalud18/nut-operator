@@ -205,7 +205,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// An eligible trigger means the flow is mid-outage, so it republishes on the AE-5
+			// An eligible trigger means the flow is mid-outage, so it republishes on the EX-29
 			// active cadence rather than waiting for the next watch event.
 			Expect(result.RequeueAfter).To(Equal(adaptive.DefaultParameters().ActiveCadence))
 
@@ -216,7 +216,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.TriggerEvaluation.Reason).To(Equal("TriggerEligible"))
 			Expect(resource.Status.TriggerEvaluation.SelectedUPSDevices).To(ConsistOf(shutdownFlowTestUPSName))
 			Expect(resource.Status.TriggerEvaluation.PlanConfigHash).To(Equal(resource.Status.ConfigHash))
-			// AE-5: the heartbeat is republished every reconcile, so its absence means the
+			// EX-29: the heartbeat is republished every reconcile, so its absence means the
 			// operator stopped rather than that nothing happened.
 			Expect(resource.Status.LastPublishTime).NotTo(BeNil())
 			Expect(resource.Status.LastPublishTime.Time).To(BeTemporally("==", observedAt))
@@ -252,7 +252,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			// The hold expires in five minutes, but a matched-and-holding trigger is mid-outage,
-			// so the AE-5 heartbeat requeues sooner. The cadence is a ceiling on silence, never a
+			// so the EX-29 heartbeat requeues sooner. The cadence is a ceiling on silence, never a
 			// floor on action: it may only bring the next reconcile forward.
 			Expect(result.RequeueAfter).To(Equal(adaptive.DefaultParameters().ActiveCadence))
 			Expect(result.RequeueAfter).To(BeNumerically("<=", 5*time.Minute))

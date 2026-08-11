@@ -82,25 +82,30 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 `internal/planner` pure compilation with diagnostics reaching status and audit, `internal/executor`
 wave execution with restart-safe resume, `internal/kubeactions` enforce-mode actions gated on
 node-agent coverage, planner artifacts with diagram exports, and `ShutdownFlow` dry-run dispatch.
-`internal/adaptive` is the pure tier-pointer and timing-mode model (`AE-1`–`AE-6`), wired into the
+`internal/adaptive` is the pure tier-pointer and timing-mode model (`EX-25`–`EX-30`), wired into the
 executor: power is re-read at every wave boundary, the pointer follows each compiled wave's tier, and
 declared timeouts and `Wait` durations are compressed by a ratio measured from remaining runtime over
 remaining declared plan. Pointer and mode persist in `executor_resume_states` and publish on
 `status.lastExecution.adaptive`. Power returning mid-flow suspends the execution without restoring
 anything, leaving the pointer unlatched at its depth so a second dip resumes from there. `Gate` is
 removed from the action enum; `Notify` emits a Kubernetes Event. Tier inversion is published as
-`nutoperator_shutdownflow_tier_inversions`, and the AE-5 cadence heartbeat as
+`nutoperator_shutdownflow_tier_inversions`, and the EX-29 cadence heartbeat as
 `nutoperator_shutdownflow_publish_timestamp_seconds` plus `status.lastPublishTime`. Node clearance is
-re-derived at execution against the pods actually on the node, read uncached.
+re-derived at execution against the pods actually on the node, read uncached. The provisional `AE-n`
+identifiers are folded into `EX-25`–`EX-30`, and the runtime-estimate gate that shared `AE-6` is now
+`CR-4`.
 
-Closed: `PL-19`, `PL-20`, `PL-43`, `AE-5`, `EX-9`, `EX-11`, `EX-14`, `EX-22`, `EX-23`, `EX-24`,
-`OD-4`, `OD-11`, `OD-17`, `OD-18`, `F-31`, `F-42`.
+Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-30`, `OD-4`,
+`OD-11`, `OD-17`, `OD-18`, `SB-15`, `F-31`, `F-42`, `F-44`.
 
 #### Open Work
 
-- `F-44` make the pre-shutdown hook engine-neutral, and record the scope limit as `SB-15`
-  ([pre-shutdown-hook-transport.md](audits/pre-shutdown-hook-transport.md)). Design the `ShutdownHook`
-  resource before building; the dry-run and hook-waiting questions are open there.
+- Build the `ShutdownHook` resource and its HTTP/CloudEvents transport
+  ([shutdown-hooks.md](design/shutdown-hooks.md), `HK-1`–`HK-10`). `RunWorkflow` currently refuses any
+  GVK but Argo, so nothing advertises neutrality it lacks in the meantime.
+- `OD-33` decide whether an opt-in bounded wait on hook completion exists, and what happens when the
+  runtime budget expires first.
+- `OD-34` decide whether a failed hook can mark the flow degraded, or stays purely advisory.
 - `OD-27` confirm the adaptive defaults against a real outage. The compression amount is measured, so
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).
@@ -108,7 +113,6 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `AE-5`, `EX-9`, `EX-11`, `EX-14`, `EX-22`, `E
   free, but suspension stops the remaining waves, so a brief flicker back to mains currently pauses a
   shutdown that should continue.
 - `OD-30` decide whether cadence is global or per-flow.
-- Fold the `AE-n` identifiers into real `PL`/`EX` numbers.
 - `OD-12` decide the infeasible-plan policy (reject/warn/truncate), then implement (`EX-3`).
 - `OD-14` decide partial-domain outage plan scope, then wire domain membership into wave compilation
   (shared with Inventory System and Telemetry & Triggers).
@@ -264,7 +268,7 @@ Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`
 normalization with profile-declared aliases, `internal/polling` per-target transport, `internal/trigger`
 pure evaluation wired into `ShutdownFlow`, and `dummy-ups` repeater mode for upstream NUT appliances.
 
-Closed: `F-22` relay half, `F-25` runtime half, `OD-9`, `AE-6`.
+Closed: `F-22` relay half, `F-25` runtime half, `OD-9`, `CR-4`.
 
 #### Open Work
 

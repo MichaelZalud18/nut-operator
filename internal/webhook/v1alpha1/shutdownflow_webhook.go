@@ -28,6 +28,7 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
+	"github.com/MichaelZalud18/nut-operator/internal/kubeactions"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 )
@@ -254,6 +255,7 @@ func validateShutdownGroups(path *field.Path, groups []powerv1alpha1.ShutdownGro
 			errs = append(errs, validateIdentifierText(groupPath.Child("after").Index(j), dependency, "dependency name must not be empty")...)
 		}
 		errs = append(errs, validateStringMap(groupPath.Child("params"), group.Params)...)
+		errs = append(errs, validateWorkflowHookGVK(groupPath.Child("params"), group.Action, group.Params)...)
 	}
 	return errs
 }
@@ -268,6 +270,39 @@ func validateShutdownSteps(path *field.Path, steps []powerv1alpha1.ShutdownStep)
 		errs = append(errs, validatePositiveDuration(stepPath.Child("duration"), step.Duration)...)
 		errs = append(errs, validatePositiveDuration(stepPath.Child("timeout"), step.Timeout)...)
 		errs = append(errs, validateStringMap(stepPath.Child("params"), step.Params)...)
+		errs = append(errs, validateWorkflowHookGVK(stepPath.Child("params"), step.Type, step.Params)...)
+	}
+	return errs
+}
+
+// validateWorkflowHookGVK refuses a RunWorkflow target the operator cannot create
+// (F-44).
+//
+// workflow.apiVersion and workflow.kind read as engine-neutral and are not: the
+// runner always builds an Argo-shaped body, and the operator's RBAC grants only
+// argoproj.io/workflows. Accepting another GVK produces an object with fields its
+// CRD does not define, created by a manager without permission to create it, and
+// the discovery lands in the middle of an outage.
+//
+// Refusing at admission is the same remedy F-25 and F-33 received: a field that
+// cannot do what it claims is implemented or rejected, never left to fail quietly
+// in the failure path. Genuine neutrality is docs/design/shutdown-hooks.md.
+func validateWorkflowHookGVK(path *field.Path, action powerv1alpha1.ShutdownStepType, params map[string]string) field.ErrorList {
+	if action != powerv1alpha1.ShutdownStepRunWorkflow || len(params) == 0 {
+		return nil
+	}
+	var errs field.ErrorList
+	if apiVersion := params["workflow.apiVersion"]; apiVersion != "" && apiVersion != kubeactions.SupportedWorkflowAPIVersion {
+		errs = append(errs, field.Invalid(
+			path.Key("workflow.apiVersion"), apiVersion,
+			fmt.Sprintf("RunWorkflow can only create %s objects; see docs/design/shutdown-hooks.md for transport-neutral hooks",
+				kubeactions.SupportedWorkflowAPIVersion)))
+	}
+	if kind := params["workflow.kind"]; kind != "" && kind != kubeactions.SupportedWorkflowKind {
+		errs = append(errs, field.Invalid(
+			path.Key("workflow.kind"), kind,
+			fmt.Sprintf("RunWorkflow can only create %s objects; see docs/design/shutdown-hooks.md for transport-neutral hooks",
+				kubeactions.SupportedWorkflowKind)))
 	}
 	return errs
 }

@@ -42,11 +42,11 @@ const (
 	PhaseFailed    = "Failed"
 	// PhaseSuspended is a flow that stopped descending because power came back.
 	//
-	// Deliberately not "halted". AE-6 reserves halt for abort: a deliberate stop that
+	// Deliberately not "halted". EX-30 reserves halt for abort: a deliberate stop that
 	// latches and never resumes. Power recovery is the opposite kind of event -- the
 	// pointer ascends, nothing is restored, and if power degrades again the flow
 	// descends from wherever the pointer sits, re-attempting already-executed tiers
-	// as no-ops (AE-2). A suspended run has more to do; a halted one does not.
+	// as no-ops (EX-26). A suspended run has more to do; a halted one does not.
 	//
 	// Also distinct from Completed, which means every wave ran, and from Aborted,
 	// which means something failed.
@@ -317,7 +317,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 
 		if waveState.Suspend {
 			// Power came back. Stop descending, restore nothing, and leave the pointer where
-			// it is so a later degrade resumes from there (AE-1, AE-3).
+			// it is so a later degrade resumes from there (EX-25, EX-27).
 			result.Phase = PhaseSuspended
 			result.Adaptive.Suspended = true
 			recordErr = errors.Join(recordErr, e.recordSuspension(ctx, writer, input, executionID, mode, dryRun, reason, startedAt, waveState, result))

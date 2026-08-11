@@ -46,7 +46,7 @@ func adaptiveInputForFlow(flow *powerv1alpha1.ShutdownFlow, bundle resolver.Stru
 		Observation: observation,
 		FinalTier:   final,
 		StartTier:   start,
-		// AE-1: on recovery the operator stops descending and publishes. Restoring is a
+		// EX-25: on recovery the operator stops descending and publishes. Restoring is a
 		// subscriber concern, so continuing to power the cluster down after mains is back
 		// would be doing work the outage no longer justifies. The pointer is left where it
 		// stopped, so a second dip resumes from that depth rather than starting over.
@@ -85,10 +85,10 @@ func compiledTierRange(waves []powerv1alpha1.CompiledShutdownWave) (int32, int32
 	return last, first
 }
 
-// publishCadence is the AE-5 heartbeat interval for this flow's current activity
+// publishCadence is the EX-29 heartbeat interval for this flow's current activity
 // (OD-30).
 //
-// The two paths AE-5 requires are not interchangeable. Change emission already
+// The two paths EX-29 requires are not interchangeable. Change emission already
 // covers transitions; this is the other one -- a periodic republish that happens
 // whether or not anything moved, so a subscriber can tell "nothing is happening"
 // from "the publisher died". Both look like silence otherwise.
@@ -178,7 +178,7 @@ func resumedTimingState(status *powerv1alpha1.ShutdownExecutionStatus) adaptive.
 	return adaptive.TimingState{Mode: adaptive.TimingMode(status.Adaptive.TimingMode)}
 }
 
-// adaptiveStatusFromResult publishes the adaptive state a run ended on (AE-4).
+// adaptiveStatusFromResult publishes the adaptive state a run ended on (EX-28).
 //
 // Facts only: the tier reached, the mode in force, and the power observed. There
 // is deliberately no "recovering", "flickering", or estimated completion here --
@@ -313,7 +313,7 @@ func powerObservationFromDevices(devices []powerv1alpha1.UPSDevice, trusted bool
 }
 
 // runtimeIsTrustedForFlow reports whether the selected devices' runtime figures may
-// drive timing decisions (AE-6).
+// drive timing decisions (CR-4).
 //
 // Every device must affirmatively declare a Dynamic runtime estimate. One device
 // reporting a fixed number the load never moves is enough to make the aggregate

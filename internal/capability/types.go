@@ -45,7 +45,7 @@ type Profile struct {
 	TelemetryAliases   map[string]string `json:"telemetryAliases,omitempty"`
 	ActuationBehaviors []string          `json:"actuationBehaviors,omitempty"`
 	Quirks             []Quirk           `json:"quirks,omitempty"`
-	// RuntimeEstimate declares how the firmware produces battery.runtime (AE-6). Empty means
+	// RuntimeEstimate declares how the firmware produces battery.runtime (CR-4). Empty means
 	// unverified.
 	RuntimeEstimate RuntimeEstimate `json:"runtimeEstimate,omitempty"`
 }
@@ -130,12 +130,12 @@ type MatchResult struct {
 	// Names rather than structures: scope is resolved here, so nothing downstream
 	// has to re-decide whether a quirk is in force.
 	Quirks []string `json:"quirks,omitempty"`
-	// RuntimeEstimate is the matched profile's runtime-estimate declaration (AE-6).
+	// RuntimeEstimate is the matched profile's runtime-estimate declaration (CR-4).
 	RuntimeEstimate RuntimeEstimate `json:"runtimeEstimate,omitempty"`
 }
 
 // SupportsTimingAdaptation reports whether this device may have its execution
-// timings adapted mid-flow (AE-6).
+// timings adapted mid-flow (CR-4).
 //
 // Requires an affirmative Dynamic declaration plus the runtime variable itself.
 // Unverified is treated as unsafe rather than assumed fine: adaptation shortens

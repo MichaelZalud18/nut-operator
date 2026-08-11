@@ -70,7 +70,7 @@ type TimingTransition struct {
 	To   TimingMode `json:"to"`
 	// Changed is false when the observation only accumulated evidence.
 	Changed bool `json:"changed"`
-	// Reason names why, for the AE-4 event log.
+	// Reason names why, for the EX-28 event log.
 	Reason string `json:"reason"`
 }
 
@@ -78,7 +78,7 @@ type TimingTransition struct {
 //
 // Unknown or untrusted runtime yields Urgent, not Relaxed. Two separate rules
 // converge here: PL-32 says missing data never produces an optimistic verdict, and
-// AE-6 says a device whose firmware reports a static runtime estimate cannot drive
+// CR-4 says a device whose firmware reports a static runtime estimate cannot drive
 // timing adaptation. In both cases the honest answer is that the flow does not
 // know how long it has, and the safe reading of "I don't know" while running on
 // battery is that there is not much.
@@ -313,7 +313,7 @@ func ScaleDuration(declared time.Duration, budget TimingBudget) time.Duration {
 	return time.Duration(float64(declared) * budget.Compression)
 }
 
-// Describe renders a budget for the AE-4 event log. It states the measurement and
+// Describe renders a budget for the EX-28 event log. It states the measurement and
 // the verdict, and does not characterize either.
 func (b TimingBudget) Describe() string {
 	source := "runtime assumed"
@@ -328,7 +328,7 @@ func (b TimingBudget) Describe() string {
 		source, b.Available, b.Required, b.Compression, verdict)
 }
 
-// Cadence returns the AE-5 publish interval for the current activity (OD-30).
+// Cadence returns the EX-29 publish interval for the current activity (OD-30).
 func (p Parameters) Cadence(flowActive bool) time.Duration {
 	p = p.WithDefaults()
 	if flowActive {
@@ -337,7 +337,7 @@ func (p Parameters) Cadence(flowActive bool) time.Duration {
 	return p.IdleCadence
 }
 
-// Describe renders a transition for the AE-4 event log. It states the modes and
+// Describe renders a transition for the EX-28 event log. It states the modes and
 // the reason code, and never characterizes what the sequence means.
 func (t TimingTransition) Describe() string {
 	if !t.Changed {
