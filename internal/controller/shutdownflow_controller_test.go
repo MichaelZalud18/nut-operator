@@ -252,8 +252,8 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			// The hold expires in five minutes, but a matched-and-holding trigger is mid-outage,
-			// so the EX-29 heartbeat requeues sooner. The cadence is a ceiling on silence, never a
-			// floor on action: it may only bring the next reconcile forward.
+			// so the EX-29 heartbeat requeues sooner. The cadence bounds silence and never delays
+			// action: it may only bring the next reconcile forward.
 			Expect(result.RequeueAfter).To(Equal(adaptive.DefaultParameters().ActiveCadence))
 			Expect(result.RequeueAfter).To(BeNumerically("<=", 5*time.Minute))
 
@@ -357,6 +357,103 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
 			Expect(resource.Status.LastExecution.DeduplicationKey).To(Equal(firstKey))
 			Expect(resource.Status.LastExecution.TriggerActive).To(BeTrue())
+		})
+
+		// EX-14: the executor is itself a workload in a cluster that is shutting down, so it may be
+		// killed mid-flow. A restart has no continuity except what reached etcd, which is why this
+		// seeds the persisted record and then reconciles through a second reconciler instance --
+		// that pair is what a restarted operator pod actually is. Producing the suspension in-process
+		// would exercise suspension, not restart.
+		It("resumes a suspended execution from the tier it left behind rather than starting over", func() {
+			observedAt := time.Date(2026, 8, 4, 9, 0, 0, 0, time.UTC)
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestPowerClusterName},
+			}
+			Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
+			cluster.Status.Storage = powerv1alpha1.StorageStatus{
+				Mode:  powerv1alpha1.PowerStorageExternalPostgres,
+				Ready: true,
+			}
+			Expect(k8sClient.Status().Update(ctx, cluster)).To(Succeed())
+
+			By("giving the flow a tier range so the pointer has somewhere to descend from")
+			earlyTier := int32(5)
+			lateTier := int32(3)
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.ManagementClusterRef = &powerv1alpha1.ObjectNameReference{Name: shutdownFlowTestPowerClusterName}
+			resource.Spec.Groups[0].ShutdownTier = &earlyTier
+			resource.Spec.Groups[1].ShutdownTier = &lateTier
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			pollTime := metav1.NewTime(observedAt.Add(-10 * time.Second))
+			device := &powerv1alpha1.UPSDevice{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery
+			device.Status.LastPollTime = &pollTime
+			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+
+			store := &fakeAuditStore{}
+			firstInstance := &ShutdownFlowReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				StorageConnector: &fakeAuditConnector{store: store},
+				Clock:            func() time.Time { return observedAt },
+			}
+
+			By("descending the full tier range on the first run")
+			_, err := firstInstance.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.LastExecution).NotTo(BeNil())
+			Expect(resource.Status.LastExecution.Adaptive).NotTo(BeNil())
+			firstRun := resource.Status.LastExecution.Adaptive
+			Expect(firstRun.PointerStarted).To(BeTrue())
+			Expect(firstRun.Tier).To(Equal(lateTier))
+			Expect(firstRun.DeepestTier).To(Equal(lateTier))
+			// The contrast the resumed run is measured against: a pointer with no history reports
+			// entering the first tier, and a timing state with no history has to escalate into Urgent.
+			Expect(firstRun.Events).To(ContainElement(ContainSubstring("entered tier 5")))
+			Expect(firstRun.Events).To(ContainElement(ContainSubstring("Escalated")))
+			Expect(firstRun.TimingMode).To(Equal(string(adaptive.ModeUrgent)))
+			executionsAfterFirstRun := len(store.shutdownFlowExecutions)
+
+			By("leaving behind the record a killed executor would have written")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Status.LastExecution.Phase = powerv1alpha1.ShutdownExecutionPhaseSuspended
+			Expect(k8sClient.Status().Update(ctx, resource)).To(Succeed())
+
+			By("reconciling through a second instance holding no in-process state")
+			secondInstance := &ShutdownFlowReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				StorageConnector: &fakeAuditConnector{store: store},
+				Clock:            func() time.Time { return observedAt },
+			}
+			_, err = secondInstance.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			// A suspension is not evidence the episode is finished, so dedupe must not stand in the
+			// way of the restart -- otherwise the resume is blocked by the record of its own progress.
+			Expect(len(store.shutdownFlowExecutions)).To(BeNumerically(">", executionsAfterFirstRun))
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resumed := resource.Status.LastExecution.Adaptive
+			Expect(resumed).NotTo(BeNil())
+
+			// The pointer resumed. Starting from a fresh one would re-report tier 5 as new work at
+			// exactly the moment a subscriber is trying to read a second dip.
+			Expect(resumed.Events).NotTo(ContainElement(ContainSubstring("entered tier 5")))
+			Expect(resumed.Events).To(ContainElement(ContainSubstring("held at tier 3")))
+			Expect(resumed.Tier).To(Equal(lateTier))
+			Expect(resumed.DeepestTier).To(Equal(lateTier))
+			Expect(resumed.PointerStarted).To(BeTrue())
+
+			// The timing mode resumed. A fresh state would have to climb out of Relaxed again, which
+			// hands back time the flow already decided it needed and cannot get back.
+			Expect(resumed.TimingMode).To(Equal(string(adaptive.ModeUrgent)))
+			Expect(resumed.Events).NotTo(ContainElement(ContainSubstring("Escalated")))
 		})
 
 		It("should change plan identity when capability profiles change", func() {

@@ -46,7 +46,7 @@ func TestFirstDescentOccupiesTheStartingTier(t *testing.T) {
 	}
 }
 
-func TestDescentStopsAtTheFloorTier(t *testing.T) {
+func TestDescentStopsAtTheFinalTier(t *testing.T) {
 	state := PointerState{Tier: 2, Deepest: 2, Started: true}
 
 	state, _ = state.Descend(1)
@@ -56,7 +56,7 @@ func TestDescentStopsAtTheFloorTier(t *testing.T) {
 
 	next, movement := state.Descend(1)
 	if next.Tier != 1 || movement.Direction != DirectionHold {
-		t.Fatalf("the pointer must not descend past the floor: %#v %#v", next, movement)
+		t.Fatalf("the pointer must not descend past the final tier: %#v %#v", next, movement)
 	}
 }
 
@@ -150,11 +150,11 @@ func TestDescentAndAscentConditionsAreInverses(t *testing.T) {
 	}
 }
 
-// The pointer must never end up below the floor or above the ceiling no matter how observations
-// arrive. Driving it with an alternating sequence is the cheapest way to assert that.
+// The pointer must never pass the final tier or climb above the tier it started at, no matter how
+// observations arrive. Driving it with an alternating sequence is the cheapest way to assert that.
 func TestPointerStaysWithinBoundsUnderAlternatingPower(t *testing.T) {
-	const floor, ceiling = int32(1), int32(5)
-	state := PointerState{Tier: ceiling}
+	const final, start = int32(1), int32(5)
+	state := PointerState{Tier: start}
 
 	observations := []PowerObservation{
 		onBattery(900), onBattery(400), onMains(1800), onBattery(200),
@@ -163,15 +163,15 @@ func TestPointerStaysWithinBoundsUnderAlternatingPower(t *testing.T) {
 	}
 	for _, observation := range observations {
 		if ShouldDescend(observation) {
-			state, _ = state.Descend(floor)
+			state, _ = state.Descend(final)
 		} else {
-			state, _ = state.Ascend(ceiling)
+			state, _ = state.Ascend(start)
 		}
-		if state.Tier < floor || state.Tier > ceiling {
-			t.Fatalf("tier %d escaped [%d,%d]", state.Tier, floor, ceiling)
+		if state.Tier < final || state.Tier > start {
+			t.Fatalf("tier %d escaped [%d,%d]", state.Tier, final, start)
 		}
-		if state.Deepest < floor {
-			t.Fatalf("deepest %d escaped the floor", state.Deepest)
+		if state.Deepest < final {
+			t.Fatalf("deepest %d passed the final tier", state.Deepest)
 		}
 	}
 }

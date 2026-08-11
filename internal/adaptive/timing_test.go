@@ -222,8 +222,8 @@ func TestZeroTimingStateStartsRelaxed(t *testing.T) {
 	}
 }
 
-// The declared duration is a ceiling. Compression exists to take less time when the battery is
-// draining, never to grant more than the flow author wrote down.
+// The declared duration is the upper bound. Compression exists to take less time when the battery
+// is draining, never to grant more than the flow author wrote down.
 func TestCompressionNeverExceedsOne(t *testing.T) {
 	parameters := DefaultParameters()
 

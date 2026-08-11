@@ -183,38 +183,38 @@ func TestAnUnreadableDeviceDegradesRatherThanFailing(t *testing.T) {
 	}
 }
 
-// The pointer's floor comes from the tiers the plan actually compiled, so a flow that only
+// The pointer's final tier comes from the tiers the plan actually compiled, so a flow that only
 // reaches tier 3 does not report descending past it.
 func TestCompiledTierRangeFollowsTheCompiledWaves(t *testing.T) {
-	floor, ceiling := compiledTierRange([]powerv1alpha1.CompiledShutdownWave{
+	final, start := compiledTierRange([]powerv1alpha1.CompiledShutdownWave{
 		{Index: 0, ShutdownTier: adaptiveTierPtr(5)},
 		{Index: 1, ShutdownTier: adaptiveTierPtr(3)},
 	})
 
-	if floor != 3 || ceiling != 5 {
-		t.Fatalf("range = %d..%d, want 3..5", floor, ceiling)
+	if final != 3 || start != 5 {
+		t.Fatalf("range = %d..%d, want 3..5", final, start)
 	}
 }
 
 // Tier 0 is last-ditch and excluded from flow targeting (OD-4). A wave claiming it is already a
-// compile error; the range must not let one that slipped through become the pointer's floor.
-func TestCompiledTierRangeNeverFloorsAtTheLastDitchTier(t *testing.T) {
-	floor, _ := compiledTierRange([]powerv1alpha1.CompiledShutdownWave{
+// compile error; the range must not let one that slipped through become the flow's final tier.
+func TestCompiledTierRangeNeverEndsAtTheLastDitchTier(t *testing.T) {
+	final, _ := compiledTierRange([]powerv1alpha1.CompiledShutdownWave{
 		{Index: 0, ShutdownTier: adaptiveTierPtr(2)},
 		{Index: 1, ShutdownTier: adaptiveTierPtr(0)},
 	})
 
-	if floor != 1 {
-		t.Fatalf("floor = %d, want 1; tier 0 is last-ditch", floor)
+	if final != 1 {
+		t.Fatalf("final tier = %d, want 1; tier 0 is last-ditch", final)
 	}
 }
 
-// An untiered plan is legitimate and must still yield a usable floor.
+// An untiered plan is legitimate and must still yield a usable range.
 func TestCompiledTierRangeDefaultsForAnUntieredPlan(t *testing.T) {
-	floor, ceiling := compiledTierRange([]powerv1alpha1.CompiledShutdownWave{{Index: 0}})
+	final, start := compiledTierRange([]powerv1alpha1.CompiledShutdownWave{{Index: 0}})
 
-	if floor != 1 || ceiling != 1 {
-		t.Fatalf("range = %d..%d, want 1..1", floor, ceiling)
+	if final != 1 || start != 1 {
+		t.Fatalf("range = %d..%d, want 1..1", final, start)
 	}
 }
 
@@ -368,8 +368,8 @@ func flowWithEligibleTrigger() *powerv1alpha1.ShutdownFlow {
 	}
 }
 
-// The cadence is a ceiling on silence, never a floor on action: a trigger hold expiring in ten
-// seconds must not be deferred to the next heartbeat.
+// The cadence bounds silence; it never delays action. A trigger hold expiring in ten seconds must
+// not be deferred to the next heartbeat.
 func TestTheCadenceNeverDelaysASoonerRequeue(t *testing.T) {
 	for name, testCase := range map[string]struct {
 		current   time.Duration

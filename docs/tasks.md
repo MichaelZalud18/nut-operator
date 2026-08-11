@@ -93,7 +93,9 @@ removed from the action enum; `Notify` emits a Kubernetes Event. Tier inversion 
 `nutoperator_shutdownflow_publish_timestamp_seconds` plus `status.lastPublishTime`. Node clearance is
 re-derived at execution against the pods actually on the node, read uncached. The provisional `AE-n`
 identifiers are folded into `EX-25`–`EX-30`, and the runtime-estimate gate that shared `AE-6` is now
-`CR-4`.
+`CR-4`. `EX-14` restart resume is covered by envtest: a second reconciler instance holding no
+in-process state resumes the persisted tier and timing mode instead of re-reporting descended tiers as
+new work.
 
 Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-30`, `OD-4`,
 `OD-11`, `OD-17`, `OD-18`, `SB-15`, `F-31`, `F-42`, `F-44`.
@@ -119,8 +121,6 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 - Accept node-selector *requirements* for node targeting so a group can express a tier range.
   `metav1.LabelSelector` has no numeric comparison; `corev1.NodeSelector` supports `Gt`/`Lt`.
   Namespace and workload targeting cannot gain this.
-- Envtest coverage for executor resume across a restart mid-flow (`EX-14` is asserted by design, not
-  by test).
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
 

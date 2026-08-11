@@ -138,9 +138,9 @@ func flowIsActive(flow *powerv1alpha1.ShutdownFlow) bool {
 // soonestRequeue picks the earlier of two reconcile intervals, ignoring
 // non-positive ones.
 //
-// The cadence is a ceiling on how long the operator may stay quiet, never a floor
-// on how soon it may act: a trigger hold expiring in ten seconds must not be
-// deferred to the next heartbeat.
+// The cadence bounds how long the operator may stay quiet; it never delays how
+// soon it may act. A trigger hold expiring in ten seconds must not be deferred to
+// the next heartbeat.
 func soonestRequeue(current, candidate time.Duration) time.Duration {
 	if candidate <= 0 {
 		return current

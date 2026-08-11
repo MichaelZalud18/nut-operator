@@ -467,7 +467,7 @@ func TestValidateUPSCapabilityProfileRejectsInvalidVersion(t *testing.T) {
 	}
 }
 
-func TestValidateUPSCapabilityProfileAcceptsUniversalFloor(t *testing.T) {
+func TestValidateUPSCapabilityProfileAcceptsTheUniversalFallback(t *testing.T) {
 	universal := true
 	profile := &powerv1alpha1.UPSCapabilityProfile{
 		Spec: powerv1alpha1.UPSCapabilityProfileSpec{
