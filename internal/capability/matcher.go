@@ -77,6 +77,7 @@ func Match(device Device, profiles []Profile) (MatchResult, []Diagnostic, error)
 		TelemetryAliases:   copyAliases(best.profile.TelemetryAliases),
 		ActuationBehaviors: append([]string(nil), best.profile.ActuationBehaviors...),
 		Quirks:             resolvedQuirks,
+		RuntimeEstimate:    best.profile.RuntimeEstimate,
 	}
 	if result.Unidentified {
 		diagnostics = append(diagnostics, Diagnostic{
@@ -132,6 +133,37 @@ func satisfiesTrigger(declared []string, trigger TriggerType) bool {
 		}
 	}
 	return true
+}
+
+// CoarserTriggerForFallback returns the trigger class that can stand in for one
+// whose telemetry a device does not report, and whether any substitute exists
+// (OD-9).
+//
+// The ordering is by how much a device has to report, and `ups.status` is the
+// floor: it is the one variable every NUT driver produces, and the only one the
+// bundled unidentified-device profile declares. `battery.charge` and
+// `battery.runtime` sit above it and are the values drivers most often omit or
+// compute badly.
+//
+// Both threshold triggers fall back to LowBattery rather than OnBattery. The two
+// are equally cheap -- each needs only `ups.status` -- but they express different
+// intent. `RuntimeBelow: 300` and `ChargeBelow: 20` both mean "act as the battery
+// nears exhaustion", and LowBattery is the coarse form of that same statement:
+// the device itself raising `LB` when it judges the battery low. OnBattery fires
+// the instant mains is lost, which would turn every brief sag into a cluster
+// shutdown -- a different policy, not a coarser one.
+//
+// OnBattery and LowBattery have no substitute because they are already at the
+// floor: a device that cannot report `ups.status` reports nothing this operator
+// can trigger on. TelemetryStale needs no telemetry at all -- absence is the
+// signal -- so it never degrades and never needs a fallback.
+func CoarserTriggerForFallback(trigger TriggerType) (TriggerType, bool) {
+	switch trigger {
+	case TriggerRuntimeBelow, TriggerChargeBelow:
+		return TriggerLowBattery, true
+	default:
+		return "", false
+	}
 }
 
 // RequiredVariablesForTrigger returns the profile variables that imply support

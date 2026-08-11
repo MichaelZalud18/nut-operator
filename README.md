@@ -163,6 +163,11 @@ uv tool install 'git+https://github.com/awslabs/automated-security-helper.git@v3
 make security-scan
 ```
 
+The target downloads `grype` and `syft` into `bin/` from pinned, checksum-verified release archives;
+`grype` is the pipeline's dependency-vulnerability coverage. `cfn-nag`, `cdk-nag`, and `opengrep` are
+excluded by decision (no CloudFormation, no CDK, and `semgrep` already covers the same rule surface),
+so they report `SKIPPED` rather than `MISSING` — see `ASH_EXCLUDED_SCANNERS` in the `Makefile`.
+
 Build and push the manager image:
 
 ```sh
@@ -220,6 +225,8 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [NUTServer pod audit](docs/audits/nutserver-pod-audit.md)
 - [NUT usage and fidelity audit](docs/audits/nut-usage-audit.md)
 - [Quirk handling, aliasing, and firmware gating](docs/audits/quirks-aliasing-firmware.md)
+- [Reconciler watch scoping](docs/audits/reconciler-watch-scoping.md)
+- [Pre-shutdown hook transport](docs/audits/pre-shutdown-hook-transport.md)
 - [Capability profiles](docs/design/capability-profiles.md)
 - [Upstream NUT relay](docs/design/upstream-nut-relay.md)
 - [Audit storage schema](docs/design/audit-storage-schema.md)

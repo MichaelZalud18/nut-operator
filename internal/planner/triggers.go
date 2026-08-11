@@ -84,26 +84,123 @@ func validateTriggerCapabilities(input StructuralInputs) []Diagnostic {
 		}
 		sort.Strings(unsupported)
 
-		if len(unsupported) == len(targets) {
-			diagnostics = append(diagnostics, Diagnostic{
+		everyDevice := len(unsupported) == len(targets)
+		diagnostics = append(diagnostics,
+			evaluateTriggerFallback(trigger, unsupported, scope, required, declared, everyDevice)...)
+	}
+	return diagnostics
+}
+
+// evaluateTriggerFallback applies the OD-9 substitution rules to one trigger's
+// uncovered devices.
+//
+// Substitution is declared, never inferred. The planner will say exactly which
+// fallback would cover the gap, but it will not quietly install it: doing so
+// changes when nodes begin powering off, and every runtime-feasibility number in
+// the compiled plan would then be computed against a trigger that is not the one
+// that fires. A plan that reports itself covered while firing at a different time
+// is worse than one that reports the gap.
+func evaluateTriggerFallback(
+	trigger Trigger,
+	unsupported []string,
+	scope string,
+	required []string,
+	declared map[string][]string,
+	everyDevice bool,
+) []Diagnostic {
+	devices := strings.Join(unsupported, ", ")
+	suggested, hasSubstitute := capability.CoarserTriggerForFallback(capability.TriggerType(trigger.Type))
+
+	if trigger.FallbackType == "" {
+		// No fallback declared. A trigger no device can satisfy stays a hard rejection: a plan whose
+		// triggers can never fire is not degraded, it is non-functional.
+		if everyDevice {
+			return []Diagnostic{{
 				Severity: DiagnosticError,
 				Reason:   "TriggerUnsupportedByAllDevices",
 				Subject:  trigger.Type,
-				Message: fmt.Sprintf("trigger %q requires NUT %s, which no device in %s declares (%s); this plan can never fire",
-					trigger.Type, variableList(required), scope, strings.Join(unsupported, ", ")),
-			})
-			continue
+				Message: fmt.Sprintf(
+					"trigger %q requires NUT %s, which no device in %s declares (%s); this plan can never fire%s",
+					trigger.Type, variableList(required), scope, devices, fallbackHint(hasSubstitute, suggested)),
+			}}
 		}
-
-		diagnostics = append(diagnostics, Diagnostic{
+		return []Diagnostic{{
 			Severity: DiagnosticWarning,
 			Reason:   "TriggerDegradedByDeviceCapability",
 			Subject:  trigger.Type,
-			Message: fmt.Sprintf("trigger %q requires NUT %s, which %s in %s does not declare; the trigger still fires for the remaining devices and this plan is degraded for those it cannot cover",
-				trigger.Type, variableList(required), strings.Join(unsupported, ", "), scope),
-		})
+			Message: fmt.Sprintf(
+				"trigger %q requires NUT %s, which %s in %s does not declare; the trigger still fires for the remaining devices and this plan is degraded for those it cannot cover%s",
+				trigger.Type, variableList(required), devices, scope, fallbackHint(hasSubstitute, suggested)),
+		}}
 	}
-	return diagnostics
+
+	// A fallback that is not strictly coarser is rejected rather than ignored. Accepting one would
+	// let a flow declare a substitute needing telemetry the device is already known not to report,
+	// which reads as coverage and provides none.
+	if !hasSubstitute || trigger.FallbackType != string(suggested) {
+		return []Diagnostic{{
+			Severity: DiagnosticError,
+			Reason:   "TriggerFallbackNotCoarser",
+			Subject:  trigger.Type,
+			Message: fmt.Sprintf(
+				"trigger %q declares fallback %q, which is not a coarser class for it; %s",
+				trigger.Type, trigger.FallbackType, coarserAdvice(hasSubstitute, suggested, trigger.Type)),
+		}}
+	}
+
+	// The fallback has to hold up against the devices that failed the primary, not against the
+	// domain as a whole -- those are precisely the devices it exists to cover.
+	fallbackRequired := capability.RequiredVariablesForTrigger(suggested)
+	var stillUncovered []string
+	for _, device := range unsupported {
+		variables, known := declared[device]
+		if !known {
+			continue
+		}
+		if !coversVariables(variables, fallbackRequired) {
+			stillUncovered = append(stillUncovered, device)
+		}
+	}
+	if len(stillUncovered) > 0 {
+		sort.Strings(stillUncovered)
+		return []Diagnostic{{
+			Severity: DiagnosticError,
+			Reason:   "TriggerFallbackUnsatisfiable",
+			Subject:  trigger.Type,
+			Message: fmt.Sprintf(
+				"trigger %q declares fallback %q, which requires NUT %s that %s still does not declare; the fallback covers nothing for those devices",
+				trigger.Type, trigger.FallbackType, variableList(fallbackRequired), strings.Join(stillUncovered, ", ")),
+		}}
+	}
+
+	// Informational, not a warning: the gap was declared and is covered, so the plan is not degraded.
+	// It is still reported, because substitution means those devices act on a different condition
+	// than the one the author wrote, and that belongs in the compile record.
+	return []Diagnostic{{
+		Severity: DiagnosticInfo,
+		Reason:   "TriggerSubstituted",
+		Subject:  trigger.Type,
+		Message: fmt.Sprintf(
+			"trigger %q cannot be satisfied by %s in %s, so the declared fallback %q applies to those devices; they act on %s rather than %s",
+			trigger.Type, devices, scope, trigger.FallbackType,
+			variableList(fallbackRequired), variableList(required)),
+	}}
+}
+
+func fallbackHint(hasSubstitute bool, suggested capability.TriggerType) string {
+	if !hasSubstitute {
+		return ""
+	}
+	return fmt.Sprintf(". Declaring fallbackType: %s would cover them", suggested)
+}
+
+func coarserAdvice(hasSubstitute bool, suggested capability.TriggerType, triggerType string) string {
+	if !hasSubstitute {
+		return fmt.Sprintf(
+			"%q already needs only the telemetry every device reports, so no coarser class exists and fallbackType must be unset",
+			triggerType)
+	}
+	return fmt.Sprintf("the only coarser class is %q", suggested)
 }
 
 // triggerTargetDevices resolves which devices a trigger is validated against,

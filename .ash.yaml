@@ -6,6 +6,8 @@ global_settings:
   ignore_paths:
     - path: ".ash/**"
       reason: "Local ASH scratch, tool cache, and generated scan reports."
+    - path: "bin/**"
+      reason: "Gitignored local tool cache, not project code. Holds downloaded third-party binaries -- envtest's kube-apiserver/etcd/kubectl, controller-gen, kustomize, golangci-lint, and grype and syft themselves. grype reports every CVE compiled into those binaries, which are findings about the tools running the scan rather than about anything this repository ships. Vulnerabilities in what the operator actually ships are still caught: go.mod/go.sum are scanned, and the operand images are scanned in images.yml."
     - path: "api/**/zz_generated.deepcopy.go"
       reason: "Kubebuilder generated deepcopy code."
   suppressions:
@@ -66,6 +68,9 @@ global_settings:
     - rule_id: "CKV_K8S_38"
       path: "config/manager/manager.yaml"
       reason: "The controller manager requires Kubernetes API credentials to reconcile CRDs and owned resources."
+# Scanners this repository deliberately does not run are excluded via ASH_EXCLUDED_SCANNERS in the
+# Makefile, not here. `enabled: false` stops a scanner running but still reports it as MISSING,
+# which is the exact ambiguity the exclusion is meant to remove.
 scanners:
   checkov:
     options:

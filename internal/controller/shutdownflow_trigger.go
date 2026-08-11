@@ -50,6 +50,7 @@ func triggerInputsFromFlow(triggers []powerv1alpha1.ShutdownTrigger) []triggerpk
 	for _, flowTrigger := range triggers {
 		input := triggerpkg.Trigger{
 			Type:                string(flowTrigger.Type),
+			FallbackType:        flowTrigger.FallbackType.Value(),
 			UPSDevices:          triggerUPSDeviceNames(flowTrigger.UPSDeviceRefs),
 			PowerDomains:        flowTrigger.PowerDomains,
 			RuntimeBelowSeconds: flowTrigger.RuntimeBelowSeconds,

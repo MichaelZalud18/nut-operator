@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -47,7 +48,6 @@ const defaultOperandNamespace = "power-system"
 const (
 	ActionNotify      = "Notify"
 	ActionWait        = "Wait"
-	ActionGate        = "Gate"
 	ActionCordonNodes = "CordonNodes"
 	ActionDrainNodes  = "DrainNodes"
 	ActionScale       = "ScaleWorkload"
@@ -82,6 +82,11 @@ type Runner struct {
 	// is executing them (F-30). Empty in envtest/unit tests, where there is no real manager pod to
 	// protect.
 	ManagerNamespace string
+
+	// Recorder emits the Kubernetes Events behind the Notify action. Nil makes Notify
+	// report Blocked rather than silently succeed: a notification nobody received is
+	// not a notification delivered.
+	Recorder record.EventRecorder
 }
 
 // RunAction implements executor.ActionRunner. It is a thin instrumented wrapper around runAction: every
@@ -111,14 +116,16 @@ func (r Runner) runAction(ctx context.Context, action executor.Action) (executor
 		return blocked(err), err
 	}
 	switch action.Group.Action {
-	case ActionNotify, ActionWait, ActionGate:
+	case ActionWait:
+		// Waiting is not a cluster mutation, so the executor performs it before the
+		// action ever reaches this runner. Reaching here means the wait is already
+		// served; there is nothing left to actuate.
 		return executor.ActionOutcome{
 			Outcome: executor.OutcomeSucceeded,
-			Details: map[string]any{
-				"action": action.Group.Action,
-				"noop":   true,
-			},
+			Details: map[string]any{"action": action.Group.Action},
 		}, nil
+	case ActionNotify:
+		return r.notify(ctx, action)
 	case ActionScale:
 		return r.scaleWorkloads(ctx, action)
 	case ActionCordonNodes:
@@ -412,6 +419,55 @@ func evictablePod(pod corev1.Pod) bool {
 		}
 	}
 	return true
+}
+
+// notify emits a Kubernetes Event against the ShutdownFlow.
+//
+// Events are the transport because they need no configuration to exist. A Notify
+// backed by a webhook or a chat integration would be inert until someone wired it
+// up, and an inert notification during an outage is worse than none — the flow
+// author believes they will be told.
+//
+// The event lands on the ShutdownFlow rather than on the targets, because the
+// message is about the flow's progress, and because a notification attached to a
+// workload that is about to be scaled to zero is a notification nobody reads.
+func (r Runner) notify(ctx context.Context, action executor.Action) (executor.ActionOutcome, error) {
+	message := action.Group.Params["message"]
+	if message == "" {
+		message = fmt.Sprintf("shutdown flow %q reached group %q", action.ShutdownFlow, action.Group.Name)
+	}
+	reason := action.Group.Params["reason"]
+	if reason == "" {
+		reason = "ShutdownFlowNotify"
+	}
+
+	if r.Recorder == nil {
+		// No recorder configured. Reported rather than silently succeeding, so the action
+		// attempt shows that the notification did not go anywhere.
+		return executor.ActionOutcome{
+			Outcome: executor.OutcomeBlocked,
+			Error:   "no event recorder configured for Notify",
+			Details: map[string]any{"action": ActionNotify, "message": message},
+		}, nil
+	}
+
+	var flow powerv1alpha1.ShutdownFlow
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: action.ShutdownFlow}, &flow); err != nil {
+		return blocked(err), err
+	}
+	r.Recorder.AnnotatedEventf(&flow, map[string]string{
+		"power.zalud.io/execution":      action.ExecutionID,
+		"power.zalud.io/executor-group": action.Group.Name,
+	}, corev1.EventTypeNormal, reason, "%s", message)
+
+	return executor.ActionOutcome{
+		Outcome: executor.OutcomeSucceeded,
+		Details: map[string]any{
+			"action":  ActionNotify,
+			"reason":  reason,
+			"message": message,
+		},
+	}, nil
 }
 
 func (r Runner) runWorkflow(ctx context.Context, action executor.Action) (executor.ActionOutcome, error) {

@@ -30,6 +30,7 @@ policy engine.
 | `plan_hash_changes_total` | Counter | `shutdownflow` | Incremented when a successful compile's plan hash differs from the previously observed one — how often the compiled plan is actually changing shape, not just re-confirming. |
 | `trigger_evaluations_total` | Counter | `shutdownflow`, `eligible` (`true`/`false`) | Trigger evaluations, by eligibility outcome. |
 | `degraded` | Gauge | `shutdownflow` | Mirrors the `Degraded` status condition (1/0), so it can be alerted on directly. |
+| `tier_inversions` | Gauge | `shutdownflow` | Nodes currently withheld from power-off because a lower-tier group runs on them (`OD-18`). Published on every compile including zero, so the series exists before the first inversion. Inversion develops as workloads reschedule, so a compile-time diagnostic alone misses it. |
 | `execution_duration_seconds` | Histogram | `shutdownflow`, `mode` (`DryRun`/`Enforce`) | Time spent recording one wave-execution run (`internal/executor.Executor.Execute`). |
 
 ## `nutoperator_actuator_*`
@@ -39,7 +40,7 @@ Not labeled by `shutdownflow`: every action from every flow passes through the s
 
 | Metric | Type | Labels | Meaning |
 | --- | --- | --- | --- |
-| `action_attempts_total` | Counter | `action`, `mode` (`DryRun`/`Enforce`), `outcome` | Every `RunAction` call, by the executor action type (`ScaleWorkload`, `CordonNodes`, `DrainNodes`, `RunWorkflow`, `AgentShutdown`, `Notify`, `Wait`, `Gate`), mode, and outcome (`Succeeded`, `Simulated`, `Blocked`, or `Error`). |
+| `action_attempts_total` | Counter | `action`, `mode` (`DryRun`/`Enforce`), `outcome` | Every `RunAction` call, by the executor action type (`ScaleWorkload`, `CordonNodes`, `DrainNodes`, `RunWorkflow`, `AgentShutdown`, `Notify`, `Wait`), mode, and outcome (`Succeeded`, `Simulated`, `Blocked`, `TimedOut`, or `Error`). |
 | `action_duration_seconds` | Histogram | `action` | Time spent on one `RunAction` call. |
 
 ## `nutoperator_audit_*`
@@ -57,6 +58,40 @@ the audit trail is degraded until the journal drains.
 Useful alerts: `increase(nutoperator_audit_spool_records_total{outcome="dropped"}[1h]) > 0` for lost
 evidence, and `nutoperator_audit_spool_journal_bytes` approaching the configured cap for evidence
 about to be lost.
+
+## `nutoperator_certificate_*`
+
+Expiry of the serving certificates the manager has mounted, read from the files controller-runtime
+actually serves rather than from the Secret through the API — so a stale mount reports its own stale
+certificate instead of the cluster's current one.
+
+This matters most on the no-cert-manager install path ([install.md](install.md)), where rotation is a
+deliberate `hack/webhook-cert.sh` re-run. Nothing renews the certificate on its own there, and a
+1-year lifetime makes expiry a once-a-year surprise — the kind nobody has the procedure in mind for
+when it fires.
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `not_after_timestamp_seconds` | Gauge | `certificate` (`webhook`/`metrics`) | Expiry as a Unix timestamp. The soonest expiry in the file: a bundle whose intermediate expires before its leaf goes down on the intermediate's date. |
+| `read_errors_total` | Counter | `certificate` | Failures to read or parse the file. |
+
+A timestamp rather than a remaining duration, so the value stays accurate between scrapes without
+being re-published. Alert with a lead time that fits the rotation procedure:
+
+```promql
+nutoperator_certificate_not_after_timestamp_seconds - time() < 30 * 24 * 3600
+```
+
+On a read failure the gauge is **deleted**, not left at its last value — a stale reading of "expires
+in eight months" answers the alert's question wrongly. Absence plus a rising `read_errors_total` is
+what an unknown expiry looks like, so alert on that too:
+
+```promql
+absent(nutoperator_certificate_not_after_timestamp_seconds{certificate="webhook"})
+```
+
+Every replica publishes its own mount's expiry; the reporter deliberately does not take the leader
+election, since a standby whose mount has gone stale is exactly the condition worth seeing.
 
 ## Design notes
 

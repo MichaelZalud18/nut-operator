@@ -80,6 +80,9 @@ type DeviceCapability struct {
 	ProfileID          string   `json:"profileID,omitempty"`
 	Unidentified       bool     `json:"unidentified,omitempty"`
 	TelemetryVariables []string `json:"telemetryVariables,omitempty"`
+	// RuntimeEstimate declares how this device's firmware produces battery.runtime (AE-6).
+	// Empty means unverified.
+	RuntimeEstimate string `json:"runtimeEstimate,omitempty"`
 }
 
 // PowerDomainMembership names the UPS devices derived into one power domain.
@@ -132,7 +135,9 @@ type PowerDomainSnapshot struct {
 
 // Trigger describes a structurally valid trigger definition.
 type Trigger struct {
-	Type                string   `json:"type"`
+	Type string `json:"type"`
+	// FallbackType is the coarser class declared for devices that cannot satisfy Type (OD-9).
+	FallbackType        string   `json:"fallbackType,omitempty"`
 	UPSDevices          []string `json:"upsDevices,omitempty"`
 	PowerDomains        []string `json:"powerDomains,omitempty"`
 	For                 Duration `json:"for,omitempty"`
@@ -302,4 +307,8 @@ type Diagnostic struct {
 type Feasibility struct {
 	Verdict string `json:"verdict,omitempty"`
 	Reason  string `json:"reason,omitempty"`
+	// Detail names the subject that produced the verdict, when there is one --
+	// the device declaring a static runtime estimate, for instance. A reason code
+	// alone tells an operator what happened but not where to look.
+	Detail string `json:"detail,omitempty"`
 }

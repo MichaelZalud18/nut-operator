@@ -97,6 +97,15 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
 		_, _ = utils.Run(cmd)
 
+		// Cluster-scoped, created imperatively by the metrics spec, and owned by nothing the
+		// namespace teardown reaches. Leaving it behind makes the next run of that spec fail with
+		// "already exists" on any cluster reused across runs -- which happens whenever a suite
+		// failure stops make before cleanup-test-e2e.
+		By("deleting the metrics ClusterRoleBinding")
+		cmd = exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName,
+			"--ignore-not-found=true")
+		_, _ = utils.Run(cmd)
+
 		By("undeploying the controller-manager")
 		cmd = exec.Command("make", "undeploy")
 		_, _ = utils.Run(cmd)

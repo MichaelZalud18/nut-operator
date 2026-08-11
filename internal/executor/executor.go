@@ -28,6 +28,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 )
 
@@ -39,12 +40,28 @@ const (
 	PhaseCompleted = "Completed"
 	PhaseAborted   = "Aborted"
 	PhaseFailed    = "Failed"
+	// PhaseSuspended is a flow that stopped descending because power came back.
+	//
+	// Deliberately not "halted". AE-6 reserves halt for abort: a deliberate stop that
+	// latches and never resumes. Power recovery is the opposite kind of event -- the
+	// pointer ascends, nothing is restored, and if power degrades again the flow
+	// descends from wherever the pointer sits, re-attempting already-executed tiers
+	// as no-ops (AE-2). A suspended run has more to do; a halted one does not.
+	//
+	// Also distinct from Completed, which means every wave ran, and from Aborted,
+	// which means something failed.
+	PhaseSuspended = "Suspended"
 
 	OutcomeSimulated = "Simulated"
 	OutcomeSucceeded = "Succeeded"
 	OutcomeBlocked   = "Blocked"
+	OutcomeTimedOut  = "TimedOut"
 
 	ActionAgentShutdown = "AgentShutdown"
+	// ActionWait holds the flow for a declared duration. Handled here rather than in
+	// the Kubernetes action runner because waiting is not a cluster mutation, and
+	// because its duration is exactly the class of value timing adaptation scales.
+	ActionWait = "Wait"
 
 	DefaultSignalPath = "/run/power-agent/shutdown.json"
 	DefaultSignalTTL  = 2 * time.Minute
@@ -56,6 +73,14 @@ type Executor struct {
 	Runner ActionRunner
 	Clock  func() time.Time
 	NewID  func() string
+
+	// Observer reads live power state at each wave boundary, driving the tier
+	// pointer and the timing mode. Nil means the flow runs against
+	// Input.Adaptive.Observation for its whole duration.
+	Observer PowerObserver
+
+	// Sleep implements the Wait action. Nil uses a context-aware timer.
+	Sleep Sleeper
 }
 
 // Input is the executor's pure data contract. It contains already-compiled
@@ -75,11 +100,24 @@ type Input struct {
 	SignalTTL          time.Duration
 	Waves              []Wave
 	Groups             []Group
+
+	// Adaptive carries the tier pointer and timing mode across the boundary. The
+	// zero value runs a flow with default parameters from a fresh pointer.
+	Adaptive AdaptiveInput
 }
 
 // Wave is one ordered unit from the compiled plan.
 type Wave struct {
-	Index  int32
+	Index int32
+	// ShutdownTier is the tier this wave belongs to, when tier policy assigned the
+	// wave's groups a shared one. Nil for an untiered flow, which is legitimate:
+	// tiers are optional.
+	ShutdownTier *int32
+
+	// Duration is the wave's compiled expected duration. Summed across the waves not
+	// yet run, it is the "how much plan is left" half of the compression ratio.
+	Duration time.Duration
+
 	Groups []string
 }
 
@@ -91,6 +129,15 @@ type Group struct {
 	SelectedTargets []Target
 	NodeReleases    []NodeRelease
 	Details         map[string]any
+
+	// Timeout is the group's declared limit (EX-11). Zero means no limit. The
+	// declared value is the most the flow will allow; the measured timing budget may
+	// shorten it but never lengthens it past what the flow author wrote.
+	Timeout time.Duration
+
+	// WaitDuration is how long a Wait group holds the flow. Scaled by the timing
+	// mode on the same terms as Timeout.
+	WaitDuration time.Duration
 }
 
 // Target is an execution-time concrete object selected for an action.
@@ -155,6 +202,10 @@ type Result struct {
 	Groups         int
 	ActionAttempts int
 	NodeReleases   int
+
+	// Adaptive is the pointer and timing state the run ended on, for the caller to
+	// persist and publish.
+	Adaptive AdaptiveResult
 }
 
 // Execute records the execution in compiled wave order.
@@ -234,7 +285,31 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		},
 	}))
 
-	for _, wave := range input.Waves {
+	adaptiveInput := input.Adaptive
+	for waveIndex, wave := range input.Waves {
+		// Evaluated at wave boundaries only, never inside one: adaptation may change
+		// timings but never wave order or membership, which are hashed into plan
+		// identity (PL-14). The compression is measured against the plan still to run,
+		// so it tightens as the flow proceeds and the runtime drains.
+		waveState, adaptiveErr := e.evaluateWave(ctx, adaptiveInput, wave, remainingPlanDuration(input.Waves, waveIndex))
+		if adaptiveErr != nil {
+			result.Phase = PhaseFailed
+			return result, errors.Join(adaptiveErr, recordErr)
+		}
+		adaptiveInput.Pointer = waveState.Pointer
+		adaptiveInput.Timing = waveState.Timing
+		adaptiveInput.Observation = waveState.Observation
+		result.Adaptive = adaptiveResultFrom(result.Adaptive, waveState)
+
+		if waveState.Suspend {
+			// Power came back. Stop descending, restore nothing, and leave the pointer where
+			// it is so a later degrade resumes from there (AE-1, AE-3).
+			result.Phase = PhaseSuspended
+			result.Adaptive.Suspended = true
+			recordErr = errors.Join(recordErr, e.recordSuspension(ctx, writer, input, executionID, mode, dryRun, reason, startedAt, waveState, result))
+			return result, recordErr
+		}
+
 		waveStart := e.now()
 		waveRecordID := e.newID()
 		currentWave := wave.Index
@@ -245,10 +320,10 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			PlanConfigHash:   input.PlanConfigHash,
 			CurrentWaveIndex: &currentWave,
 			Phase:            PhaseRunning,
-			State: map[string]any{
+			State: mergeDetails(adaptiveStateRecord(waveState), map[string]any{
 				"currentWaveIndex": wave.Index,
 				"groups":           append([]string(nil), wave.Groups...),
-			},
+			}),
 		}))
 		recordErr = errors.Join(recordErr, writer.RecordShutdownFlowExecutionWave(ctx, audit.ShutdownFlowExecutionWave{
 			WaveRecordID: waveRecordID,
@@ -258,14 +333,15 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			Phase:        PhaseRunning,
 			StartedAt:    &waveStart,
 			GroupNames:   append([]string(nil), wave.Groups...),
-			Details: map[string]any{
+			Details: mergeDetails(adaptiveStateRecord(waveState), map[string]any{
 				"dryRun": dryRun,
-			},
+				"events": append([]string(nil), waveState.Events...),
+			}),
 		}))
 
 		for _, groupName := range wave.Groups {
 			group := groups[groupName]
-			groupResult, groupErr := e.executeGroup(ctx, writer, input, executionID, mode, dryRun, wave.Index, group)
+			groupResult, groupErr := e.executeGroup(ctx, writer, input, executionID, mode, dryRun, wave.Index, group, waveState)
 			result.Groups++
 			result.ActionAttempts += groupResult.ActionAttempts
 			result.NodeReleases += groupResult.NodeReleases
@@ -305,7 +381,9 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			StartedAt:    &waveStart,
 			CompletedAt:  &waveCompletedAt,
 			GroupNames:   append([]string(nil), wave.Groups...),
-			Details:      map[string]any{"dryRun": dryRun},
+			Details: mergeDetails(adaptiveStateRecord(waveState), map[string]any{
+				"dryRun": dryRun,
+			}),
 		}))
 	}
 
@@ -340,13 +418,81 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		ShutdownFlow:   input.ShutdownFlow,
 		PlanConfigHash: input.PlanConfigHash,
 		Phase:          PhaseCompleted,
-		State: map[string]any{
+		State: mergeDetails(finalAdaptiveStateRecord(result.Adaptive), map[string]any{
 			"completedWaveCount": len(input.Waves),
 			"groupCount":         result.Groups,
-		},
+		}),
 	}))
 
 	return result, recordErr
+}
+
+// recordSuspension writes the evidence for a flow that stopped descending because
+// power recovered.
+//
+// A separate path from completion because it is a different outcome, and
+// collapsing the two would make "the outage ended" indistinguishable from "the
+// cluster finished shutting down" in the audit trail -- precisely the distinction
+// a subscriber reading a recovery needs.
+//
+// The resume state written here is the point of the whole exercise: it is what a
+// later descent reads to continue from this depth rather than starting over.
+func (e Executor) recordSuspension(ctx context.Context, writer audit.Writer, input Input, executionID, mode string, dryRun bool, reason string, startedAt time.Time, waveState waveAdaptiveState, result Result) error {
+	suspendedAt := e.now()
+	recordErr := writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
+		ExecutionID:       executionID,
+		ObservedAt:        suspendedAt,
+		ShutdownFlow:      input.ShutdownFlow,
+		TriggerDecisionID: input.TriggerDecisionID,
+		Mode:              mode,
+		Phase:             PhaseSuspended,
+		Reason:            "PowerRecovered",
+		PlanConfigHash:    input.PlanConfigHash,
+		InputHash:         input.InputHash,
+		StartedAt:         &startedAt,
+		CompletedAt:       &suspendedAt,
+		DryRun:            dryRun,
+		Approved:          input.Approved,
+		ApprovalEvidence:  map[string]any{"approved": input.Approved, "requestedMode": mode, "effectiveDryRun": dryRun},
+		Revalidation:      map[string]any{"inputHash": input.InputHash},
+		Details: mergeDetails(adaptiveStateRecord(waveState), map[string]any{
+			"triggerReason":      reason,
+			"completedWaveCount": result.Waves,
+			"groupCount":         result.Groups,
+			"events":             append([]string(nil), waveState.Events...),
+		}),
+	})
+	return errors.Join(recordErr, writer.UpsertExecutorResumeState(ctx, audit.ExecutorResumeState{
+		ExecutionID:    executionID,
+		ObservedAt:     suspendedAt,
+		ShutdownFlow:   input.ShutdownFlow,
+		PlanConfigHash: input.PlanConfigHash,
+		Phase:          PhaseSuspended,
+		State:          adaptiveStateRecord(waveState),
+	}))
+}
+
+// adaptiveResultFrom accumulates the running adaptive result across waves. Events
+// append; state is replaced by the newest evaluation.
+func adaptiveResultFrom(previous AdaptiveResult, waveState waveAdaptiveState) AdaptiveResult {
+	return AdaptiveResult{
+		Pointer:     waveState.Pointer,
+		Timing:      waveState.Timing,
+		Observation: waveState.Observation,
+		Events:      append(previous.Events, waveState.Events...),
+		Suspended:   previous.Suspended,
+	}
+}
+
+// finalAdaptiveStateRecord renders the end-of-run state for the resume row. It
+// reuses the per-wave shape so a resume row reads the same whether it was written
+// mid-flow or at the end.
+func finalAdaptiveStateRecord(result AdaptiveResult) map[string]any {
+	return adaptiveStateRecord(waveAdaptiveState{
+		Pointer:     result.Pointer,
+		Timing:      result.Timing,
+		Observation: result.Observation,
+	})
 }
 
 type groupExecutionResult struct {
@@ -355,7 +501,11 @@ type groupExecutionResult struct {
 	RecordError    error
 }
 
-func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input Input, executionID, mode string, dryRun bool, waveIndex int32, group Group) (groupExecutionResult, error) {
+func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input Input, executionID, mode string, dryRun bool, waveIndex int32, group Group, waveState waveAdaptiveState) (groupExecutionResult, error) {
+	timingMode := waveState.Mode
+	effectiveTimeout := adaptive.ScaleDuration(group.Timeout, waveState.Budget)
+	effectiveWait := adaptive.ScaleDuration(group.WaitDuration, waveState.Budget)
+
 	startedAt := e.now()
 	completedAt := startedAt
 	outcome := ActionOutcome{
@@ -375,12 +525,36 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 			}
 		}
 	}
+
+	// Wait is honored in dry-run as well as enforce. EX-5 makes dry-run a faithful
+	// rehearsal of everything except effects, and a rehearsal that skips the waits
+	// reports a flow duration the real run will not reproduce -- which is the number
+	// an operator is rehearsing to find out.
+	if group.Action == ActionWait && actionErr == nil && effectiveWait > 0 {
+		if waitErr := e.sleep(ctx, effectiveWait); waitErr != nil {
+			actionErr = fmt.Errorf("wait group %q interrupted: %w", group.Name, waitErr)
+			outcome = ActionOutcome{Outcome: OutcomeBlocked, Error: actionErr.Error()}
+		} else {
+			outcome = ActionOutcome{
+				Outcome: waitOutcome(dryRun),
+				Details: map[string]any{"action": ActionWait},
+			}
+		}
+	}
+
 	if !dryRun && actionErr == nil {
 		if e.Runner == nil {
 			actionErr = fmt.Errorf("enforce execution requires an action runner")
 			outcome = ActionOutcome{Outcome: OutcomeBlocked, Error: actionErr.Error()}
 		} else {
-			outcome, actionErr = e.Runner.RunAction(ctx, Action{
+			// EX-11: the declared timeout is enforced as written, and expiry is a group
+			// failure that engages abort policy rather than an implicit success.
+			actionCtx := ctx
+			var cancel context.CancelFunc
+			if effectiveTimeout > 0 {
+				actionCtx, cancel = context.WithTimeout(ctx, effectiveTimeout)
+			}
+			outcome, actionErr = e.Runner.RunAction(actionCtx, Action{
 				ExecutionID:        executionID,
 				ShutdownFlow:       input.ShutdownFlow,
 				PlanConfigHash:     input.PlanConfigHash,
@@ -389,8 +563,21 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 				Group:              group,
 				DryRun:             false,
 			})
+			timedOut := effectiveTimeout > 0 && actionCtx.Err() != nil && ctx.Err() == nil
+			if cancel != nil {
+				cancel()
+			}
 			if outcome.Outcome == "" && actionErr == nil {
 				outcome.Outcome = OutcomeSucceeded
+			}
+			if timedOut {
+				// A runner that returned success against an expired deadline did not finish in
+				// the time the flow allowed. Reporting it as success would let the next wave
+				// start on work that is still in flight.
+				if actionErr == nil {
+					actionErr = fmt.Errorf("group %q exceeded its %s timeout", group.Name, effectiveTimeout)
+				}
+				outcome.Outcome = OutcomeTimedOut
 			}
 			if actionErr != nil && outcome.Outcome == "" {
 				outcome.Outcome = PhaseFailed
@@ -420,6 +607,16 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 			"dryRun":  dryRun,
 			"outcome": outcome.Outcome,
 			"params":  copyStringMap(group.Params),
+			// Both the declared and the effective value, plus the compression that produced
+			// the difference, so an operator reading the record can tell a short timeout the
+			// author wrote from a short one the runtime forced -- and see the arithmetic.
+			"timingMode":       string(timingMode),
+			"compression":      waveState.Budget.Compression,
+			"planFits":         waveState.Budget.Fits,
+			"declaredTimeout":  durationSeconds(group.Timeout),
+			"effectiveTimeout": durationSeconds(effectiveTimeout),
+			"declaredWait":     durationSeconds(group.WaitDuration),
+			"effectiveWait":    durationSeconds(effectiveWait),
 		}),
 	})
 	recordErr = errors.Join(recordErr, writer.RecordShutdownFlowActionAttempt(ctx, audit.ShutdownFlowActionAttempt{
@@ -706,4 +903,31 @@ func (e Executor) newID() string {
 		return e.NewID()
 	}
 	return uuid.NewString()
+}
+
+// sleep waits out a Wait group. The default is context-aware so a cancelled flow
+// stops waiting immediately rather than holding the executor for the remainder of
+// a duration nobody is going to use.
+func (e Executor) sleep(ctx context.Context, duration time.Duration) error {
+	if e.Sleep != nil {
+		return e.Sleep(ctx, duration)
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// waitOutcome labels a completed Wait. A dry-run Wait really did wait, so calling
+// it Simulated would misreport it -- but it is still part of a simulated run, and
+// the run's own dryRun flag is what says so.
+func waitOutcome(dryRun bool) string {
+	if dryRun {
+		return OutcomeSimulated
+	}
+	return OutcomeSucceeded
 }

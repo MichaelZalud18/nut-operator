@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/certexpiry"
 	"github.com/MichaelZalud18/nut-operator/internal/controller"
 	"github.com/MichaelZalud18/nut-operator/internal/kubeactions"
 	webhookv1alpha1 "github.com/MichaelZalud18/nut-operator/internal/webhook/v1alpha1"
@@ -229,6 +230,7 @@ func main() {
 		ExecutorRunner: kubeactions.Runner{
 			Client:           mgr.GetClient(),
 			ManagerNamespace: os.Getenv("POD_NAMESPACE"),
+			Recorder:         mgr.GetEventRecorderFor("shutdownflow-executor"),
 		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "shutdownflow")
@@ -316,6 +318,15 @@ func main() {
 		}
 	}
 	// +kubebuilder:scaffold:builder
+
+	// Publishes when the mounted serving certificates expire. This matters most on the
+	// no-cert-manager install path, where rotation is a deliberate hack/webhook-cert.sh re-run and
+	// nothing else would ever mention the deadline.
+	if err := mgr.Add(certexpiry.NewReporter(
+		webhookCertPath, webhookCertName, metricsCertPath, metricsCertName)); err != nil {
+		setupLog.Error(err, "Failed to add certificate expiry reporter")
+		os.Exit(1)
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "Failed to set up health check")

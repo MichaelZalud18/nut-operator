@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/MichaelZalud18/nut-operator/internal/capability"
 )
 
 const (
@@ -67,7 +69,7 @@ func Compile(structural StructuralInputs, telemetry TelemetryInputs) (Plan, []Di
 	plan.BlockedNodes = blockedNodesFromInversions(detectTierInversions(normalized))
 	plan.Explanations = graphExplanations(plan.Graph, len(plan.Waves), len(plan.StartupWaves))
 	plan.Diagrams = renderDiagramExports(plan.Graph)
-	plan.Feasibility = advisoryFeasibility(telemetry)
+	plan.Feasibility = advisoryFeasibility(telemetry, normalized.DeviceCapabilities)
 	plan.StructuralHash = stableHash(normalized)
 	plan.Hash = stableHash(struct {
 		StructuralHash string         `json:"structuralHash"`
@@ -355,7 +357,7 @@ func summarizeTarget(target Target) string {
 	}
 }
 
-func advisoryFeasibility(telemetry TelemetryInputs) Feasibility {
+func advisoryFeasibility(telemetry TelemetryInputs, devices []DeviceCapability) Feasibility {
 	if len(telemetry.PowerDomains) == 0 {
 		return Feasibility{Verdict: FeasibilityAdvisoryUnknown, Reason: "TelemetryUnavailable"}
 	}
@@ -364,7 +366,32 @@ func advisoryFeasibility(telemetry TelemetryInputs) Feasibility {
 			return Feasibility{Verdict: FeasibilityAdvisoryUnknown, Reason: "TelemetryIncomplete"}
 		}
 	}
+	// A device whose firmware reports a fixed runtime estimate (AE-6) supplies a constant wearing a
+	// projection's name. Feasibility exists to answer "is there enough runtime to finish", and that
+	// question cannot be answered from a number that does not fall as the cluster draws on the
+	// battery. PL-32 says missing or stale data never yields an optimistic verdict; a value that
+	// cannot move is the same problem with a plausible number attached, so it lands on Unknown too.
+	if device, static := firstStaticRuntimeEstimate(devices); static {
+		return Feasibility{
+			Verdict: FeasibilityAdvisoryUnknown,
+			Reason:  "RuntimeEstimateStatic",
+			Detail:  device,
+		}
+	}
 	return Feasibility{Verdict: FeasibilityAdvisoryOK, Reason: "TelemetryPresent"}
+}
+
+// firstStaticRuntimeEstimate names the earliest device declaring a static runtime estimate.
+//
+// One device is enough. Domains are aggregated into a single runtime figure, so a static estimate
+// anywhere in the set contaminates the total -- there is no partial version of this verdict.
+func firstStaticRuntimeEstimate(devices []DeviceCapability) (string, bool) {
+	for _, device := range devices {
+		if device.RuntimeEstimate == string(capability.RuntimeEstimateStatic) {
+			return device.DeviceID, true
+		}
+	}
+	return "", false
 }
 
 func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {

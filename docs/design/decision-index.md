@@ -76,7 +76,6 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | ID | Question | Blocks | Likely owner doc |
 | --- | --- | --- | --- |
 | OD-8r | Provider key validation policy (interim: floor-match + warning, RS-6) | Resolver | Resolver |
-| OD-9 | Trigger degrade mechanics | — | Capability schema |
 | OD-10 | USB/serial support: version target and isolation model | — | v2 scoping |
 | OD-12 | Infeasible-plan policy field default and options | EX-3 | Planner design |
 | OD-14 | Partial-domain outage: cluster-wide vs domain-scoped plan (structure now available) | PL-16, PL-23, EX-10 | Planner design |
@@ -111,6 +110,7 @@ Identifiers are stable: never reused, never renumbered. Superseded items are mar
 | OD-23 | Alias maps live in the profile telemetry section. Native readings outrank aliases; aliasing is one-directional and total; every applied alias is a diagnostic | capability-profiles.md |
 | OD-18 | Tier inversion blocks the node by default: an inverted node is withheld from power-off for the whole flow. `spec.groups[].tierInversionPolicy: Allow` opts a group out per workload. Migration declined as a general remedy — node-local PVCs mean there is not always anywhere to move to | Planner tier compilation | Planner design |
 | OD-32 | NUT operand SSL backend is OpenSSL, built from source. NSS is more feature-complete for client certificates today, but has no CERTFILE and needs a cert database instead of the PEM a TLS Secret projects. Alpine's NSS build was not a considered choice: the aport requests both backends and NSS wins by precedence in configure.ac | Operand images | F-39 – F-41 |
+| OD-9 | Trigger degrade substitutes toward the `ups.status` floor: `RuntimeBelow` and `ChargeBelow` fall back to `LowBattery`, which states the same intent coarsely, rather than to `OnBattery`, which states a different one. Substitution is declared via `spec.triggers[].fallbackType`, never automatic — it changes when nodes begin powering off, so per GP-5 it is authored, not derived. Compilation names the fallback that would close a gap | Trigger validation | capability-profiles.md |
 | OD-22 | Structured quirk objects carrying firmware scope as a field: `firmware.matches` globs and a `firmware.below` dotted-numeric fix release. Firmware-ranged selectors rejected — a selector scopes the whole profile, and quirks expire independently of the telemetry a model reports | Capability schema | capability-profiles.md |
 | OD-31 | An unidentified device blocks Enforce mode unless explicitly accepted. Dry-run review is unaffected. "Universal floor" retired as a name | PL-33 |
 

@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -476,4 +477,83 @@ func histogramSampleCount(t *testing.T, observer prometheus.Observer) uint64 {
 		t.Fatalf("write histogram metric: %v", err)
 	}
 	return metric.GetHistogram().GetSampleCount()
+}
+
+// Notify emits a Kubernetes Event against the ShutdownFlow. Events are the transport because they
+// need no configuration: a Notify backed by an unconfigured webhook is inert, and an inert
+// notification during an outage is worse than none -- the flow author believes they will be told.
+func TestRunnerNotifyEmitsAnEventOnTheFlow(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	recorder := record.NewFakeRecorder(10)
+	runner := Runner{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			&powerv1alpha1.ShutdownFlow{ObjectMeta: metav1.ObjectMeta{Name: "conserve-power"}},
+		).Build(),
+		Recorder: recorder,
+	}
+
+	outcome, err := runner.RunAction(context.Background(), executor.Action{
+		ExecutionID:  "execution-a",
+		ShutdownFlow: "conserve-power",
+		Group: executor.Group{
+			Name:   "announce",
+			Action: ActionNotify,
+			Params: map[string]string{"message": "shutting down the cluster", "reason": "OutageBegan"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunAction returned error: %v", err)
+	}
+	if outcome.Outcome != executor.OutcomeSucceeded {
+		t.Fatalf("outcome = %#v, want Succeeded", outcome)
+	}
+	select {
+	case event := <-recorder.Events:
+		if !strings.Contains(event, "OutageBegan") || !strings.Contains(event, "shutting down the cluster") {
+			t.Fatalf("event = %q, want the declared reason and message", event)
+		}
+	default:
+		t.Fatal("expected an event to be recorded")
+	}
+}
+
+// A Notify with no recorder must report Blocked rather than succeed. Silently succeeding would tell
+// the audit trail a notification was delivered when nothing was sent.
+func TestRunnerNotifyWithoutARecorderReportsBlocked(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	runner := Runner{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+
+	outcome, err := runner.RunAction(context.Background(), executor.Action{
+		ShutdownFlow: "conserve-power",
+		Group:        executor.Group{Name: "announce", Action: ActionNotify},
+	})
+	if err != nil {
+		t.Fatalf("RunAction returned error: %v", err)
+	}
+	if outcome.Outcome != executor.OutcomeBlocked {
+		t.Fatalf("outcome = %#v, want Blocked", outcome)
+	}
+}
+
+// Gate was removed from the action enum: nothing defined who opens it, and a shutdown that waits on
+// a human is a shutdown that does not finish. It must be rejected, not silently accepted.
+func TestRunnerRejectsTheRemovedGateAction(t *testing.T) {
+	runner := Runner{Client: fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()}
+
+	outcome, err := runner.RunAction(context.Background(), executor.Action{
+		ShutdownFlow: "conserve-power",
+		Group:        executor.Group{Name: "hold", Action: "Gate"},
+	})
+	if err == nil {
+		t.Fatal("expected a removed action to be rejected")
+	}
+	if outcome.Outcome != executor.OutcomeBlocked {
+		t.Fatalf("outcome = %#v, want Blocked", outcome)
+	}
 }

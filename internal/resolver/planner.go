@@ -67,6 +67,7 @@ func plannerDeviceCapabilities(bundle StructuralBundle) []planner.DeviceCapabili
 			ProfileID:          match.ProfileID,
 			Unidentified:       match.Unidentified,
 			TelemetryVariables: append([]string(nil), match.TelemetryVariables...),
+			RuntimeEstimate:    string(match.RuntimeEstimate),
 		})
 	}
 	sort.SliceStable(capabilities, func(left, right int) bool {

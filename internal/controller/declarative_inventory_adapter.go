@@ -112,6 +112,7 @@ func capabilityProfileFromUPSCapabilityProfile(obj *powerv1alpha1.UPSCapabilityP
 		TelemetryAliases:   copyStringMap(obj.Spec.Telemetry.Aliases),
 		ActuationBehaviors: append([]string(nil), obj.Spec.Actuation.Behaviors...),
 		Quirks:             capabilityQuirksFromCRD(obj.Spec.Quirks),
+		RuntimeEstimate:    capability.RuntimeEstimate(obj.Spec.Telemetry.RuntimeEstimate),
 	}
 }
 

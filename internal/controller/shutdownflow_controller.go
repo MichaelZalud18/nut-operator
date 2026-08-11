@@ -65,6 +65,7 @@ type ShutdownFlowReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=argoproj.io,resources=workflows,verbs=create;get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile validates shutdown flow safety and records compiled plan status
 // against the current declarative inventory and UPS capability profile bundle.
@@ -172,6 +173,9 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		flow.Status.CompiledWaves = compiledWaves
 		flow.Status.PublishedArtifact = publishedArtifact
 		flow.Status.BlockedNodeReleases = blockedNodeReleases
+		// Published on every compile, zero included, so the series exists before the first inversion
+		// rather than appearing only once something is already wrong.
+		metrics.ShutdownFlowTierInversions.WithLabelValues(flow.Name).Set(float64(len(blockedNodeReleases)))
 		flow.Status.EstimatedDuration = estimatedDuration
 		if configHash != "" && configHash != base.Status.ConfigHash {
 			metrics.ShutdownFlowPlanHashChangesTotal.WithLabelValues(flow.Name).Inc()
@@ -284,7 +288,10 @@ func (r *ShutdownFlowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	flowChanged := builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{}, predicate.AnnotationChangedPredicate{}))
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&powerv1alpha1.ShutdownFlow{}, flowChanged).
-		Watches(&powerv1alpha1.UPSDevice{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange)).
+		// F-42: scoped to the fields trigger evaluation reads. Unpredicated, every telemetry poll
+		// re-enqueued every flow.
+		Watches(&powerv1alpha1.UPSDevice{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange),
+			builder.WithPredicates(upsDeviceTriggerRelevantPredicate())).
 		Watches(&powerv1alpha1.PowerManagementCluster{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
 		Watches(&powerv1alpha1.PowerInfrastructure{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
 		Watches(&powerv1alpha1.PowerInventoryNode{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
@@ -381,7 +388,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 			}
 		}
 		recordErr = errors.Join(recordErr, recordShutdownFlowDecisions(ctx, writer, flow, observedAt, configHash, triggerEvaluation))
-		recordErr = errors.Join(recordErr, r.recordShutdownFlowExecution(ctx, writer, flow, observedAt, bundle.Hash, configHash, triggerEvaluation))
+		recordErr = errors.Join(recordErr, r.recordShutdownFlowExecution(ctx, writer, flow, observedAt, bundle.Hash, configHash, triggerEvaluation, bundle))
 	}
 	if spoolWriter != nil {
 		r.reportAuditSpoolFallback(flow, spoolWriter.Stats(), triggerEvaluation)

@@ -66,6 +66,55 @@ var _ = Describe("ShutdownFlow Webhook", func() {
 			Expect(warnings).To(BeEmpty())
 		})
 
+		It("Should admit a coarser trigger fallback", func() {
+			obj.Spec = validShutdownFlowSpec()
+			runtimeSeconds := int64(300)
+			fallback := powerv1alpha1.ShutdownTriggerLowBattery
+			obj.Spec.Triggers[0].Type = powerv1alpha1.ShutdownTriggerRuntimeBelow
+			obj.Spec.Triggers[0].RuntimeBelowSeconds = &runtimeSeconds
+			obj.Spec.Triggers[0].FallbackType = &fallback
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should reject a trigger fallback that is not coarser", func() {
+			obj.Spec = validShutdownFlowSpec()
+			runtimeSeconds := int64(300)
+			fallback := powerv1alpha1.ShutdownTriggerChargeBelow
+			obj.Spec.Triggers[0].Type = powerv1alpha1.ShutdownTriggerRuntimeBelow
+			obj.Spec.Triggers[0].RuntimeBelowSeconds = &runtimeSeconds
+			obj.Spec.Triggers[0].FallbackType = &fallback
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("fallbackType"))
+		})
+
+		It("Should reject a fallback on a trigger that already needs only ups.status", func() {
+			obj.Spec = validShutdownFlowSpec()
+			fallback := powerv1alpha1.ShutdownTriggerLowBattery
+			obj.Spec.Triggers[0].Type = powerv1alpha1.ShutdownTriggerOnBattery
+			obj.Spec.Triggers[0].FallbackType = &fallback
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("no coarser fallback"))
+		})
+
+		It("Should reject a fallback equal to the trigger's own type", func() {
+			obj.Spec = validShutdownFlowSpec()
+			runtimeSeconds := int64(300)
+			fallback := powerv1alpha1.ShutdownTriggerRuntimeBelow
+			obj.Spec.Triggers[0].Type = powerv1alpha1.ShutdownTriggerRuntimeBelow
+			obj.Spec.Triggers[0].RuntimeBelowSeconds = &runtimeSeconds
+			obj.Spec.Triggers[0].FallbackType = &fallback
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("covers nothing"))
+		})
+
 		It("Should return a planner warning when groups and fallback steps are both present", func() {
 			obj.Spec = validShutdownFlowSpec()
 			obj.Spec.Steps = []powerv1alpha1.ShutdownStep{{ID: "fallback", Type: powerv1alpha1.ShutdownStepNotify}}

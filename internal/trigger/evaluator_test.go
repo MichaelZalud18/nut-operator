@@ -171,3 +171,159 @@ func hasDiagnostic(diagnostics []Diagnostic, reason string) bool {
 	}
 	return false
 }
+
+func hasTriggerDiagnostic(diagnostics []Diagnostic, reason string) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Reason == reason {
+			return true
+		}
+	}
+	return false
+}
+
+// OD-9 end to end at evaluation time. Without this the fallback would be a field the API accepts,
+// the planner validates, and nothing ever acts on -- the defect class F-25 and F-33 both were.
+func TestEvaluateAppliesFallbackWhenTheDeviceCannotReportRuntime(t *testing.T) {
+	observedAt := time.Date(2026, 8, 9, 20, 0, 0, 0, time.UTC)
+	runtimeThreshold := int64(120)
+
+	evaluation := Evaluate(Inputs{
+		ObservedAt: observedAt,
+		Triggers: []Trigger{
+			{
+				ID:                  "runtime-critical",
+				Type:                TypeRuntimeBelow,
+				FallbackType:        TypeLowBattery,
+				UPSDevices:          []string{"rack-a"},
+				RuntimeBelowSeconds: &runtimeThreshold,
+			},
+		},
+		UPSStates: []UPSState{
+			// Reports LB, reports no runtime. The whole case OD-9 exists for.
+			{UPSDevice: "rack-a", Phase: telemetry.PhaseLowBattery, LowBattery: true},
+		},
+	})
+
+	if !evaluation.Approved {
+		t.Fatalf("the declared fallback should have matched, got %#v", evaluation)
+	}
+	if !hasTriggerDiagnostic(evaluation.Diagnostics, "TriggerFallbackApplied") {
+		t.Fatalf("expected TriggerFallbackApplied, got %#v", evaluation.Diagnostics)
+	}
+	if hasTriggerDiagnostic(evaluation.Diagnostics, "RuntimeTelemetryMissing") {
+		t.Fatalf("a handled substitution must not also report the telemetry as missing, got %#v", evaluation.Diagnostics)
+	}
+}
+
+// The fallback substitutes the condition, it does not force a match. A device reporting no runtime
+// and no LB flag is simply not in trouble yet.
+func TestEvaluateFallbackStillRequiresItsOwnConditionToHold(t *testing.T) {
+	runtimeThreshold := int64(120)
+
+	evaluation := Evaluate(Inputs{
+		ObservedAt: time.Date(2026, 8, 9, 20, 0, 0, 0, time.UTC),
+		Triggers: []Trigger{
+			{
+				ID:                  "runtime-critical",
+				Type:                TypeRuntimeBelow,
+				FallbackType:        TypeLowBattery,
+				UPSDevices:          []string{"rack-a"},
+				RuntimeBelowSeconds: &runtimeThreshold,
+			},
+		},
+		UPSStates: []UPSState{
+			{UPSDevice: "rack-a", Phase: telemetry.PhaseOnBattery, OnBattery: true},
+		},
+	})
+
+	if evaluation.Approved {
+		t.Fatalf("LowBattery had not fired, so the fallback must not approve, got %#v", evaluation)
+	}
+}
+
+// Without a fallback the device still reports the gap. Substitution is opt-in, so the default
+// behavior must be unchanged.
+func TestEvaluateWithoutFallbackStillReportsMissingTelemetry(t *testing.T) {
+	runtimeThreshold := int64(120)
+
+	evaluation := Evaluate(Inputs{
+		ObservedAt: time.Date(2026, 8, 9, 20, 0, 0, 0, time.UTC),
+		Triggers: []Trigger{
+			{
+				ID:                  "runtime-critical",
+				Type:                TypeRuntimeBelow,
+				UPSDevices:          []string{"rack-a"},
+				RuntimeBelowSeconds: &runtimeThreshold,
+			},
+		},
+		UPSStates: []UPSState{
+			{UPSDevice: "rack-a", Phase: telemetry.PhaseLowBattery, LowBattery: true},
+		},
+	})
+
+	if evaluation.Approved {
+		t.Fatalf("no fallback was declared, so a runtime trigger must not fire, got %#v", evaluation)
+	}
+	if !hasTriggerDiagnostic(evaluation.Diagnostics, "RuntimeTelemetryMissing") {
+		t.Fatalf("expected RuntimeTelemetryMissing, got %#v", evaluation.Diagnostics)
+	}
+}
+
+// A missing threshold is an authoring mistake, not a device that cannot answer. Substituting here
+// would hide a broken flow behind a coarser trigger that happens to fire.
+func TestEvaluateDoesNotSubstituteForAMissingThreshold(t *testing.T) {
+	evaluation := Evaluate(Inputs{
+		ObservedAt: time.Date(2026, 8, 9, 20, 0, 0, 0, time.UTC),
+		Triggers: []Trigger{
+			{
+				ID:           "runtime-critical",
+				Type:         TypeRuntimeBelow,
+				FallbackType: TypeLowBattery,
+				UPSDevices:   []string{"rack-a"},
+			},
+		},
+		UPSStates: []UPSState{
+			{UPSDevice: "rack-a", Phase: telemetry.PhaseLowBattery, LowBattery: true},
+		},
+	})
+
+	if evaluation.Approved {
+		t.Fatalf("a misconfigured trigger must not be rescued by its fallback, got %#v", evaluation)
+	}
+	if !hasTriggerDiagnostic(evaluation.Diagnostics, "RuntimeThresholdMissing") {
+		t.Fatalf("expected RuntimeThresholdMissing, got %#v", evaluation.Diagnostics)
+	}
+	if hasTriggerDiagnostic(evaluation.Diagnostics, "TriggerFallbackApplied") {
+		t.Fatalf("the fallback must not apply to an authoring mistake, got %#v", evaluation.Diagnostics)
+	}
+}
+
+// A device that reports runtime uses the primary. The fallback must not preempt the finer trigger.
+func TestEvaluatePrefersThePrimaryWhenTelemetryIsPresent(t *testing.T) {
+	runtimeThreshold := int64(120)
+	runtimeRemaining := int64(600)
+
+	evaluation := Evaluate(Inputs{
+		ObservedAt: time.Date(2026, 8, 9, 20, 0, 0, 0, time.UTC),
+		Triggers: []Trigger{
+			{
+				ID:                  "runtime-critical",
+				Type:                TypeRuntimeBelow,
+				FallbackType:        TypeLowBattery,
+				UPSDevices:          []string{"rack-a"},
+				RuntimeBelowSeconds: &runtimeThreshold,
+			},
+		},
+		UPSStates: []UPSState{
+			// LB is set but 600s remain: the primary says no, and the primary is what governs.
+			{UPSDevice: "rack-a", Phase: telemetry.PhaseLowBattery, LowBattery: true, RuntimeSeconds: &runtimeRemaining},
+		},
+	})
+
+	if evaluation.Approved {
+		t.Fatalf("runtime was above the threshold, so the trigger must not fire, got %#v", evaluation)
+	}
+	if hasTriggerDiagnostic(evaluation.Diagnostics, "TriggerFallbackApplied") {
+		t.Fatalf("the fallback must not apply when the primary telemetry is present, got %#v", evaluation.Diagnostics)
+	}
+}

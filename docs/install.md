@@ -70,6 +70,10 @@ reused, so `caBundle` stays valid and only the serving certificate changes; the 
 live through its controller-runtime `certwatcher`, with no restart. `--help` lists the flags,
 including `--ca-cert`/`--ca-key` to sign from an existing CA without storing its key in the cluster.
 
+Because nothing renews the certificate on its own here, the manager publishes when it expires:
+`nutoperator_certificate_not_after_timestamp_seconds{certificate="webhook"}`. Alert on it with
+whatever lead time suits your rotation procedure — see [metrics.md](metrics.md).
+
 Storing the generated CA key in a cluster Secret is the same exposure model cert-manager and
 `cert-controller` both have: read access to that Secret is enough to mint a certificate this
 webhook's `caBundle` trusts. Use `--ca-cert`/`--ca-key` if you would rather that key never live in

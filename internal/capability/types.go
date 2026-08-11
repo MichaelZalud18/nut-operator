@@ -45,7 +45,20 @@ type Profile struct {
 	TelemetryAliases   map[string]string `json:"telemetryAliases,omitempty"`
 	ActuationBehaviors []string          `json:"actuationBehaviors,omitempty"`
 	Quirks             []Quirk           `json:"quirks,omitempty"`
+	// RuntimeEstimate declares how the firmware produces battery.runtime (AE-6). Empty means
+	// unverified.
+	RuntimeEstimate RuntimeEstimate `json:"runtimeEstimate,omitempty"`
 }
+
+// RuntimeEstimate describes how a device's firmware produces battery.runtime.
+type RuntimeEstimate string
+
+const (
+	// RuntimeEstimateDynamic means the firmware recomputes runtime against present load.
+	RuntimeEstimateDynamic RuntimeEstimate = "Dynamic"
+	// RuntimeEstimateStatic means the firmware reports a fixed estimate that ignores load.
+	RuntimeEstimateStatic RuntimeEstimate = "Static"
+)
 
 // Quirk is a behavior-affecting device defect, optionally scoped to the firmware
 // that actually has it (OD-22).
@@ -117,6 +130,24 @@ type MatchResult struct {
 	// Names rather than structures: scope is resolved here, so nothing downstream
 	// has to re-decide whether a quirk is in force.
 	Quirks []string `json:"quirks,omitempty"`
+	// RuntimeEstimate is the matched profile's runtime-estimate declaration (AE-6).
+	RuntimeEstimate RuntimeEstimate `json:"runtimeEstimate,omitempty"`
+}
+
+// SupportsTimingAdaptation reports whether this device may have its execution
+// timings adapted mid-flow (AE-6).
+//
+// Requires an affirmative Dynamic declaration plus the runtime variable itself.
+// Unverified is treated as unsafe rather than assumed fine: adaptation shortens
+// and lengthens timeouts during an outage based on how much runtime is left, and
+// a device reporting a fixed nameplate number would drive that with a value that
+// never moves -- exactly the silent failure OD-9 exists to prevent, arriving at
+// the one moment nobody is watching.
+func (r MatchResult) SupportsTimingAdaptation() bool {
+	if r.RuntimeEstimate != RuntimeEstimateDynamic {
+		return false
+	}
+	return satisfiesTrigger(r.TelemetryVariables, TriggerRuntimeBelow)
 }
 
 // SupportsTriggerType reports whether the matched profile's declared telemetry

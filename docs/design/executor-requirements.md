@@ -87,9 +87,54 @@ execution runs. After the trigger clears, the same plan may execute again for a 
 **EX-11 · Per-group timeouts are enforced as written.** Timeout expiry is a group failure, which
 engages abort policy — it is not an implicit success.
 
+The timeout becomes a context deadline on the action-runner call. A runner that returns success
+against an expired deadline is still a timeout: it did not finish in the time the flow allowed, and
+reporting it as success would let the next wave start on work still in flight. A group with no
+declared timeout runs unbounded, since an undeclared limit is not a limit of zero.
+
+"As written" means the declared value is the most the flow will allow. The measured timing budget
+may shorten it (see `adaptive-execution-tier-pointer.md`) and never lengthens it, so the flow either
+honors what the author declared or takes less. The declared value, the effective value, and the
+compression ratio between them are all recorded, so a short timeout the author chose stays
+distinguishable from a short one the runtime forced — and the arithmetic is visible either way.
+
+**EX-22 · The executor waits.** `Wait` holds the flow for its declared duration, in dry-run as well as
+enforce. It is served in the executor rather than the Kubernetes action runner because waiting is not
+a cluster mutation, and it runs in dry-run because EX-5 makes dry-run a faithful rehearsal — a
+rehearsal that skips the waits reports a flow duration the real run will not reproduce, which is the
+number an operator is rehearsing to find.
+
+**EX-23 · Power recovery suspends the flow; it does not halt it.** When the observation at a wave
+boundary shows mains restored and no low-battery assertion, the executor stops starting waves and
+records a `Suspended` phase. Nothing already shut down is restored; recovery is a subscriber concern
+(AE-1, AE-3).
+
+Suspension is explicitly not the AE-6 halt, which is abort: a deliberate stop that latches and never
+resumes. A suspended flow must remain able to descend again, so three things hold together:
+
+1. The tier pointer is **not** latched.
+2. The pointer is left at the depth it stopped, published on status and persisted in the resume
+   state, so the next descent continues from there rather than starting over.
+3. Execution deduplication ignores a suspended run. A completed episode deduplicates; a suspended one
+   does not, because it has more to do. Without this, dedupe itself would block re-descent during a
+   dip-recover-dip outage.
+
+`Suspended` is also distinct from `Completed` and `Aborted`. A completed flow ran every wave, an
+aborted one failed, and a suspended one did exactly as much as the outage called for. Collapsing
+suspension into completion would make "the outage ended" indistinguishable from "the cluster finished
+shutting down".
+
 **EX-12 · Abort policy executes as compiled** (PL-18). A failed group aborts the flow by default.
 Under `ContinueSafeSteps`, only groups pre-marked eligible in the compiled plan may still run. The
 executor makes no execution-time eligibility judgments.
+
+**EX-24 · Every action in the enum does something.** An action the API accepts and the runner
+ignores is worse than a missing one: a flow author reads it as configured behavior. `Gate` was
+removed for this reason — nothing defined who opens it, and a shutdown waiting on a human is a
+shutdown that does not finish, which is the wrong failure mode during an outage. `Notify` emits a
+Kubernetes Event, chosen because Events need no configuration to work; a transport that must be wired
+up first would be inert exactly when it is relied on. With no event recorder configured, `Notify`
+reports `Blocked` rather than succeeding, since a notification nobody received was not delivered.
 
 **EX-13 · Actions use the stock-Kubernetes mechanisms of SB-10.** Scale, suspend, quiesce; evict
 with PDB respect; withdraw traffic via Services; cordon before drain. Direct pod deletion only where
@@ -103,10 +148,15 @@ time and records every action attempt.
 
 **EX-14 · Idempotent, resumable execution.** The executor may restart mid-flow (it is itself a
 workload in a cluster that is shutting down). Execution state sufficient to resume — current wave,
-group states, enumerated instances — is persisted such that a restarted executor continues rather
-than re-running completed actions or abandoning the flow. PostgreSQL stores compact resume state in
-`executor_resume_states` and durable progress in the execution, wave, group, and action-attempt
-tables.
+group states, enumerated instances, tier pointer, and timing mode — is persisted such that a restarted
+executor continues rather than re-running completed actions or abandoning the flow. PostgreSQL stores
+compact resume state in `executor_resume_states` and durable progress in the execution, wave, group,
+and action-attempt tables.
+
+The pointer and the timing mode are part of that state, not decoration on it. A restarted executor
+that started from a fresh pointer would re-report tiers it already descended as new work, and one that
+started from a fresh timing mode would silently relax a flow that had escalated — handing back time it
+may need and cannot get again.
 
 ---
 

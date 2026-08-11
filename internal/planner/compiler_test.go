@@ -318,7 +318,7 @@ func TestCompileLinearStepsPublishesPolicyGraph(t *testing.T) {
 		Steps: []Step{
 			{ID: "notify", Action: "Notify"},
 			{ID: "wait", Action: "Wait", Duration: Duration{Duration: time.Minute}},
-			{ID: "gate", Action: "Gate"},
+			{ID: "notify-complete", Action: "Notify"},
 		},
 	}
 
@@ -1078,5 +1078,181 @@ func TestBlockedNodesAreDeterministic(t *testing.T) {
 	}
 	if got := first.BlockedNodes[0].Groups; len(got) != 2 || got[0] != "alpha" || got[1] != "zulu" {
 		t.Fatalf("expected the groups on node-a sorted by name, got %#v", got)
+	}
+}
+
+// triggerCapabilityInputWithFallback is triggerCapabilityInput with an OD-9 fallback declared.
+func triggerCapabilityInputWithFallback(devices []DeviceCapability, fallback string) StructuralInputs {
+	input := triggerCapabilityInput(devices)
+	input.Triggers[0].FallbackType = fallback
+	return input
+}
+
+// The point of OD-9: a declared fallback turns a degraded plan into a covered one, because the
+// devices that cannot report runtime still act on the coarser condition.
+func TestCompileSubstitutesDeclaredTriggerFallback(t *testing.T) {
+	input := triggerCapabilityInputWithFallback([]DeviceCapability{
+		{DeviceID: "ups-1", ProfileID: "product", TelemetryVariables: []string{"battery.runtime", "ups.status"}},
+		{DeviceID: "ups-2", ProfileID: "floor", Unidentified: true, TelemetryVariables: []string{"ups.status"}},
+	}, "LowBattery")
+
+	_, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("a covered fallback must compile, got %v", err)
+	}
+	if !hasPlannerDiagnostic(diagnostics, "TriggerSubstituted") {
+		t.Fatalf("expected TriggerSubstituted, got %#v", diagnostics)
+	}
+	if hasPlannerDiagnostic(diagnostics, "TriggerDegradedByDeviceCapability") {
+		t.Fatalf("a declared and satisfiable fallback must not leave the plan degraded, got %#v", diagnostics)
+	}
+}
+
+// A fallback rescues a plan that would otherwise be rejected outright: every device failing the
+// primary is fatal only when nothing coarser covers them.
+func TestCompileFallbackRescuesTriggerNoDeviceCanSatisfy(t *testing.T) {
+	input := triggerCapabilityInputWithFallback([]DeviceCapability{
+		{DeviceID: "ups-1", ProfileID: "floor", Unidentified: true, TelemetryVariables: []string{"ups.status"}},
+		{DeviceID: "ups-2", ProfileID: "floor", Unidentified: true, TelemetryVariables: []string{"ups.status"}},
+	}, "LowBattery")
+
+	_, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("a fallback every device can satisfy must compile, got %v", err)
+	}
+	if !hasPlannerDiagnostic(diagnostics, "TriggerSubstituted") {
+		t.Fatalf("expected TriggerSubstituted, got %#v", diagnostics)
+	}
+}
+
+// Declaring a fallback the uncovered devices also cannot satisfy is worse than declaring none: it
+// reads as coverage and provides none, so it is rejected rather than warned about.
+func TestCompileRejectsUnsatisfiableTriggerFallback(t *testing.T) {
+	input := triggerCapabilityInputWithFallback([]DeviceCapability{
+		{DeviceID: "ups-1", ProfileID: "product", TelemetryVariables: []string{"battery.runtime", "ups.status"}},
+		{DeviceID: "ups-2", ProfileID: "silent", TelemetryVariables: []string{"battery.charge"}},
+	}, "LowBattery")
+
+	_, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err == nil {
+		t.Fatal("a fallback the uncovered devices cannot satisfy must not compile")
+	}
+	if !hasPlannerDiagnostic(diagnostics, "TriggerFallbackUnsatisfiable") {
+		t.Fatalf("expected TriggerFallbackUnsatisfiable, got %#v", diagnostics)
+	}
+}
+
+func TestCompileRejectsTriggerFallbackThatIsNotCoarser(t *testing.T) {
+	input := triggerCapabilityInputWithFallback([]DeviceCapability{
+		{DeviceID: "ups-1", ProfileID: "product", TelemetryVariables: []string{"battery.runtime", "ups.status"}},
+		{DeviceID: "ups-2", ProfileID: "floor", Unidentified: true, TelemetryVariables: []string{"ups.status"}},
+	}, "ChargeBelow")
+
+	_, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err == nil {
+		t.Fatal("ChargeBelow is not a coarser class for RuntimeBelow and must not compile")
+	}
+	if !hasPlannerDiagnostic(diagnostics, "TriggerFallbackNotCoarser") {
+		t.Fatalf("expected TriggerFallbackNotCoarser, got %#v", diagnostics)
+	}
+}
+
+// The gap is only actionable if the compile output says what to write. Without the name, adopting a
+// fallback is a research task performed under outage pressure.
+func TestCompileNamesTheFallbackThatWouldCoverAGap(t *testing.T) {
+	input := triggerCapabilityInput([]DeviceCapability{
+		{DeviceID: "ups-1", ProfileID: "product", TelemetryVariables: []string{"battery.runtime", "ups.status"}},
+		{DeviceID: "ups-2", ProfileID: "floor", Unidentified: true, TelemetryVariables: []string{"ups.status"}},
+	})
+
+	_, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Reason != "TriggerDegradedByDeviceCapability" {
+			continue
+		}
+		if !strings.Contains(diagnostic.Message, "fallbackType: LowBattery") {
+			t.Fatalf("degrade diagnostic must name the fallback that would cover it, got %q", diagnostic.Message)
+		}
+		return
+	}
+	t.Fatalf("expected a degrade diagnostic, got %#v", diagnostics)
+}
+
+// feasibilityInput builds a plan with complete telemetry, so the only thing that can move the
+// verdict is the runtime-estimate declaration under test.
+func feasibilityInput(devices []DeviceCapability) (StructuralInputs, TelemetryInputs) {
+	runtime := int64(1800)
+	charge := int32(97)
+	onBattery := false
+	structural := triggerCapabilityInput(devices)
+	structural.Triggers = []Trigger{{Type: "OnBattery", PowerDomains: []string{"core"}}}
+	return structural, TelemetryInputs{PowerDomains: []PowerDomainSnapshot{{
+		Domain:                  "core",
+		RuntimeRemainingSeconds: &runtime,
+		ChargePercent:           &charge,
+		OnBattery:               &onBattery,
+	}}}
+}
+
+// AE-6's live consequence. Feasibility answers "is there enough runtime to finish", and a firmware
+// that reports a fixed estimate cannot answer it -- the number does not fall as the cluster draws on
+// the battery, so an OK verdict would be derived from a constant.
+func TestFeasibilityIsUnknownWhenADeviceReportsAStaticRuntimeEstimate(t *testing.T) {
+	structural, telemetry := feasibilityInput([]DeviceCapability{
+		{DeviceID: "ups-1", ProfileID: "product", TelemetryVariables: []string{"battery.runtime", "ups.status"},
+			RuntimeEstimate: "Dynamic"},
+		{DeviceID: "ups-2", ProfileID: "static", TelemetryVariables: []string{"battery.runtime", "ups.status"},
+			RuntimeEstimate: "Static"},
+	})
+
+	plan, _, err := Compile(structural, telemetry)
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if plan.Feasibility.Verdict != FeasibilityAdvisoryUnknown {
+		t.Fatalf("verdict = %q, want Unknown", plan.Feasibility.Verdict)
+	}
+	if plan.Feasibility.Reason != "RuntimeEstimateStatic" {
+		t.Fatalf("reason = %q, want RuntimeEstimateStatic", plan.Feasibility.Reason)
+	}
+	// A reason code without a subject tells an operator what happened but not where to look.
+	if plan.Feasibility.Detail != "ups-2" {
+		t.Fatalf("detail = %q, want the offending device ups-2", plan.Feasibility.Detail)
+	}
+}
+
+// Unverified must not be read as Static. Every profile shipped today leaves it unset, so treating
+// absence as a static estimate would downgrade every existing deployment's feasibility overnight.
+func TestFeasibilityStaysOKWhenTheRuntimeEstimateIsUndeclared(t *testing.T) {
+	structural, telemetry := feasibilityInput([]DeviceCapability{
+		{DeviceID: "ups-1", ProfileID: "product", TelemetryVariables: []string{"battery.runtime", "ups.status"}},
+	})
+
+	plan, _, err := Compile(structural, telemetry)
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if plan.Feasibility.Verdict != FeasibilityAdvisoryOK {
+		t.Fatalf("verdict = %q, want OK", plan.Feasibility.Verdict)
+	}
+}
+
+// Incomplete telemetry outranks the estimate question: there is no runtime number to characterize.
+func TestFeasibilityReportsIncompleteTelemetryBeforeTheEstimateDeclaration(t *testing.T) {
+	structural, telemetry := feasibilityInput([]DeviceCapability{
+		{DeviceID: "ups-2", ProfileID: "static", TelemetryVariables: []string{"battery.runtime", "ups.status"},
+			RuntimeEstimate: "Static"},
+	})
+	telemetry.PowerDomains[0].RuntimeRemainingSeconds = nil
+
+	plan, _, err := Compile(structural, telemetry)
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v", err)
+	}
+	if plan.Feasibility.Reason != "TelemetryIncomplete" {
+		t.Fatalf("reason = %q, want TelemetryIncomplete", plan.Feasibility.Reason)
 	}
 }

@@ -162,10 +162,35 @@ const (
 	ShutdownTriggerTelemetryStale ShutdownTriggerType = "TelemetryStale"
 )
 
+// Value dereferences an optional trigger type, yielding "" when unset. Safe on a nil receiver so
+// callers can read spec.triggers[].fallbackType without a guard at every use.
+func (t *ShutdownTriggerType) Value() string {
+	if t == nil {
+		return ""
+	}
+	return string(*t)
+}
+
 // ShutdownTrigger defines when a flow is eligible to run.
 type ShutdownTrigger struct {
 	// type is the trigger kind.
 	Type ShutdownTriggerType `json:"type"`
+
+	// fallbackType is the coarser trigger class to evaluate for devices that cannot report the
+	// telemetry this trigger needs (OD-9).
+	//
+	// Substitution is declared rather than automatic. It changes when a shutdown starts -- a
+	// RuntimeBelow trigger acts on a threshold the author chose against a runtime budget, while its
+	// LowBattery fallback acts whenever the device itself says the battery is low -- and per GP-5
+	// anything that alters failure-path behavior is declared ahead of time, not derived during the
+	// outage. Compilation names the fallback that would cover an uncovered device, so adopting one
+	// is a mechanical edit rather than a research task.
+	//
+	// Only a strictly coarser class is accepted: RuntimeBelow and ChargeBelow may fall back to
+	// LowBattery. OnBattery and LowBattery already need only ups.status and have nothing coarser to
+	// fall back to; TelemetryStale needs no telemetry at all.
+	// +optional
+	FallbackType *ShutdownTriggerType `json:"fallbackType,omitempty"`
 
 	// upsDeviceRefs limits this trigger to specific UPSDevice resources.
 	// +optional
@@ -353,10 +378,71 @@ type ShutdownExecutionStatus struct {
 	// message is a human-readable execution summary.
 	// +optional
 	Message string `json:"message,omitempty"`
+
+	// adaptive is the tier pointer and timing mode this execution ended on.
+	// +optional
+	Adaptive *ShutdownExecutionAdaptiveStatus `json:"adaptive,omitempty"`
+}
+
+// ShutdownExecutionAdaptiveStatus publishes where a flow progressed to and how
+// much time it was allowing when it got there.
+//
+// Every field is a fact about current or recorded state, which is the AE-4 line:
+// the tier reached, the mode in force, the power observed. Nothing here
+// characterizes the sequence as a dip, a flicker, or a recovery, and nothing
+// projects where power is heading — those are interpretations a subscriber owns.
+type ShutdownExecutionAdaptiveStatus struct {
+	// tier is the shutdown tier the pointer currently occupies.
+	// +optional
+	Tier int32 `json:"tier,omitempty"`
+
+	// deepestTier is the lowest-numbered tier this flow ever reached. It differs from
+	// tier after power recovered and the pointer ascended, and it is what makes a
+	// re-descent recognizable as re-execution rather than new work.
+	// +optional
+	DeepestTier int32 `json:"deepestTier,omitempty"`
+
+	// pointerStarted distinguishes a flow waiting at a tier from one that has
+	// executed it.
+	// +optional
+	PointerStarted bool `json:"pointerStarted,omitempty"`
+
+	// timingMode is the timing mode in force: Relaxed, Nominal, or Urgent.
+	// +kubebuilder:validation:Enum=Relaxed;Nominal;Urgent
+	// +optional
+	TimingMode string `json:"timingMode,omitempty"`
+
+	// suspended records that the flow stopped descending because power recovered.
+	// Nothing already shut down was restored, and the pointer stayed where it
+	// stopped, so a later degrade resumes from that depth.
+	// +optional
+	Suspended bool `json:"suspended,omitempty"`
+
+	// onBattery and lowBattery are the power state observed at the last wave
+	// boundary.
+	// +optional
+	OnBattery bool `json:"onBattery,omitempty"`
+	// +optional
+	LowBattery bool `json:"lowBattery,omitempty"`
+
+	// runtimeSeconds is the shortest remaining runtime across the selected devices.
+	// Absent means no trustworthy figure was available, which is deliberately
+	// distinct from zero seconds remaining.
+	// +optional
+	RuntimeSeconds *int64 `json:"runtimeSeconds,omitempty"`
+
+	// runtimeTrusted records whether the devices affirmatively declared a dynamic
+	// runtime estimate (AE-6). False means the runtime figure did not drive timing.
+	// +optional
+	RuntimeTrusted bool `json:"runtimeTrusted,omitempty"`
+
+	// events are the state transitions recorded during this execution, in order.
+	// +optional
+	Events []string `json:"events,omitempty"`
 }
 
 // ShutdownExecutionPhase summarizes executor progress.
-// +kubebuilder:validation:Enum=Running;Completed;Aborted;Failed;Skipped
+// +kubebuilder:validation:Enum=Running;Completed;Aborted;Failed;Skipped;Suspended
 type ShutdownExecutionPhase string
 
 const (
@@ -365,6 +451,15 @@ const (
 	ShutdownExecutionPhaseAborted   ShutdownExecutionPhase = "Aborted"
 	ShutdownExecutionPhaseFailed    ShutdownExecutionPhase = "Failed"
 	ShutdownExecutionPhaseSkipped   ShutdownExecutionPhase = "Skipped"
+	// ShutdownExecutionPhaseSuspended is a flow that stopped descending because power
+	// recovered.
+	//
+	// Deliberately not "Halted": AE-6 reserves halt for abort, a deliberate stop that
+	// never resumes. This is the opposite -- the pointer ascends, nothing is restored,
+	// and a later degrade descends again from where it stopped, re-attempting already
+	// executed tiers as no-ops (AE-2). It is also not Completed, which means every
+	// wave ran, nor Aborted, which means something failed.
+	ShutdownExecutionPhaseSuspended ShutdownExecutionPhase = "Suspended"
 )
 
 // ShutdownGroup defines a shutdown subject and its graph relationships.
@@ -469,13 +564,12 @@ const (
 )
 
 // ShutdownStepType defines supported flow actions.
-// +kubebuilder:validation:Enum=Notify;Wait;Gate;CordonNodes;DrainNodes;ScaleWorkload;RunWorkflow;AgentShutdown
+// +kubebuilder:validation:Enum=Notify;Wait;CordonNodes;DrainNodes;ScaleWorkload;RunWorkflow;AgentShutdown
 type ShutdownStepType string
 
 const (
 	ShutdownStepNotify        ShutdownStepType = "Notify"
 	ShutdownStepWait          ShutdownStepType = "Wait"
-	ShutdownStepGate          ShutdownStepType = "Gate"
 	ShutdownStepCordonNodes   ShutdownStepType = "CordonNodes"
 	ShutdownStepDrainNodes    ShutdownStepType = "DrainNodes"
 	ShutdownStepScaleWorkload ShutdownStepType = "ScaleWorkload"
@@ -800,15 +894,20 @@ type PlannerDiagramExportsStatus struct {
 }
 
 // ShutdownFlowPhase summarizes flow compilation and evaluation.
-// +kubebuilder:validation:Enum=Pending;Compiled;Blocked;Running;Aborted;Completed;Error
+// +kubebuilder:validation:Enum=Pending;Compiled;Blocked;Running;Aborted;Suspended;Completed;Error
 type ShutdownFlowPhase string
 
 const (
-	ShutdownFlowPhasePending   ShutdownFlowPhase = "Pending"
-	ShutdownFlowPhaseCompiled  ShutdownFlowPhase = "Compiled"
-	ShutdownFlowPhaseBlocked   ShutdownFlowPhase = "Blocked"
-	ShutdownFlowPhaseRunning   ShutdownFlowPhase = "Running"
-	ShutdownFlowPhaseAborted   ShutdownFlowPhase = "Aborted"
+	ShutdownFlowPhasePending  ShutdownFlowPhase = "Pending"
+	ShutdownFlowPhaseCompiled ShutdownFlowPhase = "Compiled"
+	ShutdownFlowPhaseBlocked  ShutdownFlowPhase = "Blocked"
+	ShutdownFlowPhaseRunning  ShutdownFlowPhase = "Running"
+	ShutdownFlowPhaseAborted  ShutdownFlowPhase = "Aborted"
+	// ShutdownFlowPhaseSuspended is a flow that stopped descending because power came
+	// back. Everything it already did stays in place, the pointer stays where it
+	// stopped, and a later degrade resumes from there; restoring is a subscriber
+	// concern (AE-1).
+	ShutdownFlowPhaseSuspended ShutdownFlowPhase = "Suspended"
 	ShutdownFlowPhaseCompleted ShutdownFlowPhase = "Completed"
 	ShutdownFlowPhaseError     ShutdownFlowPhase = "Error"
 )

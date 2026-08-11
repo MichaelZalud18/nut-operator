@@ -102,6 +102,56 @@ A profile is expected to declare the canonical name in `variables` as well as th
 support is derived from declared variables (CR-2), so an alias whose target is undeclared resolves at
 runtime but contributes nothing to trigger validation, and raises a warning saying so.
 
+## Trigger Degrade Mechanics (OD-9)
+
+`PL-19` validates every declared trigger against the capability profiles of the devices it targets,
+and splits on coverage: a trigger no device can satisfy is rejected, one that some devices cannot
+satisfy degrades and warns. This section settles what `PL-19` left to the capability schema — which
+coarser class substitutes, and whether substitution is automatic.
+
+**The substitution table.** Coarseness is measured by what a device has to report, and `ups.status` is
+the floor: it is the one variable every NUT driver produces and the only one the unidentified-device
+profile declares.
+
+| Trigger | Needs | Fallback |
+| --- | --- | --- |
+| `RuntimeBelow` | `battery.runtime` | `LowBattery` |
+| `ChargeBelow` | `battery.charge` | `LowBattery` |
+| `OnBattery` | `ups.status` | none — already at the floor |
+| `LowBattery` | `ups.status` | none — already at the floor |
+| `TelemetryStale` | nothing | none — absence is the signal |
+
+Both threshold classes fall back to `LowBattery` rather than `OnBattery`. The two cost the same to
+evaluate, but they say different things: `RuntimeBelow: 300` and `ChargeBelow: 20` both mean *act as
+the battery nears exhaustion*, and `LowBattery` — the device raising `LB` on its own judgement — is
+the coarse form of that statement. `OnBattery` fires the instant mains is lost, which would turn
+every brief sag into a cluster shutdown. That is a different policy, not a coarser one.
+
+**Substitution is declared, never automatic.** A flow opts in with `spec.triggers[].fallbackType`.
+
+This follows `GP-5`: anything consumed while power is failing is authored input. Substitution changes
+*when* nodes begin powering off — a `RuntimeBelow` threshold is chosen against a runtime budget, while
+its fallback fires whenever the device says the battery is low — so every feasibility number in the
+compiled plan would otherwise be computed against a trigger that is not the one that fires. A plan
+reporting itself covered while acting at a different time is worse than one reporting the gap.
+
+The cost of requiring a declaration is that an operator has to know what to write, so compilation says
+it: the degrade diagnostic names the exact `fallbackType` that would cover the uncovered devices.
+Adopting one is a mechanical edit, not a research task performed under outage pressure.
+
+**What compilation reports.** `TriggerSubstituted` is informational, not a warning — the gap was
+declared and is covered, so the plan is not degraded. It is still reported, because those devices act
+on a different condition than the one written. A fallback that is not the coarser class
+(`TriggerFallbackNotCoarser`) or that the uncovered devices also cannot satisfy
+(`TriggerFallbackUnsatisfiable`) is rejected rather than ignored: a fallback that covers nothing reads
+as coverage and provides none.
+
+**At evaluation time** the fallback applies per device, keyed on the telemetry value actually being
+absent rather than on the profile. A profile describes a model; the evaluator has the device in front
+of it, and a driver that declares `battery.runtime` and then reports nothing is exactly the case this
+exists for. A *missing threshold* on the trigger itself never substitutes — that is an authoring
+mistake, and falling back would hide a broken flow behind a coarser trigger that happens to fire.
+
 ## Influence on `upsd` Configuration
 
 *Components: Capability Profiles, NUT Server / upsd.*

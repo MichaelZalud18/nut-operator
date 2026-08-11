@@ -143,6 +143,7 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 	for _, trigger := range obj.Spec.Triggers {
 		inputs.Triggers = append(inputs.Triggers, planner.Trigger{
 			Type:                string(trigger.Type),
+			FallbackType:        trigger.FallbackType.Value(),
 			UPSDevices:          objectReferenceNames(trigger.UPSDeviceRefs),
 			PowerDomains:        append([]string(nil), trigger.PowerDomains...),
 			For:                 PlannerDuration(trigger.For),

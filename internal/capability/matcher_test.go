@@ -382,3 +382,102 @@ func TestValidateProfileAliasesWarnsOnUndeclaredTarget(t *testing.T) {
 		t.Fatalf("expected an AliasTargetNotDeclared warning, got %#v", diagnostics)
 	}
 }
+
+func TestCoarserTriggerForFallbackTable(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		trigger  TriggerType
+		expected TriggerType
+		exists   bool
+	}{
+		// Both threshold classes fall back to LowBattery, not OnBattery: they mean "act as the
+		// battery nears exhaustion", and OnBattery means "act the moment mains is lost".
+		"runtime falls back to low battery": {TriggerRuntimeBelow, TriggerLowBattery, true},
+		"charge falls back to low battery":  {TriggerChargeBelow, TriggerLowBattery, true},
+		// Already at the ups.status floor -- nothing coarser exists.
+		"low battery has no coarser class": {TriggerLowBattery, "", false},
+		"on battery has no coarser class":  {TriggerOnBattery, "", false},
+		// Absence is the signal; it needs no telemetry and so can never be degraded.
+		"telemetry stale never degrades": {TriggerTelemetryStale, "", false},
+		"unknown class has no fallback":  {TriggerType("Nonsense"), "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, exists := CoarserTriggerForFallback(testCase.trigger)
+			if exists != testCase.exists || got != testCase.expected {
+				t.Fatalf("CoarserTriggerForFallback(%q) = (%q, %v), want (%q, %v)",
+					testCase.trigger, got, exists, testCase.expected, testCase.exists)
+			}
+		})
+	}
+}
+
+// "Coarser" has to mean something checkable, and variable count is not it -- RuntimeBelow and
+// LowBattery each need exactly one. The property that matters is reachability: a fallback exists to
+// cover devices that report only what every device reports, so it must be satisfiable by the
+// unidentified-device floor while the class it replaces is not. A fallback failing this would be
+// offered to devices it could never help.
+func TestEveryFallbackIsSatisfiableByTheFloorProfile(t *testing.T) {
+	floor := []string{"ups.status"}
+	for _, trigger := range []TriggerType{
+		TriggerOnBattery, TriggerLowBattery, TriggerRuntimeBelow, TriggerChargeBelow, TriggerTelemetryStale,
+	} {
+		fallback, exists := CoarserTriggerForFallback(trigger)
+		if !exists {
+			continue
+		}
+		if !satisfiesTrigger(floor, fallback) {
+			t.Fatalf("fallback %q for %q is not satisfiable by a ups.status-only device", fallback, trigger)
+		}
+		if satisfiesTrigger(floor, trigger) {
+			t.Fatalf("%q is already satisfiable at the floor, so it should not have a fallback", trigger)
+		}
+	}
+}
+
+// AE-6: adaptation is only safe on a device whose firmware recomputes runtime against present load.
+func TestSupportsTimingAdaptationRequiresAnAffirmativeDynamicDeclaration(t *testing.T) {
+	withRuntime := []string{"battery.runtime", "ups.status"}
+
+	for name, testCase := range map[string]struct {
+		result   MatchResult
+		expected bool
+	}{
+		"dynamic firmware reporting runtime": {
+			MatchResult{TelemetryVariables: withRuntime, RuntimeEstimate: RuntimeEstimateDynamic}, true},
+		// A fixed estimate would drive adaptation from a number that never moves.
+		"static firmware": {
+			MatchResult{TelemetryVariables: withRuntime, RuntimeEstimate: RuntimeEstimateStatic}, false},
+		// Unverified is not a Dynamic claim. Assuming the good case here would turn an unknown into
+		// a silent mis-adaptation during an outage.
+		"undeclared estimate": {
+			MatchResult{TelemetryVariables: withRuntime}, false},
+		// Declaring Dynamic means nothing if the device never reports the variable.
+		"dynamic but no runtime variable": {
+			MatchResult{TelemetryVariables: []string{"ups.status"}, RuntimeEstimate: RuntimeEstimateDynamic}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := testCase.result.SupportsTimingAdaptation(); got != testCase.expected {
+				t.Fatalf("SupportsTimingAdaptation() = %v, want %v", got, testCase.expected)
+			}
+		})
+	}
+}
+
+func TestMatchCarriesTheRuntimeEstimateDeclaration(t *testing.T) {
+	profiles := []Profile{
+		{ID: "floor", Version: "1.0.0", Selector: ProfileSelector{Universal: true}},
+		{
+			ID: "product", Version: "1.0.0",
+			Selector:           ProfileSelector{Model: "TOWER"},
+			TelemetryVariables: []string{"battery.runtime", "ups.status"},
+			RuntimeEstimate:    RuntimeEstimateStatic,
+		},
+	}
+
+	result, _, err := Match(Device{ID: "ups-1", Model: "TOWER"}, profiles)
+	if err != nil {
+		t.Fatalf("Match: %v", err)
+	}
+	if result.RuntimeEstimate != RuntimeEstimateStatic {
+		t.Fatalf("runtime estimate = %q, want Static", result.RuntimeEstimate)
+	}
+}

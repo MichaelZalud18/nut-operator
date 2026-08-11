@@ -106,7 +106,31 @@ type UPSCapabilityTelemetrySpec struct {
 	// validating against it.
 	// +optional
 	Aliases map[string]string `json:"aliases,omitempty"`
+
+	// runtimeEstimate declares whether the device's firmware recomputes battery.runtime against
+	// present load, or reports a fixed estimate that does not respond to it (AE-6).
+	//
+	// The distinction matters because a static estimate is a constant wearing a projection's name.
+	// Anything that reasons forward from runtime -- advisory feasibility today, timing adaptation
+	// once it exists -- is reading a number that will not move as the cluster sheds load.
+	//
+	// Unset means unverified, which is deliberately not the same as Static. It leaves today's
+	// behavior unchanged rather than downgrading every existing profile, while still withholding
+	// the affirmative Dynamic claim that adaptation requires.
+	// +kubebuilder:validation:Enum=Dynamic;Static
+	// +optional
+	RuntimeEstimate UPSRuntimeEstimate `json:"runtimeEstimate,omitempty"`
 }
+
+// UPSRuntimeEstimate describes how a device's firmware produces battery.runtime.
+type UPSRuntimeEstimate string
+
+const (
+	// UPSRuntimeEstimateDynamic means the firmware recomputes runtime against present load.
+	UPSRuntimeEstimateDynamic UPSRuntimeEstimate = "Dynamic"
+	// UPSRuntimeEstimateStatic means the firmware reports a fixed estimate that ignores load.
+	UPSRuntimeEstimateStatic UPSRuntimeEstimate = "Static"
+)
 
 // UPSCapabilityActuationSpec declares UPS control behaviors.
 type UPSCapabilityActuationSpec struct {

@@ -42,6 +42,20 @@ ASH ?= $(shell command -v ash 2>/dev/null || echo $(HOME)/.local/bin/ash)
 ASH_MODE ?= local
 ASH_OUTPUT_DIR ?= /tmp/nut-operator-ash-output
 ASH_OUTPUT_FORMATS ?= aggregated,markdown,sarif,flat-json,html,text
+
+# Scanners excluded by decision, so the summary reads SKIPPED instead of MISSING. The distinction is
+# the whole point: MISSING means coverage was wanted and could not run, which is a gap worth
+# chasing. SKIPPED means the scanner was assessed and has nothing to contribute here. Leaving these
+# MISSING taught everyone to read an incomplete scan as normal.
+#
+#   cfn-nag  - no CloudFormation in this repository; the deployable surface is Kustomize and images.
+#   cdk-nag  - no AWS CDK app to synthesize.
+#   opengrep - a semgrep fork, and semgrep already runs in this same scan over the same source.
+#
+# grype and syft are deliberately NOT here. grype is the only dependency-vulnerability coverage in
+# the pipeline (there is no govulncheck), so it is installed rather than excluded.
+ASH_EXCLUDED_SCANNERS ?= cfn-nag cdk-nag opengrep
+ASH_EXCLUDE_FLAGS = $(foreach scanner,$(ASH_EXCLUDED_SCANNERS),--exclude-scanners $(scanner))
 UV_CACHE_DIR ?= /tmp/nut-operator-ash-uv-cache
 UV_TOOL_DIR ?= /tmp/nut-operator-ash-uv-tools
 export UV_CACHE_DIR
@@ -141,8 +155,8 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
 .PHONY: security-scan
-security-scan: ## Run AWS Labs ASH security scan locally.
-	"$(ASH)" --mode "$(ASH_MODE)" --source-dir "$(CURDIR)" --output-dir "$(ASH_OUTPUT_DIR)" --output-formats "$(ASH_OUTPUT_FORMATS)" --no-progress
+security-scan: grype syft ## Run AWS Labs ASH security scan locally.
+	PATH="$(LOCALBIN):$$PATH" "$(ASH)" --mode "$(ASH_MODE)" --source-dir "$(CURDIR)" --output-dir "$(ASH_OUTPUT_DIR)" --output-formats "$(ASH_OUTPUT_FORMATS)" $(ASH_EXCLUDE_FLAGS) --no-progress
 
 ##@ Build
 
@@ -364,6 +378,8 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+GRYPE ?= $(LOCALBIN)/grype
+SYFT ?= $(LOCALBIN)/syft
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
@@ -380,6 +396,29 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.12.2
+
+# ASH runs grype and syft when they are on PATH and reports MISSING when they are not. Versions are
+# given without a leading v because Anchore's release archives are named that way.
+# grype must stay reasonably current: its vulnerability database has a schema version, and an old
+# binary fails to hydrate a freshly published database rather than falling back. 0.92.2 could not
+# open the current one at all.
+GRYPE_VERSION ?= 0.116.1
+SYFT_VERSION ?= 1.50.0
+
+# SHA256 digests of the Anchore release archives, from each release's published checksums.txt.
+# Bumping a version above means replacing its four lines here; anchore-install-tool fails loudly
+# rather than downloading an archive it has no digest for.
+define ANCHORE_CHECKSUMS
+e5ff3adac317511876de7863598587a7dbab0c47c8e150368b7df06909c11f4e  grype_0.116.1_darwin_amd64.tar.gz
+f493f169cbaae48bade169532b20235fc16653d2a044a5bc6fe6f69a3923f975  grype_0.116.1_darwin_arm64.tar.gz
+0122df7b655981abe547ad3d2190d65551dac6a2bfc80b4dc2a989b5d0587458  grype_0.116.1_linux_amd64.tar.gz
+a8d7504a149629324eb5f4ce3dc25dfd211bbfe047e64ee2bf7844b466c3d84d  grype_0.116.1_linux_arm64.tar.gz
+d11a8c7bc27114853bd7c1e1b2f3be3ddda3a1de17aee585329f04c369341c75  syft_1.50.0_darwin_amd64.tar.gz
+e32fdb9d47823fa633748a1efca2528fd77c37469ea93c9e40ab835da44e4cce  syft_1.50.0_darwin_arm64.tar.gz
+bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788  syft_1.50.0_linux_amd64.tar.gz
+887c57cbcc2d0e8c5c110a4571a3fc7150058b24d74f993ee4663516e5c8ce86  syft_1.50.0_linux_arm64.tar.gz
+endef
+export ANCHORE_CHECKSUMS
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
@@ -403,6 +442,16 @@ envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
+.PHONY: grype
+grype: $(GRYPE) ## Download grype locally if necessary (ASH dependency-vulnerability scanner).
+$(GRYPE): $(LOCALBIN)
+	$(call anchore-install-tool,$(GRYPE),grype,$(GRYPE_VERSION))
+
+.PHONY: syft
+syft: $(SYFT) ## Download syft locally if necessary (ASH SBOM scanner).
+$(SYFT): $(LOCALBIN)
+	$(call anchore-install-tool,$(SYFT),syft,$(SYFT_VERSION))
+
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
@@ -425,6 +474,38 @@ echo "Downloading $${package}" ;\
 rm -f "$(1)" ;\
 GOBIN="$(LOCALBIN)" go install $${package} ;\
 mv "$(LOCALBIN)/$$(basename "$(1)")" "$(1)-$(3)" ;\
+} ;\
+ln -sf "$$(realpath "$(1)-$(3)")" "$(1)"
+endef
+
+# anchore-install-tool downloads a pinned Anchore release archive and verifies its SHA256 before
+# unpacking it.
+#
+# These do not go through go-install-tool because grype's go.mod carries replace directives, so
+# `go install` refuses it outright. Fetching the release archive is the supported path -- but the
+# upstream instructions pipe a remote script into a shell, which is an unpinned remote execution on
+# every run. Pinning the version and verifying a recorded digest is the same discipline the NUT
+# operand images already use for their source tarball.
+#
+# $1 - target path, $2 - tool name, $3 - version without a leading v
+define anchore-install-tool
+@[ -f "$(1)-$(3)" ] && [ "$$(readlink -- "$(1)" 2>/dev/null)" = "$(1)-$(3)" ] || { \
+set -e; \
+os=$$(go env GOOS) ; arch=$$(go env GOARCH) ;\
+archive="$(2)_$(3)_$${os}_$${arch}.tar.gz" ;\
+expected=$$(printf '%s\n' "$${ANCHORE_CHECKSUMS}" | awk -v a="$${archive}" '$$2 == a {print $$1}') ;\
+[ -n "$${expected}" ] || { echo "No recorded checksum for $${archive}. Add one to ANCHORE_CHECKSUMS." >&2; exit 1; } ;\
+tmp="$(LOCALBIN)/.$(2)-$(3).download" ;\
+rm -rf "$${tmp}" ; mkdir -p "$${tmp}" ;\
+echo "Downloading $${archive}" ;\
+curl -sSfL -o "$${tmp}/$${archive}" "https://github.com/anchore/$(2)/releases/download/v$(3)/$${archive}" ;\
+actual=$$(sha256sum "$${tmp}/$${archive}" | cut -d' ' -f1) ;\
+[ "$${actual}" = "$${expected}" ] || { echo "Checksum mismatch for $${archive}: got $${actual}, want $${expected}" >&2; rm -rf "$${tmp}"; exit 1; } ;\
+tar -xzf "$${tmp}/$${archive}" -C "$${tmp}" "$(2)" ;\
+rm -f "$(1)" ;\
+mv "$${tmp}/$(2)" "$(1)-$(3)" ;\
+chmod 0755 "$(1)-$(3)" ;\
+rm -rf "$${tmp}" ;\
 } ;\
 ln -sf "$$(realpath "$(1)-$(3)")" "$(1)"
 endef

@@ -139,6 +139,43 @@ var (
 		Name:      "spool_journal_bytes",
 		Help:      "Size in bytes of the shutdown-time audit spool journal at the last spool write.",
 	})
+
+	// ShutdownFlowTierInversions is how many nodes a flow is currently withholding from power-off
+	// because a group scheduled to keep working runs on them (OD-18).
+	//
+	// A gauge rather than a counter, and published every compile including when it is zero, because
+	// inversion is a condition that develops over time as workloads reschedule. A compile-time
+	// diagnostic is read once by whoever ran it; this is what makes the condition watchable between
+	// compiles, which is when it actually appears.
+	ShutdownFlowTierInversions = promauto.With(metrics.Registry).NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "shutdownflow",
+		Name:      "tier_inversions",
+		Help:      "Nodes currently withheld from power-off because a lower-tier group runs on them.",
+	}, []string{"shutdownflow"})
+
+	// CertificateNotAfterTimestampSeconds is the expiry of a mounted serving certificate, as a Unix
+	// timestamp. Alert on it with `... - time() < <lead time>`; a timestamp rather than a remaining
+	// duration so the value does not have to be re-published to stay accurate.
+	//
+	// This is the warning the no-cert-manager install path had no way to give: rotation there is a
+	// deliberate hack/webhook-cert.sh re-run, so nothing renews the certificate on its own.
+	CertificateNotAfterTimestampSeconds = promauto.With(metrics.Registry).NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "certificate",
+		Name:      "not_after_timestamp_seconds",
+		Help:      "Expiry of a mounted serving certificate, as a Unix timestamp.",
+	}, []string{"certificate"})
+
+	// CertificateReadErrorsTotal counts failures to read or parse a mounted serving certificate. The
+	// gauge above is deleted on failure rather than left stale, so this counter and the gauge's
+	// absence are the two signals that the expiry is currently unknown.
+	CertificateReadErrorsTotal = promauto.With(metrics.Registry).NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "certificate",
+		Name:      "read_errors_total",
+		Help:      "Total failures to read or parse a mounted serving certificate.",
+	}, []string{"certificate"})
 )
 
 // BoolToFloat renders a boolean as a Prometheus gauge value (1 for true, 0 for false).

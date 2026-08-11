@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -26,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/capability"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 )
@@ -160,6 +162,40 @@ func validateShutdownFlowMode(path *field.Path, mode powerv1alpha1.ShutdownFlowM
 	}
 }
 
+// validateTriggerFallbackType rejects a declared OD-9 fallback that is not a
+// strictly coarser class for the trigger it is attached to.
+//
+// Caught here rather than only at compile time because the mistake is a static
+// property of the spec: RuntimeBelow can only ever fall back to LowBattery, and
+// no cluster state changes that. Admission also happens to be the only layer that
+// sees it before it is stored -- a rejected compile leaves the flow in the
+// cluster looking configured.
+func validateTriggerFallbackType(path *field.Path, trigger powerv1alpha1.ShutdownTrigger) field.ErrorList {
+	if trigger.FallbackType == nil {
+		return nil
+	}
+	declared := *trigger.FallbackType
+	if declared == "" {
+		return field.ErrorList{field.Required(path, "must name a trigger type when set")}
+	}
+	if declared == trigger.Type {
+		return field.ErrorList{field.Invalid(path, declared,
+			"must differ from the trigger's own type; a fallback to the same class covers nothing")}
+	}
+
+	coarser, ok := capability.CoarserTriggerForFallback(capability.TriggerType(trigger.Type))
+	if !ok {
+		return field.ErrorList{field.Invalid(path, declared, fmt.Sprintf(
+			"%q already needs only the telemetry every device reports, so it has no coarser fallback",
+			trigger.Type))}
+	}
+	if declared != powerv1alpha1.ShutdownTriggerType(coarser) {
+		return field.ErrorList{field.NotSupported(path, declared,
+			[]string{string(coarser)})}
+	}
+	return nil
+}
+
 func validateShutdownTriggers(path *field.Path, triggers []powerv1alpha1.ShutdownTrigger) field.ErrorList {
 	var errs field.ErrorList
 	if len(triggers) == 0 {
@@ -188,6 +224,7 @@ func validateShutdownTriggers(path *field.Path, triggers []powerv1alpha1.Shutdow
 		if trigger.ChargeBelowPercent != nil && (*trigger.ChargeBelowPercent < 0 || *trigger.ChargeBelowPercent > 100) {
 			errs = append(errs, field.Invalid(triggerPath.Child("chargeBelowPercent"), *trigger.ChargeBelowPercent, "must be between 0 and 100"))
 		}
+		errs = append(errs, validateTriggerFallbackType(triggerPath.Child("fallbackType"), trigger)...)
 		errs = append(errs, validatePositiveDuration(triggerPath.Child("for"), trigger.For)...)
 		for j, ref := range trigger.UPSDeviceRefs {
 			errs = append(errs, validateObjectNameReference(triggerPath.Child("upsDeviceRefs").Index(j), ref)...)
@@ -261,7 +298,6 @@ func validateShutdownStepType(path *field.Path, stepType powerv1alpha1.ShutdownS
 	switch stepType {
 	case powerv1alpha1.ShutdownStepNotify,
 		powerv1alpha1.ShutdownStepWait,
-		powerv1alpha1.ShutdownStepGate,
 		powerv1alpha1.ShutdownStepCordonNodes,
 		powerv1alpha1.ShutdownStepDrainNodes,
 		powerv1alpha1.ShutdownStepScaleWorkload,
@@ -344,7 +380,6 @@ func supportedShutdownStepTypes() []string {
 	return []string{
 		string(powerv1alpha1.ShutdownStepNotify),
 		string(powerv1alpha1.ShutdownStepWait),
-		string(powerv1alpha1.ShutdownStepGate),
 		string(powerv1alpha1.ShutdownStepCordonNodes),
 		string(powerv1alpha1.ShutdownStepDrainNodes),
 		string(powerv1alpha1.ShutdownStepScaleWorkload),

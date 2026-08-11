@@ -144,6 +144,22 @@ spec:
                       one way, so making a duplicate key unrepresentable is better than
                       validating against it.
                     type: object
+                  runtimeEstimate:
+                    description: |-
+                      runtimeEstimate declares whether the device's firmware recomputes battery.runtime against
+                      present load, or reports a fixed estimate that does not respond to it (AE-6).
+
+                      The distinction matters because a static estimate is a constant wearing a projection's name.
+                      Anything that reasons forward from runtime -- advisory feasibility today, timing adaptation
+                      once it exists -- is reading a number that will not move as the cluster sheds load.
+
+                      Unset means unverified, which is deliberately not the same as Static. It leaves today's
+                      behavior unchanged rather than downgrading every existing profile, while still withholding
+                      the affirmative Dynamic claim that adaptation requires.
+                    enum:
+                    - Dynamic
+                    - Static
+                    type: string
                   variables:
                     description: variables are authoritative NUT variable names exposed
                       by matching devices.

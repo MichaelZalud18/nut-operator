@@ -37,6 +37,10 @@ const (
 
 	DiagnosticWarning = "Warning"
 	DiagnosticError   = "Error"
+	// DiagnosticInfo records something worth seeing in the evaluation trail that is not a problem.
+	// A declared fallback firing is the case it exists for: expected behavior, but the device is
+	// acting on a different condition than the trigger names, which belongs in the record.
+	DiagnosticInfo = "Info"
 )
 
 // Inputs are the complete trigger-evaluation state for one decision tick.
@@ -49,8 +53,11 @@ type Inputs struct {
 
 // Trigger is the evaluator-side trigger definition.
 type Trigger struct {
-	ID                  string
-	Type                string
+	ID   string
+	Type string
+	// FallbackType is the coarser class evaluated for a device that does not report the telemetry
+	// Type needs (OD-9). Empty means no substitution: such a device simply does not match.
+	FallbackType        string
 	UPSDevices          []string
 	PowerDomains        []string
 	For                 time.Duration
@@ -208,38 +215,102 @@ func evaluateTrigger(observedAt time.Time, trigger Trigger, states []UPSState, h
 	return decision, nextHolds, diagnostics
 }
 
+// matchOutcome distinguishes "this device says no" from "this device cannot
+// answer the question", which is the distinction OD-9 substitution turns on.
+type matchOutcome int
+
+const (
+	outcomeConditionFalse matchOutcome = iota
+	outcomeMatched
+	outcomeTelemetryUnavailable
+)
+
+// triggerMatchesState evaluates one trigger against one device, substituting the
+// declared fallback when the device cannot report the telemetry the primary class
+// needs (OD-9).
+//
+// Substitution keys off the value actually being absent at this tick rather than
+// off the capability profile. A profile is a declaration about a model; this is
+// the device in front of us, and a driver that declares battery.runtime and then
+// reports nothing is exactly the case the fallback exists for.
 func triggerMatchesState(trigger Trigger, state UPSState) (bool, []Diagnostic) {
-	switch trigger.Type {
+	outcome, diagnostics := evaluateTriggerClass(trigger.Type, trigger, state)
+	if outcome != outcomeTelemetryUnavailable || trigger.FallbackType == "" {
+		return outcome == outcomeMatched, diagnostics
+	}
+
+	fallbackOutcome, fallbackDiagnostics := evaluateTriggerClass(trigger.FallbackType, trigger, state)
+	if fallbackOutcome == outcomeTelemetryUnavailable {
+		// The fallback cannot answer either. Report both gaps rather than substituting silently:
+		// compilation rejects this combination, so seeing it at runtime means the plan was compiled
+		// against a different capability picture than the device now presents.
+		return false, append(diagnostics, fallbackDiagnostics...)
+	}
+
+	// The primary's missing-telemetry warning is replaced, not added to. The absence is expected and
+	// handled here, and re-reporting it every tick would train operators to ignore the one diagnostic
+	// that means a device went dark unexpectedly.
+	substitution := Diagnostic{
+		Severity: DiagnosticInfo,
+		Reason:   "TriggerFallbackApplied",
+		Subject:  trigger.ID,
+		Message: fmt.Sprintf("trigger %q evaluated %q for %q, which does not report the telemetry %q needs",
+			trigger.ID, trigger.FallbackType, state.UPSDevice, trigger.Type),
+	}
+	return fallbackOutcome == outcomeMatched, append(fallbackDiagnostics, substitution)
+}
+
+// evaluateTriggerClass evaluates one trigger class against one device's state.
+//
+// triggerType is passed separately from trigger so the fallback class can be run
+// against the same trigger definition and device.
+func evaluateTriggerClass(triggerType string, trigger Trigger, state UPSState) (matchOutcome, []Diagnostic) {
+	switch triggerType {
 	case TypeOnBattery:
-		return state.OnBattery || state.Phase == telemetry.PhaseOnBattery || state.Phase == telemetry.PhaseLowBattery, nil
+		return boolOutcome(state.OnBattery ||
+			state.Phase == telemetry.PhaseOnBattery || state.Phase == telemetry.PhaseLowBattery), nil
 	case TypeLowBattery:
-		return state.LowBattery || state.Phase == telemetry.PhaseLowBattery, nil
+		return boolOutcome(state.LowBattery || state.Phase == telemetry.PhaseLowBattery), nil
 	case TypeRuntimeBelow:
+		// A missing threshold is a misconfigured flow, not a device that cannot answer, so it never
+		// substitutes -- falling back here would paper over an authoring mistake.
 		if trigger.RuntimeBelowSeconds == nil {
-			return false, []Diagnostic{missingTriggerValue(trigger.ID, "RuntimeThresholdMissing", "runtimeBelowSeconds")}
+			return outcomeConditionFalse,
+				[]Diagnostic{missingTriggerValue(trigger.ID, "RuntimeThresholdMissing", "runtimeBelowSeconds")}
 		}
 		if state.RuntimeSeconds == nil {
-			return false, []Diagnostic{missingTelemetryValue(trigger.ID, state.UPSDevice, "RuntimeTelemetryMissing", "runtime remaining")}
+			return outcomeTelemetryUnavailable,
+				[]Diagnostic{missingTelemetryValue(trigger.ID, state.UPSDevice, "RuntimeTelemetryMissing", "runtime remaining")}
 		}
-		return *state.RuntimeSeconds <= *trigger.RuntimeBelowSeconds, nil
+		return boolOutcome(*state.RuntimeSeconds <= *trigger.RuntimeBelowSeconds), nil
 	case TypeChargeBelow:
 		if trigger.ChargeBelowPercent == nil {
-			return false, []Diagnostic{missingTriggerValue(trigger.ID, "ChargeThresholdMissing", "chargeBelowPercent")}
+			return outcomeConditionFalse,
+				[]Diagnostic{missingTriggerValue(trigger.ID, "ChargeThresholdMissing", "chargeBelowPercent")}
 		}
 		if state.ChargePercent == nil {
-			return false, []Diagnostic{missingTelemetryValue(trigger.ID, state.UPSDevice, "ChargeTelemetryMissing", "battery charge")}
+			return outcomeTelemetryUnavailable,
+				[]Diagnostic{missingTelemetryValue(trigger.ID, state.UPSDevice, "ChargeTelemetryMissing", "battery charge")}
 		}
-		return *state.ChargePercent <= *trigger.ChargeBelowPercent, nil
+		return boolOutcome(*state.ChargePercent <= *trigger.ChargeBelowPercent), nil
 	case TypeTelemetryStale:
-		return state.Stale || state.Phase == telemetry.PhaseStale || state.Phase == telemetry.PhaseUnavailable, nil
+		return boolOutcome(state.Stale ||
+			state.Phase == telemetry.PhaseStale || state.Phase == telemetry.PhaseUnavailable), nil
 	default:
-		return false, []Diagnostic{{
+		return outcomeConditionFalse, []Diagnostic{{
 			Severity: DiagnosticError,
 			Reason:   "TriggerTypeUnsupported",
 			Subject:  trigger.ID,
-			Message:  fmt.Sprintf("trigger %q has unsupported type %q", trigger.ID, trigger.Type),
+			Message:  fmt.Sprintf("trigger %q has unsupported type %q", trigger.ID, triggerType),
 		}}
 	}
+}
+
+func boolOutcome(matched bool) matchOutcome {
+	if matched {
+		return outcomeMatched
+	}
+	return outcomeConditionFalse
 }
 
 func selectUPSStates(trigger Trigger, states []UPSState) []UPSState {

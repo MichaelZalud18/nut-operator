@@ -4564,7 +4564,6 @@ spec:
                       enum:
                       - Notify
                       - Wait
-                      - Gate
                       - CordonNodes
                       - DrainNodes
                       - ScaleWorkload
@@ -5109,7 +5108,6 @@ spec:
                       enum:
                       - Notify
                       - Wait
-                      - Gate
                       - CordonNodes
                       - DrainNodes
                       - ScaleWorkload
@@ -5133,6 +5131,28 @@ spec:
                       maximum: 100
                       minimum: 0
                       type: integer
+                    fallbackType:
+                      description: |-
+                        fallbackType is the coarser trigger class to evaluate for devices that cannot report the
+                        telemetry this trigger needs (OD-9).
+
+                        Substitution is declared rather than automatic. It changes when a shutdown starts -- a
+                        RuntimeBelow trigger acts on a threshold the author chose against a runtime budget, while its
+                        LowBattery fallback acts whenever the device itself says the battery is low -- and per GP-5
+                        anything that alters failure-path behavior is declared ahead of time, not derived during the
+                        outage. Compilation names the fallback that would cover an uncovered device, so adopting one
+                        is a mechanical edit rather than a research task.
+
+                        Only a strictly coarser class is accepted: RuntimeBelow and ChargeBelow may fall back to
+                        LowBattery. OnBattery and LowBattery already need only ups.status and have nothing coarser to
+                        fall back to; TelemetryStale needs no telemetry at all.
+                      enum:
+                      - OnBattery
+                      - LowBattery
+                      - RuntimeBelow
+                      - ChargeBelow
+                      - TelemetryStale
+                      type: string
                     for:
                       description: for requires the trigger condition to hold for
                         this duration.
@@ -5260,7 +5280,6 @@ spec:
                       enum:
                       - Notify
                       - Wait
-                      - Gate
                       - CordonNodes
                       - DrainNodes
                       - ScaleWorkload
@@ -5403,6 +5422,67 @@ spec:
                       were recorded.
                     format: int32
                     type: integer
+                  adaptive:
+                    description: adaptive is the tier pointer and timing mode this
+                      execution ended on.
+                    properties:
+                      deepestTier:
+                        description: |-
+                          deepestTier is the lowest-numbered tier this flow ever reached. It differs from
+                          tier after power recovered and the pointer ascended, and it is what makes a
+                          re-descent recognizable as re-execution rather than new work.
+                        format: int32
+                        type: integer
+                      events:
+                        description: events are the state transitions recorded during
+                          this execution, in order.
+                        items:
+                          type: string
+                        type: array
+                      lowBattery:
+                        type: boolean
+                      onBattery:
+                        description: |-
+                          onBattery and lowBattery are the power state observed at the last wave
+                          boundary.
+                        type: boolean
+                      pointerStarted:
+                        description: |-
+                          pointerStarted distinguishes a flow waiting at a tier from one that has
+                          executed it.
+                        type: boolean
+                      runtimeSeconds:
+                        description: |-
+                          runtimeSeconds is the shortest remaining runtime across the selected devices.
+                          Absent means no trustworthy figure was available, which is deliberately
+                          distinct from zero seconds remaining.
+                        format: int64
+                        type: integer
+                      runtimeTrusted:
+                        description: |-
+                          runtimeTrusted records whether the devices affirmatively declared a dynamic
+                          runtime estimate (AE-6). False means the runtime figure did not drive timing.
+                        type: boolean
+                      suspended:
+                        description: |-
+                          suspended records that the flow stopped descending because power recovered.
+                          Nothing already shut down was restored, and the pointer stayed where it
+                          stopped, so a later degrade resumes from that depth.
+                        type: boolean
+                      tier:
+                        description: tier is the shutdown tier the pointer currently
+                          occupies.
+                        format: int32
+                        type: integer
+                      timingMode:
+                        description: 'timingMode is the timing mode in force: Relaxed,
+                          Nominal, or Urgent.'
+                        enum:
+                        - Relaxed
+                        - Nominal
+                        - Urgent
+                        type: string
+                    type: object
                   completedAt:
                     description: completedAt records when execution evidence recording
                       finished.
@@ -5446,6 +5526,7 @@ spec:
                     - Aborted
                     - Failed
                     - Skipped
+                    - Suspended
                     type: string
                   planConfigHash:
                     description: planConfigHash is the compiled plan hash executed.
@@ -5491,6 +5572,7 @@ spec:
                 - Blocked
                 - Running
                 - Aborted
+                - Suspended
                 - Completed
                 - Error
                 type: string
@@ -6212,6 +6294,22 @@ spec:
                       one way, so making a duplicate key unrepresentable is better than
                       validating against it.
                     type: object
+                  runtimeEstimate:
+                    description: |-
+                      runtimeEstimate declares whether the device's firmware recomputes battery.runtime against
+                      present load, or reports a fixed estimate that does not respond to it (AE-6).
+
+                      The distinction matters because a static estimate is a constant wearing a projection's name.
+                      Anything that reasons forward from runtime -- advisory feasibility today, timing adaptation
+                      once it exists -- is reading a number that will not move as the cluster sheds load.
+
+                      Unset means unverified, which is deliberately not the same as Static. It leaves today's
+                      behavior unchanged rather than downgrading every existing profile, while still withholding
+                      the affirmative Dynamic claim that adaptation requires.
+                    enum:
+                    - Dynamic
+                    - Static
+                    type: string
                   variables:
                     description: variables are authoritative NUT variable names exposed
                       by matching devices.

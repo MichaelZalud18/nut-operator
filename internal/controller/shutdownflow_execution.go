@@ -33,12 +33,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
+	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
-func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context, writer audit.Writer, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
+func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context, writer audit.Writer, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, bundle resolver.StructuralBundle) error {
 	if writer == nil || flow == nil || evaluation == nil {
 		return nil
 	}
@@ -70,7 +72,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		return nil
 	}
 
-	input, err := r.shutdownExecutionInput(ctx, flow, observedAt, inputHash, configHash, evaluation, dedupeKey)
+	input, err := r.shutdownExecutionInput(ctx, flow, observedAt, inputHash, configHash, evaluation, dedupeKey, bundle)
 	if err != nil {
 		setExecutionReadyCondition(
 			&flow.Status.Conditions,
@@ -86,6 +88,14 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		Writer: writer,
 		Runner: r.ExecutorRunner,
 		Clock:  r.now,
+		// Re-read at each wave boundary rather than closing over the trigger-time
+		// snapshot: the whole reason to evaluate at boundaries is that power may have
+		// moved since the last one.
+		Observer: r.powerObserverForDevices(
+			evaluation.SelectedUPSDevices,
+			runtimeIsTrustedForFlow(bundle.CapabilityMatches, evaluation.SelectedUPSDevices),
+			input.Adaptive.Observation,
+		),
 	}.Execute(ctx, input)
 	executionMode := "Enforce"
 	if input.DryRun {
@@ -109,6 +119,12 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		ActionAttemptCount: int32(result.ActionAttempts),
 		NodeReleaseCount:   int32(result.NodeReleases),
 		Reason:             evaluation.Reason,
+		Adaptive:           adaptiveStatusFromResult(result.Adaptive),
+	}
+	if result.Phase == executorpkg.PhaseSuspended {
+		// A suspension is not a failure, so it keeps the executor's own reason rather than the
+		// trigger's: "PowerRecovered" is what an operator needs to see.
+		status.Reason = "PowerRecovered"
 	}
 	if err != nil {
 		status.Message = err.Error()
@@ -142,16 +158,24 @@ func applyLastExecutionPhase(flow *powerv1alpha1.ShutdownFlow) {
 	switch status.Phase {
 	case powerv1alpha1.ShutdownExecutionPhaseCompleted:
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseCompleted
+	case powerv1alpha1.ShutdownExecutionPhaseSuspended:
+		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseSuspended
 	case powerv1alpha1.ShutdownExecutionPhaseAborted, powerv1alpha1.ShutdownExecutionPhaseFailed:
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseAborted
 	}
 }
 
-func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, executionID string) (executorpkg.Input, error) {
+func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, executionID string, bundle resolver.StructuralBundle) (executorpkg.Input, error) {
 	waves := executorWavesFromFlow(flow.Status.CompiledWaves, flow.Status.CompiledSteps)
 	groups, err := r.executorGroupsFromFlow(ctx, flow)
 	if err != nil {
 		return executorpkg.Input{}, err
+	}
+	// Seeded from the trigger-time state so a flow with no Observer still runs against
+	// a real reading rather than an empty one, which would look like mains present.
+	observation := adaptive.PowerObservation{
+		OnBattery:      true,
+		RuntimeTrusted: runtimeIsTrustedForFlow(bundle.CapabilityMatches, evaluation.SelectedUPSDevices),
 	}
 	return executorpkg.Input{
 		ExecutionID:        executionID,
@@ -167,6 +191,7 @@ func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flo
 		SelectedUPSDevices: append([]string(nil), evaluation.SelectedUPSDevices...),
 		Waves:              waves,
 		Groups:             groups,
+		Adaptive:           adaptiveInputForFlow(flow, bundle, observation),
 	}, nil
 }
 
@@ -175,8 +200,15 @@ func executorWavesFromFlow(compiledWaves []powerv1alpha1.CompiledShutdownWave, c
 		waves := make([]executorpkg.Wave, 0, len(compiledWaves))
 		for _, wave := range compiledWaves {
 			waves = append(waves, executorpkg.Wave{
-				Index:  wave.Index,
-				Groups: append([]string(nil), wave.Groups...),
+				Index: wave.Index,
+				// Carries the tier the planner assigned so the pointer follows the compiled
+				// plan rather than counting waves, which would drift the moment a tier spans
+				// more than one wave.
+				ShutdownTier: wave.ShutdownTier,
+				// The plan's own statement of what this wave needs. Summed across the waves
+				// still to run, it is what the runtime gets measured against.
+				Duration: durationOrZero(wave.Duration),
+				Groups:   append([]string(nil), wave.Groups...),
 			})
 		}
 		return waves
@@ -211,6 +243,10 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 				Params:          copyActionParams(group.Params),
 				SelectedTargets: targets,
 				NodeReleases:    releases,
+				Timeout:         durationOrZero(group.Timeout),
+				// Groups carry no typed duration field, so a Wait group declares it as a
+				// parameter. Steps have their own typed field.
+				WaitDuration: waitDurationFromParams(group.Params),
 				Details: map[string]any{
 					"description": group.Description,
 				},
@@ -235,12 +271,42 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 			Params:          copyActionParams(step.Params),
 			SelectedTargets: targets,
 			NodeReleases:    releases,
+			Timeout:         durationOrZero(step.Timeout),
+			WaitDuration:    durationOrZero(step.Duration),
 			Details: map[string]any{
 				"description": step.Description,
 			},
 		})
 	}
 	return groups, nil
+}
+
+// durationOrZero unwraps an optional duration. Zero means no limit, which is not
+// the same as a limit of zero: an undeclared timeout leaves the action unbounded
+// rather than failing it instantly.
+func durationOrZero(duration *metav1.Duration) time.Duration {
+	if duration == nil {
+		return 0
+	}
+	return duration.Duration
+}
+
+// waitDurationFromParams reads a group's Wait duration.
+//
+// Groups carry only string parameters, so the value is parsed here and a
+// malformed one is treated as undeclared. Rejecting the flow over it would take a
+// cluster's shutdown offline for a typo in an advisory pause; leaving the wait at
+// zero skips the pause and runs everything else, which is the safer direction.
+func waitDurationFromParams(params map[string]string) time.Duration {
+	raw, present := params["duration"]
+	if !present {
+		return 0
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil || parsed < 0 {
+		return 0
+	}
+	return parsed
 }
 
 // blockedNodeNames indexes the nodes the compiled plan declined to power off.
@@ -630,8 +696,20 @@ func eligibleTriggerDecisionID(evaluation *powerv1alpha1.ShutdownTriggerEvaluati
 	return ""
 }
 
+// executionAlreadyRecorded reports whether this trigger episode has already been
+// executed to completion.
+//
+// A suspended execution deliberately does not count. It stopped because power came
+// back, with the pointer left partway down, and the whole point of leaving it there
+// is that a second dip descends again from that depth (AE-2). Treating a suspension
+// as "already executed" would make dedupe the thing that prevents re-descent --
+// during a dip-recover-dip outage, which is precisely the case the tier pointer
+// exists to handle.
 func executionAlreadyRecorded(status *powerv1alpha1.ShutdownExecutionStatus, dedupeKey string) bool {
 	if status == nil || dedupeKey == "" {
+		return false
+	}
+	if status.Phase == powerv1alpha1.ShutdownExecutionPhaseSuspended {
 		return false
 	}
 	return status.TriggerActive && status.DeduplicationKey == dedupeKey
@@ -694,6 +772,8 @@ func shutdownExecutionPhase(phase string, err error) powerv1alpha1.ShutdownExecu
 		return powerv1alpha1.ShutdownExecutionPhaseCompleted
 	case executorpkg.PhaseAborted:
 		return powerv1alpha1.ShutdownExecutionPhaseAborted
+	case executorpkg.PhaseSuspended:
+		return powerv1alpha1.ShutdownExecutionPhaseSuspended
 	case executorpkg.PhaseRunning:
 		return powerv1alpha1.ShutdownExecutionPhaseRunning
 	default:
