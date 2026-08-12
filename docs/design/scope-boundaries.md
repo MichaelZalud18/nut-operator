@@ -384,7 +384,7 @@ for defense in depth.
 
 | ID | Decision | Blocks |
 | --- | --- | --- |
-| OD-8r | Resolver behavior on malformed or missing model strings from the topology provider: reject, floor-match with warning, or configurable | Resolver design |
+| OD-8r | Resolver behavior on malformed or missing model strings from the topology provider: reject, fall back to the unidentified-device profile with a warning, or configurable | Resolver design |
 | OD-9 | Degrade mechanics for trigger-capability mismatch — folded into capability schema doc | Capability schema doc |
 | OD-10 | USB and serial UPS support: version target and isolation model | v2 scoping |
 | OD-19 | FSD usage: whether NUT's forced-shutdown broadcast becomes the final release signal or is deliberately declined in favor of the executor's signal file. Affects whether shutdown is observable through standard NUT tooling | Executor design |

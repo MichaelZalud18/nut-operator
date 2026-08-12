@@ -75,7 +75,8 @@ Closed: `F-25`, `F-26`, `RS-7`–`RS-10`, `PL-30`, `OD-22`, `OD-23`, `OD-25`, `O
 Owns: `internal/planner` (pure compile), `internal/executor` (wave execution/evidence),
 `internal/kubeactions` (action runner), and `internal/shutdownflow` plus the `ShutdownFlow`
 controller wiring that connects them. Design docs: `planner-requirements.md`,
-`executor-requirements.md`, `shutdown-flow.md`, `adaptive-execution-tier-pointer.md`.
+`executor-requirements.md`, `shutdown-flow.md`, `adaptive-execution-tier-pointer.md`,
+`settled-questions.md`.
 
 #### Built
 
@@ -98,7 +99,7 @@ in-process state resumes the persisted tier and timing mode instead of re-report
 new work.
 
 Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-30`, `OD-4`,
-`OD-11`, `OD-17`, `OD-18`, `SB-15`, `F-31`, `F-42`, `F-44`.
+`OD-11`, `OD-12`, `OD-17`, `OD-18`, `OD-29`, `SB-15`, `F-31`, `F-42`, `F-44`.
 
 #### Open Work
 
@@ -111,11 +112,21 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 - `OD-27` confirm the adaptive defaults against a real outage. The compression amount is measured, so
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).
-- `OD-29` decide whether suspending on power recovery should require the condition to hold. Ascent is
-  free, but suspension stops the remaining waves, so a brief flicker back to mains currently pauses a
-  shutdown that should continue.
+- Remove `SuspendOnRecovery` from the executor's recovery path. `OD-29` closed on `EX-27`: ascent is
+  bookkeeping, so a flicker must cost nothing — but the implemented suspension ends the run, which
+  costs the rest of the flow. A genuinely finished outage is already handled a level up, where the
+  trigger stops being eligible.
 - `OD-30` decide whether cadence is global or per-flow.
-- `OD-12` decide the infeasible-plan policy (reject/warn/truncate), then implement (`EX-3`).
+- Implement the `OD-12` warning surface (`EX-3`): publish plan estimate against runtime estimate, per
+  tier and in total, as a visible condition and Event rather than a compile rejection. Nothing is
+  blocked or truncated — the flow author holds the risk and is owed the numbers.
+- Build `EX-31` tier-overrun policy: `spec.tierOverrunPolicy` of `Wait` (default, current behavior),
+  `Overlap`, or `Preempt`, plus metrics recording which tier overran, by how much, and what the
+  policy did.
+- Build `EX-32` history-informed estimates. The audit tables already carry `started_at`/`completed_at`
+  per wave, group, and action attempt, and nothing reads them; feed observed durations back as a
+  resolved planner input so estimates reflect what past outages took, labelled as observed or
+  declared.
 - `OD-14` decide partial-domain outage plan scope, then wire domain membership into wave compilation
   (shared with Inventory System and Telemetry & Triggers).
 - Accept node-selector *requirements* for node targeting so a group can express a tier range.
@@ -174,10 +185,9 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
 
 #### Open Work
 
-- `F-45` derive the `MONITOR` power value and `MINSUPPLIES` from `feeds` edges instead of hardcoding
-  both to `1`, and reconcile them with the planner's pessimistic observation aggregation
-  ([nut-usage-audit.md](audits/nut-usage-audit.md)). Blocked on `OD-35`.
-- `OD-35` decide whether two `feeds` edges into one node mean redundancy or coincidence.
+- `F-45` expose the `MONITOR` power value and `MINSUPPLIES` so a host whose supplies are all fed by
+  one UPS can say so ([nut-usage-audit.md](audits/nut-usage-audit.md)). The hardcoded `1`/`1` is
+  correct for every topology currently modeled, so this is a limit, not a defect.
 
 ---
 

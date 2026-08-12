@@ -176,7 +176,7 @@ reported at, through user-configured thresholds on
 changing conditions; `Warning` additionally degrades the flows compiled from that snapshot per PL-34.
 An unconfigured cluster gets `Info` at one hour and `Warning` at six.
 
-There is deliberately no rejecting level. A ceiling would contradict IN-15 at the worst possible
+There is deliberately no rejecting level. An upper limit would contradict IN-15 at the worst possible
 moment — the outage is exactly when the provider is unreachable and the shutdown still has to be
 planned. What the rule actually protects against is silence, so escalation is the whole remedy: "last
 good snapshot" must not be able to quietly mean "eight months ago," but it must still be usable when

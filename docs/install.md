@@ -12,7 +12,7 @@ for the same objects. If you need to customize the install, use the Kustomize pa
 
 **Kubernetes.** Verified against 1.34 in CI (envtest and kind). The manifests use
 `apiextensions.k8s.io/v1`, `admissionregistration.k8s.io/v1`, `policy/v1`, and
-`networking.k8s.io/v1`, so 1.21 is the structural floor. No CEL validation rules are used. Older
+`networking.k8s.io/v1`, so 1.21 is the minimum supported version. No CEL validation rules are used. Older
 versions are untested.
 
 **A webhook serving certificate.** The operator serves admission webhooks, and admission is
@@ -302,7 +302,7 @@ and the operand wires it as follows:
 | `serverCertificateRef` | `CERTFILE` in `upsd.conf`. Point it at a `kubernetes.io/tls` Secret in the operand namespace; an init container concatenates `tls.crt` and `tls.key` into the single chain-then-key PEM NUT expects. |
 | `serverCARef` | `CERTPATH` in every monitoring agent's `upsmon.conf`, plus `CERTVERIFY 1` and `FORCESSL 1`. Without it agents encrypt but cannot authenticate `upsd`, and report a `NUTTLSDowngraded` condition. |
 | `verifyClientCertificates` | `CERTREQUEST 2` in `upsd.conf`. Off by default — see below. |
-| `disableWeakProtocols` | `DISABLE_WEAK_SSL true`, raising the floor from TLS 1.0 to TLS 1.2. On by default. |
+| `disableWeakProtocols` | `DISABLE_WEAK_SSL true`, raising the minimum from TLS 1.0 to TLS 1.2. On by default. |
 
 Two constraints are worth knowing before turning on `verifyClientCertificates`. NUT honors
 `CERTREQUEST` under OpenSSL only from 2.8.6 onward — on older `upsd` builds it is silently a no-op —

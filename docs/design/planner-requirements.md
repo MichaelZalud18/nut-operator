@@ -242,7 +242,7 @@ topology change did to ordering, and reproducible fixtures.
 **PL-29** · Plans carry their structural input hash. Staleness is detectable rather than assumed.
 
 **PL-30** · Recompile on spec generation change, on watch events against referenced structural
-inputs, and on a periodic floor.
+inputs, and on a periodic minimum interval.
 
 **PL-31** · Revalidate immediately before execution. If the structural input hash no longer matches
 at trigger time, the planner does **not** simply refuse.
@@ -426,7 +426,8 @@ validation failure or requires an explicit exemption marker, mirroring PL-44. Si
 excluded.
 
 **OD-8r · Provider key validation.** Resolver behavior when the topology provider supplies a
-malformed or missing model string: reject the device, floor-match with warning, or configurable.
+malformed or missing model string: reject the device, fall back to the unidentified-device profile
+with a warning, or configurable.
 
 **OD-15 · Probe history persistence is closed.** Profile drift detection writes "last verified
 against firmware X" and mismatch evidence to PostgreSQL capability profile verification records,

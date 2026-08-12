@@ -55,8 +55,8 @@ so resolution never fails for want of a profile — it degrades (PL-33).
 
 **RS-6 · Provider key validation (OD-8r).** Behavior on a malformed or missing model string from
 the topology provider is a policy decision, uniform across providers — not a NetBox special case.
-Until OD-8r resolves, the resolver treats it as floor-match with a warning condition, which is the
-conservative reading consistent with PL-33.
+Until OD-8r resolves, the resolver falls back to the unidentified-device profile and raises a
+warning condition, which is the conservative reading consistent with PL-33.
 
 ---
 
@@ -133,7 +133,7 @@ recompilation of structural changes.
 *Components: Cross-cutting (resolver-wide).*
 
 **RS-19 · Fail loud, degrade explicit, never silent.** Every degradation the resolver introduces —
-floor-matched profile, stale snapshot, missing telemetry, unmappable entity — surfaces as a
+fallback profile, stale snapshot, missing telemetry, unmappable entity — surfaces as a
 condition with the source attribution from RS-3. The resolver's outputs are trusted downstream
 precisely because their untrustworthiness is always labeled.
 

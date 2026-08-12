@@ -100,8 +100,8 @@ active flow.
 
 Implemented as the reconcile interval rather than a separate timer, because reconciling is what
 republishes status: a second loop emitting snapshots alongside the reconciler could report a state
-the reconciler had already moved past. The cadence is a ceiling on how long the operator may stay
-quiet, never a floor on how soon it may act — a trigger hold expiring in ten seconds is not deferred
+the reconciler had already moved past. The cadence bounds how long the operator may stay quiet and
+never delays how soon it may act — a trigger hold expiring in ten seconds is not deferred
 to the next heartbeat. A flow counts as active while a trigger is eligible, while one has matched and
 is serving its hold, and while an execution is Running or Suspended.
 

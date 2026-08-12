@@ -154,7 +154,7 @@ protection that was not in effect: the same "declared field that does nothing" c
 `F-33`, and the only instance of it that was security-relevant.
 
 Fixed on both sides of the connection. `upsd.conf` now renders `CERTFILE`, plus `DISABLE_WEAK_SSL`
-(TLS 1.2 floor) and `CERTPATH`/`CERTREQUEST` when client certificate validation is enabled;
+(TLS 1.2 minimum) and `CERTPATH`/`CERTREQUEST` when client certificate validation is enabled;
 `upsmon.conf` renders `CERTPATH`, `CERTVERIFY`, and `FORCESSL`. Directive presence and the
 Disabled-mode absence are both asserted in `internal/controller/nut_tls_render_test.go`.
 
@@ -290,32 +290,23 @@ because the fix is a NUT release. The remedy when that release lands is in
 inert, which is a smaller claim than the one the API currently makes.
 
 **F-45 · `MINSUPPLIES` and the `MONITOR` power value are hardcoded, and this document
-said otherwise.** The keyword list above claims the `upsmon.conf` set is "exposed as CR
-fields rather than hardcoded" and names `MINSUPPLIES` among them. It is not.
+said otherwise.** The keyword list above claimed the `upsmon.conf` set is "exposed as CR
+fields rather than hardcoded" and named `MINSUPPLIES` among them. It is not.
 `renderNodePowerAgentSecret` writes a literal `MINSUPPLIES 1`, and every `MONITOR` line
 is emitted with a literal power value of `1`. `UpsmonConfigSpec` carries
 `pollFrequency`, `alertPollFrequency`, `deadTime`, `hostSync`, and `finalDelay` — and no
-supplies field at all.
+supplies field at all. The sentence above is corrected; this records why it was wrong.
 
-The two literals are NUT's own redundancy model, which the project has therefore
-adopted by accident rather than by decision. `MONITOR <system> <powervalue>` states how
-many of this host's power supplies that UPS feeds, and `MINSUPPLIES <n>` states how many
-supplies must be fed for the host to keep running. A dual-PSU host monitoring two UPS
-devices at power value 1 with `MINSUPPLIES 1` stays up while either one is online, and
-`upsc` still reports each device's state separately — an aggregate that is healthy while
-any member is healthy, with per-member state individually visible.
+The literals are correct for the topology the project actually targets. `MONITOR
+<system> <powervalue>` states how many of this host's power supplies that UPS feeds, and
+`MINSUPPLIES <n>` how many must be fed for the host to keep running, so power value 1
+with `MINSUPPLIES 1` means a host monitoring several UPS devices stays up while any one
+of them is online. That is the same "healthy while any member is healthy, per-member
+state still individually visible" shape the `upsd` readiness probe already implements in
+`upsdReadinessProbeScript` (`F-17`), which exits 0 on the first device that answers
+`upsc`. The two agree.
 
-That model is unreachable here for the case it exists to serve. A host whose two
-supplies are fed by one UPS needs `MONITOR ups 2` and `MINSUPPLIES 2`; the hardcoded `1`
-declares that host safe while it is losing power. The values are right for the
-single-feed default and wrong for the topology the feature is for.
-
-It also contradicts the operator's own aggregation. `powerObservationFromDevices`
-reduces pessimistically — one device on battery makes the whole flow on-battery — while
-`MINSUPPLIES 1` says a redundantly-fed node is unaffected until the last feed drops.
-Both are defensible; disagreeing silently is not. Which one is correct depends on
-whether two `feeds` edges into one node mean redundancy or coincidence, and the
-inventory model does not currently say.
-
-Fix: derive the power value and `MINSUPPLIES` from `feeds` edges rather than hardcoding
-them, and correct the keyword claim above. Blocked on `OD-35`.
+A host whose two supplies are fed by a single UPS would need `MONITOR ups 2` and
+`MINSUPPLIES 2`, and cannot express that today. That topology is not currently modeled
+anywhere in the inventory, so this is recorded as a limit of the render rather than as a
+defect with a fix waiting on it.

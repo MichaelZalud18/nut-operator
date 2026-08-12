@@ -110,15 +110,15 @@ satisfy degrades and warns. This section settles what `PL-19` left to the capabi
 coarser class substitutes, and whether substitution is automatic.
 
 **The substitution table.** Coarseness is measured by what a device has to report, and `ups.status` is
-the floor: it is the one variable every NUT driver produces and the only one the unidentified-device
-profile declares.
+the coarsest rung: it is the one variable every NUT driver produces and the only one the
+unidentified-device profile declares.
 
 | Trigger | Needs | Fallback |
 | --- | --- | --- |
 | `RuntimeBelow` | `battery.runtime` | `LowBattery` |
 | `ChargeBelow` | `battery.charge` | `LowBattery` |
-| `OnBattery` | `ups.status` | none — already at the floor |
-| `LowBattery` | `ups.status` | none — already at the floor |
+| `OnBattery` | `ups.status` | none — already the coarsest |
+| `LowBattery` | `ups.status` | none — already the coarsest |
 | `TelemetryStale` | nothing | none — absence is the signal |
 
 Both threshold classes fall back to `LowBattery` rather than `OnBattery`. The two cost the same to
@@ -176,7 +176,7 @@ over TCP.
 - **Variable count is negligible.** A small desktop UPS exposing eight variables versus an
   enterprise unit exposing sixty is a difference of a few kilobytes. Both are noise against the
   container's baseline footprint.
-- **There is no smaller `upsd` to deploy.** The daemon is already near its floor. A "lightweight
+- **There is no smaller `upsd` to deploy.** The daemon is already near its minimum. A "lightweight
   mode" for small devices would save nothing measurable.
 - **Resource consumption tracks client count, not device class.** Client count follows node count,
   which is unrelated to UPS capacity or feature richness.

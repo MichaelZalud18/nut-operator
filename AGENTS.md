@@ -36,6 +36,15 @@ Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check t
 
 ## Critical Rules
 
+### Read `docs/design/settled-questions.md` Before Proposing a Decision
+Some questions get re-raised every session and are already answered — recovery being out of scope,
+flicker hysteresis being unnecessary under idempotent re-descent, feasibility being warned rather
+than enforced, published status carrying facts and not interpretation. That file lists each one with
+the requirement that settles it and the tell that you are about to re-litigate it.
+
+Do not mint an `OD` number without naming the requirement you checked first. An apparent new decision
+is usually an existing requirement nobody re-read.
+
 ### Never Edit These (Auto-Generated)
 - `config/crd/bases/*.yaml` - from `make manifests`
 - `config/rbac/role.yaml` - from `make manifests`

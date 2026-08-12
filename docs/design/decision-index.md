@@ -28,6 +28,7 @@ tags which design content informs which component.
 | `planner-requirements.md` | Decide | PL, CR | Planning & Execution Logic; Capability Profiles (CR section) |
 | `resolver-requirements.md` | Detect | RS | Varies per section — see file |
 | `executor-requirements.md` | Act | EX | Planning & Execution Logic |
+| `settled-questions.md` | — | — | All (standing reference) |
 | `inventory-provider-contract.md` | Topology input contract | IN | Inventory System |
 | `faq.md` | User-facing answers | — | Cross-cutting |
 | `capability-profiles.md` | Profile catalog, SKU records, aliases, probe helper, `upsd` config influence, scope and provenance | CR | Capability Profiles; NUT Server / upsd |
@@ -62,7 +63,7 @@ Dated audit and findings records live in `docs/audits/` and share the `F-n` find
 | PL | Planner requirement | planner-requirements | PL-1 – PL-49 |
 | CR | Capability resolution rule | planner-requirements | CR-1 – CR-4 |
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
-| EX | Executor requirement | executor-requirements | EX-1 – EX-30 |
+| EX | Executor requirement | executor-requirements | EX-1 – EX-32 |
 | HK | Shutdown hook requirement | shutdown-hooks | HK-1 – HK-10 |
 | IN | Inventory contract rule | inventory-provider-contract | IN-1 – IN-16 |
 | F | Audit finding | audit records (`docs/audits/`) | F-1 – F-44 (2026-08-10) |
@@ -81,9 +82,8 @@ narrative account and now uses the folded numbers.
 
 | ID | Question | Blocks | Likely owner doc |
 | --- | --- | --- | --- |
-| OD-8r | Provider key validation policy (interim: floor-match + warning, RS-6) | Resolver | Resolver |
+| OD-8r | Provider key validation policy (interim: fall back to the unidentified-device profile, plus a warning, RS-6) | Resolver | Resolver |
 | OD-10 | USB/serial support: version target and isolation model | — | v2 scoping |
-| OD-12 | Infeasible-plan policy field default and options | EX-3 | Planner design |
 | OD-14 | Partial-domain outage: cluster-wide vs domain-scoped plan (structure now available) | PL-16, PL-23, EX-10 | Planner design |
 | OD-16 | Missing `carries` coverage: error vs explicit exemption | Inventory validation | inventory contract |
 | OD-19 | FSD usage: NUT's forced-shutdown broadcast as the final release signal, or deliberately declined in favor of the executor's signal file | F-20 | Executor design |
@@ -94,11 +94,10 @@ narrative account and now uses the folded numbers.
 | OD-26 | Provenance field semantics: advisory metadata or resolution-affecting | — | Capability schema |
 | OD-27 | Timing adaptation parameters: hysteresis count, improvement margin, and scope | — | Adaptive execution |
 | OD-28 | Relationship to OD-12: infeasible-plan policy before start vs timing re-decisions during | — | Adaptive execution |
-| OD-29 | Tier ascent trigger: what power condition moves the pointer up | — | Adaptive execution |
 | OD-30 | Cadence intervals: publish interval during idle vs active flow; global or per-flow | — | Adaptive execution |
 | OD-33 | Hook waiting: whether an opt-in bounded wait on hook completion exists, and what happens when the runtime budget expires first. Default decided (proceed); the mechanism is not | — | Shutdown hooks |
 | OD-34 | Hook failure and abort policy: whether a failed hook can mark the flow degraded, or stays purely advisory | — | Shutdown hooks |
-| OD-35 | Redundant power feeds: whether two `feeds` edges into one node mean redundancy or coincidence. Decides the `MONITOR` power value, `MINSUPPLIES`, and whether observation aggregation stays pessimistic | — | NUT usage audit `F-45` |
+| OD-35 | *Retired, never a decision.* Raised as "do redundant `feeds` edges change observation aggregation" while recording `F-45`. The premise was invented: `MINSUPPLIES` governs one host's own supplies and never reaches the planner's aggregation. Number burned rather than reused | — | `F-45` |
 
 ### Closed
 
@@ -119,9 +118,11 @@ narrative account and now uses the folded numbers.
 | OD-23 | Alias maps live in the profile telemetry section. Native readings outrank aliases; aliasing is one-directional and total; every applied alias is a diagnostic | capability-profiles.md |
 | OD-18 | Tier inversion blocks the node by default: an inverted node is withheld from power-off for the whole flow. `spec.groups[].tierInversionPolicy: Allow` opts a group out per workload. Migration declined as a general remedy — node-local PVCs mean there is not always anywhere to move to | Planner tier compilation | Planner design |
 | OD-32 | NUT operand SSL backend is OpenSSL, built from source. NSS is more feature-complete for client certificates today, but has no CERTFILE and needs a cert database instead of the PEM a TLS Secret projects. Alpine's NSS build was not a considered choice: the aport requests both backends and NSS wins by precedence in configure.ac | Operand images | F-39 – F-41 |
-| OD-9 | Trigger degrade substitutes toward the `ups.status` floor: `RuntimeBelow` and `ChargeBelow` fall back to `LowBattery`, which states the same intent coarsely, rather than to `OnBattery`, which states a different one. Substitution is declared via `spec.triggers[].fallbackType`, never automatic — it changes when nodes begin powering off, so per GP-5 it is authored, not derived. Compilation names the fallback that would close a gap | Trigger validation | capability-profiles.md |
+| OD-9 | Trigger degrade substitutes toward the coarsest `ups.status` trigger: `RuntimeBelow` and `ChargeBelow` fall back to `LowBattery`, which states the same intent coarsely, rather than to `OnBattery`, which states a different one. Substitution is declared via `spec.triggers[].fallbackType`, never automatic — it changes when nodes begin powering off, so per GP-5 it is authored, not derived. Compilation names the fallback that would close a gap | Trigger validation | capability-profiles.md |
 | OD-22 | Structured quirk objects carrying firmware scope as a field: `firmware.matches` globs and a `firmware.below` dotted-numeric fix release. Firmware-ranged selectors rejected — a selector scopes the whole profile, and quirks expire independently of the telemetry a model reports | Capability schema | capability-profiles.md |
 | OD-31 | An unidentified device blocks Enforce mode unless explicitly accepted. Dry-run review is unaffected. "Universal floor" retired as a name | PL-33 |
+| OD-12 | Infeasible plans warn and run. Not rejected — refusing mid-outage is the worst available outcome (PL-31). Not truncated — dropping tiers substitutes the operator's judgement for the flow author's. The author holds the risk; this operator owes them the numbers, stated plainly and visibly: plan estimate against runtime estimate, per tier and in total | EX-3, settled-questions.md |
+| OD-29 | Ascent is the strict inverse of descent: mains back and no low-battery assertion (`ShouldAscend`). No hysteresis, no hold time, no confirmation window — EX-27 makes ascent bookkeeping that triggers nothing, and EX-26 makes the re-descent that follows a sequence of no-ops, so a flicker costs nothing to get wrong | EX-26, EX-27, settled-questions.md |
 
 ## Glossary
 

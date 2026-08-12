@@ -259,8 +259,8 @@ mode change, and power state change.
 
 Neither substitutes for the other. Cadence alone loses transitions between ticks; change alone leaves
 a subscriber unable to distinguish "nothing is happening" from "the publisher died", because both look
-like silence. The cadence is a ceiling on how long the operator may stay quiet, never a floor on how
-soon it may act.
+like silence. The cadence bounds how long the operator may stay quiet; it never delays how soon it may
+act.
 
 **EX-30 · Abort is halt, not undo** (was AE-6). Abort means the executor stops descending. Nothing
 already shut down is restored, which is what makes it safe at any point in the flow.
@@ -268,6 +268,43 @@ already shut down is restored, which is what makes it safe at any point in the f
 Halt is reserved for abort and is a one-way latch. Power recovery is a different event and takes a
 different path (EX-23): it suspends, leaving the pointer unlatched so a later degrade resumes from
 its depth.
+
+**EX-31 · Tier overrun is the flow author's policy, not the executor's.** Tiers count down: tier 4
+stops before tier 3. When the pointer becomes due at tier 3 while tier 4's groups are still running,
+tier 4 has overrun the time the plan assumed for it, and something has to give.
+
+The executor does not decide what. `spec.tierOverrunPolicy` on the flow selects:
+
+- `Wait` — tier 3 starts only when tier 4 finishes. Tier 3 absorbs the overrun and runs against
+  whatever time is left. This is the current implicit behavior and stays the default, because it is
+  the only one that never cuts a running workload short.
+- `Overlap` — tier 3 starts on schedule while tier 4 continues. Both run; tier 4 keeps its remaining
+  budget. Correct when the tiers touch nothing in common.
+- `Preempt` — tier 4's groups are stopped so tier 3 starts on schedule with its full declared
+  budget. The author is stating that tier 3's work matters more than tier 4 finishing cleanly, which
+  is a judgement only they can make.
+
+`Preempt` is the reason this is a policy rather than a heuristic. Stopping a running group to protect
+a deeper tier's budget trades one workload's clean shutdown for another's, and nothing the operator
+can observe tells it which trade is right. Deciding that from a timer would be exactly the enforcement
+`OD-12` refuses.
+
+What actually happened is recorded either way: which tier overran, by how much, what the policy did,
+and what each group's real duration was. That record is the input to the next outage's estimate
+(`EX-32`), which is what turns an overrun from a surprise into a number the author can plan against.
+
+**EX-32 · Estimates are informed by what previous outages actually took.** Declared timeouts are the
+author's intent, not evidence. The audit tables already record `started_at` and `completed_at` per
+wave, per group, and per action attempt, for every execution — so the real duration of tier 3 in the
+last outage is known, and nothing currently reads it.
+
+The estimate a flow publishes is therefore built from observed durations where history exists and
+declared durations where it does not, and it says which. A tier that has run four times and averaged
+three minutes against a declared two is worth surfacing before the next outage, not after it.
+
+The planner stays pure (`PL-27`): history arrives as a resolved input alongside telemetry, never as a
+lookup the compiler performs. Determinism is preserved because the same inputs — including the same
+history snapshot — still produce a byte-identical plan.
 
 ---
 
