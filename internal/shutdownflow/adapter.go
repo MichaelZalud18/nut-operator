@@ -80,14 +80,29 @@ type CompiledFlow struct {
 	Artifact            *powerv1alpha1.PublishedPlannerArtifactStatus
 	Diagnostics         []planner.Diagnostic
 	BlockedNodeReleases []powerv1alpha1.BlockedNodeReleaseStatus
+	// GroupEstimates and EstimateConfidence carry the EX-32 provenance through to the
+	// controller, which is what turns the OD-12 warning from a bare number into a
+	// statement a reader can weigh.
+	GroupEstimates     []planner.GroupEstimate
+	EstimateConfidence planner.EstimateConfidence
+	// ObservedDuration is the plan total from measured executions, nil until something
+	// has run. The OD-12 warning prefers it over the declared estimate.
+	ObservedDuration *metav1.Duration
 }
 
 // CompileFlow compiles a ShutdownFlow against resolved inventory, capability
 // identity, and central tier policy, keeping the planner's diagnostics.
 func CompileFlow(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec) CompiledFlow {
+	return CompileFlowWithHistory(obj, bundle, tierPolicy, planner.HistoryInputs{})
+}
+
+// CompileFlowWithHistory compiles with observed durations from previous executions
+// folded into the estimates (EX-32). CompileFlow is this with no history, which is
+// what a cluster that has never run this flow legitimately has.
+func CompileFlowWithHistory(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec, history planner.HistoryInputs) CompiledFlow {
 	inputs := resolver.AttachResolvedInputHash(PlannerInputsWithTierPolicy(obj, tierPolicy), bundle)
 	inputs.GroupNodes = PlannerGroupNodes(obj, bundle)
-	plan, diagnostics, err := planner.Compile(inputs, planner.TelemetryInputs{})
+	plan, diagnostics, err := planner.CompileWithHistory(inputs, planner.TelemetryInputs{}, history)
 	if err != nil {
 		// Rejection diagnostics still travel: the reason a plan did not compile is
 		// the most useful thing the planner produced.
@@ -102,6 +117,9 @@ func CompileFlow(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBund
 		Artifact:            APIPlannerArtifact(plan),
 		Diagnostics:         diagnostics,
 		BlockedNodeReleases: APIBlockedNodeReleases(plan.BlockedNodes),
+		GroupEstimates:      plan.GroupEstimates,
+		EstimateConfidence:  plan.EstimateConfidence,
+		ObservedDuration:    APIDuration(plan.ObservedDuration),
 	}
 }
 

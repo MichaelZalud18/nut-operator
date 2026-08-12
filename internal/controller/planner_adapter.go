@@ -20,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 )
@@ -28,6 +29,15 @@ func compileShutdownFlow(obj *powerv1alpha1.ShutdownFlow) ([]powerv1alpha1.Compi
 	return shutdownflowadapter.Compile(obj)
 }
 
-func compileShutdownFlowWithResolvedInputsAndTierPolicy(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, policy powerv1alpha1.PowerShutdownTierPolicySpec) shutdownflowadapter.CompiledFlow {
-	return shutdownflowadapter.CompileFlow(obj, bundle, policy)
+// compileShutdownFlowWithHistory compiles with observed durations folded into the
+// estimates (EX-32).
+//
+// History is keyed by the plan hash already published on status, not by the hash
+// this compile is about to produce. That is deliberate and it is what keeps the
+// lookup from chasing itself: the estimate is not part of plan identity, so the
+// hash is stable across compiles, and a plan that has genuinely changed simply
+// finds no history for its new hash and falls back to declared timeouts -- which is
+// the correct answer, since the old timings measured different work.
+func compileShutdownFlowWithHistory(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, policy powerv1alpha1.PowerShutdownTierPolicySpec, history planner.HistoryInputs) shutdownflowadapter.CompiledFlow {
+	return shutdownflowadapter.CompileFlowWithHistory(obj, bundle, policy, history)
 }

@@ -194,7 +194,7 @@ var _ = Describe("NUTServer Controller", func() {
 			Expect(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe).NotTo(BeNil())
 			Expect(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Exec).NotTo(BeNil())
 			Expect(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Exec.Command).To(Equal(
-				[]string{"sh", "-c", upsdReadinessProbeScript(3493)},
+				[]string{"sh", "-c", upsdReadinessProbeScript()},
 			))
 			Expect(deployment.Spec.Template.Spec.Volumes).To(ContainElement(
 				WithTransform(func(volume corev1.Volume) string { return volume.Name }, Equal("nut-config")),

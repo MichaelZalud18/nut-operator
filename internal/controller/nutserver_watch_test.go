@@ -333,3 +333,67 @@ func TestAMalformedSelectorMatchesNothingRatherThanEverything(t *testing.T) {
 		t.Fatal("a malformed deviceSelector must not behave as a wildcard")
 	}
 }
+
+// The simulation fixture has the same gap as the credential Secret: a user-supplied reference with
+// no owner reference, which Owns() never matches.
+func TestNUTServerRequestsForConfigMapFollowsSimulationFixtures(t *testing.T) {
+	fixture := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "dummy-sequence", Namespace: "power-system"}}
+
+	referencing := watchTestDevice("ups-a", map[string]string{"rack": "a"})
+	referencing.Spec.Simulation = &powerv1alpha1.UPSDeviceSimulation{
+		SequenceConfigMapRef: powerv1alpha1.NamespacedNameReference{
+			Name: "dummy-sequence", Namespace: "power-system",
+		},
+	}
+	unreferencing := watchTestDevice("ups-b", map[string]string{"rack": "a"})
+
+	server := watchTestServer("server-a", powerv1alpha1.NUTServerSpec{
+		DeviceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"rack": "a"}},
+	})
+	elsewhere := watchTestServer("server-elsewhere", powerv1alpha1.NUTServerSpec{
+		DeviceRefs: []powerv1alpha1.ObjectNameReference{{Name: "ups-b"}},
+	})
+
+	reconciler := &NUTServerReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(nutServerWatchScheme(t)).
+			WithObjects(fixture, referencing, unreferencing, server, elsewhere).
+			Build(),
+	}
+
+	assertSameServers(t, reconciler.nutServerRequestsForConfigMap(context.Background(), fixture),
+		[]string{"server-a"})
+}
+
+// Same cluster-wide-informer reasoning as the Secret predicate: keep unrelated ConfigMap traffic
+// away from the mapping lookup entirely.
+func TestConfigMapPredicateAdmitsContentChangesOnly(t *testing.T) {
+	base := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "dummy-sequence", Namespace: "power-system"},
+		Data:       map[string]string{"sequence": "OL\nOB\n"},
+	}
+
+	edited := base.DeepCopy()
+	edited.Data["sequence"] = "OL\nOB\nLB\n"
+
+	annotated := base.DeepCopy()
+	annotated.Annotations = map[string]string{"note": "unrelated"}
+
+	predicate := configMapDataChangedPredicate()
+
+	for name, testCase := range map[string]struct {
+		updated *corev1.ConfigMap
+		admit   bool
+	}{
+		"sequence edited": {updated: edited, admit: true},
+		"annotation only": {updated: annotated, admit: false},
+		"identical":       {updated: base.DeepCopy(), admit: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := predicate.Update(event.UpdateEvent{ObjectOld: base, ObjectNew: testCase.updated})
+			if got != testCase.admit {
+				t.Fatalf("admitted = %v, want %v", got, testCase.admit)
+			}
+		})
+	}
+}

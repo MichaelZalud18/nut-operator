@@ -245,14 +245,18 @@ type NUTTLSSpec struct {
 	// +optional
 	ClientCARef *NamespacedNameReference `json:"clientCARef,omitempty"`
 
-	// verifyClientCertificates renders CERTREQUEST into upsd.conf, requiring every NUT client to
-	// present a certificate signed by clientCARef.
+	// verifyClientCertificates is inert on the shipped operand and admission rejects true.
 	//
-	// This defaults to false because the operator does not issue client certificates to upsmon.
-	// Turning it on locks out every NodePowerAgent unless the agent image is NUT 2.8.6 or newer
-	// (the first release where upsmon.conf accepts CERTFILE under OpenSSL) and an operator-external
-	// mechanism supplies each agent a client certificate. CERTREQUEST is also a no-op on OpenSSL
-	// upsd builds older than 2.8.6, so enabling it there silently grants no protection.
+	// It would render CERTREQUEST into upsd.conf, requiring every NUT client to present a
+	// certificate signed by clientCARef. No released OpenSSL build of upsd honors it: upsd's
+	// OpenSSL branch ends TLS setup with SSL_VERIFY_NONE and never loads a client CA, so it
+	// neither requests nor validates a client certificate whatever this says. Setting it true
+	// would report mutual TLS in the API while serving none on the wire, so it is refused rather
+	// than accepted and quietly ignored.
+	//
+	// Two things must both change before it can be accepted: the operand image must ship NUT
+	// 2.8.6 or newer, and every NodePowerAgent must hold a client certificate, which this
+	// operator does not issue. Turning it on without the second would lock out every agent.
 	// +kubebuilder:default=false
 	// +optional
 	VerifyClientCertificates *bool `json:"verifyClientCertificates,omitempty"`

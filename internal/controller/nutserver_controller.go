@@ -213,6 +213,8 @@ func (r *NUTServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(nutServerRenderRelevantPredicate())).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.nutServerRequestsForSecret),
 			builder.WithPredicates(secretDataChangedPredicate())).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.nutServerRequestsForConfigMap),
+			builder.WithPredicates(configMapDataChangedPredicate())).
 		Named("nutserver").
 		Complete(r)
 }

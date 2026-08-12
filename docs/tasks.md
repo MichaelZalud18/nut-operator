@@ -95,12 +95,16 @@ removed from the action enum; `Notify` emits a Kubernetes Event. Tier inversion 
 `nutoperator_shutdownflow_publish_timestamp_seconds` plus `status.lastPublishTime`. Node clearance is
 re-derived at execution against the pods actually on the node, read uncached. The provisional `AE-n`
 identifiers are folded into `EX-25`–`EX-30`, and the runtime-estimate gate that shared `AE-6` is now
-`CR-4`. `EX-14` restart resume is covered by envtest: a second reconciler instance holding no
+`CR-4`. `EX-32` estimates are informed by what previous outages actually took: observed group
+durations are read from the audit tables scoped by plan config hash, injected as a resolved planner
+input, and published per group with provenance and sample counts. `OD-12` is surfaced as
+`status.planFeasibility` — plan estimate against reported runtime, warning and never blocking.
+`EX-14` restart resume is covered by envtest: a second reconciler instance holding no
 in-process state resumes the persisted tier and timing mode instead of re-reporting descended tiers as
 new work.
 
 Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-30`, `OD-4`,
-`OD-11`, `OD-12`, `OD-17`, `OD-18`, `OD-29`, `SB-15`, `F-31`, `F-42`, `F-44`.
+`OD-11`, `OD-12`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `EX-32`, `SB-15`, `F-31`, `F-42`, `F-44`.
 
 #### Open Work
 
@@ -113,26 +117,16 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 - `OD-27` confirm the adaptive defaults against a real outage. The compression amount is measured, so
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).
-- `OD-30` decide whether cadence is global or per-flow.
-- Implement the `OD-12` warning surface (`EX-3`): publish plan estimate against runtime estimate, per
-  tier and in total, as a visible condition and Event rather than a compile rejection. Nothing is
-  blocked or truncated — the flow author holds the risk and is owed the numbers.
 - Build `EX-31` tier-overrun policy: `spec.tierOverrunPolicy` of `Wait` (default, current behavior),
   `Overlap`, or `Preempt`, plus metrics recording which tier overran, by how much, and what the
   policy did.
-- Build `EX-32` history-informed estimates, in four pieces:
-  - A read path over `shutdownflow_execution_waves`/`_groups`/`_action_attempts` producing observed
-    durations per tier and per group, keyed by plan config hash so a changed group is not compared
-    against a different one wearing the same name.
-  - Injection as a resolved planner input alongside telemetry, never a lookup the compiler performs —
-    `PL-27` determinism depends on history arriving as input.
-  - Provenance on every estimate: observed or declared, and the sample count behind it.
-  - Consumption in the `OD-12` warning surface only. `EX-11` compression keeps measuring live
-    runtime; compressing against a historical average would spend time the battery is not offering.
 - Build `EX-33` rehearsal runs so history exists before the first real outage: an on-demand or
   scheduled enforce-mode execution, labelled as a rehearsal in the audit trail and includable or
   excludable from estimates. Dry-run cannot serve this — it skips effects and so produces no honest
-  durations. Surface a recommendation when a flow's tiers have never run or have run once.
+  durations. `status.planFeasibility.thinGroups` already names what a rehearsal would improve; what
+  is missing is the run itself and the label on it.
+- Feed node metrics into the estimates alongside execution history — draw and capacity readings
+  sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `OD-14` decide partial-domain outage plan scope, then wire domain membership into wave compilation
   (shared with Inventory System and Telemetry & Triggers).
 - Accept node-selector *requirements* for node targeting so a group can express a tier range.
@@ -155,24 +149,21 @@ relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`
 protocol TLS proven end to end against operands built from source on OpenSSL, scripted `dummy-ups`
 simulation, and the `snmpsim` driver-conformance fixture. e2e covers `dummy-ups`, `snmp-ups`, and
 `NUTServer`; real actuation stays out of scope for `kind`. The reconciler watches `UPSDevice` through
-a predicate scoped to spec and labels, and maps credential `Secret` changes back to the servers whose
-selected devices reference them, so a driver, port, or credential edit re-renders instead of waiting
-for an unrelated reconcile.
+a predicate scoped to spec and labels, and maps credential `Secret` and simulation `ConfigMap` changes
+back to the servers whose selected devices reference them, so a driver, port, credential, or fixture
+edit re-renders instead of waiting for an unrelated reconcile. Readiness reads `upsdrvctl status`,
+NUT's own driver-state report, rather than inferring driver health from `upsc` failures; the inert
+Docker `HEALTHCHECK` is gone. `verifyClientCertificates` is refused at admission because no released
+OpenSSL `upsd` honors CERTREQUEST.
 
-Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`, `F-40`, `F-43`, `OD-32`. `F-19`
+Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `NS-1`–`NS-4`,
+`OD-32`. `F-19`
 declined — it only matters with an HA `upsd` topology, which is not designed.
 
 #### Open Work
 
-- `F-41` document `verifyClientCertificates` as inert, and decide whether admission should reject
-  `true` ([nut-usage-audit.md](audits/nut-usage-audit.md)).
-- `F-46` replace the bespoke `upsc` loop in the `upsd` readiness probe with `upsdrvctl status`, which
-  reports driver RESPONSIVE/NOT_RESPONSIVE natively, and drop or fix the inert Dockerfile
-  `HEALTHCHECK` ([nutserver-pod-audit.md](audits/nutserver-pod-audit.md)). Needs verification against
-  a running operand.
-- Extend the `F-43` mapping watch to `simulation.sequenceConfigMapRef` ConfigMaps. Same defect and
-  same code path as the credential `Secret` gap, but a `dummy-ups` fixture edit is a test-path
-  staleness rather than a credential one, so it was left out of the finding's own scope.
+- Verify the `F-46` readiness probe against a running operand. The rendering and its tests are done;
+  what has not happened is watching `upsdrvctl status` report an actually-disconnected driver.
 - Advanced driver-specific configuration for the operand render path.
 
 ---

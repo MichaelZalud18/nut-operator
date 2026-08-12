@@ -46,6 +46,13 @@ var ErrRejected = errors.New("planner rejected structural inputs")
 // never reads ambient state. Telemetry influences advisory feasibility only, not
 // structural or plan hashes.
 func Compile(structural StructuralInputs, telemetry TelemetryInputs) (Plan, []Diagnostic, error) {
+	return CompileWithHistory(structural, telemetry, HistoryInputs{})
+}
+
+// CompileWithHistory compiles with observed durations folded into the estimates
+// (EX-32). Compile is this with no history, which is what a cluster that has never
+// run a flow legitimately has.
+func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, history HistoryInputs) (Plan, []Diagnostic, error) {
 	normalized := normalizeStructuralInputs(structural)
 	diagnostics := validateStructuralInputs(normalized)
 	if hasError(diagnostics) {
@@ -60,6 +67,20 @@ func Compile(structural StructuralInputs, telemetry TelemetryInputs) (Plan, []Di
 		plan.Waves = waves
 		plan.StartupWaves = advisoryStartupWaves(waves)
 		plan.EstimatedDuration = Duration{Duration: duration}
+		plan.GroupEstimates = compileGroupEstimates(normalized.Groups, history)
+		plan.EstimateConfidence = summarizeEstimateConfidence(plan.GroupEstimates)
+		// Published beside EstimatedDuration rather than replacing it, and deliberately
+		// outside the plan hash.
+		//
+		// Plan identity has to mean "this plan", not "this plan as currently estimated".
+		// Folding history into the hash would also close a loop on itself: history is
+		// looked up by plan hash, so an estimate that moved the hash would change which
+		// history the next compile finds, which would move the estimate again. Keeping
+		// the declared total in the hash breaks that, and keeps an existing deployment's
+		// plan identity fixed when this mechanism starts producing numbers.
+		if observed, changed := observedPlanDuration(waves, plan.GroupEstimates); changed {
+			plan.ObservedDuration = Duration{Duration: observed}
+		}
 	} else {
 		plan.Graph = buildStepGraph(normalized.Steps)
 		steps, duration := compileSteps(normalized.Steps)

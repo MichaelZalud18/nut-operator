@@ -37,7 +37,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
-	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
@@ -145,10 +144,16 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus
 	var plannerDiagnostics []planner.Diagnostic
 	var blockedNodeReleases []powerv1alpha1.BlockedNodeReleaseStatus
+	var planFeasibility *powerv1alpha1.PlanFeasibilityStatus
+	var planEstimate *time.Duration
+	var estimateConfidence planner.EstimateConfidence
 	var triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus
 	if result.accepted {
 		compileStart := time.Now()
-		compiledFlow := compileShutdownFlowWithResolvedInputsAndTierPolicy(&flow, bundle, shutdownFlowTierPolicy(managementCluster))
+		// Keyed off the hash already on status: a plan whose identity has not moved finds
+		// its own history, and one that has moved finds none and keeps declared timeouts.
+		history := r.flowExecutionHistory(ctx, managementCluster, &flow, flow.Status.ConfigHash)
+		compiledFlow := compileShutdownFlowWithHistory(&flow, bundle, shutdownFlowTierPolicy(managementCluster), history)
 		compiled = compiledFlow.Steps
 		compiledWaves = compiledFlow.Waves
 		estimatedDuration = compiledFlow.EstimatedDuration
@@ -156,6 +161,8 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		publishedArtifact = compiledFlow.Artifact
 		plannerDiagnostics = compiledFlow.Diagnostics
 		blockedNodeReleases = compiledFlow.BlockedNodeReleases
+		planEstimate = bestPlanEstimate(compiledFlow.ObservedDuration, compiledFlow.EstimatedDuration)
+		estimateConfidence = compiledFlow.EstimateConfidence
 		metrics.ShutdownFlowCompileDurationSeconds.WithLabelValues(flow.Name).Observe(time.Since(compileStart).Seconds())
 		compileResult := "Accepted"
 		if configHash == "" {
@@ -170,6 +177,10 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{}, fmt.Errorf("evaluate ShutdownFlow %q triggers: %w", flow.Name, err)
 		}
 		triggerEvaluation = status
+		// Computed here rather than at compile time because it needs the selection this
+		// evaluation just made: the warning compares against the devices that would
+		// actually power this flow, not the ones a previous reconcile saw.
+		planFeasibility = planFeasibilityStatus(planEstimate, r.flowRuntimeObservation(ctx, status, bundle), estimateConfidence)
 		metrics.ShutdownFlowTriggerEvaluationsTotal.WithLabelValues(flow.Name, strconv.FormatBool(status.Eligible)).Inc()
 		if requeueAfter := triggerRequeueAfter(evaluation, observedAt); requeueAfter > 0 {
 			reconcileResult.RequeueAfter = requeueAfter
@@ -183,6 +194,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		// rather than appearing only once something is already wrong.
 		metrics.ShutdownFlowTierInversions.WithLabelValues(flow.Name).Set(float64(len(blockedNodeReleases)))
 		flow.Status.EstimatedDuration = estimatedDuration
+		flow.Status.PlanFeasibility = planFeasibility
 		if configHash != "" && configHash != base.Status.ConfigHash {
 			metrics.ShutdownFlowPlanHashChangesTotal.WithLabelValues(flow.Name).Inc()
 		}
@@ -201,6 +213,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		flow.Status.PublishedArtifact = nil
 		flow.Status.BlockedNodeReleases = nil
 		flow.Status.EstimatedDuration = nil
+		flow.Status.PlanFeasibility = nil
 		flow.Status.ConfigHash = ""
 		flow.Status.ResolvedInputHash = ""
 		flow.Status.TopologyHash = ""
@@ -289,7 +302,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	metrics.ShutdownFlowPublishTimestampSeconds.WithLabelValues(flow.Name).Set(float64(publishedAt.Unix()))
 	reconcileResult.RequeueAfter = soonestRequeue(
 		reconcileResult.RequeueAfter,
-		publishCadence(&flow, adaptive.DefaultParameters()),
+		publishCadence(&flow, cadenceParameters(managementCluster)),
 	)
 
 	if err := r.Status().Patch(ctx, &flow, client.MergeFrom(base)); err != nil {

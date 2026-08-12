@@ -53,7 +53,10 @@ var _ = Describe("NUTServer Webhook", func() {
 			Expect(obj.Spec.Auth.Mode).To(Equal(powerv1alpha1.NUTAuthOperatorManaged))
 			Expect(*obj.Spec.Auth.PerNodeUsers).To(BeTrue())
 			Expect(obj.Spec.TLS.Mode).To(Equal(powerv1alpha1.NUTTLSRequired))
-			Expect(*obj.Spec.TLS.VerifyClientCertificates).To(BeTrue())
+			// False, matching the CRD default and the field docs. This asserted BeTrue until the
+			// contradiction was found: the webhook set true, the CRD set false, and the structural
+			// default masked it because this suite runs without CRD defaulting.
+			Expect(*obj.Spec.TLS.VerifyClientCertificates).To(BeFalse())
 			Expect(obj.Spec.Config.ListenAddress).To(Equal("0.0.0.0"))
 			Expect(obj.Spec.Placement.PriorityClassName).To(Equal("system-cluster-critical"))
 		})
@@ -93,14 +96,30 @@ var _ = Describe("NUTServer Webhook", func() {
 			Expect(err.Error()).To(ContainSubstring("spec.auth.existingSecretRef"))
 		})
 
-		It("Should reject required TLS without a client CA when client verification is enabled", func() {
+		// F-41: no released OpenSSL upsd honors CERTREQUEST -- it ends TLS setup with
+		// SSL_VERIFY_NONE and never loads a client CA. Accepting true would report mutual TLS in
+		// the API while serving none on the wire, which is the F-25/F-33/F-44 defect on the
+		// security surface. Refused, with the message naming the release that would honor it.
+		It("Should reject client certificate verification, which the operand cannot honor", func() {
 			obj.Spec = secureNUTServerSpec()
-			obj.Spec.TLS.ClientCARef = nil
 			obj.Spec.TLS.VerifyClientCertificates = ptrBool(true)
 
 			_, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("spec.tls.clientCARef"))
+			Expect(err.Error()).To(ContainSubstring("spec.tls.verifyClientCertificates"))
+			Expect(err.Error()).To(ContainSubstring("2.8.6"))
+		})
+
+		It("Should reject it even when a client CA is supplied", func() {
+			obj.Spec = secureNUTServerSpec()
+			obj.Spec.TLS.VerifyClientCertificates = ptrBool(true)
+			obj.Spec.TLS.ClientCARef = &powerv1alpha1.NamespacedNameReference{
+				Namespace: "power-system", Name: "client-ca",
+			}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.tls.verifyClientCertificates"))
 		})
 
 		// Unset means off, matching the CRD default. The operator does not issue client

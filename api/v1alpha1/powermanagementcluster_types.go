@@ -265,6 +265,31 @@ type PowerObservabilitySpec struct {
 	// telemetryInterval is the default interval for durable UPS telemetry snapshots.
 	// +optional
 	TelemetryInterval *metav1.Duration `json:"telemetryInterval,omitempty"`
+
+	// publishCadence bounds how long the operator may publish nothing before republishing
+	// unchanged state, so a subscriber can tell "nothing is happening" from "the publisher died"
+	// (EX-29). Both look like silence otherwise.
+	//
+	// Cluster-wide rather than per-flow (OD-30): the cadence describes the publisher's liveness,
+	// and there is one publisher. A subscriber watching several flows needs one interval to
+	// reason about, and letting each flow set its own would make the reconcile rate a workload
+	// author's decision. Per-flow variation that is actually justified already exists as the
+	// idle/active split below, which follows what a flow is doing rather than what it declared.
+	// +optional
+	PublishCadence *PublishCadenceSpec `json:"publishCadence,omitempty"`
+}
+
+// PublishCadenceSpec sets the EX-29 heartbeat intervals.
+type PublishCadenceSpec struct {
+	// idle is the republish interval when no flow is mid-outage. Defaults to 60s.
+	// +optional
+	Idle *metav1.Duration `json:"idle,omitempty"`
+
+	// active is the republish interval while a flow is mid-outage — descending, or holding a
+	// matched trigger. Defaults to 10s. Must be faster than idle: the whole point of the split is
+	// that a subscriber tracking progress needs fresher state than one confirming liveness.
+	// +optional
+	Active *metav1.Duration `json:"active,omitempty"`
 }
 
 // +kubebuilder:object:root=true

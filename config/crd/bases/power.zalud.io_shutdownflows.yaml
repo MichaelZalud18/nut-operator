@@ -1087,6 +1087,55 @@ spec:
                 - Completed
                 - Error
                 type: string
+              planFeasibility:
+                description: |-
+                  planFeasibility compares that estimate against the runtime the UPS devices report
+                  (OD-12, EX-32). It warns; it never blocks. The flow author holds the risk, and this
+                  operator owes them the numbers rather than a decision made on their behalf.
+                properties:
+                  declaredGroups:
+                    format: int32
+                    type: integer
+                  fits:
+                    description: |-
+                      fits is true only when a runtime is known and the plan estimate is within it.
+                      Unknown runtime yields false, matching PL-32: missing data never produces an
+                      optimistic verdict.
+                    type: boolean
+                  message:
+                    description: message states the comparison in the form an operator
+                      reads first.
+                    type: string
+                  observedGroups:
+                    description: |-
+                      observedGroups and declaredGroups say how much of the estimate came from measured
+                      executions rather than from declared timeouts.
+                    format: int32
+                    type: integer
+                  planSeconds:
+                    description: planSeconds is the compiled plan's estimated duration.
+                    format: int64
+                    type: integer
+                  runtimeSeconds:
+                    description: |-
+                      runtimeSeconds is the shortest runtime reported across the selected devices, when
+                      one is known and trusted (CR-4). Absent means unknown, which is never read as
+                      headroom.
+                    format: int64
+                    type: integer
+                  thinGroups:
+                    description: |-
+                      thinGroups names groups whose estimate rests on fewer than two observations. These
+                      are what a rehearsal would improve (EX-33).
+                    items:
+                      type: string
+                    type: array
+                required:
+                - declaredGroups
+                - fits
+                - observedGroups
+                - planSeconds
+                type: object
               publishedArtifact:
                 description: publishedArtifact is the structured planner artifact
                   published for subscribers.

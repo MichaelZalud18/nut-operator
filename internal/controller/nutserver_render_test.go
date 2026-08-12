@@ -98,15 +98,20 @@ func TestRenderUPSConfRendersUpstreamNUTSecretAuthPath(t *testing.T) {
 	}
 }
 
-func TestUpsdReadinessProbeScriptQueriesRealData(t *testing.T) {
-	script := upsdReadinessProbeScript(3493)
-	for _, want := range []string{
-		"upsc -l localhost:3493",
-		`upsc "$u@localhost:3493" ups.status`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("readiness probe script missing %q:\n%s", want, script)
-		}
+// F-46: readiness comes from NUT's own driver-state report, not from a shell reimplementation of it.
+func TestUpsdReadinessProbeUsesUpsdrvctlStatus(t *testing.T) {
+	script := upsdReadinessProbeScript()
+
+	if !strings.Contains(script, "upsdrvctl status") {
+		t.Fatalf("readiness probe must use NUT's built-in driver status report:\n%s", script)
+	}
+	if strings.Contains(script, "upsc") {
+		t.Fatalf("readiness probe should not infer driver state from upsc queries:\n%s", script)
+	}
+	// NOT_RESPONSIVE contains RESPONSIVE. A substring match would pass on every dead driver,
+	// producing a readiness probe that can never fail -- worse than having none.
+	if !strings.Contains(script, `$i == "RESPONSIVE"`) {
+		t.Fatalf("readiness probe must match RESPONSIVE as a whole field, not a substring:\n%s", script)
 	}
 }
 

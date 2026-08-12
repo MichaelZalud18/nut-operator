@@ -96,6 +96,33 @@ func publishCadence(flow *powerv1alpha1.ShutdownFlow, parameters adaptive.Parame
 	return parameters.WithDefaults().Cadence(flowIsActive(flow))
 }
 
+// cadenceParameters folds the cluster-wide EX-29 heartbeat settings onto the defaults (OD-30).
+//
+// Cluster-wide because the cadence describes the publisher's liveness and there is one publisher.
+// A nil cluster, a nil block, or an unset field each keep the default rather than collapsing to
+// zero -- a zero interval would mean "never republish", which is the one value that defeats the
+// heartbeat entirely.
+func cadenceParameters(cluster *powerv1alpha1.PowerManagementCluster) adaptive.Parameters {
+	parameters := adaptive.DefaultParameters()
+	if cluster == nil || cluster.Spec.Observability.PublishCadence == nil {
+		return parameters
+	}
+	cadence := cluster.Spec.Observability.PublishCadence
+	if cadence.Idle != nil && cadence.Idle.Duration > 0 {
+		parameters.IdleCadence = cadence.Idle.Duration
+	}
+	if cadence.Active != nil && cadence.Active.Duration > 0 {
+		parameters.ActiveCadence = cadence.Active.Duration
+	}
+	// An active cadence slower than idle inverts the split's whole purpose. Parameters.Validate
+	// reports it as CadenceSlowerDuringFlow; here the safe reading is to keep the configured idle
+	// and fall back to the default active rather than publish more slowly mid-outage.
+	if parameters.ActiveCadence > parameters.IdleCadence {
+		parameters.ActiveCadence = adaptive.DefaultParameters().ActiveCadence
+	}
+	return parameters
+}
+
 // flowIsActive reports whether a flow is mid-outage, which is when a subscriber
 // is tracking progress rather than only confirming the publisher is alive.
 //

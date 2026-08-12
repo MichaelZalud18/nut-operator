@@ -2865,14 +2865,18 @@ spec:
                   verifyClientCertificates:
                     default: false
                     description: |-
-                      verifyClientCertificates renders CERTREQUEST into upsd.conf, requiring every NUT client to
-                      present a certificate signed by clientCARef.
+                      verifyClientCertificates is inert on the shipped operand and admission rejects true.
 
-                      This defaults to false because the operator does not issue client certificates to upsmon.
-                      Turning it on locks out every NodePowerAgent unless the agent image is NUT 2.8.6 or newer
-                      (the first release where upsmon.conf accepts CERTFILE under OpenSSL) and an operator-external
-                      mechanism supplies each agent a client certificate. CERTREQUEST is also a no-op on OpenSSL
-                      upsd builds older than 2.8.6, so enabling it there silently grants no protection.
+                      It would render CERTREQUEST into upsd.conf, requiring every NUT client to present a
+                      certificate signed by clientCARef. No released OpenSSL build of upsd honors it: upsd's
+                      OpenSSL branch ends TLS setup with SSL_VERIFY_NONE and never loads a client CA, so it
+                      neither requests nor validates a client certificate whatever this says. Setting it true
+                      would report mutual TLS in the API while serving none on the wire, so it is refused rather
+                      than accepted and quietly ignored.
+
+                      Two things must both change before it can be accepted: the operand image must ship NUT
+                      2.8.6 or newer, and every NodePowerAgent must hold a client certificate, which this
+                      operator does not issue. Turning it on without the second would lock out every agent.
                     type: boolean
                 type: object
             type: object
@@ -4018,6 +4022,29 @@ spec:
                     description: kubernetesEvents enables Kubernetes event emission
                       for power state changes.
                     type: boolean
+                  publishCadence:
+                    description: |-
+                      publishCadence bounds how long the operator may publish nothing before republishing
+                      unchanged state, so a subscriber can tell "nothing is happening" from "the publisher died"
+                      (EX-29). Both look like silence otherwise.
+
+                      Cluster-wide rather than per-flow (OD-30): the cadence describes the publisher's liveness,
+                      and there is one publisher. A subscriber watching several flows needs one interval to
+                      reason about, and letting each flow set its own would make the reconcile rate a workload
+                      author's decision. Per-flow variation that is actually justified already exists as the
+                      idle/active split below, which follows what a flow is doing rather than what it declared.
+                    properties:
+                      active:
+                        description: |-
+                          active is the republish interval while a flow is mid-outage — descending, or holding a
+                          matched trigger. Defaults to 10s. Must be faster than idle: the whole point of the split is
+                          that a subscriber tracking progress needs fresher state than one confirming liveness.
+                        type: string
+                      idle:
+                        description: idle is the republish interval when no flow is
+                          mid-outage. Defaults to 60s.
+                        type: string
+                    type: object
                   serviceMonitor:
                     default: true
                     description: serviceMonitor enables Prometheus Operator ServiceMonitor
@@ -5576,6 +5603,55 @@ spec:
                 - Completed
                 - Error
                 type: string
+              planFeasibility:
+                description: |-
+                  planFeasibility compares that estimate against the runtime the UPS devices report
+                  (OD-12, EX-32). It warns; it never blocks. The flow author holds the risk, and this
+                  operator owes them the numbers rather than a decision made on their behalf.
+                properties:
+                  declaredGroups:
+                    format: int32
+                    type: integer
+                  fits:
+                    description: |-
+                      fits is true only when a runtime is known and the plan estimate is within it.
+                      Unknown runtime yields false, matching PL-32: missing data never produces an
+                      optimistic verdict.
+                    type: boolean
+                  message:
+                    description: message states the comparison in the form an operator
+                      reads first.
+                    type: string
+                  observedGroups:
+                    description: |-
+                      observedGroups and declaredGroups say how much of the estimate came from measured
+                      executions rather than from declared timeouts.
+                    format: int32
+                    type: integer
+                  planSeconds:
+                    description: planSeconds is the compiled plan's estimated duration.
+                    format: int64
+                    type: integer
+                  runtimeSeconds:
+                    description: |-
+                      runtimeSeconds is the shortest runtime reported across the selected devices, when
+                      one is known and trusted (CR-4). Absent means unknown, which is never read as
+                      headroom.
+                    format: int64
+                    type: integer
+                  thinGroups:
+                    description: |-
+                      thinGroups names groups whose estimate rests on fewer than two observations. These
+                      are what a rehearsal would improve (EX-33).
+                    items:
+                      type: string
+                    type: array
+                required:
+                - declaredGroups
+                - fits
+                - observedGroups
+                - planSeconds
+                type: object
               publishedArtifact:
                 description: publishedArtifact is the structured planner artifact
                   published for subscribers.

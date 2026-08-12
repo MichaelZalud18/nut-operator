@@ -488,3 +488,49 @@ func TestNodeClearanceIsScopedToTheNodeUnderTest(t *testing.T) {
 		t.Fatal("a workload on another node must not block this one")
 	}
 }
+
+// OD-30: the cadence is cluster-wide because it describes the publisher's liveness, and there is
+// one publisher. These are the ways a configured value can be wrong or absent.
+func TestCadenceParametersFoldClusterSettingsOntoTheDefaults(t *testing.T) {
+	defaults := adaptive.DefaultParameters()
+
+	clusterWith := func(idle, active *metav1.Duration) *powerv1alpha1.PowerManagementCluster {
+		return &powerv1alpha1.PowerManagementCluster{
+			Spec: powerv1alpha1.PowerManagementClusterSpec{
+				Observability: powerv1alpha1.PowerObservabilitySpec{
+					PublishCadence: &powerv1alpha1.PublishCadenceSpec{Idle: idle, Active: active},
+				},
+			},
+		}
+	}
+	duration := func(d time.Duration) *metav1.Duration { return &metav1.Duration{Duration: d} }
+
+	for name, testCase := range map[string]struct {
+		cluster    *powerv1alpha1.PowerManagementCluster
+		wantIdle   time.Duration
+		wantActive time.Duration
+	}{
+		"nil cluster": {nil, defaults.IdleCadence, defaults.ActiveCadence},
+		"nil block": {&powerv1alpha1.PowerManagementCluster{},
+			defaults.IdleCadence, defaults.ActiveCadence},
+		"both set":  {clusterWith(duration(2*time.Minute), duration(5*time.Second)), 2 * time.Minute, 5 * time.Second},
+		"idle only": {clusterWith(duration(2*time.Minute), nil), 2 * time.Minute, defaults.ActiveCadence},
+		// Zero would mean "never republish", the one value that defeats the heartbeat entirely.
+		"zero is not a setting": {clusterWith(duration(0), duration(0)),
+			defaults.IdleCadence, defaults.ActiveCadence},
+		// Publishing more slowly mid-outage inverts the split's whole purpose.
+		"active slower than idle": {clusterWith(duration(30*time.Second), duration(time.Minute)),
+			30 * time.Second, defaults.ActiveCadence},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := cadenceParameters(testCase.cluster)
+			if got.IdleCadence != testCase.wantIdle || got.ActiveCadence != testCase.wantActive {
+				t.Fatalf("cadence = idle %s / active %s, want idle %s / active %s",
+					got.IdleCadence, got.ActiveCadence, testCase.wantIdle, testCase.wantActive)
+			}
+			if got.ActiveCadence > got.IdleCadence {
+				t.Fatalf("active %s must never be slower than idle %s", got.ActiveCadence, got.IdleCadence)
+			}
+		})
+	}
+}

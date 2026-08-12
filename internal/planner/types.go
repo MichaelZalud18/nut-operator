@@ -207,7 +207,17 @@ type Plan struct {
 	Explanations      []Explanation  `json:"explanations,omitempty"`
 	Diagrams          DiagramExports `json:"diagrams,omitempty"`
 	EstimatedDuration Duration       `json:"estimatedDuration,omitempty"`
-	Feasibility       Feasibility    `json:"feasibility,omitempty"`
+	// ObservedDuration is the plan total recomputed from what previous executions
+	// actually took (EX-32). Zero when nothing has been observed. Deliberately not part
+	// of the plan hash: identity is about the plan, not about its current estimate.
+	ObservedDuration Duration `json:"observedDuration,omitempty"`
+	// GroupEstimates is the per-group duration behind ObservedDuration, each saying
+	// whether it came from observation or from the author's declared timeout (EX-32).
+	GroupEstimates []GroupEstimate `json:"groupEstimates,omitempty"`
+	// EstimateConfidence reports how much evidence those estimates rest on, which is
+	// what makes an EX-33 rehearsal recommendation actionable rather than nagging.
+	EstimateConfidence EstimateConfidence `json:"estimateConfidence,omitempty"`
+	Feasibility        Feasibility        `json:"feasibility,omitempty"`
 	// BlockedNodes are nodes the plan declines to power off under OD-18. They are
 	// part of the plan rather than a diagnostic because they change what executes:
 	// a node listed here is withheld from every power-off in the flow.

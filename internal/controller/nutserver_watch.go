@@ -158,23 +158,90 @@ func (r *NUTServerReconciler) nutServerRequestsForSecret(ctx context.Context, ob
 	if len(referencing) == 0 {
 		return nil
 	}
+	return r.nutServersSelectingAny(ctx, referencing)
+}
+
+// nutServerRequestsForConfigMap enqueues the NUTServers whose selected devices name this ConfigMap
+// as a simulation fixture.
+//
+// The same gap as the credential Secret: simulation.sequenceConfigMapRef is user-supplied and
+// carries no owner reference, so Owns() never matches it and a fixture edit reached the operand only
+// when some unrelated reconcile fired. Kept separate from the Secret path only because the reference
+// lives on a different field; the reasoning is identical.
+func (r *NUTServerReconciler) nutServerRequestsForConfigMap(ctx context.Context, obj client.Object) []reconcile.Request {
+	log := logf.FromContext(ctx)
+
+	configMap, ok := obj.(*corev1.ConfigMap)
+	if !ok {
+		return nil
+	}
+
+	var devices powerv1alpha1.UPSDeviceList
+	if err := r.List(ctx, &devices); err != nil {
+		log.Error(err, "Failed to list UPSDevice resources after ConfigMap change", "configMap", configMap.Name, "namespace", configMap.Namespace)
+		return nil
+	}
+
+	referencing := make([]powerv1alpha1.UPSDevice, 0, len(devices.Items))
+	for _, device := range devices.Items {
+		if deviceUsesSimulationConfigMap(&device, configMap) {
+			referencing = append(referencing, device)
+		}
+	}
+	if len(referencing) == 0 {
+		return nil
+	}
+	return r.nutServersSelectingAny(ctx, referencing)
+}
+
+// nutServersSelectingAny returns one request per server that selects at least one of these devices.
+func (r *NUTServerReconciler) nutServersSelectingAny(ctx context.Context, devices []powerv1alpha1.UPSDevice) []reconcile.Request {
+	log := logf.FromContext(ctx)
 
 	var servers powerv1alpha1.NUTServerList
 	if err := r.List(ctx, &servers); err != nil {
-		log.Error(err, "Failed to list NUTServer resources after Secret change", "secret", secret.Name, "namespace", secret.Namespace)
+		log.Error(err, "Failed to list NUTServer resources for referenced-object change")
 		return nil
 	}
 
 	requests := make([]reconcile.Request, 0, len(servers.Items))
 	for _, server := range servers.Items {
-		for i := range referencing {
-			if nutServerWatchesDevice(&server, &referencing[i]) {
+		for i := range devices {
+			if nutServerWatchesDevice(&server, &devices[i]) {
 				requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: server.Name}})
 				break
 			}
 		}
 	}
 	return requests
+}
+
+// configMapDataChangedPredicate admits ConfigMap updates only when the contents moved, for the same
+// reason secretDataChangedPredicate exists: the informer is cluster-wide.
+func configMapDataChangedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+		GenericFunc: func(event.GenericEvent) bool { return true },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldMap, oldOK := e.ObjectOld.(*corev1.ConfigMap)
+			newMap, newOK := e.ObjectNew.(*corev1.ConfigMap)
+			if !oldOK || !newOK {
+				return true
+			}
+			return !maps.Equal(oldMap.Data, newMap.Data) || !maps.EqualFunc(oldMap.BinaryData, newMap.BinaryData, bytes.Equal)
+		},
+	}
+}
+
+// deviceUsesSimulationConfigMap reports whether the device names this exact ConfigMap. Namespace is
+// compared as well as name, for the same reason as deviceUsesCredentialSecret.
+func deviceUsesSimulationConfigMap(device *powerv1alpha1.UPSDevice, configMap *corev1.ConfigMap) bool {
+	if device.Spec.Simulation == nil {
+		return false
+	}
+	ref := device.Spec.Simulation.SequenceConfigMapRef
+	return ref.Name == configMap.Name && ref.Namespace == configMap.Namespace
 }
 
 // nutServerWatchesDevice adapts nutServerSpecSelectsDevice for watch mapping.

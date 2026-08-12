@@ -122,5 +122,16 @@ RUN upsd -V 2>&1 | grep -q "${NUT_VERSION}" \
 
 USER 65532:65532
 EXPOSE 3493
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD upsd -V >/dev/null || exit 1
+# Same check as the readiness probe the operator renders: at least one driver reports RESPONSIVE
+# from `upsdrvctl status` (F-46). Kubernetes ignores Docker HEALTHCHECK, so under this operator the
+# probe is what runs -- but the image is also runnable directly, and there it should answer the same
+# question the same way rather than drift into a second definition of healthy.
+#
+# The previous instruction ran `upsd -V`, which proves only that the binary executes: it would have
+# passed on a container whose driver never connected and whose upsd was dead. A check that cannot
+# fail is worse than none, because it reads as coverage.
+#
+# NOT_RESPONSIVE contains RESPONSIVE, so the match is field-exact for the same reason the probe's is.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD upsdrvctl status 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "RESPONSIVE") { found = 1; exit } } END { exit !found }'
 ENTRYPOINT ["/usr/local/bin/nut-server-entrypoint"]

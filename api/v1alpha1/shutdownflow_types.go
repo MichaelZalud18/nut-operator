@@ -94,6 +94,12 @@ type ShutdownFlowStatus struct {
 	// +optional
 	EstimatedDuration *metav1.Duration `json:"estimatedDuration,omitempty"`
 
+	// planFeasibility compares that estimate against the runtime the UPS devices report
+	// (OD-12, EX-32). It warns; it never blocks. The flow author holds the risk, and this
+	// operator owes them the numbers rather than a decision made on their behalf.
+	// +optional
+	PlanFeasibility *PlanFeasibilityStatus `json:"planFeasibility,omitempty"`
+
 	// configHash identifies the compiled plan.
 	// +optional
 	ConfigHash string `json:"configHash,omitempty"`
@@ -440,6 +446,41 @@ type ShutdownExecutionAdaptiveStatus struct {
 	// events are the state transitions recorded during this execution, in order.
 	// +optional
 	Events []string `json:"events,omitempty"`
+}
+
+// PlanFeasibilityStatus is the published OD-12 warning surface.
+//
+// Facts and a comparison of them, per EX-28. There is no verdict adjective, no
+// probability, and no projected completion time — those need a theory about what
+// the history means, which belongs to whoever is reading this.
+type PlanFeasibilityStatus struct {
+	// planSeconds is the compiled plan's estimated duration.
+	PlanSeconds int64 `json:"planSeconds"`
+
+	// runtimeSeconds is the shortest runtime reported across the selected devices, when
+	// one is known and trusted (CR-4). Absent means unknown, which is never read as
+	// headroom.
+	// +optional
+	RuntimeSeconds *int64 `json:"runtimeSeconds,omitempty"`
+
+	// fits is true only when a runtime is known and the plan estimate is within it.
+	// Unknown runtime yields false, matching PL-32: missing data never produces an
+	// optimistic verdict.
+	Fits bool `json:"fits"`
+
+	// observedGroups and declaredGroups say how much of the estimate came from measured
+	// executions rather than from declared timeouts.
+	ObservedGroups int32 `json:"observedGroups"`
+	DeclaredGroups int32 `json:"declaredGroups"`
+
+	// thinGroups names groups whose estimate rests on fewer than two observations. These
+	// are what a rehearsal would improve (EX-33).
+	// +optional
+	ThinGroups []string `json:"thinGroups,omitempty"`
+
+	// message states the comparison in the form an operator reads first.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // ShutdownExecutionPhase summarizes executor progress.

@@ -754,18 +754,25 @@ func servicePort(server *powerv1alpha1.NUTServer) int32 {
 	return 3493
 }
 
-// upsdReadinessProbeScript proves at least one configured device has a live, connected driver.
-// `upsc -l` alone is not sufficient (verified empirically): it lists every UPS name defined in
-// ups.conf regardless of whether the driver ever actually connected, so a fully-disconnected
-// driver (bad credentials, unreachable device) still reports as "ready". Querying a real
-// variable for each listed name is what actually distinguishes a connected driver
-// ("Driver not connected" on the disconnected ones) from a registered one.
-func upsdReadinessProbeScript(port int32) string {
-	target := fmt.Sprintf("localhost:%d", port)
-	return fmt.Sprintf(
-		`for u in $(upsc -l %s 2>/dev/null); do upsc "$u@%s" ups.status >/dev/null 2>&1 && exit 0; done; exit 1`,
-		target, target,
-	)
+// upsdReadinessProbeScript proves at least one configured device has a live, connected driver
+// (F-17), using NUT's own driver-state report rather than inferring it (F-46).
+//
+// `upsdrvctl status` is the built-in answer to exactly this question. It prints one TAB-separated
+// row per device in ups.conf with an S_RESPONSIVE column holding RESPONSIVE or NOT_RESPONSIVE,
+// determined by probing the driver's own socket. Ready means at least one row says RESPONSIVE.
+//
+// `upsc -l` cannot answer it (verified empirically): it lists every name defined in ups.conf
+// whether or not the driver ever connected, so a fully-disconnected driver still reports as
+// present. The earlier probe worked around that by querying a variable per name and reading the
+// failure, which reimplemented in shell what upsdrvctl reports directly.
+//
+// The match is field-exact and deliberately so: NOT_RESPONSIVE contains RESPONSIVE as a
+// substring, so a grep for the token would report every dead driver as healthy -- a readiness
+// probe that can never fail. Comparing whole awk fields also skips the header row for free,
+// since its token is S_RESPONSIVE.
+func upsdReadinessProbeScript() string {
+	return `upsdrvctl status 2>/dev/null | ` +
+		`awk '{for (i = 1; i <= NF; i++) if ($i == "RESPONSIVE") { found = 1; exit } } END { exit !found }'`
 }
 
 func serviceType(server *powerv1alpha1.NUTServer) corev1.ServiceType {
@@ -1095,7 +1102,7 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				ReadinessProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
 						Exec: &corev1.ExecAction{
-							Command: []string{"sh", "-c", upsdReadinessProbeScript(servicePort(server))},
+							Command: []string{"sh", "-c", upsdReadinessProbeScript()},
 						},
 					},
 					InitialDelaySeconds: upsdReadinessInitialDelaySeconds,

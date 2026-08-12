@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -116,7 +117,10 @@ func defaultNUTServer(obj *powerv1alpha1.NUTServer) {
 		obj.Spec.TLS.Mode = powerv1alpha1.NUTTLSRequired
 	}
 	if obj.Spec.TLS.VerifyClientCertificates == nil {
-		obj.Spec.TLS.VerifyClientCertificates = ptrBool(true)
+		// False, matching the CRD default and the field's own documentation. This branch used to
+		// default it true, which the structural default masked in a real cluster and no test
+		// caught, because the webhook suite runs without CRD defaulting.
+		obj.Spec.TLS.VerifyClientCertificates = ptrBool(false)
 	}
 	if obj.Spec.Config.ListenAddress == "" {
 		obj.Spec.Config.ListenAddress = "0.0.0.0"
@@ -226,20 +230,35 @@ func validateNUTTLS(path *field.Path, tls powerv1alpha1.NUTTLSSpec) field.ErrorL
 	if tls.Mode != powerv1alpha1.NUTTLSDisabled {
 		errs = append(errs, validateOptionalNamespacedNameReference(path.Child("serverCARef"), tls.ServerCARef)...)
 	}
-	if tls.Mode != powerv1alpha1.NUTTLSDisabled && verifyClientCertificatesEnabled(tls) {
-		if tls.ClientCARef == nil {
-			errs = append(errs, field.Required(path.Child("clientCARef"), "required when verifyClientCertificates is true"))
-		} else {
-			errs = append(errs, validateNamespacedNameReference(path.Child("clientCARef"), *tls.ClientCARef)...)
-		}
+	if verifyClientCertificatesEnabled(tls) {
+		// F-41: upsd's OpenSSL branch ends its TLS setup with SSL_CTX_set_verify(ctx,
+		// SSL_VERIFY_NONE, NULL) and never loads a client CA, so CERTREQUEST is honored by no
+		// released OpenSSL build. Accepting true would report mutual TLS in the API while serving
+		// none on the wire -- the F-25/F-33/F-44 defect exactly, and on the security surface where
+		// a false claim is worst. Refused until the operand ships a release that honors it.
+		errs = append(errs, field.Invalid(
+			path.Child("verifyClientCertificates"), true,
+			fmt.Sprintf("client certificate validation is not honored by the %s operand: upsd's OpenSSL "+
+				"backend never loads a client CA and never requests a client certificate, so CERTREQUEST "+
+				"grants no protection. Requires NUT %s or newer; leave this false until then",
+				nutOperandBuild, nutClientCertMinimumVersion)))
+	}
+	if tls.Mode != powerv1alpha1.NUTTLSDisabled && verifyClientCertificatesEnabled(tls) && tls.ClientCARef != nil {
+		errs = append(errs, validateNamespacedNameReference(path.Child("clientCARef"), *tls.ClientCARef)...)
 	}
 	return errs
 }
 
-// verifyClientCertificatesEnabled treats an unset field as false, matching the CRD default. NUT
-// client certificate validation needs an upsd built from NUT 2.8.6 or newer to be honored at all
-// under OpenSSL, and needs every upsmon to hold a client certificate the operator does not issue,
-// so it is opt-in rather than a default the cluster silently inherits.
+const (
+	// nutOperandBuild is the NUT version images/nut-server/Dockerfile pins, and
+	// nutClientCertMinimumVersion the first release whose OpenSSL backend honors CERTREQUEST.
+	// Both appear in the admission message so an author is told what would make the field work
+	// rather than only that it does not.
+	nutOperandBuild             = "2.8.5"
+	nutClientCertMinimumVersion = "2.8.6"
+)
+
+// verifyClientCertificatesEnabled treats an unset field as false, matching the CRD default.
 func verifyClientCertificatesEnabled(tls powerv1alpha1.NUTTLSSpec) bool {
 	return tls.VerifyClientCertificates != nil && *tls.VerifyClientCertificates
 }
