@@ -58,7 +58,7 @@ Dated audit and findings records live in `docs/audits/` and share the `F-n` find
 | GP | Governing principle | scope-boundaries | GP-1 – GP-7 |
 | SB | Scope boundary | scope-boundaries | SB-1 – SB-15 |
 | RB | Repository-derived boundary | scope-boundaries | RB-1 – RB-7 |
-| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-34, OD-8r |
+| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-35, OD-8r |
 | PL | Planner requirement | planner-requirements | PL-1 – PL-49 |
 | CR | Capability resolution rule | planner-requirements | CR-1 – CR-4 |
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
@@ -98,6 +98,7 @@ narrative account and now uses the folded numbers.
 | OD-30 | Cadence intervals: publish interval during idle vs active flow; global or per-flow | — | Adaptive execution |
 | OD-33 | Hook waiting: whether an opt-in bounded wait on hook completion exists, and what happens when the runtime budget expires first. Default decided (proceed); the mechanism is not | — | Shutdown hooks |
 | OD-34 | Hook failure and abort policy: whether a failed hook can mark the flow degraded, or stays purely advisory | — | Shutdown hooks |
+| OD-35 | Redundant power feeds: whether two `feeds` edges into one node mean redundancy or coincidence. Decides the `MONITOR` power value, `MINSUPPLIES`, and whether observation aggregation stays pessimistic | — | NUT usage audit `F-45` |
 
 ### Closed
 

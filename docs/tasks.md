@@ -160,7 +160,8 @@ declined — it only matters with an HA `upsd` topology, which is not designed.
 
 Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_render.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
-`internal/nodeagent`. Audit: `docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`, `F-33`–`F-36`).
+`internal/nodeagent`. Audits: `docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`,
+`F-33`–`F-36`); `F-45` from `docs/audits/nut-usage-audit.md`.
 
 #### Built
 
@@ -173,7 +174,10 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
 
 #### Open Work
 
-None.
+- `F-45` derive the `MONITOR` power value and `MINSUPPLIES` from `feeds` edges instead of hardcoding
+  both to `1`, and reconcile them with the planner's pessimistic observation aggregation
+  ([nut-usage-audit.md](audits/nut-usage-audit.md)). Blocked on `OD-35`.
+- `OD-35` decide whether two `feeds` edges into one node mean redundancy or coincidence.
 
 ---
 

@@ -93,13 +93,14 @@ func secretDataChangedPredicate() predicate.Predicate {
 	}
 }
 
-// nutServerRequestsForUPSDevice enqueues the NUTServers that select the changed
-// device (F-43).
+// nutServerRequestsForUPSDevice enqueues the NUTServers that select this device
+// (F-43).
 //
-// Selection is re-evaluated per event rather than read from a cached mapping,
-// because the label edit that moved the device is itself the event being handled:
-// the old membership needs re-rendering just as much as the new one. See
-// nutServerWatchesDevice for how both sides of that move are covered.
+// Answers only "does this server select the object I was handed". Both sides of a
+// relabelling are covered without any bookkeeping here, because
+// EnqueueRequestsFromMapFunc runs the map function over ObjectOld and ObjectNew on
+// every update and dedupes the union: the old labels reach the server losing the
+// device, the new labels reach the one gaining it.
 func (r *NUTServerReconciler) nutServerRequestsForUPSDevice(ctx context.Context, obj client.Object) []reconcile.Request {
 	log := logf.FromContext(ctx)
 
@@ -176,22 +177,17 @@ func (r *NUTServerReconciler) nutServerRequestsForSecret(ctx context.Context, ob
 	return requests
 }
 
-// nutServerWatchesDevice reports whether a change to this device can change what
-// the server renders.
+// nutServerWatchesDevice adapts nutServerSpecSelectsDevice for watch mapping.
 //
-// The union of two answers, because a relabelling has to reach both sides of the
-// move. The spec says whether the device belongs to the server now; the last
-// recorded selection says whether it did before. Taking only the first would leave
-// the server that just lost the device still serving it, and taking only the second
-// would never pick up a device that just arrived.
+// The spec is asked directly rather than through nutServerSelectsDevice, whose
+// status short-circuit is correct for reconcile and wrong here: a device that has
+// just been relabelled into a selector is absent from the recorded selection by
+// definition, so preferring that record would drop the arrival half of every move.
 //
 // A malformed deviceSelector matches nothing rather than everything. An invalid
 // selector is already a reconcile error the server surfaces on its own status, and
 // treating it as a wildcard would turn one bad selector into cluster-wide churn.
 func nutServerWatchesDevice(server *powerv1alpha1.NUTServer, device *powerv1alpha1.UPSDevice) bool {
-	if stringSliceContains(server.Status.SelectedDevices, device.Name) {
-		return true
-	}
 	selected, err := nutServerSpecSelectsDevice(server, device)
 	if err != nil {
 		return false

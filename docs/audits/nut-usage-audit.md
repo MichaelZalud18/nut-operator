@@ -42,9 +42,10 @@ project-owned actuator protocol. NUT still runs its complete state machine and i
 command; the command writes a structured, TTL-bound signal that remains dry-run unless the
 `NodePowerAgent` is explicitly approved for actuation.
 
-**`upsmon.conf` keyword set is correct and exposed as CR fields** rather than hardcoded:
-`MINSUPPLIES`, `POLLFREQ` (15s), `POLLFREQALERT` (5s), `HOSTSYNC` (15s), `DEADTIME` (45s),
-`POWERDOWNFLAG`, `FINALDELAY` (10s).
+**`upsmon.conf` keyword set is correct**, and the timing keywords are exposed as CR fields rather
+than hardcoded: `POLLFREQ` (15s), `POLLFREQALERT` (5s), `HOSTSYNC` (15s), `DEADTIME` (45s),
+`FINALDELAY` (10s). `POWERDOWNFLAG` is derived from the agent. `MINSUPPLIES` and the `MONITOR` power
+value are hardcoded — see `F-45`.
 
 ## Findings
 
@@ -287,3 +288,34 @@ This is the `F-25`/`F-33`/`F-37` class again, and it is recorded rather than fix
 because the fix is a NUT release. The remedy when that release lands is in
 `docs/tasks.md`; until then the field's documentation must say plainly that it is
 inert, which is a smaller claim than the one the API currently makes.
+
+**F-45 · `MINSUPPLIES` and the `MONITOR` power value are hardcoded, and this document
+said otherwise.** The keyword list above claims the `upsmon.conf` set is "exposed as CR
+fields rather than hardcoded" and names `MINSUPPLIES` among them. It is not.
+`renderNodePowerAgentSecret` writes a literal `MINSUPPLIES 1`, and every `MONITOR` line
+is emitted with a literal power value of `1`. `UpsmonConfigSpec` carries
+`pollFrequency`, `alertPollFrequency`, `deadTime`, `hostSync`, and `finalDelay` — and no
+supplies field at all.
+
+The two literals are NUT's own redundancy model, which the project has therefore
+adopted by accident rather than by decision. `MONITOR <system> <powervalue>` states how
+many of this host's power supplies that UPS feeds, and `MINSUPPLIES <n>` states how many
+supplies must be fed for the host to keep running. A dual-PSU host monitoring two UPS
+devices at power value 1 with `MINSUPPLIES 1` stays up while either one is online, and
+`upsc` still reports each device's state separately — an aggregate that is healthy while
+any member is healthy, with per-member state individually visible.
+
+That model is unreachable here for the case it exists to serve. A host whose two
+supplies are fed by one UPS needs `MONITOR ups 2` and `MINSUPPLIES 2`; the hardcoded `1`
+declares that host safe while it is losing power. The values are right for the
+single-feed default and wrong for the topology the feature is for.
+
+It also contradicts the operator's own aggregation. `powerObservationFromDevices`
+reduces pessimistically — one device on battery makes the whole flow on-battery — while
+`MINSUPPLIES 1` says a redundantly-fed node is unaffected until the last feed drops.
+Both are defensible; disagreeing silently is not. Which one is correct depends on
+whether two `feeds` edges into one node mean redundancy or coincidence, and the
+inventory model does not currently say.
+
+Fix: derive the power value and `MINSUPPLIES` from `feeds` edges rather than hardcoding
+them, and correct the keyword claim above. Blocked on `OD-35`.

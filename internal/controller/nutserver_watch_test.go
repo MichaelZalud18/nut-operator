@@ -24,12 +24,30 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 )
+
+// drainQueue empties a workqueue into the requests it received, so a handler's real output can be
+// asserted rather than a mapping function's return value.
+func drainQueue(t *testing.T, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) []reconcile.Request {
+	t.Helper()
+	requests := make([]reconcile.Request, 0, queue.Len())
+	for queue.Len() > 0 {
+		request, shutdown := queue.Get()
+		if shutdown {
+			break
+		}
+		requests = append(requests, request)
+		queue.Done(request)
+	}
+	return requests
+}
 
 func nutServerWatchScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -181,33 +199,67 @@ func TestNUTServerRequestsForUPSDeviceCoversBothSelectionPaths(t *testing.T) {
 		[]string{"server-by-ref", "server-by-selector"})
 }
 
-// A device relabelled out of a selector no longer matches the spec, so only the server's record of
-// what it last selected can still reach it. Without that the server keeps serving a device that is
-// no longer its own.
-func TestNUTServerRequestsForUPSDeviceReachesTheServerThatJustLostIt(t *testing.T) {
-	device := watchTestDevice("ups-a", map[string]string{"rack": "b"})
+// Relabelling a device between servers has to reach both sides of the move, and nothing in the
+// mapping function arranges that: EnqueueRequestsFromMapFunc runs the map over ObjectOld and
+// ObjectNew on every update and dedupes the union. Driven through the real handler and a real queue,
+// because a mapping function called once by hand cannot show the behavior that matters.
+func TestRelabellingADeviceEnqueuesBothTheLosingAndGainingServer(t *testing.T) {
+	before := watchTestDevice("ups-a", map[string]string{"rack": "a"})
+	after := before.DeepCopy()
+	after.Labels = map[string]string{"rack": "b"}
 
-	former := watchTestServer("server-former", powerv1alpha1.NUTServerSpec{
+	losing := watchTestServer("server-losing", powerv1alpha1.NUTServerSpec{
 		DeviceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"rack": "a"}},
 	})
-	former.Status.SelectedDevices = []string{"ups-a"}
-	former.Status.ObservedGeneration = former.Generation
-
-	arriving := watchTestServer("server-arriving", powerv1alpha1.NUTServerSpec{
+	gaining := watchTestServer("server-gaining", powerv1alpha1.NUTServerSpec{
 		DeviceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"rack": "b"}},
 	})
-	arriving.Status.SelectedDevices = nil
-	arriving.Status.ObservedGeneration = arriving.Generation
+	uninvolved := watchTestServer("server-uninvolved", powerv1alpha1.NUTServerSpec{
+		DeviceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"rack": "z"}},
+	})
 
 	reconciler := &NUTServerReconciler{
 		Client: fake.NewClientBuilder().
 			WithScheme(nutServerWatchScheme(t)).
-			WithObjects(device, former, arriving).
+			WithObjects(before, losing, gaining, uninvolved).
 			Build(),
 	}
 
-	assertSameServers(t, reconciler.nutServerRequestsForUPSDevice(context.Background(), device),
-		[]string{"server-former", "server-arriving"})
+	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
+	defer queue.ShutDown()
+
+	handler.EnqueueRequestsFromMapFunc(reconciler.nutServerRequestsForUPSDevice).
+		Update(context.Background(), event.UpdateEvent{ObjectOld: before, ObjectNew: after}, queue)
+
+	assertSameServers(t, drainQueue(t, queue), []string{"server-losing", "server-gaining"})
+}
+
+// The same dedupe is why a server matching both the old and the new object is enqueued once. A
+// server selecting by name never stops matching, so without the framework's dedupe every update
+// would queue it twice.
+func TestAServerMatchingBeforeAndAfterIsEnqueuedOnce(t *testing.T) {
+	before := watchTestDevice("ups-a", map[string]string{"rack": "a"})
+	after := before.DeepCopy()
+	after.Labels = map[string]string{"rack": "b"}
+
+	byName := watchTestServer("server-by-name", powerv1alpha1.NUTServerSpec{
+		DeviceRefs: []powerv1alpha1.ObjectNameReference{{Name: "ups-a"}},
+	})
+
+	reconciler := &NUTServerReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(nutServerWatchScheme(t)).
+			WithObjects(before, byName).
+			Build(),
+	}
+
+	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
+	defer queue.ShutDown()
+
+	handler.EnqueueRequestsFromMapFunc(reconciler.nutServerRequestsForUPSDevice).
+		Update(context.Background(), event.UpdateEvent{ObjectOld: before, ObjectNew: after}, queue)
+
+	assertSameServers(t, drainQueue(t, queue), []string{"server-by-name"})
 }
 
 // The finding itself: Owns() never matches a user-supplied credentialSecretRef target, so a rotated
