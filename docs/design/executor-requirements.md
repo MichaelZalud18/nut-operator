@@ -117,25 +117,23 @@ a cluster mutation, and it runs in dry-run because EX-5 makes dry-run a faithful
 rehearsal that skips the waits reports a flow duration the real run will not reproduce, which is the
 number an operator is rehearsing to find.
 
-**EX-23 · Power recovery suspends the flow; it does not halt it.** When the observation at a wave
-boundary shows mains restored and no low-battery assertion, the executor stops starting waves and
-records a `Suspended` phase. Nothing already shut down is restored; recovery is a subscriber concern
-(EX-25, EX-27).
+**EX-23 · Power recovery is an observation, not a state the executor enters.** When the observation
+at a wave boundary shows mains restored, the executor records it and keeps going. It does not pause,
+suspend, or end the run, and there is no phase representing a recovered outage.
 
-Suspension is explicitly not the EX-30 halt, which is abort: a deliberate stop that latches and never
-resumes. A suspended flow must remain able to descend again, so three things hold together:
+Execution flows one way. An outage is not a thing this operator tracks as a whole with a beginning,
+a middle, and an end — it could not do that honestly, because understanding an outage end to end
+requires tracking recovery, and recovery is out of scope (OD-1, OD-5, EX-25). What it tracks is a
+descent: each wave, each action, each observation, published as it happens.
 
-1. The tier pointer is **not** latched.
-2. The pointer is left at the depth it stopped, published on status and persisted in the resume
-   state, so the next descent continues from there rather than starting over.
-3. Execution deduplication ignores a suspended run. A completed episode deduplicates; a suspended one
-   does not, because it has more to do. Without this, dedupe itself would block re-descent during a
-   dip-recover-dip outage.
+Whether a *new* execution starts is a trigger question, settled a level up: power returning makes the
+trigger ineligible, `TriggerActive` clears, and the episode is over. The executor never has to reason
+about that, which is why execution deduplication has no power-shaped exception in it.
 
-`Suspended` is also distinct from `Completed` and `Aborted`. A completed flow ran every wave, an
-aborted one failed, and a suspended one did exactly as much as the outage called for. Collapsing
-suspension into completion would make "the outage ended" indistinguishable from "the cluster finished
-shutting down".
+The pointer still records the improvement by ascending (EX-27), and `Deepest` still holds the depth
+actually reached, so a second dip descends from there and re-crosses executed tiers as no-ops
+(EX-26). Subscribers watching the published metrics see power move both ways and act on it. This
+operator does not.
 
 **EX-12 · Abort policy executes as compiled** (PL-18). A failed group aborts the flow by default.
 Under `ContinueSafeSteps`, only groups pre-marked eligible in the compiled plan may still run. The
@@ -273,7 +271,12 @@ its depth.
 stops before tier 3. When the pointer becomes due at tier 3 while tier 4's groups are still running,
 tier 4 has overrun the time the plan assumed for it, and something has to give.
 
-The executor does not decide what. `spec.tierOverrunPolicy` on the flow selects:
+Group timeouts already exist and are already the author's (`spec.groups[].timeout`, enforced as a
+context deadline with an `OutcomeTimedOut` record). What is missing is only the *cross-tier*
+consequence: a group hitting its timeout says what happens to that group, not what happens to the
+tier waiting behind it.
+
+The executor does not decide that. `spec.tierOverrunPolicy` on the flow selects:
 
 - `Wait` — tier 3 starts only when tier 4 finishes. Tier 3 absorbs the overrun and runs against
   whatever time is left. This is the current implicit behavior and stays the default, because it is
@@ -294,17 +297,48 @@ and what each group's real duration was. That record is the input to the next ou
 (`EX-32`), which is what turns an overrun from a surprise into a number the author can plan against.
 
 **EX-32 · Estimates are informed by what previous outages actually took.** Declared timeouts are the
-author's intent, not evidence. The audit tables already record `started_at` and `completed_at` per
-wave, per group, and per action attempt, for every execution — so the real duration of tier 3 in the
-last outage is known, and nothing currently reads it.
+author's intent, not evidence. Runtime cannot be known precisely — the UPS's own figure is a firmware
+estimate and `CR-4` already limits when it may be trusted — but how long *this cluster's* tier 3
+takes is not a guess at all. It is recorded, repeatedly, and currently thrown away.
 
-The estimate a flow publishes is therefore built from observed durations where history exists and
-declared durations where it does not, and it says which. A tier that has run four times and averaged
-three minutes against a declared two is worth surfacing before the next outage, not after it.
+The audit tables already carry `started_at` and `completed_at` per wave, per group, and per action
+attempt, for every execution, indexed by execution. Every past outage's real timings are sitting in
+PostgreSQL. Keeping that history is most of the reason the database exists, and nothing reads it
+back.
 
-The planner stays pure (`PL-27`): history arrives as a resolved input alongside telemetry, never as a
-lookup the compiler performs. Determinism is preserved because the same inputs — including the same
-history snapshot — still produce a byte-identical plan.
+What the estimate becomes:
+
+- Per tier and per group, the observed duration distribution across previous executions — not just a
+  mean, since the number that matters when a battery is draining is the slow case, not the typical
+  one.
+- Labelled by provenance. An estimate says whether it came from observation or from a declared
+  timeout, and how many runs it is based on. A one-sample estimate is not a trend and must not be
+  presented as one.
+- Scoped to the plan it was measured under. A group whose target set changed is not the same group,
+  so history keyed only by name would silently compare different work. The plan config hash is
+  already recorded alongside every execution and is what makes that check possible.
+- Fed into the `OD-12` warning surface, so "this plan needs longer than the battery is likely to
+  give" is a statement about what actually happened here rather than about what someone typed.
+
+Two consumers, and they must not be confused. The *advisory feasibility* verdict and the `OD-12`
+warning are planning-time outputs and may use history freely. The *timing compression* in `EX-11`
+runs during the outage against measured runtime, and history does not enter it — compressing against
+a historical average would mean spending time the battery is not currently offering.
+
+**EX-33 · A rehearsal is how history gets built before it is needed.** History has a starting
+problem: the estimates are worst exactly when a cluster is new, which is also when nobody has
+outage experience to fall back on. Waiting for real outages to accumulate samples means the feature
+arrives years late for the deployments that need it most.
+
+So a flow can be run deliberately — a scheduled or on-demand rehearsal, in enforce mode, against real
+targets, recorded like any other execution and labelled as a rehearsal so it is distinguishable in
+the audit trail and can be included in or excluded from estimates. This is not dry-run: dry-run skips
+effects and therefore produces no honest durations at all, which is precisely why it cannot answer
+this question.
+
+The operator recommends one when a flow's estimates are thin — a flow whose tiers have never run, or
+have run once, is a flow whose warning surface is built on declared numbers alone, and saying so is
+information the author is owed.
 
 ---
 

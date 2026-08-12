@@ -74,3 +74,28 @@ to node agents. Design this before implementing commands, not after.
 4. F-18 priority class default and PDB.
 5. F-23 privileged user design, ahead of any instant-command work.
 6. F-19 revisit only if an HA topology is designed.
+
+**F-46 · The readiness probe reimplements `upsdrvctl status` in shell, and the Dockerfile
+`HEALTHCHECK` is inert.** `upsdReadinessProbeScript` loops `upsc -l`, queries `ups.status`
+on each name, and exits 0 on the first device that answers. That is a bespoke aggregation
+of "is any driver connected" — and NUT 2.8.5 ships `upsdrvctl status`, which reports each
+driver as RUNNING/STOPPED and RESPONSIVE/NOT_RESPONSIVE directly, by probing the driver
+socket rather than inferring state from a failed client query.
+
+The probe mechanism is not the problem: Kubernetes offers `httpGet`, `tcpSocket`, `exec`,
+and gRPC, and NUT speaks none of the network protocols, so `exec` is the only built-in that
+can prove more than an open port. The problem is the command inside it.
+
+The two are not equivalent, which is why this is a finding rather than a swap. `upsc` proves
+the whole serving path — client, `upsd`, driver — while `upsdrvctl status` proves driver
+health directly and says nothing about whether `upsd` is accepting connections. The
+replacement is therefore `upsdrvctl status` for driver state, and `upsd`'s own listening
+socket for the rest, rather than one command for both.
+
+Separately, the image declares `HEALTHCHECK ... CMD upsd -V`. Kubernetes ignores Docker
+HEALTHCHECK entirely, and `upsd -V` only proves the binary executes — it would pass on a
+container whose driver never connected and whose `upsd` was not running. It reads as a
+health check while checking nothing that matters. Remove it or make it match the probe.
+
+Fix: replace the shell loop with `upsdrvctl status`, and drop or correct the `HEALTHCHECK`.
+Needs verification against a running operand, not a static edit.

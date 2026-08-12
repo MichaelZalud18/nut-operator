@@ -40,17 +40,6 @@ const (
 	PhaseCompleted = "Completed"
 	PhaseAborted   = "Aborted"
 	PhaseFailed    = "Failed"
-	// PhaseSuspended is a flow that stopped descending because power came back.
-	//
-	// Deliberately not "halted". EX-30 reserves halt for abort: a deliberate stop that
-	// latches and never resumes. Power recovery is the opposite kind of event -- the
-	// pointer ascends, nothing is restored, and if power degrades again the flow
-	// descends from wherever the pointer sits, re-attempting already-executed tiers
-	// as no-ops (EX-26). A suspended run has more to do; a halted one does not.
-	//
-	// Also distinct from Completed, which means every wave ran, and from Aborted,
-	// which means something failed.
-	PhaseSuspended = "Suspended"
 
 	OutcomeSimulated = "Simulated"
 	OutcomeSucceeded = "Succeeded"
@@ -315,15 +304,6 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		adaptiveInput.Observation = waveState.Observation
 		result.Adaptive = adaptiveResultFrom(result.Adaptive, waveState)
 
-		if waveState.Suspend {
-			// Power came back. Stop descending, restore nothing, and leave the pointer where
-			// it is so a later degrade resumes from there (EX-25, EX-27).
-			result.Phase = PhaseSuspended
-			result.Adaptive.Suspended = true
-			recordErr = errors.Join(recordErr, e.recordSuspension(ctx, writer, input, executionID, mode, dryRun, reason, startedAt, waveState, result))
-			return result, recordErr
-		}
-
 		waveStart := e.now()
 		waveRecordID := e.newID()
 		currentWave := wave.Index
@@ -441,51 +421,6 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	return result, recordErr
 }
 
-// recordSuspension writes the evidence for a flow that stopped descending because
-// power recovered.
-//
-// A separate path from completion because it is a different outcome, and
-// collapsing the two would make "the outage ended" indistinguishable from "the
-// cluster finished shutting down" in the audit trail -- precisely the distinction
-// a subscriber reading a recovery needs.
-//
-// The resume state written here is the point of the whole exercise: it is what a
-// later descent reads to continue from this depth rather than starting over.
-func (e Executor) recordSuspension(ctx context.Context, writer audit.Writer, input Input, executionID, mode string, dryRun bool, reason string, startedAt time.Time, waveState waveAdaptiveState, result Result) error {
-	suspendedAt := e.now()
-	recordErr := writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
-		ExecutionID:       executionID,
-		ObservedAt:        suspendedAt,
-		ShutdownFlow:      input.ShutdownFlow,
-		TriggerDecisionID: input.TriggerDecisionID,
-		Mode:              mode,
-		Phase:             PhaseSuspended,
-		Reason:            "PowerRecovered",
-		PlanConfigHash:    input.PlanConfigHash,
-		InputHash:         input.InputHash,
-		StartedAt:         &startedAt,
-		CompletedAt:       &suspendedAt,
-		DryRun:            dryRun,
-		Approved:          input.Approved,
-		ApprovalEvidence:  map[string]any{"approved": input.Approved, "requestedMode": mode, "effectiveDryRun": dryRun},
-		Revalidation:      map[string]any{"inputHash": input.InputHash},
-		Details: mergeDetails(adaptiveStateRecord(waveState), map[string]any{
-			"triggerReason":      reason,
-			"completedWaveCount": result.Waves,
-			"groupCount":         result.Groups,
-			"events":             append([]string(nil), waveState.Events...),
-		}),
-	})
-	return errors.Join(recordErr, writer.UpsertExecutorResumeState(ctx, audit.ExecutorResumeState{
-		ExecutionID:    executionID,
-		ObservedAt:     suspendedAt,
-		ShutdownFlow:   input.ShutdownFlow,
-		PlanConfigHash: input.PlanConfigHash,
-		Phase:          PhaseSuspended,
-		State:          adaptiveStateRecord(waveState),
-	}))
-}
-
 // adaptiveResultFrom accumulates the running adaptive result across waves. Events
 // append; state is replaced by the newest evaluation.
 func adaptiveResultFrom(previous AdaptiveResult, waveState waveAdaptiveState) AdaptiveResult {
@@ -494,7 +429,6 @@ func adaptiveResultFrom(previous AdaptiveResult, waveState waveAdaptiveState) Ad
 		Timing:      waveState.Timing,
 		Observation: waveState.Observation,
 		Events:      append(previous.Events, waveState.Events...),
-		Suspended:   previous.Suspended,
 	}
 }
 

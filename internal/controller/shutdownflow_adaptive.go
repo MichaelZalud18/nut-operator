@@ -46,11 +46,6 @@ func adaptiveInputForFlow(flow *powerv1alpha1.ShutdownFlow, bundle resolver.Stru
 		Observation: observation,
 		FinalTier:   final,
 		StartTier:   start,
-		// EX-25: on recovery the operator stops descending and publishes. Restoring is a
-		// subscriber concern, so continuing to power the cluster down after mains is back
-		// would be doing work the outage no longer justifies. The pointer is left where it
-		// stopped, so a second dip resumes from that depth rather than starting over.
-		SuspendOnRecovery: true,
 	}
 }
 
@@ -104,11 +99,9 @@ func publishCadence(flow *powerv1alpha1.ShutdownFlow, parameters adaptive.Parame
 // flowIsActive reports whether a flow is mid-outage, which is when a subscriber
 // is tracking progress rather than only confirming the publisher is alive.
 //
-// Two states count that might not look like it. A trigger that has matched but is
-// still serving its hold is mid-outage by definition — the condition is true and
-// the clock is running. And a suspended flow is parked partway down with a second
-// dip able to resume it, which is exactly the state a subscriber most needs kept
-// fresh.
+// A trigger that has matched but is still serving its hold counts, which might not
+// look like it: the condition is true and the clock is running, so the flow is
+// mid-outage by definition even though no wave has started.
 func flowIsActive(flow *powerv1alpha1.ShutdownFlow) bool {
 	if flow == nil {
 		return false
@@ -128,7 +121,7 @@ func flowIsActive(flow *powerv1alpha1.ShutdownFlow) bool {
 		return false
 	}
 	switch execution.Phase {
-	case powerv1alpha1.ShutdownExecutionPhaseRunning, powerv1alpha1.ShutdownExecutionPhaseSuspended:
+	case powerv1alpha1.ShutdownExecutionPhaseRunning:
 		return true
 	default:
 		return false
@@ -190,7 +183,6 @@ func adaptiveStatusFromResult(result executorpkg.AdaptiveResult) *powerv1alpha1.
 		DeepestTier:    result.Pointer.Deepest,
 		PointerStarted: result.Pointer.Started,
 		TimingMode:     string(result.Timing.Mode),
-		Suspended:      result.Suspended,
 		OnBattery:      result.Observation.OnBattery,
 		LowBattery:     result.Observation.LowBattery,
 		RuntimeTrusted: result.Observation.RuntimeTrusted,

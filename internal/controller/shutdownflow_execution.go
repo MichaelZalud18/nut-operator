@@ -122,11 +122,6 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		Reason:             evaluation.Reason,
 		Adaptive:           adaptiveStatusFromResult(result.Adaptive),
 	}
-	if result.Phase == executorpkg.PhaseSuspended {
-		// A suspension is not a failure, so it keeps the executor's own reason rather than the
-		// trigger's: "PowerRecovered" is what an operator needs to see.
-		status.Reason = "PowerRecovered"
-	}
 	if err != nil {
 		status.Message = err.Error()
 		setExecutionReadyCondition(
@@ -159,8 +154,6 @@ func applyLastExecutionPhase(flow *powerv1alpha1.ShutdownFlow) {
 	switch status.Phase {
 	case powerv1alpha1.ShutdownExecutionPhaseCompleted:
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseCompleted
-	case powerv1alpha1.ShutdownExecutionPhaseSuspended:
-		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseSuspended
 	case powerv1alpha1.ShutdownExecutionPhaseAborted, powerv1alpha1.ShutdownExecutionPhaseFailed:
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseAborted
 	}
@@ -816,19 +809,15 @@ func eligibleTriggerDecisionID(evaluation *powerv1alpha1.ShutdownTriggerEvaluati
 }
 
 // executionAlreadyRecorded reports whether this trigger episode has already been
-// executed to completion.
+// executed.
 //
-// A suspended execution deliberately does not count. It stopped because power came
-// back, with the pointer left partway down, and the whole point of leaving it there
-// is that a second dip descends again from that depth (EX-26). Treating a suspension
-// as "already executed" would make dedupe the thing that prevents re-descent --
-// during a dip-recover-dip outage, which is precisely the case the tier pointer
-// exists to handle.
+// Scoped to the episode, not to power state. Re-descent during a dip-recover-dip
+// outage is not blocked by this, because power returning makes the trigger
+// ineligible and deactivateLastExecution clears TriggerActive; the next dip is a
+// fresh episode. Dedupe never has to reason about power, which is why there is no
+// power-shaped exception here.
 func executionAlreadyRecorded(status *powerv1alpha1.ShutdownExecutionStatus, dedupeKey string) bool {
 	if status == nil || dedupeKey == "" {
-		return false
-	}
-	if status.Phase == powerv1alpha1.ShutdownExecutionPhaseSuspended {
 		return false
 	}
 	return status.TriggerActive && status.DeduplicationKey == dedupeKey
@@ -891,8 +880,6 @@ func shutdownExecutionPhase(phase string, err error) powerv1alpha1.ShutdownExecu
 		return powerv1alpha1.ShutdownExecutionPhaseCompleted
 	case executorpkg.PhaseAborted:
 		return powerv1alpha1.ShutdownExecutionPhaseAborted
-	case executorpkg.PhaseSuspended:
-		return powerv1alpha1.ShutdownExecutionPhaseSuspended
 	case executorpkg.PhaseRunning:
 		return powerv1alpha1.ShutdownExecutionPhaseRunning
 	default:

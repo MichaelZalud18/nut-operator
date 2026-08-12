@@ -419,12 +419,6 @@ type ShutdownExecutionAdaptiveStatus struct {
 	// +optional
 	TimingMode string `json:"timingMode,omitempty"`
 
-	// suspended records that the flow stopped descending because power recovered.
-	// Nothing already shut down was restored, and the pointer stayed where it
-	// stopped, so a later degrade resumes from that depth.
-	// +optional
-	Suspended bool `json:"suspended,omitempty"`
-
 	// onBattery and lowBattery are the power state observed at the last wave
 	// boundary.
 	// +optional
@@ -449,7 +443,7 @@ type ShutdownExecutionAdaptiveStatus struct {
 }
 
 // ShutdownExecutionPhase summarizes executor progress.
-// +kubebuilder:validation:Enum=Running;Completed;Aborted;Failed;Skipped;Suspended
+// +kubebuilder:validation:Enum=Running;Completed;Aborted;Failed;Skipped
 type ShutdownExecutionPhase string
 
 const (
@@ -458,15 +452,6 @@ const (
 	ShutdownExecutionPhaseAborted   ShutdownExecutionPhase = "Aborted"
 	ShutdownExecutionPhaseFailed    ShutdownExecutionPhase = "Failed"
 	ShutdownExecutionPhaseSkipped   ShutdownExecutionPhase = "Skipped"
-	// ShutdownExecutionPhaseSuspended is a flow that stopped descending because power
-	// recovered.
-	//
-	// Deliberately not "Halted": AE-6 reserves halt for abort, a deliberate stop that
-	// never resumes. This is the opposite -- the pointer ascends, nothing is restored,
-	// and a later degrade descends again from where it stopped, re-attempting already
-	// executed tiers as no-ops (AE-2). It is also not Completed, which means every
-	// wave ran, nor Aborted, which means something failed.
-	ShutdownExecutionPhaseSuspended ShutdownExecutionPhase = "Suspended"
 )
 
 // ShutdownGroup defines a shutdown subject and its graph relationships.
@@ -901,20 +886,15 @@ type PlannerDiagramExportsStatus struct {
 }
 
 // ShutdownFlowPhase summarizes flow compilation and evaluation.
-// +kubebuilder:validation:Enum=Pending;Compiled;Blocked;Running;Aborted;Suspended;Completed;Error
+// +kubebuilder:validation:Enum=Pending;Compiled;Blocked;Running;Aborted;Completed;Error
 type ShutdownFlowPhase string
 
 const (
-	ShutdownFlowPhasePending  ShutdownFlowPhase = "Pending"
-	ShutdownFlowPhaseCompiled ShutdownFlowPhase = "Compiled"
-	ShutdownFlowPhaseBlocked  ShutdownFlowPhase = "Blocked"
-	ShutdownFlowPhaseRunning  ShutdownFlowPhase = "Running"
-	ShutdownFlowPhaseAborted  ShutdownFlowPhase = "Aborted"
-	// ShutdownFlowPhaseSuspended is a flow that stopped descending because power came
-	// back. Everything it already did stays in place, the pointer stays where it
-	// stopped, and a later degrade resumes from there; restoring is a subscriber
-	// concern (AE-1).
-	ShutdownFlowPhaseSuspended ShutdownFlowPhase = "Suspended"
+	ShutdownFlowPhasePending   ShutdownFlowPhase = "Pending"
+	ShutdownFlowPhaseCompiled  ShutdownFlowPhase = "Compiled"
+	ShutdownFlowPhaseBlocked   ShutdownFlowPhase = "Blocked"
+	ShutdownFlowPhaseRunning   ShutdownFlowPhase = "Running"
+	ShutdownFlowPhaseAborted   ShutdownFlowPhase = "Aborted"
 	ShutdownFlowPhaseCompleted ShutdownFlowPhase = "Completed"
 	ShutdownFlowPhaseError     ShutdownFlowPhase = "Error"
 )

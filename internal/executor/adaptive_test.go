@@ -19,7 +19,6 @@ package executor
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -111,12 +110,12 @@ func TestThePointerNeverReachesTheLastDitchTier(t *testing.T) {
 	}
 }
 
-// EX-25: on recovery the operator stops descending and restores nothing. Suspended is not
-// Completed -- collapsing them would make "the outage ended" read as "the cluster shut down".
-func TestPowerRecoverySuspendsTheFlowWithoutRestoringAnything(t *testing.T) {
+// Execution flows one way. Power returning mid-run is an observation, not a state the executor
+// enters: every wave still runs, nothing is restored, and the improvement shows up in the pointer
+// and the events for a subscriber to react to. The operator does no recovery of any kind.
+func TestPowerReturningMidRunDoesNotStopTheFlow(t *testing.T) {
 	writer := &fakeAuditWriter{}
 	input := tieredInput(onBattery(200))
-	input.Adaptive.SuspendOnRecovery = true
 	input.Adaptive.StartTier = 4
 
 	observations := []adaptive.PowerObservation{onBattery(200), onMains(), onMains()}
@@ -132,31 +131,32 @@ func TestPowerRecoverySuspendsTheFlowWithoutRestoringAnything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
-	if result.Phase != PhaseSuspended || !result.Adaptive.Suspended {
-		t.Fatalf("result = %#v, want a suspended flow", result)
+	if result.Phase != PhaseCompleted {
+		t.Fatalf("phase = %q, want Completed; there is no paused state for an execution to enter", result.Phase)
 	}
-	// The first wave ran; the second and third did not.
-	if result.Groups != 1 {
-		t.Fatalf("groups executed = %d, want only the pre-recovery wave", result.Groups)
+	if result.Groups != 3 {
+		t.Fatalf("groups executed = %d, want all 3; power improving does not cancel remaining waves", result.Groups)
 	}
-	if phases := executionPhases(writer.executions); fmt.Sprint(phases) != "[Running Suspended]" {
-		t.Fatalf("execution phases = %v, want [Running Suspended]", phases)
+	// The improvement is recorded as an observation and nothing is undone by recording it.
+	observed := false
+	for _, event := range result.Adaptive.Events {
+		if strings.Contains(event, "power: OL") {
+			observed = true
+		}
 	}
-	// EX-27: ascent is bookkeeping. Nothing is un-scaled, un-cordoned, or restarted.
+	if !observed {
+		t.Fatalf("expected mains returning to be recorded in the events, got %#v", result.Adaptive.Events)
+	}
 	if len(writer.nodeReleases) != 0 {
-		t.Fatalf("a suspension must not release nodes, got %#v", writer.nodeReleases)
-	}
-	if writer.executions[1].Reason != "PowerRecovered" {
-		t.Fatalf("suspension reason = %q, want PowerRecovered", writer.executions[1].Reason)
+		t.Fatalf("recording an improvement must not release or restore anything, got %#v", writer.nodeReleases)
 	}
 }
 
-// EX-30 reserves halt for abort. A suspension must leave the pointer unlatched, or a second dip
-// could never descend again -- which is the exact case the tier pointer exists to handle.
-func TestSuspensionDoesNotLatchThePointer(t *testing.T) {
+// EX-30 reserves halt for abort. Recording an improvement must leave the pointer unlatched, or a
+// second dip could never descend again -- the exact case the tier pointer exists to handle.
+func TestRecordingAnImprovementDoesNotLatchThePointer(t *testing.T) {
 	writer := &fakeAuditWriter{}
 	input := tieredInput(onBattery(200))
-	input.Adaptive.SuspendOnRecovery = true
 	input.Adaptive.StartTier = 4
 
 	executor := newExecutor(writer)
@@ -173,37 +173,16 @@ func TestSuspensionDoesNotLatchThePointer(t *testing.T) {
 	}
 }
 
-// The whole point of leaving the pointer where it stopped: a second dip descends from that depth
-// and re-attempts the tiers it already ran as no-ops (EX-26), reported as re-execution.
-func TestASecondDipResumesFromTheSuspendedDepth(t *testing.T) {
-	first := &fakeAuditWriter{}
-	firstInput := tieredInput(onBattery(200))
-	firstInput.Adaptive.SuspendOnRecovery = true
-	firstInput.Adaptive.StartTier = 4
-
-	observations := []adaptive.PowerObservation{onBattery(200), onBattery(200), onMains()}
-	read := 0
-	executor := newExecutor(first)
-	executor.Observer = func(context.Context) (adaptive.PowerObservation, error) {
-		observation := observations[read]
-		read++
-		return observation, nil
-	}
-	firstResult, err := executor.Execute(context.Background(), firstInput)
-	if err != nil {
-		t.Fatalf("first Execute returned error: %v", err)
-	}
-	if firstResult.Phase != PhaseSuspended {
-		t.Fatalf("first run phase = %q, want Suspended", firstResult.Phase)
-	}
-	if firstResult.Adaptive.Pointer.Deepest != 3 {
-		t.Fatalf("first run reached tier %d, want 3", firstResult.Adaptive.Pointer.Deepest)
-	}
-
-	// Power drops again. The caller hands back the pointer exactly as persisted.
+// A second dip resumes from the persisted depth and re-attempts the tiers it already ran as no-ops
+// (EX-26), reported as re-execution so a subscriber can tell a second descent from a first.
+func TestASecondDipResumesFromThePersistedDepth(t *testing.T) {
+	// The state a dip-recover-dip outage leaves behind: the flow reached tier 2, power improved
+	// and the pointer recorded that by climbing back to 4, and Deepest kept the record of how far
+	// it actually got. That last field is what makes the next descent recognizable as a second one.
 	second := &fakeAuditWriter{}
 	secondInput := tieredInput(onBattery(120))
-	secondInput.Adaptive.Pointer = firstResult.Adaptive.Pointer
+	secondInput.Adaptive.StartTier = 4
+	secondInput.Adaptive.Pointer = adaptive.PointerState{Tier: 4, Deepest: 2, Started: true}
 
 	secondResult, err := newExecutor(second).Execute(context.Background(), secondInput)
 	if err != nil {
@@ -212,9 +191,9 @@ func TestASecondDipResumesFromTheSuspendedDepth(t *testing.T) {
 	if secondResult.Phase != PhaseCompleted {
 		t.Fatalf("second run phase = %q, want Completed", secondResult.Phase)
 	}
-	// It descends past where it stopped rather than starting over.
+	// Deepest is not lost by re-crossing ground already covered.
 	if secondResult.Adaptive.Pointer.Deepest != 2 {
-		t.Fatalf("second run reached tier %d, want it to continue to 2", secondResult.Adaptive.Pointer.Deepest)
+		t.Fatalf("second run deepest = %d, want it to hold at 2", secondResult.Adaptive.Pointer.Deepest)
 	}
 	// And the re-crossed tiers are reported as re-execution, not as new work.
 	reexecuted := false
@@ -225,21 +204,6 @@ func TestASecondDipResumesFromTheSuspendedDepth(t *testing.T) {
 	}
 	if !reexecuted {
 		t.Fatalf("expected a re-execution event on the second descent, got %#v", secondResult.Adaptive.Events)
-	}
-}
-
-// Without the suspend behavior a recovered flow runs to completion, which is the pre-existing
-// contract and must stay reachable rather than becoming implicit.
-func TestRecoveryDoesNotSuspendWhenTheFlowDidNotAskForIt(t *testing.T) {
-	writer := &fakeAuditWriter{}
-	input := tieredInput(onMains())
-
-	result, err := newExecutor(writer).Execute(context.Background(), input)
-	if err != nil {
-		t.Fatalf("Execute returned error: %v", err)
-	}
-	if result.Phase != PhaseCompleted || result.Groups != 3 {
-		t.Fatalf("result = %#v, want every wave to have run", result)
 	}
 }
 

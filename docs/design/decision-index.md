@@ -63,7 +63,7 @@ Dated audit and findings records live in `docs/audits/` and share the `F-n` find
 | PL | Planner requirement | planner-requirements | PL-1 – PL-49 |
 | CR | Capability resolution rule | planner-requirements | CR-1 – CR-4 |
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
-| EX | Executor requirement | executor-requirements | EX-1 – EX-32 |
+| EX | Executor requirement | executor-requirements | EX-1 – EX-33 |
 | HK | Shutdown hook requirement | shutdown-hooks | HK-1 – HK-10 |
 | IN | Inventory contract rule | inventory-provider-contract | IN-1 – IN-16 |
 | F | Audit finding | audit records (`docs/audits/`) | F-1 – F-44 (2026-08-10) |

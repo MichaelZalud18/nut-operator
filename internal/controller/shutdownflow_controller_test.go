@@ -364,7 +364,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 		// seeds the persisted record and then reconciles through a second reconciler instance --
 		// that pair is what a restarted operator pod actually is. Producing the suspension in-process
 		// would exercise suspension, not restart.
-		It("resumes a suspended execution from the tier it left behind rather than starting over", func() {
+		It("resumes a restarted execution from the tier it left behind rather than starting over", func() {
 			observedAt := time.Date(2026, 8, 4, 9, 0, 0, 0, time.UTC)
 			cluster := &powerv1alpha1.PowerManagementCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestPowerClusterName},
@@ -419,9 +419,9 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(firstRun.TimingMode).To(Equal(string(adaptive.ModeUrgent)))
 			executionsAfterFirstRun := len(store.shutdownFlowExecutions)
 
-			By("leaving behind the record a killed executor would have written")
+			By("clearing the episode the way a trigger going ineligible would")
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
-			resource.Status.LastExecution.Phase = powerv1alpha1.ShutdownExecutionPhaseSuspended
+			resource.Status.LastExecution.TriggerActive = false
 			Expect(k8sClient.Status().Update(ctx, resource)).To(Succeed())
 
 			By("reconciling through a second instance holding no in-process state")
@@ -434,8 +434,8 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			_, err = secondInstance.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
-			// A suspension is not evidence the episode is finished, so dedupe must not stand in the
-			// way of the restart -- otherwise the resume is blocked by the record of its own progress.
+			// A fresh episode runs again, and the pointer it resumes from is the one the previous
+			// run persisted -- otherwise the restart is blocked by the record of its own progress.
 			Expect(len(store.shutdownFlowExecutions)).To(BeNumerically(">", executionsAfterFirstRun))
 
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())

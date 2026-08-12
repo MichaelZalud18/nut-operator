@@ -267,27 +267,27 @@ func TestAMalformedWaitDurationIsTreatedAsUndeclared(t *testing.T) {
 	}
 }
 
-// A suspended execution must not count as "already executed". It stopped because power came back,
-// with the pointer partway down, and the whole point of leaving it there is that a second dip
-// descends again. Treating suspension as done would make dedupe the thing that blocks re-descent --
-// during a dip-recover-dip outage, which is exactly what the tier pointer exists to handle.
-func TestASuspendedExecutionDoesNotBlockTheNextDescent(t *testing.T) {
-	suspended := &powerv1alpha1.ShutdownExecutionStatus{
-		TriggerActive:    true,
-		DeduplicationKey: "key-a",
-		Phase:            powerv1alpha1.ShutdownExecutionPhaseSuspended,
-	}
-	if executionAlreadyRecorded(suspended, "key-a") {
-		t.Fatal("a suspended execution has more to do and must not block a later descent")
-	}
-
-	completed := &powerv1alpha1.ShutdownExecutionStatus{
+// Dedupe is scoped to the trigger episode and knows nothing about power. Re-descent during a
+// dip-recover-dip outage is not blocked by it, because power returning makes the trigger ineligible
+// and clears TriggerActive -- so the next dip arrives as a fresh episode rather than as a
+// continuation dedupe has to be taught to recognize.
+func TestDedupeIsScopedToTheTriggerEpisode(t *testing.T) {
+	active := &powerv1alpha1.ShutdownExecutionStatus{
 		TriggerActive:    true,
 		DeduplicationKey: "key-a",
 		Phase:            powerv1alpha1.ShutdownExecutionPhaseCompleted,
 	}
-	if !executionAlreadyRecorded(completed, "key-a") {
-		t.Fatal("a completed execution for the same episode must still deduplicate")
+	if !executionAlreadyRecorded(active, "key-a") {
+		t.Fatal("a completed execution for the same active episode must deduplicate")
+	}
+
+	deactivated := &powerv1alpha1.ShutdownExecutionStatus{
+		TriggerActive:    false,
+		DeduplicationKey: "key-a",
+		Phase:            powerv1alpha1.ShutdownExecutionPhaseCompleted,
+	}
+	if executionAlreadyRecorded(deactivated, "key-a") {
+		t.Fatal("once the trigger goes ineligible the episode is over; the next dip must run")
 	}
 }
 
@@ -295,18 +295,18 @@ func TestASuspendedExecutionDoesNotBlockTheNextDescent(t *testing.T) {
 // has to preserve it exactly -- including Deepest, which is what makes re-descent recognizable.
 func TestThePublishedPointerRoundTripsBackIntoTheNextRun(t *testing.T) {
 	published := adaptiveStatusFromResult(executorpkg.AdaptiveResult{
-		Pointer:   adaptive.PointerState{Tier: 4, Deepest: 2, Started: true},
-		Timing:    adaptive.TimingState{Mode: adaptive.ModeUrgent},
-		Suspended: true,
+		Pointer: adaptive.PointerState{Tier: 4, Deepest: 2, Started: true},
+		Timing:  adaptive.TimingState{Mode: adaptive.ModeUrgent},
 	})
 
 	resumed := resumedPointerState(&powerv1alpha1.ShutdownExecutionStatus{Adaptive: published})
 	if resumed.Tier != 4 || resumed.Deepest != 2 || !resumed.Started {
 		t.Fatalf("resumed = %#v, want tier 4 deepest 2 started", resumed)
 	}
-	// Suspension is not a halt: the resumed pointer must be free to descend again (EX-30).
+	// Recording an improvement is not a halt: the resumed pointer must be free to descend again
+	// (EX-30, which reserves latching for abort).
 	if resumed.Halted {
-		t.Fatal("a suspended run must not resume into a latched pointer")
+		t.Fatal("a run that observed power improving must not resume into a latched pointer")
 	}
 }
 
@@ -329,9 +329,10 @@ func TestPublishCadenceIsFasterWhileAFlowIsActive(t *testing.T) {
 	}
 }
 
-// A suspended flow is parked partway down with a second dip able to resume it, which is exactly
-// the state a subscriber most needs kept fresh.
-func TestASuspendedFlowStillCountsAsActive(t *testing.T) {
+// Activity is what a subscriber tracks progress against: a running execution or a trigger that has
+// matched and is still serving its hold. A finished execution is not activity, whatever the power
+// did afterward.
+func TestFlowActivityFollowsExecutionAndTriggerState(t *testing.T) {
 	for name, testCase := range map[string]struct {
 		flow     *powerv1alpha1.ShutdownFlow
 		expected bool
@@ -339,7 +340,6 @@ func TestASuspendedFlowStillCountsAsActive(t *testing.T) {
 		"nil flow":  {nil, false},
 		"never run": {&powerv1alpha1.ShutdownFlow{}, false},
 		"running":   {flowInPhase(powerv1alpha1.ShutdownExecutionPhaseRunning), true},
-		"suspended": {flowInPhase(powerv1alpha1.ShutdownExecutionPhaseSuspended), true},
 		"completed": {flowInPhase(powerv1alpha1.ShutdownExecutionPhaseCompleted), false},
 		"aborted":   {flowInPhase(powerv1alpha1.ShutdownExecutionPhaseAborted), false},
 		"eligible":  {flowWithEligibleTrigger(), true},

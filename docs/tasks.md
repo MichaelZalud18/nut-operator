@@ -87,8 +87,9 @@ node-agent coverage, planner artifacts with diagram exports, and `ShutdownFlow` 
 executor: power is re-read at every wave boundary, the pointer follows each compiled wave's tier, and
 declared timeouts and `Wait` durations are compressed by a ratio measured from remaining runtime over
 remaining declared plan. Pointer and mode persist in `executor_resume_states` and publish on
-`status.lastExecution.adaptive`. Power returning mid-flow suspends the execution without restoring
-anything, leaving the pointer unlatched at its depth so a second dip resumes from there. `Gate` is
+`status.lastExecution.adaptive`. Power returning mid-flow is recorded and nothing else: the execution
+runs to completion, the pointer ascends as bookkeeping, and whether a new execution starts is settled
+by trigger eligibility a level up. `Gate` is
 removed from the action enum; `Notify` emits a Kubernetes Event. Tier inversion is published as
 `nutoperator_shutdownflow_tier_inversions`, and the EX-29 cadence heartbeat as
 `nutoperator_shutdownflow_publish_timestamp_seconds` plus `status.lastPublishTime`. Node clearance is
@@ -112,10 +113,6 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 - `OD-27` confirm the adaptive defaults against a real outage. The compression amount is measured, so
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).
-- Remove `SuspendOnRecovery` from the executor's recovery path. `OD-29` closed on `EX-27`: ascent is
-  bookkeeping, so a flicker must cost nothing — but the implemented suspension ends the run, which
-  costs the rest of the flow. A genuinely finished outage is already handled a level up, where the
-  trigger stops being eligible.
 - `OD-30` decide whether cadence is global or per-flow.
 - Implement the `OD-12` warning surface (`EX-3`): publish plan estimate against runtime estimate, per
   tier and in total, as a visible condition and Event rather than a compile rejection. Nothing is
@@ -123,10 +120,19 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 - Build `EX-31` tier-overrun policy: `spec.tierOverrunPolicy` of `Wait` (default, current behavior),
   `Overlap`, or `Preempt`, plus metrics recording which tier overran, by how much, and what the
   policy did.
-- Build `EX-32` history-informed estimates. The audit tables already carry `started_at`/`completed_at`
-  per wave, group, and action attempt, and nothing reads them; feed observed durations back as a
-  resolved planner input so estimates reflect what past outages took, labelled as observed or
-  declared.
+- Build `EX-32` history-informed estimates, in four pieces:
+  - A read path over `shutdownflow_execution_waves`/`_groups`/`_action_attempts` producing observed
+    durations per tier and per group, keyed by plan config hash so a changed group is not compared
+    against a different one wearing the same name.
+  - Injection as a resolved planner input alongside telemetry, never a lookup the compiler performs —
+    `PL-27` determinism depends on history arriving as input.
+  - Provenance on every estimate: observed or declared, and the sample count behind it.
+  - Consumption in the `OD-12` warning surface only. `EX-11` compression keeps measuring live
+    runtime; compressing against a historical average would spend time the battery is not offering.
+- Build `EX-33` rehearsal runs so history exists before the first real outage: an on-demand or
+  scheduled enforce-mode execution, labelled as a rehearsal in the audit trail and includable or
+  excludable from estimates. Dry-run cannot serve this — it skips effects and so produces no honest
+  durations. Surface a recommendation when a flow's tiers have never run or have run once.
 - `OD-14` decide partial-domain outage plan scope, then wire domain membership into wave compilation
   (shared with Inventory System and Telemetry & Triggers).
 - Accept node-selector *requirements* for node targeting so a group can express a tier range.
@@ -160,6 +166,10 @@ declined — it only matters with an HA `upsd` topology, which is not designed.
 
 - `F-41` document `verifyClientCertificates` as inert, and decide whether admission should reject
   `true` ([nut-usage-audit.md](audits/nut-usage-audit.md)).
+- `F-46` replace the bespoke `upsc` loop in the `upsd` readiness probe with `upsdrvctl status`, which
+  reports driver RESPONSIVE/NOT_RESPONSIVE natively, and drop or fix the inert Dockerfile
+  `HEALTHCHECK` ([nutserver-pod-audit.md](audits/nutserver-pod-audit.md)). Needs verification against
+  a running operand.
 - Extend the `F-43` mapping watch to `simulation.sequenceConfigMapRef` ConfigMaps. Same defect and
   same code path as the credential `Secret` gap, but a `dummy-ups` fixture edit is a test-path
   staleness rather than a credential one, so it was left out of the finding's own scope.

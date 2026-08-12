@@ -974,12 +974,6 @@ spec:
                           runtimeTrusted records whether the devices affirmatively declared a dynamic
                           runtime estimate (AE-6). False means the runtime figure did not drive timing.
                         type: boolean
-                      suspended:
-                        description: |-
-                          suspended records that the flow stopped descending because power recovered.
-                          Nothing already shut down was restored, and the pointer stayed where it
-                          stopped, so a later degrade resumes from that depth.
-                        type: boolean
                       tier:
                         description: tier is the shutdown tier the pointer currently
                           occupies.
@@ -1037,7 +1031,6 @@ spec:
                     - Aborted
                     - Failed
                     - Skipped
-                    - Suspended
                     type: string
                   planConfigHash:
                     description: planConfigHash is the compiled plan hash executed.
@@ -1091,7 +1084,6 @@ spec:
                 - Blocked
                 - Running
                 - Aborted
-                - Suspended
                 - Completed
                 - Error
                 type: string

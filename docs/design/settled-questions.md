@@ -46,10 +46,27 @@ to persist" anywhere near power state. If the answer involves waiting to be more
 re-read `EX-26` and ask what the wrong action would actually cost. On the descent path it costs
 nothing.
 
-**Known contradiction:** the executor's `SuspendOnRecovery` currently ends the run when power
-returns, which is not bookkeeping and does have a cost. See open work in `docs/tasks.md`.
+## 3. Tracking an outage as one thing with a beginning and an end
 
-## 3. Enforcing feasibility on the operator's behalf
+**Settled by:** `EX-23`, and by `OD-1`/`OD-5` upstream of it.
+
+Execution flows one way. There is no paused state, no suspended phase, no "the outage is ongoing"
+object. The operator descends, records each step, and stops. Whether a *new* execution starts is a
+trigger question answered a level up.
+
+The reason is not fastidiousness, it is honesty: understanding an outage end to end requires tracking
+recovery, and this operator does not do recovery. A component that models an outage holistically
+while structurally unable to observe half of it will describe that outage wrongly, and it will do so
+at the moment someone is relying on the description.
+
+Power moving back up is an observation. It goes in the metrics, both directions, and subscribers
+that *do* own recovery react to it. They are not hooked, notified, or coordinated with — they watch
+and they act, and that is the whole integration.
+
+**The tell:** a status field, phase, or executor branch whose meaning is a stage of an outage rather
+than a fact about this execution. `PhaseSuspended` was exactly this and has been removed.
+
+## 4. Enforcing feasibility on the operator's behalf
 
 **Settled by:** `OD-12`, `PL-31`.
 
@@ -62,7 +79,7 @@ outcome, and quietly dropping tiers substitutes the operator's judgement for the
 prediction rather than a structural error. Structural errors — a cycle, an unknown dependency, an
 unreachable node — are rejected at compile time and that is correct. Estimates are not errors.
 
-## 4. Analysis and interpretation in published output
+## 5. Analysis and interpretation in published output
 
 **Settled by:** `EX-28`.
 
@@ -76,7 +93,7 @@ it requires a theory about what the history means, it belongs to the subscriber.
 
 **The tell:** any status field whose value is an adjective.
 
-## 5. Becoming a workflow engine
+## 6. Becoming a workflow engine
 
 **Settled by:** `SB-15`, and `HK-7` for the hook case specifically.
 
@@ -87,14 +104,14 @@ is what `HK-3` exists for.
 **The tell:** proposing that a hook or action gets a retry budget, or that a failure should pick a
 different branch.
 
-## 6. A lifecycle controller
+## 7. A lifecycle controller
 
 **Settled by:** permanently rejected, repeatedly. Argo Events plus Argo Workflows is the entire
 orchestration implementation. There is no additional controller that owns lifecycle.
 
 **The tell:** sketching a new controller whose job is to sequence other components.
 
-## 7. Naming a node in documentation or status
+## 8. Naming a node in documentation or status
 
 **Settled by:** role-based naming throughout.
 

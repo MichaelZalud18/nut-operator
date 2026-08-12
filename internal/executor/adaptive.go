@@ -61,13 +61,6 @@ type AdaptiveInput struct {
 	// ascend back to. Ascent is bookkeeping only (EX-27); the limit exists so the
 	// recorded position stays inside the flow's own range.
 	StartTier int32
-
-	// SuspendOnRecovery stops the flow starting further waves once power is back.
-	// EX-25: the operator stops descending and publishes, and restores nothing.
-	//
-	// Not a halt. The pointer is left where it is, unlatched, so a later degrade
-	// descends from that depth and re-attempts the tiers below it as no-ops (EX-26).
-	SuspendOnRecovery bool
 }
 
 // PowerObserver reads the current power state at a wave boundary.
@@ -94,9 +87,6 @@ type AdaptiveResult struct {
 	Observation adaptive.PowerObservation
 	// Events are the EX-28 log lines produced, in order.
 	Events []string
-	// Suspended records that the flow stopped descending because power recovered.
-	// The pointer is left where it stopped so a later degrade resumes from there.
-	Suspended bool
 }
 
 // waveAdaptiveState is the per-wave outcome of evaluating the adaptive model.
@@ -108,8 +98,6 @@ type waveAdaptiveState struct {
 	Movement    adaptive.PointerMovement
 	Transition  adaptive.TimingTransition
 	Events      []string
-	// Suspend is true when power recovered and the flow should stop starting waves.
-	Suspend bool
 	// Budget is the derived timing budget applied to this wave's declared durations.
 	Budget adaptive.TimingBudget
 }
@@ -151,17 +139,13 @@ func (e Executor) evaluateWave(ctx context.Context, input AdaptiveInput, wave Wa
 	state.Events = append(state.Events, state.Budget.Describe())
 
 	pointer := input.Pointer
-	switch {
-	case adaptive.ShouldDescend(observation):
+	if adaptive.ShouldDescend(observation) {
 		pointer, state.Movement = descendToWaveTier(pointer, wave, finalTier(input))
-	case input.SuspendOnRecovery:
-		// EX-25 and EX-27: record that power improved, restore nothing, and stop
-		// descending. The pointer stays where it is, unlatched, so a later degrade
-		// resumes from this depth. The subscriber owns recovery.
+	} else {
+		// EX-27: record that power improved. Bookkeeping only -- no action, and the wave
+		// runs regardless. Execution flows one way; power moving back up is an observation
+		// for subscribers to react to, not a state this executor enters.
 		pointer, state.Movement = pointer.Ascend(startTier(input, wave))
-		state.Suspend = true
-	default:
-		pointer, state.Movement = descendToWaveTier(pointer, wave, finalTier(input))
 	}
 	state.Pointer = pointer
 	state.Events = append(state.Events, state.Movement.Describe(observation))
