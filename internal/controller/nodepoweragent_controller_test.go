@@ -499,8 +499,13 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(*actuator.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
 			Expect(actuator.SecurityContext.Capabilities.Drop).To(ContainElement(corev1.Capability("ALL")))
 			Expect(actuator.SecurityContext.Capabilities.Add).To(ConsistOf(corev1.Capability("SYS_BOOT")))
-			Expect(actuator.SecurityContext.SeccompProfile).NotTo(BeNil())
-			Expect(actuator.SecurityContext.SeccompProfile.Type).To(Equal(corev1.SeccompProfileTypeUnconfined))
+			// F-62: no seccomp override, so the pod's RuntimeDefault applies. Measured on kind with
+			// the capability actually held: RuntimeDefault + CAP_SYS_BOOT reaches the kernel's
+			// reboot handler (EINVAL on the argument), while the same profile without the
+			// capability is refused with EPERM. The capability is the gate; Unconfined was removing
+			// every other syscall filter from the one container that can halt a host, and buying
+			// nothing for it.
+			Expect(actuator.SecurityContext.SeccompProfile).To(BeNil())
 			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_AGENT_MODE", Value: "Actuate"}))
 			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_ACTUATOR_POLICY", Value: "SystemdPoweroff"}))
 			for _, variable := range actuator.Env {

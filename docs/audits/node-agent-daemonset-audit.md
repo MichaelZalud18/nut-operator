@@ -450,6 +450,41 @@ Verified here, separately: `ensureOperandNamespace` (`:633-647`) labels the name
 Security Standards):* `hostPID` plus `Unconfined` puts the pod outside `baseline`, so a cluster
 enforcing it would reject the actuating configuration and admit the stub one.
 
+*Seccomp half resolved 2026-08-13; the Pod Security half is open and narrowed.*
+
+The seccomp assumption was wrong, and it could only be tested after `F-61` — until then no process
+held the capability, so any result would have been about the wrong failure. Measured on `kind`:
+
+| Configuration | `reboot(2)` result |
+| --- | --- |
+| `RuntimeDefault` + `CAP_SYS_BOOT` | `EINVAL` (errno 22) |
+| `RuntimeDefault`, no capability | `EPERM` (errno 1) |
+
+The two errnos are what separate the explanations. A seccomp denial surfaces as `EPERM` before the
+kernel's reboot handler runs; `EINVAL` can only come from the handler itself, rejecting the argument.
+So `RuntimeDefault` reaches the syscall and the capability is the only gate. `Unconfined` is removed
+— it was stripping every other syscall filter from the one container that can halt a machine, in
+exchange for nothing.
+
+(The `EINVAL` is itself informative and belongs to `F-63`: the probe used `LINUX_REBOOT_CMD_CAD_ON`,
+which the kernel refuses from a non-initial PID namespace. That the argument was rejected on
+namespace grounds is direct evidence that PID-namespace placement changes what `reboot(2)` does.)
+
+**The Pod Security half is confirmed and is now the whole of `F-62`.** Both shapes were submitted to
+labelled namespaces:
+
+- The **actuating** shape is rejected by `baseline`, on two counts:
+  `non-default capabilities (container "p" must not include "SYS_BOOT")` and
+  `host namespaces (hostPID=true)`. Removing `Unconfined` does not change this; `hostPID` alone
+  would.
+- The **stub/dry-run default** shape is admitted by `restricted`, the strictest level.
+
+That asymmetry is the useful part. The agent's default configuration is compatible with the tightest
+Pod Security level a cluster can enforce, and only enabling actuation requires an exception. What is
+undecided is whether the operator, which creates this namespace, should say so in labels — and
+writing `enforce: privileged` onto a namespace is the operator weakening a boundary on the user's
+behalf, so it is a decision rather than an omission to fix.
+
 **F-63 · Record why `hostPID` is required.** `daemonSet.Spec.Template.Spec.HostPID = hostPoweroff`
 (`nodepoweragent_render.go:748`), where `hostPoweroff` is true only for `mode=Actuate` plus
 `policy=SystemdPoweroff` (`:338-341`).

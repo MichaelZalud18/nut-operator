@@ -928,15 +928,29 @@ func actuatorContainerSecurityContext(hostPoweroff bool) *corev1.SecurityContext
 	if !hostPoweroff {
 		return restrictedContainerSecurityContext()
 	}
+	// No seccomp override: the pod's RuntimeDefault applies (F-62).
+	//
+	// This carried SeccompProfile: Unconfined on the assumption that the runtime's default profile
+	// would block reboot(2). It does not. Measured on kind, with the capability actually held after
+	// the F-61 fix:
+	//
+	//   RuntimeDefault + CAP_SYS_BOOT  -> EINVAL, the kernel's reboot handler ran and rejected the
+	//                                    argument, so the capability check passed
+	//   RuntimeDefault, no capability  -> EPERM, refused on the capability
+	//
+	// The two errnos are what separate the explanations. Seccomp denials surface as EPERM before the
+	// handler runs; EINVAL can only come from the handler itself. The capability is the gate, and
+	// Unconfined was buying nothing while removing every other syscall filter from the one container
+	// that can halt the machine.
+	//
+	// hostPID still places this pod outside Pod Security "baseline" on its own, so dropping the
+	// override narrows the container without changing where it can be admitted.
 	return &corev1.SecurityContext{
 		AllowPrivilegeEscalation: ptrBool(false),
 		ReadOnlyRootFilesystem:   ptrBool(true),
 		Capabilities: &corev1.Capabilities{
 			Add:  []corev1.Capability{"SYS_BOOT"},
 			Drop: []corev1.Capability{"ALL"},
-		},
-		SeccompProfile: &corev1.SeccompProfile{
-			Type: corev1.SeccompProfileTypeUnconfined,
 		},
 	}
 }

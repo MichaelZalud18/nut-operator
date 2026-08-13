@@ -283,11 +283,16 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
   the audit for the measurements; `F-62` and `F-63` can now be tested against a process that
   actually holds the capability.
 
-- **`F-62` · `SeccompProfile: Unconfined` on the actuator is probably wider than needed.** The
-  runtime default profile permits `reboot` conditionally on `CAP_SYS_BOOT` being present, so
-  `RuntimeDefault` likely already allows it; test that first and fall back to a narrow
-  `localhostProfile` rather than Unconfined. Separately, `hostPID` plus Unconfined puts the operand
-  namespace outside Pod Security `baseline`, and no namespace labelling appears in the render path.
+- **`F-62` · Pod Security labelling for the operand namespace.** The seccomp half is closed: measured
+  on `kind` after `F-61`, `RuntimeDefault` + `CAP_SYS_BOOT` reaches the kernel's reboot handler
+  (`EINVAL` on the argument) while the same profile without the capability is refused (`EPERM`), so
+  the capability is the gate and `Unconfined` is removed. What remains is a decision. The actuating
+  shape is rejected by a `baseline` namespace on `hostPID` and the added capability; the stub default
+  is admitted by `restricted`. The operator creates this namespace and applies no
+  `pod-security.kubernetes.io/*` labels, so on a cluster enforcing `baseline` by default, enabling
+  actuation fails at admission with no explanation from this operator. Decide whether it labels the
+  namespace, and accept that writing `enforce: privileged` is the operator weakening a boundary for
+  the user.
 
 - **`F-63` · Record why `hostPID` is required.** `reboot(2)` called from a non-initial PID namespace
   signals that namespace's init instead of halting the host, so `hostPID` is load-bearing rather than
