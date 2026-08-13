@@ -214,6 +214,36 @@ var _ = Describe("NUTServer Controller", func() {
 				ReadOnly:  true,
 			}))
 
+			// F-49: the drivers get a supervisor. upsdrvctl start runs once at startup, so a
+			// driver that dies later leaves upsd alive, the container is never restarted, and the
+			// pod sits out of the Service endpoints indefinitely with every agent in DEADTIME.
+			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(2))
+			watchdog := deployment.Spec.Template.Spec.Containers[1]
+			Expect(watchdog.Name).To(Equal(driverWatchdogContainerName))
+			Expect(watchdog.Image).To(Equal(deployment.Spec.Template.Spec.Containers[0].Image))
+			Expect(watchdog.Command).To(Equal([]string{"sh", "-c", driverWatchdogScript()}))
+
+			// It reaches the drivers exactly as upsd does -- the sockets and PID files in
+			// /run/nut, and the device list in /etc/nut -- and needs no privilege upsd does not
+			// already hold.
+			Expect(watchdog.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name: "nut-config", MountPath: "/etc/nut", ReadOnly: true,
+			}))
+			Expect(watchdog.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name: "nut-run", MountPath: "/run/nut",
+			}))
+			Expect(*watchdog.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(*watchdog.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
+			Expect(watchdog.SecurityContext.Capabilities.Drop).To(Equal([]corev1.Capability{"ALL"}))
+
+			// No probes on the supervisor, deliberately. A readiness probe here would gate the
+			// pod's endpoint membership on the watchdog rather than on the server, and a liveness
+			// probe would let a supervisor restart take the server down with it. Being a separate
+			// container is the point.
+			Expect(watchdog.ReadinessProbe).To(BeNil())
+			Expect(watchdog.LivenessProbe).To(BeNil())
+			Expect(watchdog.StartupProbe).To(BeNil())
+
 			pdb := &policyv1.PodDisruptionBudget{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-server"}, pdb)).To(Succeed())
 			Expect(pdb.Spec.MinAvailable).NotTo(BeNil())

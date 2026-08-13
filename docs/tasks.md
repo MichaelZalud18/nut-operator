@@ -161,10 +161,11 @@ because that is what was asked for rather than as a side effect of debug logging
 PID file `upsd -c reload` needs; the smoke test asserts the file rather than the flag. The driver
 allowlist is pinned to the image from both sides — the smoke test asserts every admitted driver is
 present, and a Go test asserts the two lists agree — so admission cannot accept a driver the operand
-cannot run.
+cannot run. A `driver-watchdog` sidecar restarts drivers that stop answering, so a driver dying after
+startup no longer leaves the pod permanently out of the Service endpoints.
 
 Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `F-47`,
-`F-50`, `NS-1`–`NS-5`, `OD-32`. `F-19`
+`F-49`, `F-50`, `NS-1`–`NS-6`, `OD-32`. `F-19`
 declined — it only matters with an HA `upsd` topology, which is not designed.
 
 #### Open Work
@@ -178,14 +179,6 @@ declined — it only matters with an HA `upsd` topology, which is not designed.
   session and NUT's login accounting — the damage `F-15` and `F-16` exist to prevent. Projected
   volumes update in place, so the config reaches the container without a restart. Blocked on `F-47`.
   Scope explicitly what still requires a restart: `LISTEN`, port, and certificate changes.
-- Give the drivers a supervisor (`F-49`). `upsdrvctl start` runs once at startup and nothing retries.
-  A driver that dies later leaves `upsd` alive, so the container is never restarted, readiness pulls
-  the pod from the Service endpoints, and it stays unready indefinitely with every agent in
-  `DEADTIME`. Upstream supervises one service unit per driver (`upsdrvsvcctl` and
-  nut-driver-enumerator, 2.8.0+); the Kubernetes-loyal equivalents are a container per driver sharing
-  `/run/nut` with kubelet as the service manager, or a liveness probe that fails when no driver is
-  responsive. Decide which before `NS-4` reads as complete. Trade-off to settle in the same pass: a
-  container per driver makes device add/remove a pod recreate, which pulls against `F-48`.
 - Render `ALLOW_NO_DEVICE` and fix the empty-`ups.conf` failure (`F-51`). `upsd` calls `fatalx` when
   `ups.conf` defines no devices, so a `NUTServer` whose selector matches nothing cannot start. The
   entrypoint's `-s` test fires first and exits with `missing required /etc/nut/ups.conf` for a file

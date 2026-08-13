@@ -192,6 +192,40 @@ This one carries a design trade-off that has to be settled in the same pass rath
 container per driver makes adding or removing a device a pod recreate, which pulls directly against
 `F-48`. `NS-4` does not read as complete until this is decided.
 
+*Resolved 2026-08-12 with a watchdog sidecar.* Recorded as `NS-6` in
+[nut-server-operand.md](../design/nut-server-operand.md).
+
+The container-per-driver shape was declined on the trade-off above: it makes the container list a
+function of the device set, so adding a `UPSDevice` becomes a pod recreate. A liveness probe was
+declined for two reasons rather than one — it restarts `upsd` along with the drivers, and it cannot
+fire while any single driver still answers, which is the common case and the failure `F-49` is
+actually about.
+
+Four upstream behaviors were established by running the operand image, and each decided part of the
+implementation:
+
+- A killed driver reports `RUNNING=N/A`, `S_RESPONSIVE=NOT_RESPONSIVE`, and leaves its PID file.
+- `upsdrvctl start <ups>` recovers from that state unaided — stale PID file detected, phantom
+  terminated, fresh driver started, PID file rewritten. A stop-then-start pair would only add a
+  window where the driver is deliberately down.
+- `upsdrvctl start <ups>` against a healthy driver terminates and replaces it, so a restart is not
+  free and a single transient reading must not trigger one. The watchdog re-checks before acting.
+- `upsdrvctl status` prints a version banner above the header on stdout.
+
+That last one is worth recording as a method note, not just a fact. The first implementation
+selected rows that failed to say `RESPONSIVE`, which read the banner as a device named `Network` and
+ran `upsdrvctl start Network` on every pass. Every unit test passed, and the live driver still
+recovered — the watchdog simply did useless work forever. It was only visible by running the
+rendered script against the image and reading the log. The selector now matches the `NOT_RESPONSIVE`
+token directly, and the banner is in the test fixtures so the regression is caught in `go test`.
+
+A second observation from that session did **not** become a finding, and the reason is worth
+recording. A root-run reproduction showed `upsdrvctl` failing to rewrite the PID file with a
+doubled path (`writepid: fopen /run/nut//run/nut/...pid.pid`), leaving `PF_PID` stale. Re-run under
+the configuration the pod actually uses — UID 65532, no `-u` flag — it does not reproduce: the PID
+file is rewritten correctly and `PF_PID` and `S_PID` agree. The artifact was in the test setup, not
+the operand.
+
 **F-51 · A `NUTServer` whose selector matches nothing cannot start, and says the wrong thing about
 why.** `renderUPSConf` (`internal/controller/nutserver_render.go:376-378`) builds the file by
 iterating devices, so zero selected devices renders a zero-byte `ups.conf`. The entrypoint's
@@ -249,6 +283,11 @@ receipt written mid-change describes an intermediate state.
    a restart.
 5. `F-51` last, since upstream's own remedy for it ends in "reload the service" and reads as
    incomplete until `F-48` exists.
+
+*Progress against this order, 2026-08-12:* `F-47` and `F-49` are closed, and `F-50`/`OD-36` are
+closed in [nut-usage-audit.md](nut-usage-audit.md). `F-49` resolved as a watchdog sidecar, which
+leaves `F-48`'s reload path unobstructed — the container list stays independent of the device set,
+so the reload work can proceed as scoped. `F-53` and `F-48`/`F-51` remain.
 
 `F-50` and `OD-36` are recorded in [nut-usage-audit.md](nut-usage-audit.md) as NUT-mechanism
 fidelity rather than operand-pod findings. `F-50` is independent of this sequence and can be taken

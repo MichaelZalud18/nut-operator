@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -51,6 +52,21 @@ const (
 	upsdReadinessPeriodSeconds       = 10
 	upsdReadinessTimeoutSeconds      = 5
 	upsdReadinessFailureThreshold    = 3
+
+	// nutServerUpsdContainerName is the container that serves the NUT protocol. It is referenced by
+	// name rather than by index because the pod now holds more than one container.
+	nutServerUpsdContainerName = "upsd"
+
+	// driverWatchdogContainerName supervises the drivers upsdrvctl starts once and never revisits
+	// (F-49). It is a sidecar rather than a container per driver so that the container list stays
+	// independent of the device set: making it a function of the devices would turn adding or
+	// removing a UPSDevice into a pod recreate, which is the outcome F-48 exists to eliminate.
+	driverWatchdogContainerName = "driver-watchdog"
+
+	// driverWatchdogIntervalSeconds is deliberately slower than the readiness probe. Readiness has
+	// to report the fault promptly; the watchdog has to fix it without churning, and every restart
+	// it performs costs a short telemetry gap for that device.
+	driverWatchdogIntervalSeconds = 30
 
 	// NUT TLS paths inside the upsd operand. The kubernetes.io/tls Secret is projected read-only
 	// at nutServerCertificateMountPath; the init container concatenates it into a single PEM on a
@@ -775,6 +791,93 @@ func upsdReadinessProbeScript() string {
 		`awk '{for (i = 1; i <= NF; i++) if ($i == "RESPONSIVE") { found = 1; exit } } END { exit !found }'`
 }
 
+// driverWatchdogScript restarts drivers that have stopped answering (F-49).
+//
+// upsdrvctl start runs once at startup and nothing retries. A driver that dies later leaves upsd
+// alive, so the container is never restarted; readiness then fails correctly and pulls the pod from
+// the Service endpoints, where it stays indefinitely with every agent in DEADTIME. Readiness
+// reports the fault accurately and nothing acts on it. This is what acts on it.
+//
+// Three behaviors verified by running the operand image rather than assumed, because each one
+// decides part of the script:
+//
+//   - After `kill -9` on a driver, `upsdrvctl status` reports RUNNING=N/A and
+//     S_RESPONSIVE=NOT_RESPONSIVE, and the stale PID file is left behind.
+//   - `upsdrvctl start <ups>` recovers from exactly that state on its own: it detects the stale PID
+//     file, terminates the phantom, and starts a fresh driver, exiting 0. No stop-then-start dance
+//     is needed, and adding one would introduce a window where the driver is deliberately down.
+//   - `upsdrvctl start <ups>` against a *healthy* driver terminates and replaces it. That is why
+//     the non-responsive reading is confirmed with a second probe before acting: a transient miss
+//     would otherwise cost a working driver a restart, and this loop runs unattended forever.
+//
+// The RESPONSIVE match is field-exact for the same reason upsdReadinessProbeScript's is --
+// NOT_RESPONSIVE contains RESPONSIVE as a substring, so a substring test would find every dead
+// driver healthy and the watchdog would never do anything. The header row is skipped by name
+// rather than by line number, since its own token is S_RESPONSIVE and matching it would try to
+// start a device called UPSNAME.
+func driverWatchdogScript() string {
+	return `set -u
+notResponsive() {
+  upsdrvctl status 2>/dev/null | ` + driverWatchdogNonResponsiveSelector() + `
+}
+while true; do
+  for ups in $(notResponsive); do
+    if notResponsive | grep -qx "$ups"; then
+      echo "driver-watchdog: $ups is not responsive, restarting its driver"
+      upsdrvctl start "$ups" || echo "driver-watchdog: restart of $ups failed, will retry"
+    fi
+  done
+  sleep ` + strconv.Itoa(driverWatchdogIntervalSeconds) + `
+done`
+}
+
+// driverWatchdogNonResponsiveSelector prints the name of every device whose driver is not
+// answering. It is split out from the loop so it can be run against captured `upsdrvctl status`
+// output in a test, because every way this can be wrong is silent.
+//
+// It selects rows that state NOT_RESPONSIVE rather than rows that fail to state RESPONSIVE, and
+// the difference is not stylistic. `upsdrvctl status` prints a version banner to stdout above the
+// header -- "Network UPS Tools upsdrvctl - UPS driver controller 2.8.5 release" -- and a selector
+// keyed on the absence of RESPONSIVE reads that line as a device named "Network" and tries to
+// start it on every tick. That was the first implementation, and it took running the watchdog
+// against the operand image to see it: the driver still recovered, so every test passed while the
+// loop spent each pass failing to start a device that does not exist.
+//
+// Matching on the positive token also handles the header for free, since its own token is
+// S_RESPONSIVE, and it cannot invent a device name out of prose the way absence-matching can.
+//
+// The match is field-exact for the reason NS-2 gives in reverse: NOT_RESPONSIVE contains
+// RESPONSIVE, so anything less than whole-field comparison confuses the two states in one
+// direction or the other.
+func driverWatchdogNonResponsiveSelector() string {
+	return `awk '{
+    for (i = 1; i <= NF; i++) if ($i == "NOT_RESPONSIVE") { print $1; next }
+  }'`
+}
+
+// driverWatchdogResources sizes the sidecar without spending the user's budget on it.
+//
+// spec.resources describes upsd. Reusing it here would silently double whatever the user declared
+// for the server, which is the kind of surprise that shows up as an unschedulable pod on a full
+// node rather than as an error. The watchdog is a shell loop that execs upsdrvctl twice a minute,
+// so its footprint is a property of this implementation rather than a decision the user should be
+// asked to make.
+//
+// Requests equal limits deliberately. Without them the sidecar would drag a pod whose upsd is
+// Guaranteed down to Burstable, changing the eviction ordering of the server on the observability
+// path for every agent -- an operand-shape change nobody asked for.
+func driverWatchdogResources() corev1.ResourceRequirements {
+	requests := corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("10m"),
+		corev1.ResourceMemory: resource.MustParse("32Mi"),
+	}
+	limits := corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("10m"),
+		corev1.ResourceMemory: resource.MustParse("32Mi"),
+	}
+	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
+}
+
 func serviceType(server *powerv1alpha1.NUTServer) corev1.ServiceType {
 	if server.Spec.Service.Type != "" {
 		return server.Spec.Service.Type
@@ -1077,7 +1180,7 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 		)
 		deployment.Spec.Template.Spec.Containers = []corev1.Container{
 			{
-				Name:            "upsd",
+				Name:            nutServerUpsdContainerName,
 				Image:           image,
 				ImagePullPolicy: pullPolicy,
 				Ports: []corev1.ContainerPort{
@@ -1109,6 +1212,30 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 					PeriodSeconds:       upsdReadinessPeriodSeconds,
 					TimeoutSeconds:      upsdReadinessTimeoutSeconds,
 					FailureThreshold:    upsdReadinessFailureThreshold,
+				},
+			},
+			{
+				// The watchdog runs the same image and reaches the drivers the same way upsd does:
+				// through /run/nut, which holds the driver sockets and PID files, and /etc/nut,
+				// which is where upsdrvctl reads the device list from. It needs no privilege upsd
+				// does not already have, and it carries no probes -- a restart of the supervisor
+				// must never take the server down with it, which is the whole reason it is a
+				// separate container.
+				Name:            driverWatchdogContainerName,
+				Image:           image,
+				ImagePullPolicy: pullPolicy,
+				Command:         []string{"sh", "-c", driverWatchdogScript()},
+				Resources:       driverWatchdogResources(),
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: ptrBool(false),
+					ReadOnlyRootFilesystem:   ptrBool(true),
+					Capabilities: &corev1.Capabilities{
+						Drop: []corev1.Capability{"ALL"},
+					},
+				},
+				VolumeMounts: []corev1.VolumeMount{
+					{Name: "nut-config", MountPath: "/etc/nut", ReadOnly: true},
+					{Name: "nut-run", MountPath: "/run/nut"},
 				},
 			},
 		}
@@ -1205,7 +1332,11 @@ func applyNUTServerTLSOperand(deployment *appsv1.Deployment, server *powerv1alph
 			{Name: nutServerCombinedTLSVolume, MountPath: nutServerCombinedCertDir},
 		},
 	})
-	podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts,
+	upsd := nutServerUpsdContainer(podSpec)
+	if upsd == nil {
+		return
+	}
+	upsd.VolumeMounts = append(upsd.VolumeMounts,
 		corev1.VolumeMount{Name: nutServerCombinedTLSVolume, MountPath: nutServerCombinedCertDir, ReadOnly: true},
 	)
 
@@ -1221,9 +1352,25 @@ func applyNUTServerTLSOperand(deployment *appsv1.Deployment, server *powerv1alph
 			},
 		},
 	})
-	podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts,
+	upsd.VolumeMounts = append(upsd.VolumeMounts,
 		corev1.VolumeMount{Name: nutServerClientCAVolumeName, MountPath: nutServerClientCAMountPath, ReadOnly: true},
 	)
+}
+
+// nutServerUpsdContainer finds the server container by name rather than by position.
+//
+// These mounts carry the certificate and CA material upsd negotiates TLS with, and they were
+// indexed as Containers[0] while upsd was the only container. Now that the pod also runs the F-49
+// watchdog, position is no longer a safe way to name the one container that serves the protocol:
+// reordering the slice would mount the CA into the sidecar and leave upsd serving plaintext while
+// reporting TLS Required, which is F-37 and F-39 arriving a third time by a different route.
+func nutServerUpsdContainer(podSpec *corev1.PodSpec) *corev1.Container {
+	for i := range podSpec.Containers {
+		if podSpec.Containers[i].Name == nutServerUpsdContainerName {
+			return &podSpec.Containers[i]
+		}
+	}
+	return nil
 }
 
 // nutServerTLSAssembleScript writes the CERTFILE upsd expects. Order matters: NUT documents the

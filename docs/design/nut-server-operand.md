@@ -106,6 +106,58 @@ The smoke test asserts the file exists rather than asserting the entrypoint's te
 is the only observable that separates `-FF` from the two flags that behave identically in every
 other respect. `F-47` records the correction.
 
+## Driver supervision
+
+**NS-6 · A sidecar restarts drivers that stop answering.** `upsdrvctl start` runs once in the
+entrypoint. A driver that dies afterwards leaves `upsd` alive, so the container is never restarted,
+readiness fails correctly, and the pod leaves the Service endpoints — and stays out of them
+indefinitely, with every agent monitoring it in `DEADTIME`. Readiness reports the fault accurately
+and nothing acts on it. The `driver-watchdog` container is what acts on it.
+
+It runs the operand image, shares `/run/nut` and `/etc/nut` with `upsd`, and every 30 seconds asks
+`upsdrvctl status` which drivers are not responding, restarting each one with
+`upsdrvctl start <ups>`.
+
+### Why a sidecar rather than a container per driver
+
+Upstream supervises one service unit per driver (`upsdrvsvcctl`, and nut-driver-enumerator since
+2.8.0), and the direct Kubernetes translation is a container per driver with kubelet as the service
+manager. That would give per-driver restart backoff and per-driver logs for free.
+
+It was declined because it makes the container list a function of the device set. Adding or removing
+a `UPSDevice` would change the pod's containers, which is a pod recreate — dropping every `upsmon`
+session and NUT's login accounting, which is the damage `F-15` and `F-16` exist to prevent and which
+the reload path in `F-48` is being built to eliminate. One supervisor for all drivers keeps the
+pod's shape independent of how many devices a server serves.
+
+A liveness probe was the other candidate and is worse on both counts: it restarts `upsd` along with
+the drivers, and it cannot fire at all while any one driver still answers — which is the common
+case, since a server with four devices losing one still reports ready.
+
+### What the watchdog relies on, and how it is known
+
+Each of these was established by running the operand image, because each one decides part of the
+implementation:
+
+- A driver killed outright reports `RUNNING` as `N/A` and `S_RESPONSIVE` as `NOT_RESPONSIVE`, and
+  leaves its PID file behind.
+- `upsdrvctl start <ups>` recovers from exactly that state on its own: it detects the stale PID
+  file, terminates the phantom, starts a fresh driver, and rewrites the PID file. No stop-then-start
+  pair is needed, and adding one would open a window where the driver is deliberately down.
+- `upsdrvctl start <ups>` against a **healthy** driver terminates and replaces it. A restart is
+  therefore not free, and a single transient reading must not trigger one — so a device seen as
+  non-responsive is re-checked before the watchdog acts.
+- `upsdrvctl status` prints a version banner above the header, on stdout. This is why the selector
+  matches the `NOT_RESPONSIVE` token rather than selecting rows that fail to say `RESPONSIVE`: the
+  first implementation did the latter, read the banner as a device named `Network`, and tried to
+  start it on every pass. The driver still recovered, so nothing failed — the watchdog simply did
+  useless work forever, which is the failure mode `F-46` and `NS-2` describe from the other
+  direction.
+
+The container carries no probes. A readiness probe would gate the pod's endpoint membership on the
+supervisor rather than on the server, and a liveness probe would let a supervisor restart take the
+server down with it. Keeping them apart is the reason it is a separate container.
+
 ## Related
 
 - `F-17`, `F-46` — [nutserver-pod-audit.md](../audits/nutserver-pod-audit.md)
