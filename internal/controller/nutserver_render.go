@@ -66,6 +66,10 @@ const (
 	// driverWatchdogIntervalSeconds is deliberately slower than the readiness probe. Readiness has
 	// to report the fault promptly; the watchdog has to fix it without churning, and every restart
 	// it performs costs a short telemetry gap for that device.
+	//
+	// It also bounds how long a reloadable config change takes to reach upsd (F-48), on top of the
+	// kubelet's own projected-volume sync period. Both are far inside any window that matters:
+	// the alternative it replaces was replacing the pod.
 	driverWatchdogIntervalSeconds = 30
 
 	// NUT TLS paths inside the upsd operand. The kubernetes.io/tls Secret is projected read-only
@@ -138,11 +142,29 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
-	// rolloutHash covers the full rendered config, including ups.conf, so a credential rotation or
-	// driverOptions change still rolls the Deployment via the pod-template annotation below even
-	// though ups.conf itself moves into a separate Secret. A SHA-256 digest in that annotation
-	// cannot be reversed to recover the plaintext credential.
-	rolloutHash := hashStringMap(configData)
+	// The pod-template annotation carries only the config upsd cannot adopt on reload (F-48).
+	//
+	// It used to carry a digest of everything rendered, so any change at all replaced the pod --
+	// dropping every upsmon session and NUT's login accounting, which is the damage F-15 and F-16
+	// exist to prevent. Adding one device should not cost the other devices their clients.
+	//
+	// The split is drawn from what upsd actually does, established by running it rather than from
+	// the documentation: `upsd -c reload` registers a device added to ups.conf (upsc -l reports it
+	// immediately afterwards) and re-reads upsd.users, but a changed LISTEN address or port is
+	// ignored -- the reload returns success, logs nothing about it, and upsd stays bound to the old
+	// port. Silent non-adoption is why upsd.conf stays on the restart path.
+	//
+	// TLS material is on the restart path for the same reason and is included by digest, because it
+	// lives in referenced Secrets rather than in configData: upsd builds its SSL context at startup,
+	// so a rotated certificate reaches the pod's volume and is not served until the process restarts.
+	tlsDigest, err := r.nutServerTLSMaterialDigest(ctx, server, namespace)
+	if err != nil {
+		return renderedNUTServer{}, err
+	}
+	restartHash := hashStringMap(map[string]string{
+		"upsd.conf": configData["upsd.conf"],
+		"tls":       tlsDigest,
+	})
 	upsConf := configData["ups.conf"]
 	delete(configData, "ups.conf")
 	configHash := hashStringMap(configData)
@@ -167,7 +189,7 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
-	deployment, err := r.ensureNUTServerDeployment(ctx, server, namespace, image, configMap.Name, driverConfigSecret.Name, secretRef, rolloutHash, devices)
+	deployment, err := r.ensureNUTServerDeployment(ctx, server, namespace, image, configMap.Name, driverConfigSecret.Name, secretRef, restartHash, devices)
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
@@ -839,14 +861,33 @@ func driverWatchdogScript() string {
 notResponsive() {
   upsdrvctl status 2>/dev/null | ` + driverWatchdogNonResponsiveSelector() + `
 }
+configDigest() {
+  cat /etc/nut/ups.conf /etc/nut/upsd.users 2>/dev/null | md5sum | cut -d' ' -f1
+}
+lastDigest="$(configDigest)"
 while true; do
+  # The interval is taken at the top of the loop, not the bottom, so the first pass happens after a
+  # full interval rather than immediately. The watchdog container and the upsd container start
+  # together, and checking straight away races the entrypoint's own driver start: the drivers are
+  # legitimately not responsive yet, both the check and its confirmation agree on that, and the
+  # watchdog restarts a driver that was seconds from being healthy. Observed, not hypothesized.
+  sleep ` + strconv.Itoa(driverWatchdogIntervalSeconds) + `
+
+  currentDigest="$(configDigest)"
+  if [ "$currentDigest" != "$lastDigest" ]; then
+    echo "driver-watchdog: reloadable configuration changed, reloading upsd"
+    if upsd -c reload; then
+      lastDigest="$currentDigest"
+    else
+      echo "driver-watchdog: upsd reload failed, will retry"
+    fi
+  fi
   for ups in $(notResponsive); do
     if notResponsive | grep -qx "$ups"; then
       echo "driver-watchdog: $ups is not responsive, restarting its driver"
       upsdrvctl start "$ups" || echo "driver-watchdog: restart of $ups failed, will retry"
     fi
   done
-  sleep ` + strconv.Itoa(driverWatchdogIntervalSeconds) + `
 done`
 }
 
@@ -1154,6 +1195,20 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				Type: corev1.SeccompProfileTypeRuntimeDefault,
 			},
 		}
+		// F-48: the watchdog signals upsd with `upsd -c reload`, and signalling across the
+		// container boundary needs a shared PID namespace. Without it upsd is PID 1 in its own
+		// container, so the PID file reads "1" and upsd refuses it -- "Ignoring invalid pid number
+		// 1". The reload is not merely blocked but blocked in a way that resembles success, since
+		// the command still exits 0.
+		//
+		// The isolation cost is small here in a way it would not be elsewhere: both containers run
+		// the same image as the same non-root UID and are peers. This is not the node agent's
+		// split, where F-57 records a real trust boundary between a container that parses network
+		// responses and one holding CAP_SYS_BOOT.
+		//
+		// It also makes the pause container PID 1, which reaps the orphaned drivers upsd never
+		// reaped (F-76).
+		deployment.Spec.Template.Spec.ShareProcessNamespace = ptrBool(true)
 		deployment.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
 				Name: "nut-config",
@@ -1280,6 +1335,42 @@ func (r *NUTServerReconciler) validateNUTServerTLSSecrets(ctx context.Context, s
 		return nil
 	}
 	return r.requireSecretKeys(ctx, namespace, *server.Spec.TLS.ClientCARef, "spec.tls.clientCARef", nutServerCABundleKey)
+}
+
+// nutServerTLSMaterialDigest summarizes the certificate material upsd serves, for the restart hash.
+//
+// The certificate is not part of the rendered config: it arrives through a referenced Secret and is
+// mounted as a volume, so a rotation changes the pod's filesystem without changing anything the
+// operator writes. upsd builds its SSL context once at startup, so the rotated certificate sits on
+// disk unserved until the process restarts. Folding a digest of the material into the restart hash
+// is what turns a rotation into a rollout.
+//
+// It is a digest rather than the material itself for the F-24 reason: the value ends up in a
+// pod-template annotation, which is broadly readable, and a SHA-256 over the certificate and key
+// cannot be reversed to recover them.
+func (r *NUTServerReconciler) nutServerTLSMaterialDigest(ctx context.Context, server *powerv1alpha1.NUTServer, namespace string) (string, error) {
+	if !nutServerTLSEnabled(server) {
+		return "", nil
+	}
+
+	material := map[string][]byte{}
+	var serverSecret corev1.Secret
+	key := types.NamespacedName{Namespace: namespace, Name: server.Spec.TLS.ServerCertificateRef.Name}
+	if err := r.Get(ctx, key, &serverSecret); err != nil {
+		return "", fmt.Errorf("get Secret %s for spec.tls.serverCertificateRef: %w", key, err)
+	}
+	material[nutServerTLSCertificateKey] = serverSecret.Data[nutServerTLSCertificateKey]
+	material[nutServerTLSPrivateKeyKey] = serverSecret.Data[nutServerTLSPrivateKeyKey]
+
+	if nutServerVerifiesClientCertificates(server) {
+		var caSecret corev1.Secret
+		caKey := types.NamespacedName{Namespace: namespace, Name: server.Spec.TLS.ClientCARef.Name}
+		if err := r.Get(ctx, caKey, &caSecret); err != nil {
+			return "", fmt.Errorf("get Secret %s for spec.tls.clientCARef: %w", caKey, err)
+		}
+		material["clientCA/"+nutServerCABundleKey] = caSecret.Data[nutServerCABundleKey]
+	}
+	return hashByteMap(material), nil
 }
 
 // requireSecretKeys enforces both that the Secret carries the expected keys and that it lives in

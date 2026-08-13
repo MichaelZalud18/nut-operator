@@ -244,6 +244,13 @@ var _ = Describe("NUTServer Controller", func() {
 			Expect(watchdog.LivenessProbe).To(BeNil())
 			Expect(watchdog.StartupProbe).To(BeNil())
 
+			// F-48: without a shared PID namespace upsd is PID 1 in its own container, so its PID
+			// file reads "1" and upsd refuses to signal it -- "Ignoring invalid pid number 1" --
+			// while `upsd -c reload` still exits 0. The reload would fail in a way that resembles
+			// success, so this flag is load-bearing rather than incidental.
+			Expect(deployment.Spec.Template.Spec.ShareProcessNamespace).NotTo(BeNil())
+			Expect(*deployment.Spec.Template.Spec.ShareProcessNamespace).To(BeTrue())
+
 			pdb := &policyv1.PodDisruptionBudget{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-server"}, pdb)).To(Succeed())
 			Expect(pdb.Spec.MinAvailable).NotTo(BeNil())
@@ -314,6 +321,62 @@ var _ = Describe("NUTServer Controller", func() {
 
 			By("cleaning up the dedicated namespace and its contents")
 			Expect(k8sClient.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: f7Namespace}})).To(Succeed())
+		})
+
+		// F-48: adding a device must not replace the pod. The old pod-template annotation digested
+		// everything rendered, so onboarding one UPS dropped every *other* device's upsmon sessions
+		// and NUT's login accounting -- the damage F-15 and F-16 exist to prevent.
+		//
+		// Asserted end to end rather than against the hash function, because the claim is about
+		// which rendered inputs reach the annotation, and a unit test over the same expression the
+		// render path uses would agree with itself no matter what it covered.
+		It("should not roll the Deployment when only the device set changes", func() {
+			controllerReconciler := &NUTServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			deployment := &appsv1.Deployment{}
+			deploymentKey := types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-server"}
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			annotationBefore := deployment.Spec.Template.Annotations["power.zalud.io/config-hash"]
+			Expect(annotationBefore).NotTo(BeEmpty())
+
+			driverConfig := &corev1.Secret{}
+			driverConfigKey := types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-driver-config"}
+			Expect(k8sClient.Get(ctx, driverConfigKey, driverConfig)).To(Succeed())
+			upsConfBefore := string(driverConfig.Data["ups.conf"])
+
+			By("onboarding a second UPSDevice")
+			second := &powerv1alpha1.UPSDevice{
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-b-ups"},
+				Spec: powerv1alpha1.UPSDeviceSpec{
+					DisplayName:   "Rack B Dummy UPS",
+					Driver:        "dummy-ups",
+					DriverOptions: map[string]string{"desc": "rack-b-ups"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, second)).To(Succeed())
+			defer func() {
+				Expect(k8sClient.Delete(ctx, second)).To(Succeed())
+			}()
+
+			server := &powerv1alpha1.NUTServer{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, server)).To(Succeed())
+			server.Spec.DeviceRefs = append(server.Spec.DeviceRefs, powerv1alpha1.ObjectNameReference{Name: "rack-b-ups"})
+			Expect(k8sClient.Update(ctx, server)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("confirming the device actually reached ups.conf")
+			Expect(k8sClient.Get(ctx, driverConfigKey, driverConfig)).To(Succeed())
+			Expect(string(driverConfig.Data["ups.conf"])).NotTo(Equal(upsConfBefore))
+			Expect(string(driverConfig.Data["ups.conf"])).To(ContainSubstring("[rack-b-ups]"))
+
+			By("confirming the pod template was left alone")
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			Expect(deployment.Spec.Template.Annotations["power.zalud.io/config-hash"]).To(Equal(annotationBefore))
 		})
 
 		It("should finalize and actually delete on deletion", func() {

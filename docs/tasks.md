@@ -163,30 +163,23 @@ allowlist is pinned to the image from both sides — the smoke test asserts ever
 present, and a Go test asserts the two lists agree — so admission cannot accept a driver the operand
 cannot run. A `driver-watchdog` sidecar restarts drivers that stop answering, so a driver dying after
 startup no longer leaves the pod permanently out of the Service endpoints. A server whose selector
-matches nothing starts idle and reports NotReady instead of crash-looping.
+matches nothing starts idle and reports NotReady instead of crash-looping. Adding or removing a
+device reloads `upsd` in place instead of replacing the pod; only `LISTEN`, port, and certificate
+changes still roll it, because those are the changes `upsd` ignores on reload — silently, in the
+case of `LISTEN`.
 
 Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `F-47`,
-`F-49`–`F-51`, `NS-1`–`NS-7`, `OD-32`, `OD-36`. `F-19`
+`F-48`–`F-51`, `NS-1`–`NS-9`, `OD-32`, `OD-36`. `F-19`
 declined — it only matters with an HA `upsd` topology, which is not designed.
 
 #### Open Work
 
-- Add a config-reload path instead of recreating the pod on every change (`F-48`). `upsd -c reload`
-  re-reads `ups.conf`, `upsd.conf`, and `upsd.users` and registers devices added since startup;
-  `upsdrvctl -c reload` / `reload-or-error` / `reload-or-exit` covers the driver side. Today the
-  `power.zalud.io/config-hash` annotation forces a `Recreate` on any change, dropping every `upsmon`
-  session and NUT's login accounting — the damage `F-15` and `F-16` exist to prevent. Projected
-  volumes update in place, so the config reaches the container without a restart. `F-47` has landed,
-  so the PID file reload signals through now exists, and `F-49` resolved as a sidecar rather than a
-  container per driver, so the container list stays independent of the device set. Scope explicitly
-  what still requires a restart: `LISTEN`, port, and certificate changes.
-- Reap dead driver processes (`F-76`). The entrypoint `exec`s `upsd`, so `upsd` is PID 1 and never
-  reaps the drivers reparented to it — verified as `State: Z (zombie)`, `PPid: 1`. Before `F-49` that
-  leaked one entry per driver death; now the watchdog restarts the driver, so a flapping device
-  leaks one per flap with no ceiling and nothing reporting it. Remedy is an init shim ahead of
-  `upsd`, or `shareProcessNamespace: true`, which also collapses the PID-namespace asymmetry the
-  watchdog works around — but that weakens the container boundary, so it is a decision rather than a
-  swap. Not urgent: the symptom is process-table growth, not service failure.
+- Confirm `F-76` is closed on a real cluster. `shareProcessNamespace: true` landed with `F-48` and is
+  one of the two remedies the finding named, so the leak should be gone: PID 1 becomes the pause
+  container, which reaps. A two-container reproduction showed no zombies where the same test
+  previously left one per driver death — but its PID 1 was a shell that happens to reap, not
+  kubelet's pause container, so the remedy is verified by analogue rather than in place. One `ps`
+  against a running operand after a driver restart settles it.
 - Advanced driver-specific configuration for the operand render path.
 
 ---

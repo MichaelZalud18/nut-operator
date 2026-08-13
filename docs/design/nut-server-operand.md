@@ -181,6 +181,55 @@ The container carries no probes. A readiness probe would gate the pod's endpoint
 supervisor rather than on the server, and a liveness probe would let a supervisor restart take the
 server down with it. Keeping them apart is the reason it is a separate container.
 
+The interval is taken at the top of the loop rather than the bottom, so the first pass happens after
+a full interval instead of immediately. Both containers start together, and a check at t=0 races the
+entrypoint's own `upsdrvctl start` — the drivers are legitimately not yet responsive, the confirming
+re-check agrees with the first, and the watchdog restarts a driver that was seconds from healthy.
+
+## Configuration changes
+
+**NS-8 · Adding a device reloads `upsd`; changing where it listens replaces the pod.** The
+pod-template annotation carries a digest of only the configuration `upsd` cannot adopt at runtime.
+Everything else reaches a running server through `upsd -c reload`, issued by the watchdog when it
+notices the files changed.
+
+The split follows what `upsd` actually does, established by running it:
+
+| Change | Adopted on reload | Path |
+| --- | --- | --- |
+| Device added to or removed from `ups.conf` | Yes — `upsc -l` reports it immediately after | Reload |
+| `upsd.users` contents | Yes — `upsd` re-reads and re-parses the file | Reload |
+| `LISTEN` address or port | **No** — reload returns success and `upsd` stays on the old port | Restart |
+| Serving certificate or client CA | No — the SSL context is built once at startup | Restart |
+
+The `LISTEN` row is why the split is drawn here rather than trusted to reload generally. The reload
+does not merely decline the change; it declines it *silently*, exiting 0 and logging nothing about
+the port it did not rebind.
+
+Certificates are on the restart path for the same reason and reach it by a different route: they
+are not rendered configuration at all, but referenced Secrets mounted as volumes. A digest of that
+material is folded into the restart hash, because otherwise a rotated certificate would land in the
+pod's filesystem and go unserved until something unrelated happened to restart the process.
+
+**Why this matters more than it sounds.** The annotation previously digested everything rendered,
+so any change replaced the pod — and the strategy is `Recreate` (`F-16`), so onboarding a single
+UPS dropped every *other* device's `upsmon` sessions along with NUT's login accounting. That is the
+damage `F-15` and `F-16` exist to prevent, arriving through the config path instead.
+
+**NS-9 · The pod shares a process namespace.** `upsd -c reload` signals a running process located
+through its PID file, and signalling across a container boundary needs `shareProcessNamespace:
+true`.
+
+Without it the reload fails in the worst available way. `upsd` is PID 1 in its own container, so the
+PID file reads `1`; `upsd` refuses to signal PID 1 — `Ignoring invalid pid number 1` — and the
+command still exits 0. A reload path built without the flag would look like it worked.
+
+The isolation cost is small here in a way it would not be elsewhere: both containers run the same
+image as the same non-root UID and are peers. This is not the node agent's split, where `F-57`
+records a real trust boundary between a container that parses network responses and one holding
+`CAP_SYS_BOOT`. The flag also gives the pod's pause container PID 1, which reaps the orphaned
+drivers `upsd` never reaped (`F-76`).
+
 ### What the container boundary changes
 
 The watchdog and `upsd` share `/run/nut` but not a PID namespace, and that asymmetry decides two

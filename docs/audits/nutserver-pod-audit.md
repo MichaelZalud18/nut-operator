@@ -186,6 +186,53 @@ the expected set — rather than assume reload covers everything.
 Projected volumes update in place, so the config does reach the container without a restart. Blocked
 on `F-47`: with `-D` there is no PID file to signal.
 
+*Resolved 2026-08-12.* Recorded as `NS-8` and `NS-9`.
+
+The reload/restart split was drawn from what `upsd` does rather than from what it documents, because
+running it produced one answer the documentation would not have:
+
+| Change | Adopted on reload |
+| --- | --- |
+| Device added to `ups.conf` | Yes — `upsc -l` reports it immediately after |
+| `upsd.users` contents | Yes — re-read and re-parsed |
+| `LISTEN` address or port | **No**, and silently: reload exits 0, logs nothing, stays on the old port |
+| Serving certificate | No — the SSL context is built once at startup |
+
+Silent non-adoption is what settles `upsd.conf` onto the restart path. A reload that refused loudly
+could have been handled; one that reports success while ignoring the change cannot.
+
+Certificates reach the restart path by a different route, and this closes a gap that predates the
+finding: they are referenced Secrets rather than rendered config, so a rotation changed nothing the
+operator writes and therefore rolled nothing. A rotated certificate landed in the pod's volume and
+went unserved until something unrelated restarted the process. A digest of the material is now part
+of the restart hash.
+
+The mechanism is `shareProcessNamespace: true` plus a reload step in the `F-49` watchdog. The
+alternatives were an operator-issued `pods/exec` (rejected: a permanent grant of a shell in every
+operand pod, and it leaves `F-76` open) and a supervisor as PID 1 (rejected: the largest change to
+the process model, and the supervisor must propagate `upsd`'s exit or `NS-3` liveness stops
+working). The chosen option also gives the pause container PID 1, which addresses `F-76`.
+
+Without the shared namespace the reload fails in the worst available way: `upsd` is PID 1 in its own
+container, the PID file reads `1`, `upsd` refuses to signal it — `Ignoring invalid pid number 1` —
+and the command still exits 0. A reload path built without the flag would have looked like it
+worked, which is why the flag was verified before being chosen rather than after.
+
+Proven end to end against the operand image, two containers sharing a PID namespace and `/run/nut`:
+a device appended to `ups.conf` was picked up within one watchdog interval, `upsc -l` listed it,
+`upsc <device> battery.charge` returned its value — and the server container reported
+`restarts=0`. `ps` showed no zombie processes, unlike the same test before the namespace was shared.
+
+Sabotage-verified: restoring the annotation to a digest of all rendered config fails
+`should not roll the Deployment when only the device set changes` in envtest.
+
+One behavior worth recording for whoever tunes this next. In an early run under machine load, the
+watchdog restarted a healthy-looking driver on its first pass. That was not a false positive — the
+driver genuinely was not responsive at that moment, and restarting it is the watchdog's job. The
+real defect was that the loop checked at t=0, racing the entrypoint's own `upsdrvctl start`; the
+interval now runs at the top of the loop. It has not recurred in clean runs, and no attempt is made
+here to claim more than that.
+
 **F-49 · Nothing supervises the drivers.** `images/nut-server/entrypoint.sh:30-32` runs
 `upsdrvctl start` once, deliberately tolerating failure, and then `:34` `exec`s `upsd`. Nothing
 retries and nothing watches.
@@ -340,6 +387,15 @@ watchdog currently works around, but it weakens isolation between the two contai
 Note while deciding: the watchdog's own container has the same shape, since its PID 1 is `sh`.
 A driver it starts and later loses is reparented to that shell.
 
+*Very likely resolved 2026-08-12 as a side effect of `F-48`, and deliberately not marked closed.*
+`shareProcessNamespace: true` was adopted for the reload path, and it is one of the two remedies
+named above: the pod's pause container becomes PID 1, and reaping orphans is what it is for.
+
+The reproduction agrees — the two-container test that previously left a zombie after every driver
+restart now shows none. But its PID 1 was a shell that happens to `wait`, not kubelet's pause
+container, so this is verified by analogue rather than in place. The task line asks for one `ps`
+against a running operand after a driver restart, which is the whole of what is left.
+
 ### Recommended order — upstream fidelity pass
 
 1. `F-47` first. One line in the entrypoint, and it is the prerequisite for everything else here:
@@ -354,10 +410,19 @@ A driver it starts and later loses is reparented to that shell.
 5. `F-51` last, since upstream's own remedy for it ends in "reload the service" and reads as
    incomplete until `F-48` exists.
 
-*Progress against this order, 2026-08-12:* `F-47` and `F-49` are closed, and `F-50`/`OD-36` are
-closed in [nut-usage-audit.md](nut-usage-audit.md). `F-49` resolved as a watchdog sidecar, which
-leaves `F-48`'s reload path unobstructed — the container list stays independent of the device set,
-so the reload work can proceed as scoped. `F-53` and `F-48`/`F-51` remain.
+*Progress against this order, 2026-08-12:* the whole sequence is closed except `F-53`, and
+`F-50`/`OD-36` are closed in [nut-usage-audit.md](nut-usage-audit.md).
+
+It ran as ordered and the order earned its keep. `F-47` had to come first because the PID file is
+what `F-48` signals through. `F-49` had to precede `F-48` because a container per driver would have
+made the device set a property of the pod's shape, and `F-48` exists to stop the device set
+replacing pods — resolving it as a sidecar instead is what left the reload path open, and the
+sidecar then turned out to be where the reload belongs. `F-51` was the one item whose dependency was
+weaker than recorded: it was delivered ahead of `F-48` because reload makes an empty server pleasant
+rather than possible.
+
+`F-76` was found during the sequence and very likely closed by it. `F-53` remains, and is a
+documentation correction owned by Foundation & Documentation.
 
 `F-50` and `OD-36` are recorded in [nut-usage-audit.md](nut-usage-audit.md) as NUT-mechanism
 fidelity rather than operand-pod findings. `F-50` is independent of this sequence and can be taken
