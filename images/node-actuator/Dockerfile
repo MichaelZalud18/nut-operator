@@ -44,10 +44,29 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
 # sets where the capability is not granted, and cmd/node-actuator raises it into the effective set
 # immediately before reboot(2).
 #
-# Verified on kind rather than reasoned about, because three things here are easy to get wrong:
-# that no_new_privs (set by AllowPrivilegeEscalation: false) would suppress the file capability, that
-# a multi-stage COPY into distroless would drop the extended attribute, and the exec behavior above.
-# The first two do not happen; the third does.
+# no_new_privs does not suppress this, and the reason is worth stating precisely, because the
+# general rule says it should. AllowPrivilegeEscalation: false sets no_new_privs, and the kernel's
+# downgrade branch in cap_bprm_creds_from_file intersects the new permitted set with the caller's
+# whenever execve would gain a capability under it. Measured on kind with one image, one pod, and
+# one securityContext:
+#
+#     runtime execs the setcap binary   -> CapPrm 0000000000400000
+#     sh -c '<same binary>'             -> CapPrm 0000000000000000
+#
+# The entrypoint is not a gain. containerd writes permitted: [CAP_SYS_BOOT] into the OCI spec, so
+# the runtime's init already holds the capability when it execs this binary, and there is nothing
+# to take away. Anything spawned *inside* the container is a gain -- the parent is a
+# capability-dumb process whose permitted set went empty at its own exec -- and loses it.
+#
+# So this only works while the actuator is the container's entrypoint. Wrapping it in a shell, an
+# init shim, or a debug wrapper would disarm actuation while leaving every probe and status field
+# reporting healthy. cmd/node-actuator checks the permitted set at startup and refuses to arm
+# rather than trusting that; TestDockerfileExecsTheActuatorAsTheEntrypoint guards the exec form.
+#
+# The extended attribute survives the whole distribution path, which was the other thing likely to
+# break it: a multi-stage COPY into distroless, a push to a registry, and a pull unpacked by
+# containerd on the node all preserve it. Checked with getcap against the binary as unpacked on the
+# node, not as built.
 FROM alpine:3.22 AS capabilities
 
 COPY --from=builder /workspace/node-actuator /out/node-actuator

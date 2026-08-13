@@ -12,6 +12,45 @@ import (
 // capSysBoot is CAP_SYS_BOOT's bit position in the capability sets.
 const capSysBoot = 22
 
+// sysBootPermitted reports whether CAP_SYS_BOOT is in this process's permitted set, and whether it
+// has already been raised into the effective set.
+func sysBootPermitted() (permitted bool, effective bool, err error) {
+	header := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3, Pid: 0}
+	var data [2]unix.CapUserData
+	if err := unix.Capget(&header, &data[0]); err != nil {
+		return false, false, fmt.Errorf("read capabilities: %w", err)
+	}
+	index := capSysBoot / 32
+	bit := uint32(1) << (capSysBoot % 32)
+	return data[index].Permitted&bit != 0, data[index].Effective&bit != 0, nil
+}
+
+// verifySysBootAvailable checks at startup that this process could actually power the node off.
+//
+// Every way of granting CAP_SYS_BOOT to a non-root container fails silently, which is what made
+// F-61 a defect rather than an outage: the capability was missing on every mode=Actuate deployment
+// for the whole life of the feature, and nothing reported it, because the only code that would have
+// noticed runs once, during a power event, on a node nobody is watching.
+//
+// Checking here converts all of those into a CrashLoopBackOff at rollout. The actuator is the only
+// container in the pod that fails; upsmon keeps monitoring beside it, so the cluster loses the
+// ability to actuate loudly rather than keeping it in name only. There is no other channel to report
+// on -- the pod mounts no ServiceAccount token (F-60) -- so exiting is the signal.
+func verifySysBootAvailable() error {
+	permitted, _, err := sysBootPermitted()
+	if err != nil {
+		return err
+	}
+	if permitted {
+		return nil
+	}
+	return fmt.Errorf("CAP_SYS_BOOT is not in this process's permitted set, so reboot(2) would fail with EPERM. " +
+		"One of three things is true: the container securityContext does not request the capability, " +
+		"the shipped binary lost its cap_sys_boot file capability (an image registry or builder that " +
+		"drops the security.capability extended attribute), or this process was not exec'd as the " +
+		"container entrypoint (a capability-dumb parent inside the container loses it to no_new_privs)")
+}
+
 // raiseSysBoot moves CAP_SYS_BOOT from the permitted set into the effective set (F-61).
 //
 // The capability reaches this process as a file capability on the binary, set to permitted-only.
@@ -29,24 +68,23 @@ const capSysBoot = 22
 // watching a directory, parsing JSON written by its neighbor -- CAP_SYS_BOOT is in the permitted
 // set and not the effective one, so a bug reached through that surface cannot halt the host.
 func raiseSysBoot() error {
+	permitted, effective, err := sysBootPermitted()
+	if err != nil {
+		return err
+	}
+	if !permitted {
+		return verifySysBootAvailable()
+	}
+	if effective {
+		return nil
+	}
+
 	header := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3, Pid: 0}
 	var data [2]unix.CapUserData
 	if err := unix.Capget(&header, &data[0]); err != nil {
 		return fmt.Errorf("read capabilities: %w", err)
 	}
-
-	index := capSysBoot / 32
-	bit := uint32(1) << (capSysBoot % 32)
-
-	if data[index].Permitted&bit == 0 {
-		return fmt.Errorf("CAP_SYS_BOOT is not in this process's permitted set, so reboot(2) would fail with EPERM: " +
-			"the container must request the capability and the binary must carry cap_sys_boot=p")
-	}
-	if data[index].Effective&bit != 0 {
-		return nil
-	}
-
-	data[index].Effective |= bit
+	data[capSysBoot/32].Effective |= uint32(1) << (capSysBoot % 32)
 	if err := unix.Capset(&header, &data[0]); err != nil {
 		return fmt.Errorf("raise CAP_SYS_BOOT into the effective set: %w", err)
 	}

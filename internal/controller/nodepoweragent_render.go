@@ -78,6 +78,9 @@ type renderedNodePowerAgent struct {
 	// render would leave the node with no UPS monitoring at all, which is strictly worse than
 	// monitoring over a weaker channel, but it must not pass silently either.
 	TLSDowngradeReason string
+	// PodSecurityConflict is set when the operand namespace enforces a Pod Security level that
+	// will reject the actuating agent pod (F-62).
+	PodSecurityConflict string
 }
 
 type agentMonitorTarget struct {
@@ -167,12 +170,19 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		return renderedNodePowerAgent{}, err
 	}
 	namespace := nodePowerAgentNamespace(agent, cluster)
-	if err := r.ensureOperandNamespace(ctx, namespace); err != nil {
+	operandNamespace, err := r.ensureOperandNamespace(ctx, namespace)
+	if err != nil {
 		return renderedNodePowerAgent{}, err
 	}
 
 	if err := validateNodePowerAgentRenderSafety(agent); err != nil {
 		return renderedNodePowerAgent{}, err
+	}
+
+	// Only the actuating shape can be rejected on admission, so only it is checked (F-62).
+	podSecurityConflict := ""
+	if nodePowerAgentRequiresHostPoweroff(agent) {
+		podSecurityConflict = nodePowerAgentPodSecurityConflict(operandNamespace)
 	}
 
 	upsmonImage, upsmonPullPolicy, err := nodePowerAgentUpsmonImage(agent, cluster)
@@ -253,6 +263,7 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		NodeStatuses:           nodeStatuses,
 		ConfigHash:             configHash,
 		TLSDowngradeReason:     tlsPosture.DowngradeReason,
+		PodSecurityConflict:    podSecurityConflict,
 		ManagedResources: []powerv1alpha1.ManagedResourceStatus{
 			{APIVersion: "v1", Kind: "Namespace", Name: namespace},
 			{APIVersion: "v1", Kind: "ServiceAccount", Namespace: namespace, Name: serviceAccount.Name},
@@ -630,9 +641,16 @@ func shellQuotedNUTValue(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
 }
 
-func (r *NodePowerAgentReconciler) ensureOperandNamespace(ctx context.Context, name string) error {
+// ensureOperandNamespace creates or adopts the operand namespace and returns it as it now stands.
+//
+// The returned object carries whatever labels the namespace already had, including any
+// pod-security.kubernetes.io/* set by whoever owns the cluster's admission policy. The mutation
+// below adds this operator's own two labels and touches nothing else, which is what lets
+// nodePowerAgentPodSecurityConflict read the enforced level without a second API call and without
+// any risk of this operator being the thing that changed it.
+func (r *NodePowerAgentReconciler) ensureOperandNamespace(ctx context.Context, name string) (*corev1.Namespace, error) {
 	if err := rejectReservedOperandNamespace(name); err != nil {
-		return err
+		return nil, err
 	}
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, namespace, func() error {
@@ -643,7 +661,10 @@ func (r *NodePowerAgentReconciler) ensureOperandNamespace(ctx context.Context, n
 		namespace.Labels["power.zalud.io/operand-namespace"] = "true"
 		return nil
 	})
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return namespace, nil
 }
 
 func (r *NodePowerAgentReconciler) ensureNodePowerAgentConfigMap(ctx context.Context, agent *powerv1alpha1.NodePowerAgent, namespace string, data map[string]string) (*corev1.ConfigMap, error) {
@@ -922,6 +943,45 @@ func restrictedContainerSecurityContext() *corev1.SecurityContext {
 			Drop: []corev1.Capability{"ALL"},
 		},
 	}
+}
+
+// nodePowerAgentPodSecurityConflict reports whether the operand namespace's enforced Pod Security
+// level will reject the actuating agent pod, and names the exception needed (F-62).
+//
+// This reads the namespace and reports. It deliberately does not write the labels. Relaxing a
+// namespace from `baseline` to `privileged` is a decision about how much the cluster is willing to
+// trust one workload, and an operator that quietly widens it on the user's behalf has taken that
+// decision away from the person accountable for it -- while making a CR field the thing that edits
+// a security boundary. The failure this replaces is not the rejection itself, which is loud; it is
+// that nothing connected the rejection back to this operator's own rendering choices.
+//
+// Two things put the actuating pod outside `baseline`, both measured on kind against a labelled
+// namespace rather than read off the standard:
+//
+//	host namespaces          hostPID=true
+//	non-default capabilities container "actuator" must not include "SYS_BOOT"
+//
+// The stub and dry-run default has neither, and is admitted by `restricted` -- the strictest level
+// there is. That asymmetry is worth keeping: the exception is scoped to the configuration that
+// actually halts machines, not to the operator as a whole.
+//
+// Only the `enforce` label can reject a pod. `warn` and `audit` produce messages and admit it, so a
+// namespace carrying only those is not reported here.
+func nodePowerAgentPodSecurityConflict(namespace *corev1.Namespace) string {
+	if namespace == nil {
+		return ""
+	}
+	level := namespace.Labels["pod-security.kubernetes.io/enforce"]
+	if level != "baseline" && level != "restricted" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"namespace %q enforces pod-security.kubernetes.io/enforce=%s, which rejects the actuating agent pod "+
+			"on hostPID=true (host namespaces) and CAP_SYS_BOOT (non-default capabilities); "+
+			"actuation needs that namespace exempted or labelled pod-security.kubernetes.io/enforce=privileged. "+
+			"The Stub and DryRun default needs neither and is admitted under restricted",
+		namespace.Name, level,
+	)
 }
 
 func actuatorContainerSecurityContext(hostPoweroff bool) *corev1.SecurityContext {

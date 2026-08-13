@@ -29,6 +29,53 @@ func permittedHasSysBoot(t *testing.T) bool {
 	return data[index].Permitted&bit != 0
 }
 
+// The startup check is the only thing standing between a silently inert actuator and a visible
+// failure, so its message has to be able to send someone to the right place. There are exactly
+// three ways to arrive here and they need completely different fixes -- fix the CR, fix the image
+// pipeline, or fix how the container invokes the binary -- and none of them is guessable from
+// "operation not permitted".
+func TestVerifySysBootNamesEveryWayTheCapabilityCanBeLost(t *testing.T) {
+	if permittedHasSysBoot(t) {
+		t.Skip("CAP_SYS_BOOT is held here, so the failure message is not produced")
+	}
+
+	err := verifySysBootAvailable()
+	if err == nil {
+		t.Fatal("verifySysBootAvailable must fail when CAP_SYS_BOOT is not permitted")
+	}
+	for _, cause := range []string{"securityContext", "security.capability", "entrypoint"} {
+		if !strings.Contains(err.Error(), cause) {
+			t.Errorf("the message must point at %q as a possible cause, got: %v", cause, err)
+		}
+	}
+}
+
+// F-61 re-verification: the file capability survives only when the container runtime execs the
+// binary. Measured on kind, with one image, one pod, and one securityContext:
+//
+//	runtime execs /usr/local/bin/probe   -> CapPrm 0000000000400000
+//	sh -c '/usr/local/bin/probe'         -> CapPrm 0000000000000000
+//
+// The kernel's downgrade branch in cap_bprm_creds_from_file intersects the new permitted set with
+// the caller's whenever no_new_privs is set and execve would gain a capability. For the entrypoint
+// the caller is the runtime's init, which already holds CAP_SYS_BOOT from the OCI spec, so nothing
+// is gained and nothing is taken away. For anything spawned inside the container the caller is a
+// capability-dumb process whose permitted set is empty, so the gain is real and the capability is
+// stripped.
+//
+// Wrapping the entrypoint in a shell would therefore disarm the actuator while leaving every test,
+// probe, and status field looking healthy.
+func TestDockerfileExecsTheActuatorAsTheEntrypoint(t *testing.T) {
+	dockerfile, err := os.ReadFile("../../images/node-actuator/Dockerfile")
+	if err != nil {
+		t.Fatalf("read node-actuator Dockerfile: %v", err)
+	}
+
+	if !strings.Contains(string(dockerfile), `ENTRYPOINT ["/node-actuator"]`) {
+		t.Error("the actuator must be the container entrypoint in exec form; a shell wrapper silently drops cap_sys_boot (F-61)")
+	}
+}
+
 // F-61: without CAP_SYS_BOOT in the permitted set, reboot(2) returns EPERM. The actuator must say
 // so plainly rather than letting the syscall fail with a bare errno at the one moment a node was
 // supposed to power off.

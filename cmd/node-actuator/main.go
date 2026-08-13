@@ -70,6 +70,16 @@ func main() {
 		if mode != "Actuate" {
 			block(logger, "SystemdPoweroff requires POWER_AGENT_MODE=Actuate")
 		}
+		// F-61: prove the capability is held now, not during a power event.
+		//
+		// This is the configuration that claims it can halt a node, so it is the one place worth
+		// refusing to start over. Every way of losing CAP_SYS_BOOT is silent, and the code that
+		// would have noticed runs once, on a node under load, at the end of a UPS runtime.
+		if err := verifySysBootAvailable(); err != nil {
+			logger.Printf("refusing to arm SystemdPoweroff actuation: %v", err)
+			os.Exit(78)
+		}
+		logger.Printf("CAP_SYS_BOOT held in the permitted set; actuation armed")
 		watchSignals(logger, config, systemdPoweroffActuator)
 	default:
 		logger.Printf("unknown actuator policy %q", policy)

@@ -154,7 +154,18 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				degradedReason = "NUTTLSDowngraded"
 				degradedMessage = "upsmon.conf is less strict than the monitored NUTServers request: " + rendered.TLSDowngradeReason
 			}
-			degraded := rendered.UnavailableNodeCount > 0 || rendered.TLSDowngradeReason != ""
+			// A Pod Security conflict outranks both (F-62). It is not a competing symptom, it is the
+			// cause of the unavailability directly above: the pods are not late, they were refused
+			// admission, and the only place that shows is a kubelet event on a pod that does not
+			// exist. Naming the exception here is the difference between a five-minute fix and an
+			// afternoon.
+			if rendered.PodSecurityConflict != "" {
+				degradedReason = "PodSecurityRejectsActuation"
+				degradedMessage = rendered.PodSecurityConflict
+			}
+			degraded := rendered.UnavailableNodeCount > 0 ||
+				rendered.TLSDowngradeReason != "" ||
+				rendered.PodSecurityConflict != ""
 			setDegradedCondition(&agent.Status.Conditions, agent.Generation, degraded, degradedReason, degradedMessage)
 		}
 	} else {

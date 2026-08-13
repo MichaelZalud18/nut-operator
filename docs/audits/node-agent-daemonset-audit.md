@@ -430,6 +430,107 @@ Guarded on both sides: `hack/smoke-image.sh` reads the extended attribute off th
 (from outside, since the image is distroless), and `TestDockerfileAppliesPermittedOnlyFileCapability`
 fails if it is ever changed to `=ep`.
 
+*Reopened and re-verified 2026-08-13, against the objection that the fix was inert in the deployed
+pod.* It is not inert, but the objection was well-aimed: the verification that first closed this
+finding did not use an operator-rendered pod, and the explanation it recorded was wrong.
+
+**Which harness produced which measurement.** Both original runs used hand-written pod specs on
+`kind`, copying the security context out of `nodepoweragent_render.go` by hand.
+
+| Measurement | Harness | Image |
+| --- | --- | --- |
+| The defect (`CapPrm: 0`) | hand-written pod | NUT server image with a shell, not the actuator |
+| The `=p` fix working | `kubectl run --overrides` | a stand-in Go probe, not the actuator |
+
+The actuator image itself was only ever run as `--version` to prove it execs. Its capability sets
+were never read inside a pod. `AllowPrivilegeEscalation` was **not** changed as part of the fix; it
+is `false` in `actuatorContainerSecurityContext` and was `false` in the probe pods, which reported
+`NoNewPrivs: 1` alongside a populated `CapPrm`.
+
+**Re-measured properly.** The operator was deployed to `kind` and a real `NodePowerAgent` created
+with `mode: Actuate`, `actuatorPolicy: SystemdPoweroff`, and the approval annotation. Read from the
+node's PID namespace, since the image is distroless and has no shell to exec into:
+
+```console
+$ grep -E 'Uid|Cap|NoNewPrivs|Seccomp' /proc/<actuator>/status
+Uid:        65532  65532  65532  65532
+CapPrm:     0000000000400000
+CapEff:     0000000000000000
+CapBnd:     0000000000400000
+NoNewPrivs: 1
+Seccomp:    2
+```
+
+The capability is held, `no_new_privs` is on, and `CapEff` is empty exactly as intended. (`Seccomp:
+2` is `RuntimeDefault` from the `F-62` change, applied and filtering.)
+
+**Why `no_new_privs` does not suppress it — the recorded explanation was wrong.** The objection's
+reading of `cap_bprm_creds_from_file` is correct: with `no_new_privs` set, any execve that *gains* a
+permitted capability has the new set intersected with the caller's. What the earlier note got wrong
+was concluding this never applies. It does. One image, one pod, one security context, three exec
+paths:
+
+| Exec path | `CapPrm` |
+| --- | --- |
+| `sh` — a capability-dumb binary | `0` |
+| the runtime execs the setcap binary | `0x400000` |
+| `sh -c '<the same setcap binary>'` | `0` |
+
+The third row is the downgrade branch firing. The second is the actuator. The difference is which
+process called `execve`: containerd writes `permitted: ['CAP_SYS_BOOT']` into the OCI spec (read
+back off the running container with `ctr c info`, alongside `no_new_privileges: True`), so the
+runtime's init already holds the capability and the entrypoint exec gains nothing. A process spawned
+inside the container has an empty permitted set, so its exec is a real gain and is downgraded.
+
+This is a genuine constraint on the design, and it was not previously recorded: **the actuator only
+holds the capability while it is the container's entrypoint.** Wrapping it in a shell, an init shim,
+or a debug wrapper would disarm actuation silently.
+
+**The distribution path preserves the extended attribute.** `kind load` bypasses registries
+entirely, so it proved nothing about a real cluster. Re-checked by pushing the image to a registry
+and pulling it back through containerd on the node, with a rebuild under a different `VERSION` to
+change the layer digest and force a genuine unpack rather than a content-addressed cache hit. The
+pulled image ran with `CapPrm: 0x400000`, and `getcap` on the binary as unpacked on the node
+reported `cap_sys_boot=p`.
+
+**The approach stays as a file capability, and the argument for root does not survive the
+measurement.** The case for a root actuator rested on the file capability requiring
+`no_new_privs` off. It does not. The comparison is:
+
+| | file capability | root actuator |
+| --- | --- | --- |
+| UID | 65532 | 0 |
+| `no_new_privs` | on | on |
+| `CAP_SYS_BOOT` in `CapEff` | only for the instant before `reboot(2)` | the whole process lifetime |
+| `runAsNonRoot` | pod-level, uniform | needs a container-level override |
+| Pod Security violations when actuating | `hostPID`, `SYS_BOOT` | those plus `runAsNonRoot` |
+
+The file capability is narrower on every row. It matters most on the row about `CapEff`: the
+actuator shares a writable `emptyDir` with the network-facing container (`F-57`), and for the whole
+life of the process — watching that directory, parsing JSON written across that boundary — the
+capability is held and inert, so a bug reached through it cannot halt the host.
+
+**What the objection was actually right about is silence, and that is now fixed.** Both remaining
+risks — a registry that strips the attribute, an entrypoint that gets wrapped — fail the same way
+the original defect did: invisibly, until a node fails to power off. So the actuator now proves the
+capability at startup instead of assuming it. When `policy=SystemdPoweroff` and `mode=Actuate`, it
+reads its own permitted set and refuses to start without it, naming all three causes:
+
+```console
+node-actuator refusing to arm SystemdPoweroff actuation: CAP_SYS_BOOT is not in this process's
+permitted set, so reboot(2) would fail with EPERM. One of three things is true: the container
+securityContext does not request the capability, the shipped binary lost its cap_sys_boot file
+capability (an image registry or builder that drops the security.capability extended attribute), or
+this process was not exec'd as the container entrypoint (a capability-dumb parent inside the
+container loses it to no_new_privs)
+```
+
+Verified by sabotage: an image identical to the shipped one but with `setcap -r` applied exits `78`
+with that message, while the shipped image logs `CAP_SYS_BOOT held in the permitted set; actuation
+armed`. Only the actuator container fails, so `upsmon` keeps monitoring beside it — the cluster
+loses the ability to actuate loudly rather than keeping it in name only. Exiting is the only channel
+available, because the pod mounts no ServiceAccount token (`F-60`).
+
 **This unblocks `F-62` and `F-63`, and changes what they are asking.** Both were written against a
 configuration that could not actuate. `F-62`'s seccomp question can now be answered against a
 process that actually holds the capability, and `F-63`'s `hostPID` justification can be tested by
@@ -461,14 +562,18 @@ held the capability, so any result would have been about the wrong failure. Meas
 | `RuntimeDefault`, no capability | `EPERM` (errno 1) |
 
 The two errnos are what separate the explanations. A seccomp denial surfaces as `EPERM` before the
-kernel's reboot handler runs; `EINVAL` can only come from the handler itself, rejecting the argument.
-So `RuntimeDefault` reaches the syscall and the capability is the only gate. `Unconfined` is removed
-— it was stripping every other syscall filter from the one container that can halt a machine, in
+syscall body runs at all; `EINVAL` can only come from inside it, past the capability check. So
+`RuntimeDefault` reaches the syscall and the capability is the only gate. `Unconfined` is removed —
+it was stripping every other syscall filter from the one container that can halt a machine, in
 exchange for nothing.
 
-(The `EINVAL` is itself informative and belongs to `F-63`: the probe used `LINUX_REBOOT_CMD_CAD_ON`,
-which the kernel refuses from a non-initial PID namespace. That the argument was rejected on
-namespace grounds is direct evidence that PID-namespace placement changes what `reboot(2)` does.)
+*Correction, 2026-08-13:* this first recorded the `EINVAL` as the reboot handler rejecting the
+argument. That is the wrong place. `reboot(2)` checks `CAP_SYS_BOOT`, then the magic arguments, then
+calls `reboot_pid_ns`, and it is that function's `default:` branch returning `-EINVAL` for
+`LINUX_REBOOT_CMD_CAD_ON` from a non-initial PID namespace. The conclusion above is unaffected —
+reaching `reboot_pid_ns` means the capability check already passed and seccomp did not intervene —
+but the distinction matters for `F-63`, which turns on what that same function does with the
+argument the actuator actually uses.
 
 **The Pod Security half is confirmed and is now the whole of `F-62`.** Both shapes were submitted to
 labelled namespaces:
@@ -479,11 +584,48 @@ labelled namespaces:
   would.
 - The **stub/dry-run default** shape is admitted by `restricted`, the strictest level.
 
-That asymmetry is the useful part. The agent's default configuration is compatible with the tightest
-Pod Security level a cluster can enforce, and only enabling actuation requires an exception. What is
-undecided is whether the operator, which creates this namespace, should say so in labels — and
-writing `enforce: privileged` onto a namespace is the operator weakening a boundary on the user's
-behalf, so it is a decision rather than an omission to fix.
+That asymmetry is the useful part, and it is a property of the design worth keeping: the agent's
+default configuration is compatible with the tightest Pod Security level a cluster can enforce, and
+only enabling actuation requires an exception. The exception is scoped to the configuration that
+actually halts machines rather than to the operator as a whole.
+
+*Pod Security half resolved 2026-08-13 — the operator reports the conflict and does not resolve it.*
+
+Writing `enforce: privileged` onto a namespace was rejected: it makes a CR field the thing that
+edits a security boundary, and takes the decision away from whoever is accountable for the cluster's
+admission policy. But the failure being left in place was not the rejection — the rejection is
+loud — it was that nothing connected it back to this operator's own rendering choices.
+
+`nodePowerAgentPodSecurityConflict` reads the operand namespace's `pod-security.kubernetes.io/enforce`
+label during rendering, and only when `mode=Actuate` and `policy=SystemdPoweroff` are both set. If
+the level would reject the actuating shape, the agent reports `Degraded` with reason
+`PodSecurityRejectsActuation` and a message naming both violations and the way out. Only `enforce`
+is consulted; `warn` and `audit` produce messages and admit the pod, so reporting on them would be a
+false alarm.
+
+Verified end to end on `kind`. Labelling the operand namespace `enforce=baseline` and deleting the
+agent pod produced:
+
+```console
+$ kubectl get events --field-selector reason=FailedCreate
+Error creating: pods "f61v-agent-node-power-agent-xkgd7" is forbidden: violates PodSecurity
+"baseline:latest": non-default capabilities (container "actuator" must not include "SYS_BOOT" in
+securityContext.capabilities.add), host namespaces (hostPID=true)
+
+$ kubectl get nodepoweragent f61v-agent -o jsonpath='{.status.conditions[?(@.type=="Degraded")]}'
+status=True
+reason=PodSecurityRejectsActuation
+message=namespace "power-system" enforces pod-security.kubernetes.io/enforce=baseline, which
+rejects the actuating agent pod on hostPID=true (host namespaces) and CAP_SYS_BOOT (non-default
+capabilities); actuation needs that namespace exempted or labelled
+pod-security.kubernetes.io/enforce=privileged. The Stub and DryRun default needs neither and is
+admitted under restricted
+```
+
+Note that Pod Security's own rejection names the same two violations the message does, which is
+where the message's wording comes from rather than from the standard. Before this, the only evidence
+was a `FailedCreate` event about a pod that does not exist, on a DaemonSet whose desired count is
+non-zero and whose current count is zero.
 
 **F-63 · Record why `hostPID` is required.** `daemonSet.Spec.Template.Spec.HostPID = hostPoweroff`
 (`nodepoweragent_render.go:748`), where `hostPoweroff` is true only for `mode=Actuate` plus
@@ -497,6 +639,42 @@ The reason this needs writing down is that `F-13` framed the choice as an either
 alone *or* `hostPID` plus `nsenter` — and the code does both, for a reason `F-13` does not state.
 Read against `F-13` alone, `hostPID` looks like an unnecessary privilege, and someone will harden it
 away.
+
+*Confirmed 2026-08-13, measured with the shipped actuator rather than argued.* `hostPID` is
+load-bearing, and removing it fails in the worst available way: silently, reporting success.
+
+`reboot(2)` calls `reboot_pid_ns` before doing anything. From the initial PID namespace it returns
+immediately and the real poweroff proceeds. From any other, it does not return to the caller at all:
+for `LINUX_REBOOT_CMD_POWER_OFF` and `HALT` it records the namespace's reboot signal, `SIGKILL`s the
+namespace's init, and exits the calling task. Only the `default:` branch returns `-EINVAL`, which is
+what the `F-62` probe hit with `CAD_ON`.
+
+Run on `kind` with the real `node-actuator` image, a real shutdown signal, `mode=Actuate`,
+`policy=SystemdPoweroff`, and `hostPID` deliberately **omitted** — the shape someone would produce
+by hardening it away. The actuator was PID 1 in its own namespace, so the blast radius was its own
+container:
+
+```console
+node-actuator starting mode=Actuate policy=SystemdPoweroff poweroff=reboot-syscall(POWER_OFF)
+node-actuator CAP_SYS_BOOT held in the permitted set; actuation armed
+node-actuator systemd actuator executing poweroff executionID=f63-probe node=f63-nohostpid flow=f63-flow
+```
+
+That is the entire log. `runPoweroff`'s error check produced nothing, because `rebootPoweroff` never
+returned to it. The container terminated with exit code `130` — `128 + SIGINT`, the signal
+`reboot_pid_ns` records for `POWER_OFF` — and the node and the host stayed up.
+
+So the failure mode of removing `hostPID` is: the syscall reports no error, the actuator logs
+nothing wrong, the container dies and is restarted by the DaemonSet, and the machine that was
+supposed to power off keeps running. Combined with `F-60` — no receipt, no metric, no channel to
+report on — nothing in the cluster distinguishes that from a successful poweroff, because the
+executor infers success from the node disappearing and the node has not disappeared.
+
+This is the strongest argument against hardening `hostPID` away, and it is stronger than the
+`F-13`-shaped argument that it is merely redundant with `CAP_SYS_BOOT`. The two are not alternatives:
+`CAP_SYS_BOOT` is what makes the syscall permitted, and `hostPID` is what makes it mean what the
+caller intended. Losing either one produces `EPERM` and a silent no-op respectively, and only the
+first is visible.
 
 ### Checks that cannot fail
 
@@ -708,6 +886,11 @@ first, for the reason the exposure note above gives.
    can invalidate the others: if `CAP_SYS_BOOT` does not survive the UID transition, the container
    shape changes, and `F-62`'s seccomp question and `F-63`'s `hostPID` justification are both being
    asked about a configuration that does not work. Settle it, then `F-62` and `F-63` in either order.
+
+   *Done 2026-08-13. `F-61`, `F-62`, and `F-63` are all closed.* The privilege group is settled and
+   step 2 is next. Worth carrying forward from how it went: `F-61` had to be reopened after being
+   closed against a hand-written pod, and every conclusion that changed changed because something was
+   run in the shape the operator actually renders rather than in a shape assembled to test it.
 2. **`F-54` and `OD-37` next, together.** `OD-37` is the decision and `F-54` is its consequence, so
    they resolve as one. They gate `F-55`, `F-56`, and `F-57`: the shape of the authorization fix
    depends entirely on whether the local `upsmon` signal path survives at all. Designing signal

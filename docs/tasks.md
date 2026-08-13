@@ -274,31 +274,43 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
 
 ##### Privilege model
 
-- **`F-61` closed 2026-08-13 — the capability did not survive, and the fix is shipped.** Measured on
-  `kind`: `CapBnd` held `SYS_BOOT` while `CapPrm`/`CapEff` were empty, so `reboot(2)` would have
-  returned `EPERM` on every `mode=Actuate` deployment. Resolved with `cap_sys_boot=p` on the binary
-  plus a permitted-to-effective raise immediately before the syscall, keeping non-root,
-  `AllowPrivilegeEscalation: false`, and `drop: ALL`. `=ep` was tried first and makes the image
-  unrunnable wherever the capability is outside the bounding set — including the `Stub` default. See
-  the audit for the measurements; `F-62` and `F-63` can now be tested against a process that
-  actually holds the capability.
+- **`F-61` closed 2026-08-13, reopened and re-closed the same day.** The capability did not survive
+  the UID transition: `CapBnd` held `SYS_BOOT` while `CapPrm`/`CapEff` were empty, so `reboot(2)`
+  would have returned `EPERM` on every `mode=Actuate` deployment. Fixed with `cap_sys_boot=p` on the
+  binary plus a permitted-to-effective raise before the syscall, keeping non-root,
+  `AllowPrivilegeEscalation: false`, and `drop: ALL`.
 
-- **`F-62` · Pod Security labelling for the operand namespace.** The seccomp half is closed: measured
-  on `kind` after `F-61`, `RuntimeDefault` + `CAP_SYS_BOOT` reaches the kernel's reboot handler
-  (`EINVAL` on the argument) while the same profile without the capability is refused (`EPERM`), so
-  the capability is the gate and `Unconfined` is removed. What remains is a decision. The actuating
-  shape is rejected by a `baseline` namespace on `hostPID` and the added capability; the stub default
-  is admitted by `restricted`. The operator creates this namespace and applies no
-  `pod-security.kubernetes.io/*` labels, so on a cluster enforcing `baseline` by default, enabling
-  actuation fails at admission with no explanation from this operator. Decide whether it labels the
-  namespace, and accept that writing `enforce: privileged` is the operator weakening a boundary for
-  the user.
+  Reopened because the verification used a hand-written pod and a stand-in probe image, not an
+  operator-rendered pod running the actuator. Re-measured in a real `mode=Actuate` DaemonSet pod:
+  `CapPrm: 0x400000` with `NoNewPrivs: 1`, so the fix is live. The recorded explanation was wrong
+  and is corrected in the audit — `no_new_privs` *does* strip file capabilities, but only on an
+  execve that gains one relative to its caller, and the container entrypoint gains nothing because
+  containerd puts `CAP_SYS_BOOT` in the runtime init's permitted set. The consequence is a real
+  constraint: the actuator holds the capability only while it is the container entrypoint, so
+  wrapping it in a shell would disarm actuation silently. The extended attribute was also confirmed
+  to survive a registry push and pull, checked against the binary as unpacked on the node.
 
-- **`F-63` · Record why `hostPID` is required.** `reboot(2)` called from a non-initial PID namespace
-  signals that namespace's init instead of halting the host, so `hostPID` is load-bearing rather than
-  defense-in-depth. `F-13` framed it as an either/or — `CAP_SYS_BOOT` alone *or* `hostPID` plus
-  `nsenter` — and the code correctly does both for a reason `F-13` does not state. Someone will
-  harden it away.
+  The file-capability approach was kept over a root actuator, which is narrower on every axis once
+  `no_new_privs` is off the table. Both silent failure modes are now loud: the actuator reads its own
+  permitted set at startup and refuses to arm without it, naming all three causes. Sabotage-verified.
+
+- **`F-62` closed 2026-08-13.** Seccomp half: `RuntimeDefault` + `CAP_SYS_BOOT` reaches the syscall
+  past the capability check (`EINVAL` from `reboot_pid_ns`) while the same profile without the
+  capability is refused (`EPERM`), so the capability is the gate and `Unconfined` is removed.
+
+  Pod Security half: the operator reports the conflict and does not resolve it. Writing
+  `enforce: privileged` was rejected — it makes a CR field the thing that edits a security boundary.
+  Instead the render path reads the operand namespace's `pod-security.kubernetes.io/enforce` label
+  when actuation is enabled, and reports `Degraded` / `PodSecurityRejectsActuation` naming both
+  violations (`hostPID=true`, `CAP_SYS_BOOT`) and the exception required. Verified end to end on
+  `kind` against a `baseline` namespace. The stub default remains admissible under `restricted`.
+
+- **`F-63` closed 2026-08-13.** `hostPID` is load-bearing, and removing it fails silently while
+  reporting success. Measured with the shipped actuator, a real signal, and `hostPID` omitted: the
+  log ends at `executing poweroff`, `runPoweroff`'s error check produces nothing because the syscall
+  never returns, the container exits `130`, and the host stays up. `reboot_pid_ns` `SIGKILL`s the
+  namespace's init for `POWER_OFF` rather than returning an error. With `F-60`'s missing return path,
+  nothing in the cluster distinguishes that from a successful poweroff.
 
 ##### Checks that cannot fail
 
