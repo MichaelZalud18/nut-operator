@@ -164,6 +164,45 @@ declined — it only matters with an HA `upsd` topology, which is not designed.
 
 - Verify the `F-46` readiness probe against a running operand. The rendering and its tests are done;
   what has not happened is watching `upsdrvctl status` report an actually-disconnected driver.
+- Replace `exec upsd -D` with `upsd -FF` in `images/nut-server/entrypoint.sh` (`F-47`). `-D` raises
+  the debugging level and only stays foregrounded as a side effect, so the operand runs at debug
+  level permanently; `-F`/`-FF` are the documented foreground flags. `-FF` also writes the PID file,
+  which `F-48` depends on. The file lands in `/run/nut` under `--with-altpidpath`, already a
+  writable `emptyDir`, so the read-only root filesystem is unaffected.
+- Add a config-reload path instead of recreating the pod on every change (`F-48`). `upsd -c reload`
+  re-reads `ups.conf`, `upsd.conf`, and `upsd.users` and registers devices added since startup;
+  `upsdrvctl -c reload` / `reload-or-error` / `reload-or-restart` covers the driver side. Today the
+  `power.zalud.io/config-hash` annotation forces a `Recreate` on any change, dropping every `upsmon`
+  session and NUT's login accounting — the damage `F-15` and `F-16` exist to prevent. Projected
+  volumes update in place, so the config reaches the container without a restart. Blocked on `F-47`.
+  Scope explicitly what still requires a restart: `LISTEN`, port, and certificate changes.
+- Give the drivers a supervisor (`F-49`). `upsdrvctl start` runs once at startup and nothing retries.
+  A driver that dies later leaves `upsd` alive, so the container is never restarted, readiness pulls
+  the pod from the Service endpoints, and it stays unready indefinitely with every agent in
+  `DEADTIME`. Upstream supervises one service unit per driver (`upsdrvsvcctl` and
+  nut-driver-enumerator, 2.8.0+); the Kubernetes-loyal equivalents are a container per driver sharing
+  `/run/nut` with kubelet as the service manager, or a liveness probe that fails when no driver is
+  responsive. Decide which before `NS-4` reads as complete. Trade-off to settle in the same pass: a
+  container per driver makes device add/remove a pod recreate, which pulls against `F-48`.
+- Reconcile the driver allowlist with what the image actually builds (`F-50`). Admission accepts
+  `powerman-pdu` (`internal/webhook/v1alpha1/upsdevice_webhook.go:208`) while
+  `images/nut-server/Dockerfile` configures `--without-powerman`, and `drivers/Makefile.am` gates
+  that driver on `POWERMAN_DRIVERLIST`. A `UPSDevice` using it is admitted and can never start —
+  the `F-25`/`F-33`/`F-37` class. Drop it from the allowlist or build it in; either way assert the
+  allowlist against the image in the smoke test so the two cannot drift again.
+- Render `ALLOW_NO_DEVICE` and fix the empty-`ups.conf` failure (`F-51`). `upsd` calls `fatalx` when
+  `ups.conf` defines no devices, so a `NUTServer` whose selector matches nothing cannot start. The
+  entrypoint's `-s` test fires first and exits with `missing required /etc/nut/ups.conf` for a file
+  that exists, which sends the diagnosis in the wrong direction. `ALLOW_NO_DEVICE` is upstream's
+  answer for exactly this lifecycle — configure the file and reload the service — so it pairs with
+  `F-48`.
+- Record the `clone`, `clone-outlet`, and `failover` decision (`OD-36`). None of the three appears
+  anywhere in the repo, and all are built unconditionally as part of `NUTSW_DRIVERLIST`. `clone` is
+  upstream's staged-shutdown mechanism — a virtual UPS with earlier thresholds — and is the closest
+  upstream analog to the sequencer; `failover` addresses the multi-supply-per-host topology `F-45`
+  records as inexpressible. Either decline them with reasons, alongside FSD (`F-20`) and `upssched`
+  (`F-21`), or scope them. Leaving them unnamed is what invites a contributor to wire one in
+  parallel with the executor.
 - Advanced driver-specific configuration for the operand render path.
 
 ---
@@ -269,6 +308,13 @@ Closed: `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`.
 - Wire keyless Sigstore signing as a release gate, with cosign verification docs and digest-pinned
   examples (`docs/images.md` describes the target state).
 - Automate triage of new unsuppressed medium-or-higher ASH findings.
+- Correct `docs/images.md` to the source-build reality and close the two supply-chain claims it makes
+  that the build does not meet (`F-52`). It still states that the operand Dockerfiles package NUT
+  "from pinned distribution packages" and that `nut-server` "installs `nut`" — both images have built
+  from source since `F-39`. It also lists checksum *and signature* verification of NUT source inputs,
+  where the Dockerfiles verify `sha256` only, and a pinned base image digest, where both use
+  `alpine:3.22` as a tag. The description is a correction; the digest pin and signature verification
+  are real work — do them or restate them as target state, and say which.
 
 ---
 
@@ -309,6 +355,14 @@ boundaries, the decision index, the references under `docs/`, and the audit reco
 
 #### Open Work
 
+- Record `F-47`–`F-53` in `docs/audits/nutserver-pod-audit.md` (operand findings) and
+  `docs/audits/nut-usage-audit.md` (`F-50`, `OD-36`, as NUT-mechanism fidelity), with the upstream
+  evidence above. The task lines below carry pointers, not rationale, and are unreadable without
+  them.
+- Reconcile the `HEALTHCHECK` statement (`F-53`). The NUT Server *Built* paragraph in
+  `docs/tasks.md` says the inert Docker `HEALTHCHECK` "is gone", while `NS-3` and
+  `images/nut-server/Dockerfile` both say it exists and runs the readiness probe's `upsdrvctl status`
+  check verbatim. The receipt describes the removal and not the replacement that followed it.
 - Redraw the example pod placement diagram into `docs/diagrams/`. Blocked on deciding node naming.
 - Define how the Orion example's string tier labels (`application`/`data`/`storage`) coexist with
   `OD-4` numbered tiers. Numbered tiers win, but named tags still occur in practice.
