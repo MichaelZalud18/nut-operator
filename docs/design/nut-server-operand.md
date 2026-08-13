@@ -158,6 +158,34 @@ The container carries no probes. A readiness probe would gate the pod's endpoint
 supervisor rather than on the server, and a liveness probe would let a supervisor restart take the
 server down with it. Keeping them apart is the reason it is a separate container.
 
+### What the container boundary changes
+
+The watchdog and `upsd` share `/run/nut` but not a PID namespace, and that asymmetry decides two
+things. Both were confirmed by running the two containers against a shared volume rather than
+reasoned about.
+
+**`RUNNING` is namespace-local; `S_RESPONSIVE` is not.** Asked from the watchdog, `upsdrvctl status`
+reports `RUNNING` as `N/A` for a perfectly healthy driver, because the PID from the PID file does
+not resolve in the watchdog's namespace. `S_RESPONSIVE` stays accurate, because it comes from
+probing the driver's socket and the socket is shared.
+
+`NS-1` already declines to consult `RUNNING`, on the grounds that a driver can be running and not
+answering. From the sidecar the argument is stronger and no longer optional: a watchdog keyed on
+`RUNNING` would find every driver stopped on every pass and restart all of them, forever. The
+correct field is correct for two independent reasons.
+
+**A restarted driver lives in the watchdog's container.** `upsdrvctl start` spawns the driver where
+it runs, so a driver the watchdog recovers is a child of the watchdog rather than of the entrypoint.
+Telemetry is unaffected — NUT drivers and `upsd` communicate over the Unix socket in `/run/nut`,
+which both containers mount, and `upsc` against `upsd` returns the device's status normally
+afterwards.
+
+The stale PID file that the recovered driver leaves behind is safe to act on across the boundary.
+`upsdrvctl` announces "Terminating other driver!" when it finds one, but it verifies the process
+before signalling: a PID file pointing at an unrelated process in the watchdog's namespace leaves
+that process alive. This was tested directly, by pointing a driver's PID file at an innocent
+`sleep` and confirming it survived.
+
 ## Related
 
 - `F-17`, `F-46` — [nutserver-pod-audit.md](../audits/nutserver-pod-audit.md)

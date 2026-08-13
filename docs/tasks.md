@@ -141,7 +141,7 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 
 Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_probe.go`, and the
 `nut-server` operand image. Audit: `docs/audits/nutserver-pod-audit.md` (`F-15`–`F-19`, `F-23`,
-`F-46`–`F-49`, `F-51`, `F-53`); relevant findings from `docs/audits/nut-usage-audit.md`
+`F-46`–`F-49`, `F-51`, `F-53`, `F-76`); relevant findings from `docs/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`). The task lines below are pointers; the evidence and the
 recommended order are in the audits.
 
@@ -185,6 +185,13 @@ declined — it only matters with an HA `upsd` topology, which is not designed.
   that exists, which sends the diagnosis in the wrong direction. `ALLOW_NO_DEVICE` is upstream's
   answer for exactly this lifecycle — configure the file and reload the service — so it pairs with
   `F-48`.
+- Reap dead driver processes (`F-76`). The entrypoint `exec`s `upsd`, so `upsd` is PID 1 and never
+  reaps the drivers reparented to it — verified as `State: Z (zombie)`, `PPid: 1`. Before `F-49` that
+  leaked one entry per driver death; now the watchdog restarts the driver, so a flapping device
+  leaks one per flap with no ceiling and nothing reporting it. Remedy is an init shim ahead of
+  `upsd`, or `shareProcessNamespace: true`, which also collapses the PID-namespace asymmetry the
+  watchdog works around — but that weakens the container boundary, so it is a decision rather than a
+  swap. Not urgent: the symptom is process-table growth, not service failure.
 - Advanced driver-specific configuration for the operand render path.
 
 ---

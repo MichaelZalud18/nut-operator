@@ -285,6 +285,38 @@ flipped from PASSED to FAILED on its absence — so it was restored pointing at 
 the probe. The status line was written for the deletion and never updated for the restoration. A
 receipt written mid-change describes an intermediate state.
 
+**F-76 · A dead driver leaves a permanent zombie in the `upsd` container.** Found while verifying
+`F-49`'s watchdog across a real container boundary, and it is not caused by the watchdog — it is a
+property of the operand's process model that the watchdog makes recurring instead of one-off.
+
+The entrypoint `exec`s `upsd`, so `upsd` is PID 1. Drivers started by `upsdrvctl start` in the same
+entrypoint are reparented to it when they exit, and `upsd` never reaps them. Verified directly:
+
+```console
+$ cat /proc/10/status
+Name:   dummy-ups
+State:  Z (zombie)
+PPid:   1
+```
+
+One dead driver, one zombie, held for the pod's lifetime. Before `F-49` that was a single leaked
+entry per driver death and a driver death was terminal for that device anyway. Now the watchdog
+restarts the driver, so a device whose driver flaps leaves one zombie per flap, unbounded over a
+long-lived pod, against a PID limit that Kubernetes may or may not be enforcing.
+
+Not urgent — a flapping driver has to be flapping for a long time to matter, and the practical
+symptom is process-table growth rather than a service failure. It is a defect rather than a
+curiosity because the growth has no ceiling and nothing reports it.
+
+The conventional remedy is to make PID 1 reap: an init shim ahead of `upsd`, or
+`shareProcessNamespace: true` on the pod, which gives Kubernetes' own pause container the reaper
+role. The second is the smaller change and would also collapse the PID-namespace asymmetry the
+watchdog currently works around, but it weakens isolation between the two containers and touches
+`F-57`'s general question about what the boundary is worth — so it is a decision, not a swap.
+
+Note while deciding: the watchdog's own container has the same shape, since its PID 1 is `sh`.
+A driver it starts and later loses is reparented to that shell.
+
 ### Recommended order — upstream fidelity pass
 
 1. `F-47` first. One line in the entrypoint, and it is the prerequisite for everything else here:
