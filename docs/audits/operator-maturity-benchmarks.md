@@ -408,3 +408,50 @@ fail, then removing it again.
 The durable lesson is broader than the guard: an operator whose install has never been exercised
 end-to-end in CI has an untested startup path regardless of unit coverage. Tracked in `docs/tasks.md`
 as an e2e gap.
+
+## Findings — sixth pass, 2026-08-12
+
+Recorded here rather than in the two NUT audits it was transferred alongside. `F-52` is about what
+`docs/images.md` claims of the build, which is supply-chain posture and this document's subject,
+not NUT-mechanism fidelity or the `upsd` pod's shape.
+
+**F-52 · `docs/images.md` makes four claims the build does not meet, and they are not the same
+kind of claim.** Two are stale descriptions of a build that changed underneath them; two are
+aspirations written in the present tense.
+
+Stale descriptions, both left behind by `F-39`'s move from distribution packages to a source build:
+
+- `docs/images.md:20` — "The operand Dockerfiles package real Network UPS Tools binaries from
+  **pinned distribution packages**." Both operand Dockerfiles now build NUT from source in a
+  dedicated `nut-builder` stage: `images/nut-server/Dockerfile:17` and
+  `images/upsmon-agent/Dockerfile:29`, each fetching `nut-${NUT_VERSION}.tar.gz` and running
+  `./configure`.
+- `docs/images.md:22-23` — "`nut-server` **installs `nut`**" and "`upsmon-agent` **installs
+  `nut`**". Neither does. The runtime stages `apk add` shared libraries only and copy the built
+  tree from the builder stage.
+
+Aspirations stated as fact:
+
+- `docs/images.md:32` — "pinned NUT version and **base image digest**". The NUT version is pinned
+  (`ARG NUT_VERSION=2.8.5`, plus the assertion at `images/nut-server/Dockerfile:119-121` that the
+  shipped `upsd` reports it and links OpenSSL rather than NSS — a real and unusually good control).
+  The base image is not: every stage in both operand Dockerfiles is `FROM alpine:${ALPINE_VERSION}`
+  with `ALPINE_VERSION=3.22`, a mutable tag.
+- `docs/images.md:33` — "checksum **and signature** verification for NUT source inputs". Only
+  checksum. `images/nut-server/Dockerfile:35` and `images/upsmon-agent/Dockerfile:38` both run
+  `sha256sum -c` against a pinned `ARG NUT_SHA256`; a search of both files for `gpg`, `gpgv`,
+  `.asc`, and `.sig` returns nothing. NUT does publish detached signatures, so this is unimplemented
+  rather than unavailable.
+
+The distinction matters for how it gets closed. The first two are corrections — the document should
+describe the source build, and doing so is strictly an improvement, since a pinned source build with
+a verified checksum and an asserted TLS backend is a **stronger** supply-chain position than the
+distribution packages the text still advertises. The last two are real work, and the choice is to do
+them or move them into the "Roadmap" framing the same file already uses at `:43-44` for Sigstore
+signatures and digest references. Either is defensible; leaving them in the Build Requirements list
+is not, because a reader takes that list as describing released images.
+
+One related item found while reading: `docs/images.md:26` states the driver allowlist including
+`powerman-pdu`, which the operand image does not contain. That is `F-50`, recorded in
+[nut-usage-audit.md](nut-usage-audit.md) — the allowlist appears in two places and both need the
+same correction.

@@ -310,3 +310,64 @@ A host whose two supplies are fed by a single UPS would need `MONITOR ups 2` and
 `MINSUPPLIES 2`, and cannot express that today. That topology is not currently modeled
 anywhere in the inventory, so this is recorded as a limit of the render rather than as a
 defect with a fix waiting on it.
+
+## Findings — fifth pass, 2026-08-12
+
+Two items about which NUT drivers the operand actually carries. Both were resolved by listing the
+drivers in the shipped image rather than by reading the `configure` invocation, which is what turned
+one of them from a suspicion into a fact.
+
+*Verified — `ls /usr/lib/nut` in `example.com/nut-server:v0.0.1`, the source-built operand image
+(NUT 2.8.5, OpenSSL, per `F-39`'s remedy):*
+
+```text
+adelsystem_cbi  apc_modbus  apcupsd-ups  clone  clone-outlet  dummy-ups  failover
+generic_modbus  huawei-ups2000  must_ep2000pro  netxml-ups  phoenixcontact_modbus
+skel  snmp-ups  socomec_jbus
+```
+
+The only Dockerfile change between that image and `main` is the `HEALTHCHECK` instruction
+(`ffeca4a`), so its `configure` flags and its driver set are the ones this repository currently
+ships.
+
+**F-50 · The driver allowlist admits a driver the image does not contain.**
+`supportedNetworkUPSDrivers` (`internal/webhook/v1alpha1/upsdevice_webhook.go:207-209`) returns
+`dummy-ups`, `snmp-ups`, `netxml-ups`, `powerman-pdu`, and `apcupsd-ups`. Four of those five appear
+in the listing above. **`powerman-pdu` does not.**
+
+The cause is in the image: `images/nut-server/Dockerfile:64` passes `--without-powerman`. So a
+`UPSDevice` naming `powerman-pdu` passes admission, renders into `ups.conf`, and can never start —
+`upsdrvctl` has no such binary to exec. That is the `F-25`/`F-33`/`F-37` class again: an API that
+accepts a configuration the implementation cannot honor. It differs from those three in being
+resolvable in either direction, since building the driver in is a one-flag change.
+
+`docs/images.md:26` repeats the allowlist including `powerman-pdu`, so the claim exists in two
+places and both need correcting together — see `F-52` in
+[operator-maturity-benchmarks.md](operator-maturity-benchmarks.md).
+
+Whichever direction is chosen, the fix has to include an assertion of the allowlist against the
+image in the smoke test. The two drifted apart silently once and nothing would stop it happening
+again.
+
+**OD-36 · `clone`, `clone-outlet`, and `failover` are built, unused, and undeclared.** All three
+appear in the listing above — they are part of `NUTSW_DRIVERLIST` and are built unconditionally,
+with no `configure` flag in `images/nut-server/Dockerfile` naming them either way. A search of the
+repository for all three returns nothing outside `docs/tasks.md`: no allowlist entry, no
+documentation, no decision.
+
+Two of them bear directly on this project's own subject matter, which is why silence is the wrong
+answer:
+
+- **`clone`** is upstream's staged-shutdown mechanism — a virtual UPS presenting earlier thresholds
+  than the device it shadows, so one physical UPS can drive several shutdown stages. That is the
+  closest thing upstream has to the sequencer, and it sits in the image unmentioned.
+- **`failover`** addresses the multi-supply-per-host topology `F-45` records as inexpressible today.
+
+This is the same shape as `F-20` (FSD) and `F-21` (`upssched`): a NUT-native mechanism that the
+project declines by omission rather than by decision. `F-21` was resolved by writing the reasoning
+down, and that is the model. Either decline all three with reasons, alongside FSD and `upssched`, or
+scope them.
+
+The concrete risk of leaving them unnamed is precise: a contributor who finds `clone` in the image
+and reads that this operator sequences staged shutdowns has every reason to wire one up in parallel
+with the executor, which is exactly the split-brain `SB-2b` forbids.

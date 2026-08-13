@@ -140,8 +140,10 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 ### NUT Server / upsd
 
 Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_probe.go`, and the
-`nut-server` operand image. Audit: `docs/audits/nutserver-pod-audit.md` (`F-15`–`F-19`, `F-23`);
-relevant findings from `docs/audits/nut-usage-audit.md` (`F-20`–`F-22`, `F-24`).
+`nut-server` operand image. Audit: `docs/audits/nutserver-pod-audit.md` (`F-15`–`F-19`, `F-23`,
+`F-46`–`F-49`, `F-51`, `F-53`); relevant findings from `docs/audits/nut-usage-audit.md`
+(`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`). The task lines below are pointers; the evidence and the
+recommended order are in the audits.
 
 #### Built
 
@@ -171,7 +173,7 @@ declined — it only matters with an HA `upsd` topology, which is not designed.
   writable `emptyDir`, so the read-only root filesystem is unaffected.
 - Add a config-reload path instead of recreating the pod on every change (`F-48`). `upsd -c reload`
   re-reads `ups.conf`, `upsd.conf`, and `upsd.users` and registers devices added since startup;
-  `upsdrvctl -c reload` / `reload-or-error` / `reload-or-restart` covers the driver side. Today the
+  `upsdrvctl -c reload` / `reload-or-error` / `reload-or-exit` covers the driver side. Today the
   `power.zalud.io/config-hash` annotation forces a `Recreate` on any change, dropping every `upsmon`
   session and NUT's login accounting — the damage `F-15` and `F-16` exist to prevent. Projected
   volumes update in place, so the config reaches the container without a restart. Blocked on `F-47`.
@@ -212,7 +214,10 @@ declined — it only matters with an HA `upsd` topology, which is not designed.
 Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_render.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
 `internal/nodeagent`. Audits: `docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`,
-`F-33`–`F-36`); `F-45` from `docs/audits/nut-usage-audit.md`.
+`F-33`–`F-36`, `F-54`–`F-75`, `OD-37`); `F-45` from `docs/audits/nut-usage-audit.md`. The task lines
+below are pointers; the evidence and the recommended order are in the audit, which sequences `F-61`
+first and records that `F-54`, `F-56`, and `F-57` are pre-commitment decisions to lock before
+actuation ships rather than live exposure.
 
 #### Built
 
@@ -233,8 +238,11 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
 
 - **`F-54` · The local `upsmon` path self-authorizes an unordered fleet-wide halt.**
   `POWER_EXECUTION_ID` is never rendered, so `power-signal-writer` always falls through to a
-  synthetic `upsmon-<node>-<nanos>` with `shutdownFlow: upsmon-local`, and the actuator accepts it
-  with the same authority as an executor-issued signal. Every agent renders `MONITOR ... 1 ...
+  synthetic `upsmon-<node>-<nanos>`, and the actuator accepts it with the same authority as an
+  executor-issued signal. The `shutdownFlow: upsmon-local` half of the original framing was wrong
+  and is corrected in the audit: an agent bound to a `shutdownFlowRef` writes the *real* flow name,
+  so for those agents the only distinguishing mark is the `upsmon-` prefix nothing inspects. Every
+  agent renders `MONITOR ... 1 ...
   secondary` with `MINSUPPLIES 1`, so one UPS reaching OB+LB fires `SHUTDOWNCMD` on every node it
   covers within one `POLLFREQALERT`. Under `mode=Actuate` that is the whole fleet halting at once,
   unordered, at the moment the sequencer exists to prevent it. `SB-2b` says NUT's threshold model is
@@ -375,10 +383,12 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
 
 ##### Coverage
 
-- **`F-74` · Nothing detects a node with no agent pod.** `DaemonSet.status` answers whether scheduled
-  pods are healthy, not whether every node in the inventory has an agent. A node excluded by a
-  selector or an untolerated taint is invisible rather than degraded — the inverse of readiness, and
-  the check that catches placement mistakes.
+- **`F-74` · Coverage is measured against the agent's own selector, not against the inventory.**
+  Narrowed from its original framing while writing up the audit: an untolerated taint *is* already
+  detected, as `AgentPodMissing` on a selected node. The gap is the frame of reference — every count
+  is computed over nodes `spec.nodeSelector` already matched, so a node the inventory considers in
+  scope but the selector excludes is absent from every count and the agent reports fully ready. The
+  inverse of readiness, and the check that catches placement mistakes.
 
 ##### Naming and hygiene
 
@@ -470,7 +480,8 @@ Closed: `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`.
   examples (`docs/images.md` describes the target state).
 - Automate triage of new unsuppressed medium-or-higher ASH findings.
 - Correct `docs/images.md` to the source-build reality and close the two supply-chain claims it makes
-  that the build does not meet (`F-52`). It still states that the operand Dockerfiles package NUT
+  that the build does not meet (`F-52`, recorded in
+  [operator-maturity-benchmarks.md](audits/operator-maturity-benchmarks.md)). It still states that the operand Dockerfiles package NUT
   "from pinned distribution packages" and that `nut-server` "installs `nut`" — both images have built
   from source since `F-39`. It also lists checksum *and signature* verification of NUT source inputs,
   where the Dockerfiles verify `sha256` only, and a pinned base image digest, where both use
@@ -516,17 +527,11 @@ boundaries, the decision index, the references under `docs/`, and the audit reco
 
 #### Open Work
 
-- Record `F-47`–`F-53` in `docs/audits/nutserver-pod-audit.md` (operand findings) and
-  `docs/audits/nut-usage-audit.md` (`F-50`, `OD-36`, as NUT-mechanism fidelity), with the upstream
-  evidence above. The task lines below carry pointers, not rationale, and are unreadable without
-  them.
-- Record `F-54`–`F-75` and `OD-37` in `docs/audits/node-agent-daemonset-audit.md` before the task
-  lines are worked, with the upstream evidence from the transfer note (static reading of `main` on
-  2026-08-12 against NUT v2.8.5 `clients/upsmon.c`). `tasks.md` carries pointers, not rationale.
 - Reconcile the `HEALTHCHECK` statement (`F-53`). The NUT Server *Built* paragraph in
   `docs/tasks.md` says the inert Docker `HEALTHCHECK` "is gone", while `NS-3` and
   `images/nut-server/Dockerfile` both say it exists and runs the readiness probe's `upsdrvctl status`
   check verbatim. The receipt describes the removal and not the replacement that followed it.
+  Recorded in [nutserver-pod-audit.md](audits/nutserver-pod-audit.md).
 - Redraw the example pod placement diagram into `docs/diagrams/`. Blocked on deciding node naming.
 - Define how the Orion example's string tier labels (`application`/`data`/`storage`) coexist with
   `OD-4` numbered tiers. Numbered tiers win, but named tags still occur in practice.
