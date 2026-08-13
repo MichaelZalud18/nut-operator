@@ -203,3 +203,20 @@ kind node, observed a directly-written projected `Secret` signal update in its a
 ~44 seconds after the write, well inside the 2-minute TTL and consistent with kubelet's projected-volume
 sync period — before committing the equivalent as a permanent `test/e2e` spec. Full `make test-e2e`
 (6 of 6 specs) passes.
+
+## Not findings — 2026-08-12 privilege-model reading
+
+Recorded verbatim from the transfer note that proposed `F-54`–`F-75` and `OD-37`. Provenance: static
+reading of `main` on 2026-08-12 — `internal/controller/nodepoweragent_render.go`,
+`internal/nodeagent/signal.go`, `cmd/node-actuator/main.go`, `cmd/power-signal-writer/main.go`, and
+the three agent images — checked against Network UPS Tools v2.8.5 `clients/upsmon.c`. Nothing was
+run. The findings themselves are still to be written up here; the task line in `docs/tasks.md`
+tracks that.
+
+- Defaults fail safe. Mode defaults to `DryRun`, policy to `Stub`, and `SystemdPoweroff` refuses
+  unless mode is `Actuate`, so an env-injection failure yields an inert agent rather than a live one.
+- `WriteSignalAtomic` writes via temp file and `rename`, so the actuator never sees partial JSON.
+- The projected signal Secret is mounted without `subPath` and marked `Optional`, which is why it
+  updates in place at all.
+- The toleration baseline (`Exists` on both `NoSchedule` and `NoExecute`) covers every taint that can
+  block scheduling.

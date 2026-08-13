@@ -229,6 +229,167 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
   one UPS can say so ([nut-usage-audit.md](audits/nut-usage-audit.md)). The hardcoded `1`/`1` is
   correct for every topology currently modeled, so this is a limit, not a defect.
 
+##### Signal authority and the two-component boundary
+
+- **`F-54` · The local `upsmon` path self-authorizes an unordered fleet-wide halt.**
+  `POWER_EXECUTION_ID` is never rendered, so `power-signal-writer` always falls through to a
+  synthetic `upsmon-<node>-<nanos>` with `shutdownFlow: upsmon-local`, and the actuator accepts it
+  with the same authority as an executor-issued signal. Every agent renders `MONITOR ... 1 ...
+  secondary` with `MINSUPPLIES 1`, so one UPS reaching OB+LB fires `SHUTDOWNCMD` on every node it
+  covers within one `POLLFREQALERT`. Under `mode=Actuate` that is the whole fleet halting at once,
+  unordered, at the moment the sequencer exists to prevent it. `SB-2b` says NUT's threshold model is
+  an input and never the sequencer; this path makes it the sequencer, and no field disables it.
+  `requireFreshTelemetry` (`F-33`) gates the executor's group release only and never sees this path.
+
+- **`OD-37` · Decide and record what the local path is for.** Either an intentional last-resort
+  backstop — in which case it needs a name, a spec field, a distinct `reason`, and a written
+  statement of what ordering guarantee is surrendered when it fires — or it is a bypass and should
+  be bound to prior authorization per `F-57`. Leaving it undeclared is what makes `F-54` a surprise.
+
+- **`F-55` · `PlanConfigHash`, `ExecutionID`, and `ShutdownFlow` are validated for presence, never
+  for value.** `InspectSignal` checks non-empty and stops. The actuator container's env carries only
+  `POWER_AGENT_MODE`, `POWER_ACTUATOR_POLICY`, `POWER_NODE_NAME`, `POWER_SIGNAL_PATH`,
+  `POWER_SIGNAL_PATHS`, and `POWER_SIGNAL_TTL` — `POWER_PLAN_CONFIG_HASH` and `POWER_SHUTDOWN_FLOW`
+  go to the `upsmon` container only, so the check cannot be written without a render change.
+  `resiliency-and-partitions.md` calls signals plan-hash-bound and execution-bound; at the
+  enforcement point they are neither. Same class as `F-25`/`F-33`/`F-37`.
+
+- **`F-56` · `DryRun` looks like authorization and carries no independent information.** The writer
+  sets it from `POWER_AGENT_MODE`; the actuator gates on it; the same render injects that env var
+  into both containers. The actuator is reading its own configuration back out of a file. Whatever
+  replaces it has to originate outside the pod.
+
+- **`F-57` · The trust boundary between the two containers is a shared writable tmpfs.**
+  `power-agent-run` is an `emptyDir` mounted read-write into both containers, and `signalPaths`
+  evaluates it before the API-gated projected Secret, so the less-trusted source wins the tick. Code
+  execution in the `upsmon` container — the one that speaks a network protocol to a server and parses
+  its responses — writes one JSON file and halts the host. Three structurally different fixes, pick
+  deliberately: sign the payload with an operator-held key and ship the agent only the public half;
+  accept a local-path signal only when it names an `executionID` already observed on the projected
+  path; or drop the local path and route the `upsmon` decision through the operator. Mount the
+  actuator's copy `ReadOnly` regardless.
+
+- **`F-58` · A signal can actuate twice.** `seen` is an in-memory map in `watchSignals`; `emptyDir`
+  is pod-scoped, not container-scoped. An actuator restart clears the map while the file survives, so
+  a still-fresh signal actuates again. Nothing persists an actuated-key record, and nothing obliges
+  the executor to retract its Secret key after a node goes down. Shutdown-side obligation, not a
+  recovery concern — `OD-1` does not cover it.
+
+- **`F-59` · TTL spans two clocks with no stated assumption.** The executor stamps `Timestamp`; the
+  actuator compares against the node clock, tolerating ±`SignalTTL` in each direction. Inside that
+  window real skew is invisible; past it every operator-issued signal is rejected fleet-wide as
+  `SignalStale` or `SignalFromFuture`, evidenced only by a container log line. Needs a stated NTP
+  assumption plus a condition or metric for "this node rejects what I send it".
+
+- **`F-60` · The boundary is one-way — the actuator cannot report anything.** No receipt, metric, or
+  event, and `AutomountServiceAccountToken: false` at both ServiceAccount and pod level means no
+  channel exists. A signal delivered to a `Disabled` actuator sitting in `block()`'s `select{}` is
+  indistinguishable from one that halted a machine, since the readiness probe is `--version`. The
+  executor infers success from the node disappearing. `resiliency-and-partitions.md` lists per-node
+  heartbeat records as an implementation hook; choosing its channel is a design decision, not a TODO.
+  Note while deciding: the agent ServiceAccount exists with no Role bound, so flipping automount for
+  a heartbeat activates whatever is bound at that time for both containers, including the one holding
+  `CAP_SYS_BOOT`.
+
+##### Privilege model
+
+- **`F-61` · Verify `CAP_SYS_BOOT` survives the switch to UID 65532 — before anything else on this
+  list.** The pod sets `RunAsNonRoot`, `RunAsUser: 65532`, `AllowPrivilegeEscalation: false`, and the
+  actuator adds `SYS_BOOT`. Linux drops the permitted set across a UID transition unless the
+  capability is ambient, and Kubernetes has no field to request ambient capabilities — whether it
+  holds depends on runtime OCI spec generation. Actuation has only ever run stubbed, so this may
+  never have reached the syscall. If it does not hold, the options are a root actuator with
+  `CAP_SYS_BOOT` only, or a file capability on the binary.
+
+- **`F-62` · `SeccompProfile: Unconfined` on the actuator is probably wider than needed.** The
+  runtime default profile permits `reboot` conditionally on `CAP_SYS_BOOT` being present, so
+  `RuntimeDefault` likely already allows it; test that first and fall back to a narrow
+  `localhostProfile` rather than Unconfined. Separately, `hostPID` plus Unconfined puts the operand
+  namespace outside Pod Security `baseline`, and no namespace labelling appears in the render path.
+
+- **`F-63` · Record why `hostPID` is required.** `reboot(2)` called from a non-initial PID namespace
+  signals that namespace's init instead of halting the host, so `hostPID` is load-bearing rather than
+  defense-in-depth. `F-13` framed it as an either/or — `CAP_SYS_BOOT` alone *or* `hostPID` plus
+  `nsenter` — and the code correctly does both for a reason `F-13` does not state. Someone will
+  harden it away.
+
+##### Checks that cannot fail
+
+- **`F-64` · `F-46`'s rule never crossed to the agent side.** The actuator's readiness probe is
+  `/node-actuator --version`, which a process blocked forever in `block()` passes.
+  `images/upsmon-agent/Dockerfile` still carries `HEALTHCHECK CMD upsmon -V` and
+  `images/node-actuator/Dockerfile` carries `--version`. Actuator readiness should reflect the watch
+  loop: signal directory readable, TTL clock sane, mode and policy parsed.
+
+- **`F-65` · The `upsmon` readiness probe is blind to authentication and TLS.** It runs
+  `upsc -l <server>` per MONITOR line — an anonymous `LIST UPS` over plaintext that exercises neither
+  the `MONITOR` credentials nor the TLS posture `upsmon` was told to enforce. It would have reported
+  Ready throughout `F-40`, where `upsmon` logged `connect failed: SSL error` against a server `upsc`
+  reached fine. It also passes trivially when the rendered secret contains zero MONITOR lines, since
+  the `while` body never runs. With `F-35`'s `pgrep` liveness, nothing proves `upsmon` holds a live
+  authenticated session. `F-68`'s `NOTIFYCMD` state file is the NUT-native source for a real check.
+
+##### NUT mechanisms inert or unused
+
+- **`F-66` · `POWERDOWNFLAG` is written and structurally unreadable, and the PID file is never
+  written.** The flag points into `/run/power-agent`, an `emptyDir` that dies with the pod, and
+  nothing ever runs `upsmon -K`. Separately the agent image never creates `/run/nut`
+  (`--with-altpidpath=/run/nut`) and the DaemonSet mounts an `emptyDir` over `/run` anyway; `upsmon`
+  writes its PID file unconditionally, unlike `upsd`, so this is a silent `writepid` failure that
+  costs `-c reload`, `-c fsd`, and `-K` together.
+
+- **`F-67` · `Args: ["-D"]` should be `-F`.** `-D` raises the debugging level and foregrounds as a
+  side effect, so the agent runs at debug level permanently. `upsmon` has no `-FF` and does not need
+  one.
+
+- **`F-68` · The whole notification surface is unused.** `NOTIFYFLAG`, `NOTIFYCMD`, `NOTIFYMSG`,
+  `RBWARNTIME`, `NOCOMMWARNTIME`, `SHUTDOWNEXIT`. This is the NUT-native way for a node to publish
+  its own events, and `COMMOK`/`COMMBAD`/`NOCOMM` via `EXEC` into a state file is the fix `F-65`
+  needs.
+
+- **`F-69` · `subPath` mounts do not receive updates.** `upsmon-config` and `nut-client-config` are
+  both mounted with `SubPath`, so Kubernetes never propagates Secret or ConfigMap changes into them.
+  The config-hash rolling restart is therefore not merely the chosen path, it is the only one that
+  works — adding `upsmon -c reload` requires directory mounts first, on top of `F-66`'s PID file.
+
+##### Event-time coupling
+
+- **`F-70` · Signal TTL is set beside the delivery bound rather than derived from it.** TTL defaults
+  to 2m; measured projected-Secret delivery was ~44s, and kubelet sync period plus cache TTL can push
+  worst case toward or past that. Derive TTL and the Urgent tier's budget from the delivery bound.
+
+- **`F-71` · `MONITOR` targets and the readiness probe both depend on cluster DNS.** Both use
+  `<name>.<ns>.svc.cluster.local`, and CoreDNS is an ordinary workload inside the flow's path — when
+  it goes, every agent loses reconnect capability and flips NotReady together. Render the Service
+  ClusterIP or add `hostAliases`; either way DNS needs an explicit tier position.
+
+- **`F-72` · Rollout shape leaves nodes unmonitored and is not suppressed during a flow.**
+  `maxUnavailable: 1` with no `maxSurge` and no `minReadySeconds` means every rollout leaves one node
+  uncovered for a full pull-and-start window. `maxSurge: 1, maxUnavailable: 0` is the better shape —
+  no hostPort or hostNetwork blocks it — and nothing currently prevents a rollout while a flow is
+  active.
+
+- **`F-73` · Agent image residency is unguarded.** `IfNotPresent` is the right default and nothing
+  prevents a user setting `Always`, while the images may live in a registry inside the cluster being
+  shut down. `ImageReference` supports digests and does not require them.
+
+##### Coverage
+
+- **`F-74` · Nothing detects a node with no agent pod.** `DaemonSet.status` answers whether scheduled
+  pods are healthy, not whether every node in the inventory has an agent. A node excluded by a
+  selector or an untolerated taint is invisible rather than degraded — the inverse of readiness, and
+  the check that catches placement mistakes.
+
+##### Naming and hygiene
+
+- **`F-75` · `policySystemdPoweroff = "SystemdPoweroff"` is the enum a user sets to enable real
+  actuation, and since `F-36` it performs `reboot(2)` and never touches systemd.** Reviewers asking
+  what privileges the container needs are told dbus and host PID when the answer is `CAP_SYS_BOOT`.
+  Rename with the CRD enum. Fold in while there: `signalPaths` splits on `:` as well as `,`, so any
+  path containing a colon fragments into nonexistent paths and fails as `SignalMissing`, the one
+  reason the watcher deliberately does not log; `POWER_SIGNAL_PATH` and `POWER_SIGNAL_PATHS` are both
+  rendered with overlapping content; and `seen` grows unbounded over the pod's life.
+
 ---
 
 ### Outputs & Publishing
@@ -359,6 +520,9 @@ boundaries, the decision index, the references under `docs/`, and the audit reco
   `docs/audits/nut-usage-audit.md` (`F-50`, `OD-36`, as NUT-mechanism fidelity), with the upstream
   evidence above. The task lines below carry pointers, not rationale, and are unreadable without
   them.
+- Record `F-54`–`F-75` and `OD-37` in `docs/audits/node-agent-daemonset-audit.md` before the task
+  lines are worked, with the upstream evidence from the transfer note (static reading of `main` on
+  2026-08-12 against NUT v2.8.5 `clients/upsmon.c`). `tasks.md` carries pointers, not rationale.
 - Reconcile the `HEALTHCHECK` statement (`F-53`). The NUT Server *Built* paragraph in
   `docs/tasks.md` says the inert Docker `HEALTHCHECK` "is gone", while `NS-3` and
   `images/nut-server/Dockerfile` both say it exists and runs the readiness probe's `upsdrvctl status`
