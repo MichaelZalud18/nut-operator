@@ -162,10 +162,11 @@ PID file `upsd -c reload` needs; the smoke test asserts the file rather than the
 allowlist is pinned to the image from both sides — the smoke test asserts every admitted driver is
 present, and a Go test asserts the two lists agree — so admission cannot accept a driver the operand
 cannot run. A `driver-watchdog` sidecar restarts drivers that stop answering, so a driver dying after
-startup no longer leaves the pod permanently out of the Service endpoints.
+startup no longer leaves the pod permanently out of the Service endpoints. A server whose selector
+matches nothing starts idle and reports NotReady instead of crash-looping.
 
 Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `F-47`,
-`F-49`, `F-50`, `NS-1`–`NS-6`, `OD-32`, `OD-36`. `F-19`
+`F-49`–`F-51`, `NS-1`–`NS-7`, `OD-32`, `OD-36`. `F-19`
 declined — it only matters with an HA `upsd` topology, which is not designed.
 
 #### Open Work
@@ -179,12 +180,6 @@ declined — it only matters with an HA `upsd` topology, which is not designed.
   so the PID file reload signals through now exists, and `F-49` resolved as a sidecar rather than a
   container per driver, so the container list stays independent of the device set. Scope explicitly
   what still requires a restart: `LISTEN`, port, and certificate changes.
-- Render `ALLOW_NO_DEVICE` and fix the empty-`ups.conf` failure (`F-51`). `upsd` calls `fatalx` when
-  `ups.conf` defines no devices, so a `NUTServer` whose selector matches nothing cannot start. The
-  entrypoint's `-s` test fires first and exits with `missing required /etc/nut/ups.conf` for a file
-  that exists, which sends the diagnosis in the wrong direction. `ALLOW_NO_DEVICE` is upstream's
-  answer for exactly this lifecycle — configure the file and reload the service — so it pairs with
-  `F-48`.
 - Reap dead driver processes (`F-76`). The entrypoint `exec`s `upsd`, so `upsd` is PID 1 and never
   reaps the drivers reparented to it — verified as `State: Z (zombie)`, `PPid: 1`. Before `F-49` that
   leaked one entry per driver death; now the watchdog restarts the driver, so a flapping device

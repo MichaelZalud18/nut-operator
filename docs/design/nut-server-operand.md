@@ -106,6 +106,29 @@ The smoke test asserts the file exists rather than asserting the entrypoint's te
 is the only observable that separates `-FF` from the two flags that behave identically in every
 other respect. `F-47` records the correction.
 
+**NS-7 · A server with no devices runs idle rather than failing.** A `NUTServer` whose device
+selector matches nothing renders an empty `ups.conf`, and that is a legitimate state — a server
+created before its devices, or one whose last device was removed. It starts, listens, and reports
+NotReady.
+
+Two separate things have to allow it, and each fails differently:
+
+- `upsd` calls `fatalx` on a device-less `ups.conf` — "Fatal error: at least one UPS must be defined
+  in `ups.conf`", exit 1 — unless `ALLOW_NO_DEVICE` is set. `upsd.conf` therefore always carries it.
+- The entrypoint checks that `ups.conf` **exists**, not that it has content. Checking for content
+  reported `missing required /etc/nut/ups.conf` for a file that was present and was exactly what the
+  operator meant to write, which sends diagnosis toward a broken mount instead of an empty selector.
+
+`ALLOW_NO_DEVICE` is rendered unconditionally rather than only when the selection is empty. A
+conditional directive would appear and disappear as devices come and go, so the transition from one
+device to zero would itself require a config change in order to survive — precisely the state the
+directive exists to make survivable.
+
+Nothing is concealed by running. `NS-1` reports NotReady when no driver is responsive, so the pod
+leaves the Service endpoints and an empty server is visibly idle rather than quietly serving
+nothing. `upsd`'s own log line names the intended lifecycle: *please configure the file and reload
+the service*.
+
 ## Driver supervision
 
 **NS-6 · A sidecar restarts drivers that stop answering.** `upsdrvctl start` runs once in the

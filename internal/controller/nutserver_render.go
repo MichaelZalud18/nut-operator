@@ -355,6 +355,25 @@ func renderNUTServerConfig(server *powerv1alpha1.NUTServer, devices []powerv1alp
 func renderUPSDConf(server *powerv1alpha1.NUTServer) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "LISTEN %s %d\n", listenAddress(server), servicePort(server))
+
+	// ALLOW_NO_DEVICE is rendered unconditionally, not only when the selector currently matches
+	// nothing (F-51).
+	//
+	// Without it upsd calls fatalx on a device-less ups.conf -- verified: "Fatal error: at least
+	// one UPS must be defined in ups.conf", exit 1 -- so a NUTServer whose selector matches nothing
+	// yet, or stops matching, cannot start. That turns an ordinary empty state into a crash loop.
+	//
+	// Rendering it conditionally would be worse than rendering it always: the directive would then
+	// appear and disappear as devices come and go, so the transition from one device to zero would
+	// itself require a config change to survive, which is the situation the directive exists to
+	// avoid. Upstream's own message names the intended lifecycle -- "please configure the file and
+	// reload the service".
+	//
+	// Nothing is hidden by this. A server with no responsive driver reports NotReady through NS-1
+	// and leaves the Service endpoints, so an empty server is visibly idle rather than silently
+	// serving nothing.
+	out.WriteString("ALLOW_NO_DEVICE true\n")
+
 	if !nutServerTLSEnabled(server) {
 		return out.String()
 	}

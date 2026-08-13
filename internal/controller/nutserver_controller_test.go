@@ -151,7 +151,7 @@ var _ = Describe("NUTServer Controller", func() {
 
 			configMap := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-config"}, configMap)).To(Succeed())
-			Expect(configMap.Data["upsd.conf"]).To(Equal("LISTEN 0.0.0.0 3493\n"))
+			Expect(configMap.Data["upsd.conf"]).To(Equal("LISTEN 0.0.0.0 3493\nALLOW_NO_DEVICE true\n"))
 			Expect(configMap.Data).NotTo(HaveKey("ups.conf"))
 			Expect(configMap.Data["rack-a-ups.dev"]).To(ContainSubstring("ups.status: OL"))
 
@@ -283,7 +283,7 @@ var _ = Describe("NUTServer Controller", func() {
 
 			configMap := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: f7Namespace, Name: "test-resource-nut-config"}, configMap)).To(Succeed())
-			Expect(configMap.Data["upsd.conf"]).To(Equal("LISTEN 0.0.0.0 3493\n"))
+			Expect(configMap.Data["upsd.conf"]).To(Equal("LISTEN 0.0.0.0 3493\nALLOW_NO_DEVICE true\n"))
 			Expect(configMap.OwnerReferences).NotTo(BeEmpty())
 
 			ns := &corev1.Namespace{}

@@ -71,6 +71,27 @@ func TestRenderUPSDConfEmitsCertFileWhenTLSEnabled(t *testing.T) {
 	}
 }
 
+// F-51: without ALLOW_NO_DEVICE, upsd calls fatalx on a device-less ups.conf -- verified against
+// the operand image as "Fatal error: at least one UPS must be defined in ups.conf", exit 1 -- so a
+// NUTServer whose selector matches nothing cannot start at all.
+//
+// It is rendered unconditionally rather than only when the selection is empty. A conditional
+// directive would appear and disappear as devices come and go, which means the transition from one
+// device to zero would itself need a config change to survive -- exactly the state the directive
+// exists to make survivable.
+func TestRenderUPSDConfAlwaysAllowsADeviceLessConfig(t *testing.T) {
+	for name, server := range map[string]*powerv1alpha1.NUTServer{
+		"tls enabled":  tlsEnabledNUTServer(),
+		"tls disabled": {Spec: powerv1alpha1.NUTServerSpec{Namespace: "power-system"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if conf := renderUPSDConf(server); !strings.Contains(conf, "ALLOW_NO_DEVICE true\n") {
+				t.Fatalf("upsd.conf must let a device-less server start, got:\n%s", conf)
+			}
+		})
+	}
+}
+
 func TestRenderUPSDConfEmitsCertRequestOnlyWhenClientVerificationEnabled(t *testing.T) {
 	server := tlsEnabledNUTServer()
 	server.Spec.TLS.VerifyClientCertificates = ptrBool(true)
@@ -115,8 +136,8 @@ func TestRenderUPSDConfEmitsNoTLSDirectivesWithoutACertificate(t *testing.T) {
 			mutate(server)
 
 			conf := renderUPSDConf(server)
-			if conf != "LISTEN 0.0.0.0 3493\n" {
-				t.Fatalf("expected LISTEN-only upsd.conf, got:\n%s", conf)
+			if conf != "LISTEN 0.0.0.0 3493\nALLOW_NO_DEVICE true\n" {
+				t.Fatalf("expected no TLS directives in upsd.conf, got:\n%s", conf)
 			}
 		})
 	}

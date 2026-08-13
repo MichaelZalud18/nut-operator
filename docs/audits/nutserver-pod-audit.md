@@ -272,6 +272,29 @@ file, reload the service — which is `F-48`'s reload path, so the two findings 
 entrypoint's `-s` test needs to become a real emptiness check with an accurate message, or move out
 of the way of the directive that already handles this case.
 
+*Resolved 2026-08-12, without waiting for `F-48`.* Recorded as `NS-7`.
+
+The pairing with `F-48` turned out to be weaker than this finding claimed. Reload makes the empty
+state *pleasant* — a device added later reaches a running server without replacing it — but it is
+not what makes the empty state *possible*. Delivered separately for that reason: until `F-48` lands,
+adding the first device still recreates the pod, which is no worse than today and strictly better
+than a server that could not start at all.
+
+`ALLOW_NO_DEVICE` is rendered unconditionally rather than only for an empty selection. A conditional
+directive would come and go with the device set, so the one-device-to-zero transition would itself
+need a config change to survive — the state the directive exists to make survivable.
+
+The entrypoint check moved from `-s` to `-f`: existence, not content.
+
+Both halves are asserted in `hack/smoke-image.sh`, which starts the real entrypoint against a
+zero-byte `ups.conf` and requires the container to still be running. Sabotage-verified by restoring
+the `-s` test and rebuilding: the smoke test failed, and the captured log was
+`missing required /etc/nut/ups.conf` — this finding's own misdirection, reproduced on demand.
+
+End-to-end against the image: container running, zero restarts, `upsd` listening, upstream's
+"please configure the file and reload the service" in the log, and the readiness probe exiting 1 so
+the pod reports NotReady and leaves the Service endpoints.
+
 **F-53 · The receipt for `F-46` describes the removal and not the replacement.** The NUT Server
 *Built* paragraph in `docs/tasks.md` records that the inert Docker `HEALTHCHECK` "is gone". It is
 not: `images/nut-server/Dockerfile:135-136` carries a `HEALTHCHECK` running the readiness probe's

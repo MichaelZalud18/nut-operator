@@ -79,6 +79,26 @@ case "$kind" in
       "$container_tool" logs "$smoke_container" >&2 || true
       exit 1
     fi
+
+    # F-51: a NUTServer whose device selector matches nothing renders an empty ups.conf, and that
+    # has to be a running-but-idle server rather than a crash loop.
+    #
+    # Two independent things could break it and both did: the entrypoint's non-empty test, which
+    # reported "missing required /etc/nut/ups.conf" for a file that was present and correct, and
+    # upsd itself, which calls fatalx on a device-less ups.conf unless ALLOW_NO_DEVICE is set. The
+    # operator renders that directive unconditionally; this asserts the image honors it.
+    printf '' > "$smoke_config/ups.conf"
+    printf 'LISTEN 127.0.0.1 3493\nALLOW_NO_DEVICE true\n' > "$smoke_config/upsd.conf"
+
+    empty_container="$("$container_tool" run -d -v "$smoke_config:/etc/nut:ro" "$image")"
+    trap 'rm -rf "$smoke_config"; "$container_tool" rm -f "$smoke_container" "$empty_container" >/dev/null 2>&1 || true' EXIT
+    sleep 5
+
+    if [[ "$("$container_tool" inspect --format '{{.State.Running}}' "$empty_container")" != "true" ]]; then
+      echo "nut-server smoke: a device-less ups.conf must start an idle server, not fail (F-51)" >&2
+      "$container_tool" logs "$empty_container" >&2 || true
+      exit 1
+    fi
     ;;
   upsmon-agent)
     exec "$container_tool" run --rm --entrypoint /bin/sh "$image" -ec '

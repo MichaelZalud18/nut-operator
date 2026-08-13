@@ -5,7 +5,14 @@ if [ "$#" -gt 0 ]; then
   exec "$@"
 fi
 
-if [ ! -s /etc/nut/ups.conf ]; then
+# ups.conf must exist, but an empty one is a legitimate state: a NUTServer whose device selector
+# matches nothing yet renders exactly that (F-51). The check is therefore existence, not content.
+#
+# It used to be `-s`, which fails on an empty file and reported "missing required
+# /etc/nut/ups.conf" for a file that was present and was exactly what the operator meant to write.
+# That sent diagnosis toward a broken mount instead of an empty selector. upsd handles the empty
+# case itself once ALLOW_NO_DEVICE is set, which the operator now always renders.
+if [ ! -f /etc/nut/ups.conf ]; then
   echo "missing required /etc/nut/ups.conf" >&2
   exit 1
 fi
