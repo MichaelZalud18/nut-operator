@@ -156,21 +156,18 @@ back to the servers whose selected devices reference them, so a driver, port, cr
 edit re-renders instead of waiting for an unrelated reconcile. Readiness reads `upsdrvctl status`,
 NUT's own driver-state report, rather than inferring driver health from `upsc` failures; the inert
 Docker `HEALTHCHECK` is gone. `verifyClientCertificates` is refused at admission because no released
-OpenSSL `upsd` honors CERTREQUEST.
+OpenSSL `upsd` honors CERTREQUEST. The entrypoint runs `upsd -FF`, so the operand is foregrounded
+because that is what was asked for rather than as a side effect of debug logging, and it leaves the
+PID file `upsd -c reload` needs; the smoke test asserts the file rather than the flag.
 
-Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `NS-1`–`NS-4`,
-`OD-32`. `F-19`
+Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `F-47`,
+`NS-1`–`NS-5`, `OD-32`. `F-19`
 declined — it only matters with an HA `upsd` topology, which is not designed.
 
 #### Open Work
 
 - Verify the `F-46` readiness probe against a running operand. The rendering and its tests are done;
   what has not happened is watching `upsdrvctl status` report an actually-disconnected driver.
-- Replace `exec upsd -D` with `upsd -FF` in `images/nut-server/entrypoint.sh` (`F-47`). `-D` raises
-  the debugging level and only stays foregrounded as a side effect, so the operand runs at debug
-  level permanently; `-F`/`-FF` are the documented foreground flags. `-FF` also writes the PID file,
-  which `F-48` depends on. The file lands in `/run/nut` under `--with-altpidpath`, already a
-  writable `emptyDir`, so the read-only root filesystem is unaffected.
 - Add a config-reload path instead of recreating the pod on every change (`F-48`). `upsd -c reload`
   re-reads `ups.conf`, `upsd.conf`, and `upsd.users` and registers devices added since startup;
   `upsdrvctl -c reload` / `reload-or-error` / `reload-or-exit` covers the driver side. Today the

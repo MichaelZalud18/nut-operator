@@ -134,6 +134,20 @@ through it — so `-FF` is the correct replacement rather than `-F`. It costs no
 lands in `/run/nut` under `--with-altpidpath` (`images/nut-server/Dockerfile:52`), which is already
 a writable `emptyDir`, so the read-only root filesystem is unaffected.
 
+*Resolved 2026-08-12.* The entrypoint runs `exec upsd -FF`, and `NS-5` in
+[nut-server-operand.md](../design/nut-server-operand.md) records the process model.
+
+The guard is in `hack/smoke-image.sh`, and it asserts the **PID file** rather than the entrypoint's
+text, because the three foreground flags are indistinguishable in every other observable — same
+process, same `ps` output, same served port. It starts the real entrypoint against a device-less
+`dummy-ups` so the driver fails, which also proves `NS-4`: `upsd` comes up on a partial start, not
+only a clean one.
+
+Sabotage-verified rather than assumed: rebuilt with `-F` in place of `-FF`, watched the smoke test
+fail with `Running as foreground process, not saving a PID file` in the captured container log, then
+restored. A test that passes under both flags would have been worth nothing here, which is the same
+standard `F-46` applied to the readiness probe.
+
 **F-48 · Every configuration change recreates the pod, and NUT can reload instead.**
 `internal/controller/nutserver_render.go:1020` stamps `power.zalud.io/config-hash` on the pod
 template, and `:1010-1015` sets `Recreate` as the Deployment strategy. Together, any change to any

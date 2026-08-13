@@ -77,6 +77,35 @@ endpoint leaves the other devices queryable, and credentials can be corrected wi
 The readiness probe is what makes this safe to do: a partial start surfaces as an unready pod
 carrying working devices, rather than as a crash loop that takes the working ones down too.
 
+**NS-5 · `upsd` runs foregrounded *and* writes a PID file.** The entrypoint ends with
+`exec upsd -FF`.
+
+Three of `upsd`'s flags keep it in the foreground and the running process looks identical under all
+three, so the choice between them is easy to get wrong and impossible to see afterwards:
+
+```text
+  -D    raise debugging level (and stay foreground by default)
+  -F    stay foregrounded even if no debugging is enabled
+  -FF   stay foregrounded and still save the PID file
+```
+
+`-D` foregrounds only as a side effect of raising the debugging level, so an operand started that
+way runs at debug level for its whole life. `-F` says what is meant but skips the PID file, logging
+`Running as foreground process, not saving a PID file`.
+
+`-FF` is the flag this operand needs, because the PID file is load-bearing rather than
+housekeeping. `upsd -c reload` signals a running process located through it, and that is the path
+by which configuration is re-read without replacing the pod — which would drop every `upsmon`
+session and NUT's own login accounting. Choosing a foreground flag therefore chooses whether the
+operand can ever reload.
+
+The file lands in `/run/nut` via `--with-altpidpath`, the same writable `emptyDir` that already
+holds the driver sockets, so nothing about the read-only root filesystem changes.
+
+The smoke test asserts the file exists rather than asserting the entrypoint's text, since the file
+is the only observable that separates `-FF` from the two flags that behave identically in every
+other respect. `F-47` records the correction.
+
 ## Related
 
 - `F-17`, `F-46` — [nutserver-pod-audit.md](../audits/nutserver-pod-audit.md)

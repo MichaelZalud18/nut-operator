@@ -31,4 +31,19 @@ if ! upsdrvctl start; then
   echo "one or more NUT drivers failed to start; continuing so upsd still serves any devices that did register" >&2
 fi
 
-exec upsd -D
+# -FF, not -D (F-47). All three of -D, -F and -FF keep upsd in the foreground, which is what a
+# container needs, but they are not interchangeable:
+#
+#   -D    raise debugging level (and stay foreground by default)
+#   -F    stay foregrounded even if no debugging is enabled
+#   -FF   stay foregrounded and still save the PID file
+#
+# Under -D the foregrounding is a side effect of turning debugging on, so the operand ran at debug
+# level permanently on every cluster. -FF asks for the behavior directly and additionally writes
+# /run/nut/upsd.pid -- under -F, upsd logs "Running as foreground process, not saving a PID file".
+#
+# The PID file is not incidental. `upsd -c reload` signals a running process located through it,
+# which is the only way to re-read configuration without replacing the pod and dropping every
+# upsmon session (F-48). It lands in /run/nut via --with-altpidpath, already a writable emptyDir
+# holding the driver sockets, so the read-only root filesystem is unaffected.
+exec upsd -FF
