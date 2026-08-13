@@ -60,7 +60,7 @@ Dated audit and findings records live in `docs/audits/` and share the `F-n` find
 | GP | Governing principle | scope-boundaries | GP-1 – GP-7 |
 | SB | Scope boundary | scope-boundaries | SB-1 – SB-15 |
 | RB | Repository-derived boundary | scope-boundaries | RB-1 – RB-7 |
-| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-35, OD-8r |
+| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-37, OD-8r |
 | PL | Planner requirement | planner-requirements | PL-1 – PL-49 |
 | CR | Capability resolution rule | planner-requirements | CR-1 – CR-4 |
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
@@ -99,6 +99,7 @@ narrative account and now uses the folded numbers.
 | OD-33 | Hook waiting: whether an opt-in bounded wait on hook completion exists, and what happens when the runtime budget expires first. Default decided (proceed); the mechanism is not | — | Shutdown hooks |
 | OD-34 | Hook failure and abort policy: whether a failed hook can mark the flow degraded, or stays purely advisory | — | Shutdown hooks |
 | OD-35 | *Retired, never a decision.* Raised as "do redundant `feeds` edges change observation aggregation" while recording `F-45`. The premise was invented: `MINSUPPLIES` governs one host's own supplies and never reaches the planner's aggregation. Number burned rather than reused | — | `F-45` |
+| OD-37 | What the node agent's local `upsmon` signal path is for: declared last-resort backstop with its own name, field, and stated ordering cost, or a bypass bound to prior authorization | `F-54` – `F-57` | Node agent authorization |
 
 ### Closed
 
@@ -119,6 +120,7 @@ narrative account and now uses the folded numbers.
 | OD-23 | Alias maps live in the profile telemetry section. Native readings outrank aliases; aliasing is one-directional and total; every applied alias is a diagnostic | capability-profiles.md |
 | OD-18 | Tier inversion blocks the node by default: an inverted node is withheld from power-off for the whole flow. `spec.groups[].tierInversionPolicy: Allow` opts a group out per workload. Migration declined as a general remedy — node-local PVCs mean there is not always anywhere to move to | Planner tier compilation | Planner design |
 | OD-32 | NUT operand SSL backend is OpenSSL, built from source. NSS is more feature-complete for client certificates today, but has no CERTFILE and needs a cert database instead of the PEM a TLS Secret projects. Alpine's NSS build was not a considered choice: the aport requests both backends and NSS wins by precedence in configure.ac | Operand images | F-39 – F-41 |
+| OD-36 | `clone`, `clone-outlet`, and `failover` are declined, alongside FSD (`F-20`) and `upssched` (`F-21`). The first two are staged-shutdown sequencers and `SB-2b` reserves sequencing for the operator; `failover` addresses a gap that lives in the render and inventory model rather than the driver layer, so the driver would not close it. Revisit `failover` only if `F-45` is built. All three ship in the image unconditionally, so this governs the allowlist and the docs, not the build | Operand images, admission allowlist | F-50, `OD-36` |
 | OD-9 | Trigger degrade substitutes toward the coarsest `ups.status` trigger: `RuntimeBelow` and `ChargeBelow` fall back to `LowBattery`, which states the same intent coarsely, rather than to `OnBattery`, which states a different one. Substitution is declared via `spec.triggers[].fallbackType`, never automatic — it changes when nodes begin powering off, so per GP-5 it is authored, not derived. Compilation names the fallback that would close a gap | Trigger validation | capability-profiles.md |
 | OD-22 | Structured quirk objects carrying firmware scope as a field: `firmware.matches` globs and a `firmware.below` dotted-numeric fix release. Firmware-ranged selectors rejected — a selector scopes the whole profile, and quirks expire independently of the telemetry a model reports | Capability schema | capability-profiles.md |
 | OD-31 | An unidentified device blocks Enforce mode unless explicitly accepted. Dry-run review is unaffected. "Universal floor" retired as a name | PL-33 |

@@ -100,6 +100,21 @@ health check while checking nothing that matters. Remove it or make it match the
 Fix: replace the shell loop with `upsdrvctl status`, and drop or correct the `HEALTHCHECK`.
 Needs verification against a running operand, not a static edit.
 
+*Verified against a running operand, 2026-08-12.* The rendered probe script was run verbatim inside
+the source-built image in the three states that matter, and the middle one is the whole point of the
+finding:
+
+| State | `upsdrvctl status` | Probe exit |
+| --- | --- | --- |
+| No driver started | no device rows | 1 |
+| Driver responsive | `RUNNING ... RESPONSIVE` | 0 |
+| Driver killed, still configured | `N/A ... NOT_RESPONSIVE` | 1 |
+
+The third row is the one a substring match would have gotten wrong, since `NOT_RESPONSIVE` contains
+`RESPONSIVE` — the probe would have reported ready on a dead driver, forever, silently. Static
+review could not have distinguished the two implementations; running it against a driver that had
+actually stopped answering is what settles it.
+
 ## Findings — upstream fidelity pass, 2026-08-12
 
 Continues the `F-n` namespace from `F-46`. Scope: the operand's process model — how `upsd` is

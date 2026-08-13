@@ -72,3 +72,25 @@ func TestPowermanPDUIsNotAdmitted(t *testing.T) {
 		t.Error("powerman-pdu is admitted but images/nut-server/Dockerfile builds --without-powerman (F-50)")
 	}
 }
+
+// OD-36 declines clone, clone-outlet, and failover. Unlike powerman-pdu they are present in the
+// operand image -- they build unconditionally as part of NUTSW_DRIVERLIST and there is no
+// configure flag to exclude them -- so the decision is enforced by the allowlist alone, and this
+// is where it is enforced.
+//
+// clone and clone-outlet are staged-shutdown sequencers: a virtual UPS presenting earlier
+// thresholds than the device it shadows. SB-2b reserves sequencing for the operator, and admitting
+// one would put a second sequencer in the cluster with no view of it -- the objection that
+// declined upssched in F-21. The closer analogy makes it more dangerous, not less: clone looks
+// like it would work.
+//
+// failover presents several physical devices as one, which resembles the multi-supply-per-host
+// topology F-45 records as inexpressible. That gap is in the render and the inventory model, not
+// the driver layer, so the driver would not close it.
+func TestSequencingDriversAreNotAdmitted(t *testing.T) {
+	for _, driver := range []string{"clone", "clone-outlet", "failover"} {
+		if isSupportedNetworkUPSDriver(driver) {
+			t.Errorf("%s is declined by OD-36 but the allowlist admits it", driver)
+		}
+	}
+}

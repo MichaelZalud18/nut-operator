@@ -395,3 +395,25 @@ scope them.
 The concrete risk of leaving them unnamed is precise: a contributor who finds `clone` in the image
 and reads that this operator sequences staged shutdowns has every reason to wire one up in parallel
 with the executor, which is exactly the split-brain `SB-2b` forbids.
+
+*Resolved 2026-08-12: all three declined.* Recorded in
+[scope-boundaries.md](../design/scope-boundaries.md) and the decision index, alongside FSD (`F-20`)
+and `upssched` (`F-21`).
+
+`clone` and `clone-outlet` fall to `SB-2b` directly — they are sequencers, and sequencing is the
+operator's. The reasoning is `F-21`'s, and the closeness of the analogy is what makes writing it
+down worth the effort: `upssched` is obviously a scheduler and obviously not wanted, while `clone`
+looks like it would work, because a virtual UPS with earlier thresholds is a genuinely reasonable
+way to stage a shutdown when there is no cluster to coordinate.
+
+`failover` is declined for a different reason and should not be lumped in. It is not a sequencer;
+it presents several physical devices as one, which really does resemble the topology `F-45` records
+as inexpressible. It is declined because that gap is in the render — `MONITOR` power value and
+`MINSUPPLIES` hardcoded to 1 — and in the inventory model, so adopting the driver would not close
+it. Revisit only if `F-45` is built.
+
+Nothing changes in the image: all three build unconditionally as part of `NUTSW_DRIVERLIST` and
+there is no `configure` flag to exclude them, so the decision governs the admission allowlist and
+the documentation. Enforcement is already in place as a side effect of `F-50` — the allowlist
+rejects any driver not among its four names — and `TestSequencingDriversAreNotAdmitted` pins the
+three by name so the decision fails loudly rather than eroding if the allowlist ever grows.

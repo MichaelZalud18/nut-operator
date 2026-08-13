@@ -165,33 +165,26 @@ cannot run. A `driver-watchdog` sidecar restarts drivers that stop answering, so
 startup no longer leaves the pod permanently out of the Service endpoints.
 
 Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `F-47`,
-`F-49`, `F-50`, `NS-1`–`NS-6`, `OD-32`. `F-19`
+`F-49`, `F-50`, `NS-1`–`NS-6`, `OD-32`, `OD-36`. `F-19`
 declined — it only matters with an HA `upsd` topology, which is not designed.
 
 #### Open Work
 
-- Verify the `F-46` readiness probe against a running operand. The rendering and its tests are done;
-  what has not happened is watching `upsdrvctl status` report an actually-disconnected driver.
 - Add a config-reload path instead of recreating the pod on every change (`F-48`). `upsd -c reload`
   re-reads `ups.conf`, `upsd.conf`, and `upsd.users` and registers devices added since startup;
   `upsdrvctl -c reload` / `reload-or-error` / `reload-or-exit` covers the driver side. Today the
   `power.zalud.io/config-hash` annotation forces a `Recreate` on any change, dropping every `upsmon`
   session and NUT's login accounting — the damage `F-15` and `F-16` exist to prevent. Projected
-  volumes update in place, so the config reaches the container without a restart. Blocked on `F-47`.
-  Scope explicitly what still requires a restart: `LISTEN`, port, and certificate changes.
+  volumes update in place, so the config reaches the container without a restart. `F-47` has landed,
+  so the PID file reload signals through now exists, and `F-49` resolved as a sidecar rather than a
+  container per driver, so the container list stays independent of the device set. Scope explicitly
+  what still requires a restart: `LISTEN`, port, and certificate changes.
 - Render `ALLOW_NO_DEVICE` and fix the empty-`ups.conf` failure (`F-51`). `upsd` calls `fatalx` when
   `ups.conf` defines no devices, so a `NUTServer` whose selector matches nothing cannot start. The
   entrypoint's `-s` test fires first and exits with `missing required /etc/nut/ups.conf` for a file
   that exists, which sends the diagnosis in the wrong direction. `ALLOW_NO_DEVICE` is upstream's
   answer for exactly this lifecycle — configure the file and reload the service — so it pairs with
   `F-48`.
-- Record the `clone`, `clone-outlet`, and `failover` decision (`OD-36`). None of the three appears
-  anywhere in the repo, and all are built unconditionally as part of `NUTSW_DRIVERLIST`. `clone` is
-  upstream's staged-shutdown mechanism — a virtual UPS with earlier thresholds — and is the closest
-  upstream analog to the sequencer; `failover` addresses the multi-supply-per-host topology `F-45`
-  records as inexpressible. Either decline them with reasons, alongside FSD (`F-20`) and `upssched`
-  (`F-21`), or scope them. Leaving them unnamed is what invites a contributor to wire one in
-  parallel with the executor.
 - Advanced driver-specific configuration for the operand render path.
 
 ---
