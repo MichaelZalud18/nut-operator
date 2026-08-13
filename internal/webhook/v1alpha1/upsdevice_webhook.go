@@ -204,8 +204,18 @@ func isSupportedNetworkUPSDriver(driver string) bool {
 	return false
 }
 
+// supportedNetworkUPSDrivers is the admission allowlist, and every entry must exist in the
+// nut-server operand image. hack/smoke-image.sh asserts the binaries are present and
+// TestSmokeTestCoversEveryAllowlistedDriver asserts the two lists agree, because they drifted
+// apart once already and nothing noticed (F-50).
+//
+// powerman-pdu was admitted here and is not in the image: images/nut-server/Dockerfile passes
+// --without-powerman, and building it in would mean compiling libpowerman from source as well,
+// since Alpine does not package it. Adding a second source build to every operand image for a
+// driver no device in the inventory uses is the wrong trade against an allowlist entry that could
+// never start, so the allowlist gives way rather than the image.
 func supportedNetworkUPSDrivers() []string {
-	return []string{"dummy-ups", "snmp-ups", "netxml-ups", "powerman-pdu", "apcupsd-ups"}
+	return []string{"dummy-ups", "snmp-ups", "netxml-ups", "apcupsd-ups"}
 }
 
 func isUnsupportedLocalUPSDriver(driver string) bool {

@@ -32,10 +32,10 @@ type UPSDeviceSpec struct {
 	// +optional
 	Identity UPSDeviceIdentitySpec `json:"identity,omitempty"`
 
-	// driver is the Network UPS Tools driver name for a network-capable UPS driver,
-	// such as snmp-ups, netxml-ups, powerman-pdu, apcupsd-ups, or dummy-ups for
-	// tests. It is required unless upstreamNUT is set. Local USB and serial drivers
-	// are intentionally unsupported by this API.
+	// driver is the Network UPS Tools driver name for a network-capable UPS driver:
+	// snmp-ups, netxml-ups, apcupsd-ups, or dummy-ups for tests. It is required
+	// unless upstreamNUT is set. Local USB and serial drivers are intentionally
+	// unsupported by this API.
 	// +optional
 	Driver string `json:"driver,omitempty"`
 

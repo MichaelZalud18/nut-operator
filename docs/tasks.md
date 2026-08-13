@@ -158,10 +158,13 @@ NUT's own driver-state report, rather than inferring driver health from `upsc` f
 Docker `HEALTHCHECK` is gone. `verifyClientCertificates` is refused at admission because no released
 OpenSSL `upsd` honors CERTREQUEST. The entrypoint runs `upsd -FF`, so the operand is foregrounded
 because that is what was asked for rather than as a side effect of debug logging, and it leaves the
-PID file `upsd -c reload` needs; the smoke test asserts the file rather than the flag.
+PID file `upsd -c reload` needs; the smoke test asserts the file rather than the flag. The driver
+allowlist is pinned to the image from both sides — the smoke test asserts every admitted driver is
+present, and a Go test asserts the two lists agree — so admission cannot accept a driver the operand
+cannot run.
 
 Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `F-47`,
-`NS-1`–`NS-5`, `OD-32`. `F-19`
+`F-50`, `NS-1`–`NS-5`, `OD-32`. `F-19`
 declined — it only matters with an HA `upsd` topology, which is not designed.
 
 #### Open Work
@@ -183,12 +186,6 @@ declined — it only matters with an HA `upsd` topology, which is not designed.
   `/run/nut` with kubelet as the service manager, or a liveness probe that fails when no driver is
   responsive. Decide which before `NS-4` reads as complete. Trade-off to settle in the same pass: a
   container per driver makes device add/remove a pod recreate, which pulls against `F-48`.
-- Reconcile the driver allowlist with what the image actually builds (`F-50`). Admission accepts
-  `powerman-pdu` (`internal/webhook/v1alpha1/upsdevice_webhook.go:208`) while
-  `images/nut-server/Dockerfile` configures `--without-powerman`, and `drivers/Makefile.am` gates
-  that driver on `POWERMAN_DRIVERLIST`. A `UPSDevice` using it is admitted and can never start —
-  the `F-25`/`F-33`/`F-37` class. Drop it from the allowlist or build it in; either way assert the
-  allowlist against the image in the smoke test so the two cannot drift again.
 - Render `ALLOW_NO_DEVICE` and fix the empty-`ups.conf` failure (`F-51`). `upsd` calls `fatalx` when
   `ups.conf` defines no devices, so a `NUTServer` whose selector matches nothing cannot start. The
   entrypoint's `-s` test fires first and exits with `missing required /etc/nut/ups.conf` for a file

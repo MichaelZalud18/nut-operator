@@ -12,13 +12,28 @@ image="$3"
 
 case "$kind" in
   nut-server)
+    # ALLOWLISTED_DRIVERS must match supportedNetworkUPSDrivers() in
+    # internal/webhook/v1alpha1/upsdevice_webhook.go. TestSmokeTestCoversEveryAllowlistedDriver
+    # parses this line and fails when the two disagree.
+    #
+    # Admission accepting a driver the image does not contain produces a UPSDevice that is valid,
+    # renders into ups.conf, and can never start -- which is how powerman-pdu survived in the
+    # allowlist across a source-build migration that dropped it from the image (F-50). Asserting
+    # the binaries here is the half of the guard that can see the image.
+    ALLOWLISTED_DRIVERS="dummy-ups snmp-ups netxml-ups apcupsd-ups"
+
     "$container_tool" run --rm --entrypoint /bin/sh "$image" -ec '
       command -v upsd
       command -v upsdrvctl
       command -v upsc
-      test -x /usr/lib/nut/dummy-ups || command -v dummy-ups
       upsd -V >/dev/null
       upsc -V >/dev/null
+      for driver in '"$ALLOWLISTED_DRIVERS"'; do
+        if [ ! -x "/usr/lib/nut/$driver" ]; then
+          echo "admission allowlists $driver but the image does not contain it (F-50)" >&2
+          exit 1
+        fi
+      done
     '
 
     # F-47: the entrypoint must leave a PID file behind, not merely stay in the foreground.

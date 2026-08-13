@@ -23,7 +23,7 @@ The operand Dockerfiles package real Network UPS Tools binaries from pinned dist
 - `upsmon-agent` installs `nut`, including `upsmon` and `upsc`, and includes the Go
   `power-signal-writer` binary from this repository.
 
-The operator validates `UPSDevice` drivers against a network-driver allowlist before rendering operands. The allowlist is `snmp-ups`, `netxml-ups`, `powerman-pdu`, `apcupsd-ups`, and `dummy-ups` for tests.
+The operator validates `UPSDevice` drivers against a network-driver allowlist before rendering operands. The allowlist is `snmp-ups`, `netxml-ups`, `apcupsd-ups`, and `dummy-ups` for tests. Every entry is asserted present in the `nut-server` image by `make docker-smoke-nut-server`, so admission cannot accept a driver the operand cannot run.
 
 ## Build Requirements
 

@@ -349,6 +349,30 @@ Whichever direction is chosen, the fix has to include an assertion of the allowl
 image in the smoke test. The two drifted apart silently once and nothing would stop it happening
 again.
 
+*Resolved 2026-08-12 by dropping the allowlist entry, not by building the driver.* Alpine does not
+package `libpowerman` (`apk search libpowerman` returns nothing on 3.22), so building `powerman-pdu`
+in means compiling a second dependency from source inside every operand image. That is the wrong
+trade for a driver no device in the inventory uses, against an allowlist entry that could never
+start.
+
+The guard is deliberately two-sided, because neither side can see the other. `hack/smoke-image.sh`
+asserts every allowlisted driver exists at `/usr/lib/nut/<driver>` in the image — that half can see
+the image but not the Go allowlist. `TestSmokeTestCoversEveryAllowlistedDriver` parses the script's
+`ALLOWLISTED_DRIVERS` line and compares it to `supportedNetworkUPSDrivers()` — that half can see the
+allowlist but not the image. Pinned to each other they close the gap: a driver added to admission
+without the smoke test fails in `go test`, and a driver in both lists that the image lacks fails in
+the smoke test.
+
+`TestPowermanPDUIsNotAdmitted` is separate on purpose. The comparison above passes just as happily
+if someone re-adds the driver to both lists, which is exactly how it would come back.
+
+Sabotage-verified in both directions: re-adding `powerman-pdu` to the Go allowlist failed both Go
+tests; adding it to the smoke list alone failed the smoke test with
+`admission allowlists powerman-pdu but the image does not contain it`.
+
+The claim also existed in `README.md` and `docs/images.md:26`, and in the `UPSDevice.spec.driver`
+doc comment that generates the CRD description. All four are corrected.
+
 **OD-36 · `clone`, `clone-outlet`, and `failover` are built, unused, and undeclared.** All three
 appear in the listing above — they are part of `NUTSW_DRIVERLIST` and are built unconditionally,
 with no `configure` flag in `images/nut-server/Dockerfile` naming them either way. A search of the
