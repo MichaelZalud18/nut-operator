@@ -274,13 +274,14 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
 
 ##### Privilege model
 
-- **`F-61` · Verify `CAP_SYS_BOOT` survives the switch to UID 65532 — before anything else on this
-  list.** The pod sets `RunAsNonRoot`, `RunAsUser: 65532`, `AllowPrivilegeEscalation: false`, and the
-  actuator adds `SYS_BOOT`. Linux drops the permitted set across a UID transition unless the
-  capability is ambient, and Kubernetes has no field to request ambient capabilities — whether it
-  holds depends on runtime OCI spec generation. Actuation has only ever run stubbed, so this may
-  never have reached the syscall. If it does not hold, the options are a root actuator with
-  `CAP_SYS_BOOT` only, or a file capability on the binary.
+- **`F-61` closed 2026-08-13 — the capability did not survive, and the fix is shipped.** Measured on
+  `kind`: `CapBnd` held `SYS_BOOT` while `CapPrm`/`CapEff` were empty, so `reboot(2)` would have
+  returned `EPERM` on every `mode=Actuate` deployment. Resolved with `cap_sys_boot=p` on the binary
+  plus a permitted-to-effective raise immediately before the syscall, keeping non-root,
+  `AllowPrivilegeEscalation: false`, and `drop: ALL`. `=ep` was tried first and makes the image
+  unrunnable wherever the capability is outside the bounding set — including the `Stub` default. See
+  the audit for the measurements; `F-62` and `F-63` can now be tested against a process that
+  actually holds the capability.
 
 - **`F-62` · `SeccompProfile: Unconfined` on the actuator is probably wider than needed.** The
   runtime default profile permits `reboot` conditionally on `CAP_SYS_BOOT` being present, so

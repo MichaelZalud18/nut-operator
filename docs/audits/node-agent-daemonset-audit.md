@@ -373,6 +373,68 @@ If the capability does not survive, the options are a root actuator holding `CAP
 a file capability on the binary. Both are larger changes than `F-62` or `F-63`, which is why this
 one is sequenced first.
 
+*Confirmed as a defect and resolved 2026-08-13, measured on `kind`.* The capability did not survive.
+A pod rendered with the actuator's exact security context reported:
+
+```console
+CapInh: 0000000000000000
+CapPrm: 0000000000000000
+CapEff: 0000000000000000
+CapBnd: 0000000000400000     <- SYS_BOOT allowed, and not held
+CapAmb: 0000000000000000
+```
+
+Kubernetes honored the request into the **bounding** set and the permitted set was empty, so
+`reboot(2)` would have returned `EPERM`. Every rendered `mode=Actuate` deployment has been unable to
+power off a node, and nothing would have reported it: actuation has only ever run under
+`policyStub`, so the syscall was never reached.
+
+Both proposed remedies were measured rather than argued.
+
+- **Root with `CAP_SYS_BOOT` only** works — `CapPrm`/`CapEff` both `0x400000` — and gives up
+  `RunAsNonRoot` on the one container that can halt the machine.
+- **A file capability on the binary** also works, and keeps everything: UID 65532, `RunAsNonRoot`,
+  `AllowPrivilegeEscalation: false`, `drop: ALL`. Two things that looked likely to break it do not:
+  `no_new_privs` (which `AllowPrivilegeEscalation: false` sets) does **not** suppress the file
+  capability, and a multi-stage `COPY` into `gcr.io/distroless/static` preserves the extended
+  attribute that carries it. Both were checked directly rather than assumed.
+
+The file capability was taken, with one correction that only appeared by running it. Applied as
+`cap_sys_boot=ep` the image becomes unrunnable wherever `CAP_SYS_BOOT` is outside the bounding set:
+
+```console
+$ docker run --rm node-actuator --version
+exec /node-actuator: operation not permitted
+```
+
+That is every configuration except actuation — including the `DryRun`/`Stub` default every
+deployment starts in, where `restrictedContainerSecurityContext` adds no capability at all. Shipping
+`=ep` would have crash-looped the actuator container on every node in the fleet in order to make one
+rarely-used path work. It is a sharper version of the same lesson `F-46` and `NS-2` record: the
+failure was invisible to every test and appeared only when the thing was run.
+
+`cap_sys_boot=p` masks instead of failing. The process starts with empty sets where the capability
+is not granted, and `cmd/node-actuator` raises it from permitted into effective immediately before
+`reboot(2)`. Measured in both configurations:
+
+| Rendered config | `CapPrm` at start | `CapEff` at start | After raise |
+| --- | --- | --- | --- |
+| `mode=Actuate` (`SYS_BOOT` requested) | `0x400000` | `0` | `0x400000`, reboot possible |
+| `Stub`/`DryRun` default (no request) | `0` | `0` | refused, with the reason named |
+
+Permitted-but-not-effective is worth more than a workaround here. For the whole life of the process
+— watching a directory, parsing JSON written by its neighbor across the `F-57` boundary —
+`CAP_SYS_BOOT` is held and inert, so a bug reached through that surface cannot halt the host.
+
+Guarded on both sides: `hack/smoke-image.sh` reads the extended attribute off the shipped binary
+(from outside, since the image is distroless), and `TestDockerfileAppliesPermittedOnlyFileCapability`
+fails if it is ever changed to `=ep`.
+
+**This unblocks `F-62` and `F-63`, and changes what they are asking.** Both were written against a
+configuration that could not actuate. `F-62`'s seccomp question can now be answered against a
+process that actually holds the capability, and `F-63`'s `hostPID` justification can be tested by
+observing whether `reboot(2)` reaches the host — neither of which was previously possible.
+
 **F-62 · `SeccompProfile: Unconfined` on the actuator is probably wider than needed.** The pod sets
 `RuntimeDefault` (`nodepoweragent_render.go:759-761`); the actuator's container context overrides it
 to `Unconfined` (`:938-940`), but only on the `hostPoweroff` branch — `restrictedContainerSecurityContext`

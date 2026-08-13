@@ -109,7 +109,34 @@ case "$kind" in
     '
     ;;
   node-actuator)
-    exec "$container_tool" run --rm "$image" --version
+    "$container_tool" run --rm "$image" --version
+
+    # F-61: the actuator must carry CAP_SYS_BOOT as a file capability on the binary.
+    #
+    # Asking for the capability in the container securityContext is not enough and fails silently.
+    # Kubernetes puts it in the bounding set, but the pod runs as UID 65532 and the permitted set
+    # does not survive that transition, so the process comes up with CapPrm and CapEff both zero
+    # and reboot(2) returns EPERM. Nothing reports that until the one moment it matters, and
+    # actuation has only ever run stubbed, so no test would have caught it.
+    #
+    # Checked from outside because the image is distroless and has no shell: a throwaway stage
+    # copies the shipped binary out and reads the extended attribute. That also exercises the thing
+    # most likely to break it, which is a COPY that does not preserve xattrs.
+    capability_context="$(mktemp -d)"
+    trap 'rm -rf "$capability_context"' EXIT
+    cat > "$capability_context/Dockerfile" <<DOCKERFILE
+FROM $image AS shipped
+FROM alpine:3.22
+RUN apk add --no-cache libcap
+COPY --from=shipped /node-actuator /check/node-actuator
+RUN getcap /check/node-actuator | grep -q cap_sys_boot || \
+    (echo "node-actuator ships without cap_sys_boot; reboot(2) would fail with EPERM (F-61)" >&2; exit 1)
+DOCKERFILE
+
+    if ! "$container_tool" build --quiet -f "$capability_context/Dockerfile" "$capability_context" >/dev/null; then
+      echo "node-actuator smoke: the shipped binary is missing cap_sys_boot=ep (F-61)" >&2
+      exit 1
+    fi
     ;;
   *)
     echo "unknown smoke image kind: $kind" >&2
