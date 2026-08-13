@@ -154,8 +154,9 @@ simulation, and the `snmpsim` driver-conformance fixture. e2e covers `dummy-ups`
 a predicate scoped to spec and labels, and maps credential `Secret` and simulation `ConfigMap` changes
 back to the servers whose selected devices reference them, so a driver, port, credential, or fixture
 edit re-renders instead of waiting for an unrelated reconcile. Readiness reads `upsdrvctl status`,
-NUT's own driver-state report, rather than inferring driver health from `upsc` failures; the inert
-Docker `HEALTHCHECK` is gone. `verifyClientCertificates` is refused at admission because no released
+NUT's own driver-state report, rather than inferring driver health from `upsc` failures, and the
+Docker `HEALTHCHECK` runs that same check instead of the `upsd -V` that could never fail.
+`verifyClientCertificates` is refused at admission because no released
 OpenSSL `upsd` honors CERTREQUEST. The entrypoint runs `upsd -FF`, so the operand is foregrounded
 because that is what was asked for rather than as a side effect of debug logging, and it leaves the
 PID file `upsd -c reload` needs; the smoke test asserts the file rather than the flag. The driver
@@ -166,20 +167,17 @@ startup no longer leaves the pod permanently out of the Service endpoints. A ser
 matches nothing starts idle and reports NotReady instead of crash-looping. Adding or removing a
 device reloads `upsd` in place instead of replacing the pod; only `LISTEN`, port, and certificate
 changes still roll it, because those are the changes `upsd` ignores on reload — silently, in the
-case of `LISTEN`.
+case of `LISTEN`. The pod shares a process namespace, which is what lets the sidecar signal `upsd`
+and what gives the pause container the orphaned drivers to reap. Verified on `kind`: a killed driver
+is recovered and leaves no zombie, and a device added by patching the ConfigMap is served without
+either container restarting.
 
 Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `F-47`,
-`F-48`–`F-51`, `NS-1`–`NS-9`, `OD-32`, `OD-36`. `F-19`
+`F-48`–`F-51`, `F-53`, `F-76`, `NS-1`–`NS-9`, `OD-32`, `OD-36`. `F-19`
 declined — it only matters with an HA `upsd` topology, which is not designed.
 
 #### Open Work
 
-- Confirm `F-76` is closed on a real cluster. `shareProcessNamespace: true` landed with `F-48` and is
-  one of the two remedies the finding named, so the leak should be gone: PID 1 becomes the pause
-  container, which reaps. A two-container reproduction showed no zombies where the same test
-  previously left one per driver death — but its PID 1 was a shell that happens to reap, not
-  kubelet's pause container, so the remedy is verified by analogue rather than in place. One `ps`
-  against a running operand after a driver restart settles it.
 - Advanced driver-specific configuration for the operand render path.
 
 ---
@@ -502,11 +500,6 @@ boundaries, the decision index, the references under `docs/`, and the audit reco
 
 #### Open Work
 
-- Reconcile the `HEALTHCHECK` statement (`F-53`). The NUT Server *Built* paragraph in
-  `docs/tasks.md` says the inert Docker `HEALTHCHECK` "is gone", while `NS-3` and
-  `images/nut-server/Dockerfile` both say it exists and runs the readiness probe's `upsdrvctl status`
-  check verbatim. The receipt describes the removal and not the replacement that followed it.
-  Recorded in [nutserver-pod-audit.md](audits/nutserver-pod-audit.md).
 - Redraw the example pod placement diagram into `docs/diagrams/`. Blocked on deciding node naming.
 - Define how the Orion example's string tier labels (`application`/`data`/`storage`) coexist with
   `OD-4` numbered tiers. Numbered tiers win, but named tags still occur in practice.

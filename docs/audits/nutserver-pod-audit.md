@@ -387,14 +387,31 @@ watchdog currently works around, but it weakens isolation between the two contai
 Note while deciding: the watchdog's own container has the same shape, since its PID 1 is `sh`.
 A driver it starts and later loses is reparented to that shell.
 
-*Very likely resolved 2026-08-12 as a side effect of `F-48`, and deliberately not marked closed.*
+*Resolved as a side effect of `F-48`, verified in place on `kind` 2026-08-13.*
 `shareProcessNamespace: true` was adopted for the reload path, and it is one of the two remedies
 named above: the pod's pause container becomes PID 1, and reaping orphans is what it is for.
 
-The reproduction agrees — the two-container test that previously left a zombie after every driver
-restart now shows none. But its PID 1 was a shell that happens to `wait`, not kubelet's pause
-container, so this is verified by analogue rather than in place. The task line asks for one `ps`
-against a running operand after a driver restart, which is the whole of what is left.
+Verified against a real pod rather than the docker analogue, because the claim is specifically about
+kubelet's pause container:
+
+```console
+$ kubectl exec f76-check -c upsd -- ps -o pid,ppid,stat,comm
+PID   PPID  STAT COMMAND
+    1     0 S    pause
+    7     0 S    upsd
+   23     0 S    sh
+   41     1 S    dummy-ups        <- already reparented to pause, not to upsd
+```
+
+Killing the driver leaves **nothing** — not a zombie, no entry at all — where the same test before
+the shared namespace left `State: Z, PPid: 1` for the pod's lifetime. After a full kill-and-recover
+cycle the process table is clean and the zombie count is 0.
+
+The same run confirmed `F-49` and `F-48` in real Kubernetes rather than in docker: the watchdog
+recovered the killed driver, and a device added by patching the ConfigMap was reloaded into a
+running `upsd` and served — `upsc beta battery.charge` returned its value — with both containers
+reporting `restartCount: 0` throughout. The projected-volume update plus one watchdog interval is
+the whole latency.
 
 ### Recommended order — upstream fidelity pass
 
