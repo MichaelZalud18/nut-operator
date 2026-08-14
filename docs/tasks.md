@@ -188,18 +188,25 @@ Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_render.go`, 
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
 `internal/nodeagent`. Audits: `docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`,
 `F-33`–`F-36`, `F-54`–`F-75`, `OD-37`); `F-45` from `docs/audits/nut-usage-audit.md`. The task lines
-below are pointers; the evidence and the recommended order are in the audit, which sequences `F-61`
-first and records that `F-54`, `F-56`, and `F-57` are pre-commitment decisions to lock before
-actuation ships rather than live exposure.
+below are pointers; the evidence and the recommended order are in the audit. The privilege group it
+sequenced first is closed, so `F-54` with `OD-37` is next — and the audit records that `F-54`,
+`F-56`, and `F-57` are pre-commitment decisions to lock before actuation ships rather than live
+exposure.
 
 #### Built
 
 `NodePowerAgent` DaemonSet rendering in `MonitorOnly`/`DryRun`/`Actuate`, `power-signal-writer` as
 the `SHUTDOWNCMD` binary, `internal/nodeagent` signal validation with TTL and node-name enforcement,
 and `cmd/node-actuator`'s syscall-backed poweroff. Handoff proven on `kind` within the configured
-TTL.
+TTL. The actuator carries `CAP_SYS_BOOT` as a file capability and raises it only for the syscall,
+which is what makes `mode=Actuate` able to halt a node at all; it refuses to arm without it, runs
+under the pod's `RuntimeDefault` seccomp profile, and keeps `hostPID`, without which `reboot(2)`
+kills the container and reports success. An operand namespace whose Pod Security level would reject
+the actuating pod is reported on the agent's `Degraded` condition rather than relabelled. Both
+containers' readiness probes can fail: the actuator's reflects its watch loop, and `upsmon`'s
+queries every `<ups>@<server>` it monitors instead of anonymously listing the host.
 
-Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
+Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-61`–`F-64`.
 
 #### Open Work
 
@@ -209,18 +216,11 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
 
 ##### Signal authority and the two-component boundary
 
-- **`F-54` · The local `upsmon` path self-authorizes an unordered fleet-wide halt.**
-  `POWER_EXECUTION_ID` is never rendered, so `power-signal-writer` always falls through to a
-  synthetic `upsmon-<node>-<nanos>`, and the actuator accepts it with the same authority as an
-  executor-issued signal. The `shutdownFlow: upsmon-local` half of the original framing was wrong
-  and is corrected in the audit: an agent bound to a `shutdownFlowRef` writes the *real* flow name,
-  so for those agents the only distinguishing mark is the `upsmon-` prefix nothing inspects. Every
-  agent renders `MONITOR ... 1 ...
-  secondary` with `MINSUPPLIES 1`, so one UPS reaching OB+LB fires `SHUTDOWNCMD` on every node it
-  covers within one `POLLFREQALERT`. Under `mode=Actuate` that is the whole fleet halting at once,
-  unordered, at the moment the sequencer exists to prevent it. `SB-2b` says NUT's threshold model is
-  an input and never the sequencer; this path makes it the sequencer, and no field disables it.
-  `requireFreshTelemetry` (`F-33`) gates the executor's group release only and never sees this path.
+- **`F-54` · The local `upsmon` path self-authorizes an unordered fleet-wide halt.** Every agent
+  renders `MONITOR ... 1 ... secondary` with `MINSUPPLIES 1`, so one UPS reaching OB+LB fires
+  `SHUTDOWNCMD` on every node it covers, unordered, with an execution ID nothing distinguishes from
+  the executor's. Resolve with `OD-37`; gates `F-55`–`F-57`
+  ([node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md)).
 
 - **`OD-37` · Decide and record what the local path is for.** Either an intentional last-resort
   backstop — in which case it needs a name, a spec field, a distinct `reason`, and a written
@@ -241,14 +241,10 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
   replaces it has to originate outside the pod.
 
 - **`F-57` · The trust boundary between the two containers is a shared writable tmpfs.**
-  `power-agent-run` is an `emptyDir` mounted read-write into both containers, and `signalPaths`
-  evaluates it before the API-gated projected Secret, so the less-trusted source wins the tick. Code
-  execution in the `upsmon` container — the one that speaks a network protocol to a server and parses
-  its responses — writes one JSON file and halts the host. Three structurally different fixes, pick
-  deliberately: sign the payload with an operator-held key and ship the agent only the public half;
-  accept a local-path signal only when it names an `executionID` already observed on the projected
-  path; or drop the local path and route the `upsmon` decision through the operator. Mount the
-  actuator's copy `ReadOnly` regardless.
+  `power-agent-run` is read-write in both, and `signalPaths` evaluates it before the API-gated
+  projected Secret, so the network-facing container can halt the host by writing one file. Three
+  structurally different fixes, to be picked deliberately; mount the actuator's copy `ReadOnly`
+  regardless. Blocked on `F-54`/`OD-37` ([node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md)).
 
 - **`F-58` · A signal can actuate twice.** `seen` is an in-memory map in `watchSignals`; `emptyDir`
   is pod-scoped, not container-scoped. An actuator restart clears the map while the file survives, so
@@ -262,91 +258,18 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
   `SignalStale` or `SignalFromFuture`, evidenced only by a container log line. Needs a stated NTP
   assumption plus a condition or metric for "this node rejects what I send it".
 
-- **`F-60` · The boundary is one-way — the actuator cannot report anything.** No receipt, metric, or
-  event, and `AutomountServiceAccountToken: false` at both ServiceAccount and pod level means no
-  channel exists. A signal delivered to a `Disabled` actuator sitting in `block()`'s `select{}` is
-  indistinguishable from one that halted a machine, since the readiness probe is `--version`. The
-  executor infers success from the node disappearing. `resiliency-and-partitions.md` lists per-node
-  heartbeat records as an implementation hook; choosing its channel is a design decision, not a TODO.
-  Note while deciding: the agent ServiceAccount exists with no Role bound, so flipping automount for
-  a heartbeat activates whatever is bound at that time for both containers, including the one holding
-  `CAP_SYS_BOOT`.
-
-##### Privilege model
-
-- **`F-61` closed 2026-08-13, reopened and re-closed the same day.** The capability did not survive
-  the UID transition: `CapBnd` held `SYS_BOOT` while `CapPrm`/`CapEff` were empty, so `reboot(2)`
-  would have returned `EPERM` on every `mode=Actuate` deployment. Fixed with `cap_sys_boot=p` on the
-  binary plus a permitted-to-effective raise before the syscall, keeping non-root,
-  `AllowPrivilegeEscalation: false`, and `drop: ALL`.
-
-  Reopened because the verification used a hand-written pod and a stand-in probe image, not an
-  operator-rendered pod running the actuator. Re-measured in a real `mode=Actuate` DaemonSet pod:
-  `CapPrm: 0x400000` with `NoNewPrivs: 1`, so the fix is live. The recorded explanation was wrong
-  and is corrected in the audit — `no_new_privs` *does* strip file capabilities, but only on an
-  execve that gains one relative to its caller, and the container entrypoint gains nothing because
-  containerd puts `CAP_SYS_BOOT` in the runtime init's permitted set. The consequence is a real
-  constraint: the actuator holds the capability only while it is the container entrypoint, so
-  wrapping it in a shell would disarm actuation silently. The extended attribute was also confirmed
-  to survive a registry push and pull, checked against the binary as unpacked on the node.
-
-  The file-capability approach was kept over a root actuator, which is narrower on every axis once
-  `no_new_privs` is off the table. Both silent failure modes are now loud: the actuator reads its own
-  permitted set at startup and refuses to arm without it, naming all three causes. Sabotage-verified.
-
-- **`F-62` closed 2026-08-13.** Seccomp half: `RuntimeDefault` + `CAP_SYS_BOOT` reaches the syscall
-  past the capability check (`EINVAL` from `reboot_pid_ns`) while the same profile without the
-  capability is refused (`EPERM`), so the capability is the gate and `Unconfined` is removed.
-
-  Pod Security half: the operator reports the conflict and does not resolve it. Writing
-  `enforce: privileged` was rejected — it makes a CR field the thing that edits a security boundary.
-  Instead the render path reads the operand namespace's `pod-security.kubernetes.io/enforce` label
-  when actuation is enabled, and reports `Degraded` / `PodSecurityRejectsActuation` naming both
-  violations (`hostPID=true`, `CAP_SYS_BOOT`) and the exception required. Verified end to end on
-  `kind` against a `baseline` namespace. The stub default remains admissible under `restricted`.
-
-- **`F-63` closed 2026-08-13.** `hostPID` is load-bearing, and removing it fails silently while
-  reporting success. Measured with the shipped actuator, a real signal, and `hostPID` omitted: the
-  log ends at `executing poweroff`, `runPoweroff`'s error check produces nothing because the syscall
-  never returns, the container exits `130`, and the host stays up. `reboot_pid_ns` `SIGKILL`s the
-  namespace's init for `POWER_OFF` rather than returning an error. With `F-60`'s missing return path,
-  nothing in the cluster distinguishes that from a successful poweroff.
+- **`F-60` · The boundary is one-way — the actuator cannot report anything.** No receipt, metric,
+  or event, and `AutomountServiceAccountToken: false` at both levels means no channel exists, so the
+  executor infers success from the node disappearing. Choosing the channel is a design decision, not
+  a TODO — and note that the agent's ServiceAccount has no Role bound, so enabling automount grants
+  whatever is bound then to both containers ([node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md)).
 
 ##### Checks that cannot fail
 
-- **`F-64` closed 2026-08-14.** Actuator readiness ran `--version`, which prints a string and
-  returns before any config is parsed, so it passed on a process parked forever in `block()` and on
-  one that had stopped looping. Replaced with `/node-actuator --ready`, which reads a state file the
-  watch loop rewrites after each pass and fails on a missing, stale, or unparseable record or an
-  unreadable signal directory; the staleness bound follows the loop's configured interval. A
-  `Disabled` policy passes without a loop, since blocking is its job. State goes to an
-  actuator-only volume, not the emptyDir shared with the signal writer (`F-57`). Verified both ways
-  on a rendered agent: with the state volume read-only, `--version` exits 0 and `--ready` exits 1
-  naming the cause. Both image `HEALTHCHECK`s updated to match, per `F-46`'s precedent.
-
-- **`F-65` partly closed 2026-08-14; the auth/TLS half stays open.** The vacuous pass is fixed and
-  was reproduced first: the old script piped targets into `while read`, so zero `MONITOR` lines
-  exited 0 with `upsc` stubbed to always fail. The rewrite fails on no targets and queries the full
-  `<ups>@<server>` instead of an anonymous `LIST UPS` against the host — measured against a real
-  dummy-ups server, the old query returns 0 for a UPS the server does not serve and the new one
-  returns 1. Still uncovered: the `MONITOR` credentials and TLS posture, the exact gap `F-40` fell
-  into. `upsc` does not read `upsmon.conf`, so no rearrangement of this probe reaches them; `F-68`'s
-  `NOTIFYCMD` state file remains the source for a check that would.
-
-- **`F-78` · The manager image's `HEALTHCHECK` is `--version`, the same defect as `F-64`/`F-46`.**
-  `Dockerfile:59`. No in-image remedy: distroless, no shell, no HTTP client for its own `/healthz`,
-  no readiness subcommand. Either add one mirroring the actuator's `--ready`, or drop the
-  instruction — Kubernetes ignores `HEALTHCHECK` and `config/manager` already probes `/healthz` and
-  `/readyz`. Dropping is defensible here where it was not for the operands, which are also run
-  directly. See [operator-maturity-benchmarks.md](audits/operator-maturity-benchmarks.md).
-
-- **`F-77` · CI publishes an image that no e2e run ever tested.** `images.yml` and `test-e2e.yml`
-  trigger on the same events with no `needs:` edge, so nothing gates publication on e2e passing, and
-  the suite builds its own `example.com/*:v0.0.1` rather than pulling what was published. Same shape
-  as `F-61` — the verified artifact is not the shipped one. Fix is one edge, not a stage system:
-  build once, have e2e pull that digest, gate the `:main` tag on the result. Cost is serializing the
-  e2e run onto the path to a published `:main`. A shell-bearing "dev" image tier was considered and
-  declined; the reasoning is recorded in the audit so it is not re-proposed.
+- **`F-65` · The `upsmon` readiness probe still cannot see credentials or TLS.** The vacuous-pass
+  and wrong-UPS halves are fixed; `upsc` does not read `upsmon.conf`, so no rearrangement of this
+  probe reaches the `MONITOR` credentials or the TLS posture — the gap `F-40` fell into. Blocked on
+  `F-68`'s `NOTIFYCMD` state file, which is the NUT-native source for a check that would.
 
 - **`F-66` · `POWERDOWNFLAG` is written and structurally unreadable, and the PID file is never
   written.** The flag points into `/run/power-agent`, an `emptyDir` that dies with the pod, and
@@ -488,6 +411,12 @@ Closed: `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`.
 - Wire keyless Sigstore signing as a release gate, with cosign verification docs and digest-pinned
   examples (`docs/images.md` describes the target state).
 - Automate triage of new unsuppressed medium-or-higher ASH findings.
+- `F-77` gate image publication on the e2e run and have the suite pull the digest it built rather
+  than building its own, so the published image is one that was tested
+  ([operator-maturity-benchmarks.md](audits/operator-maturity-benchmarks.md)).
+- `F-78` decide whether the manager image gains a readiness subcommand for its `HEALTHCHECK` or
+  drops the instruction; `--version` cannot fail and distroless leaves no in-image alternative
+  ([operator-maturity-benchmarks.md](audits/operator-maturity-benchmarks.md)).
 - Correct `docs/images.md` to the source-build reality and close the two supply-chain claims it makes
   that the build does not meet (`F-52`, recorded in
   [operator-maturity-benchmarks.md](audits/operator-maturity-benchmarks.md)). It still states that the operand Dockerfiles package NUT
