@@ -260,6 +260,51 @@ spec:
                   value.
                 format: int32
                 type: integer
+              capability:
+                description: capability reports the capability profile this device
+                  resolves to.
+                properties:
+                  message:
+                    description: message explains reason in one sentence.
+                    type: string
+                  profileHash:
+                    description: |-
+                      profileHash identifies the exact profile content the match was computed against, so a
+                      resolution can be tied to a specific catalog revision.
+                    type: string
+                  profileID:
+                    description: profileID is the capability profile this device currently
+                      resolves to.
+                    type: string
+                  profileSource:
+                    description: profileSource records whether the profile came from
+                      the bundled catalog or a CRD.
+                    type: string
+                  profileVersion:
+                    description: profileVersion is that profile's semantic version.
+                    type: string
+                  quirks:
+                    description: quirks names the profile quirks in force for this
+                      device after firmware scoping.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  reason:
+                    description: |-
+                      reason carries the machine-readable reason the resolution is not a clean product match, or
+                      the reason it could not be computed at all. Empty on a clean match.
+                    type: string
+                  tier:
+                    description: |-
+                      tier is the precedence tier that produced the match, from an exact model and firmware match
+                      down to the unidentified floor.
+                    type: string
+                  unidentified:
+                    description: unidentified is true when no profile matched this
+                      device and the universal floor was used.
+                    type: boolean
+                type: object
               conditions:
                 description: conditions represent the current state of the UPSDevice
                   resource.

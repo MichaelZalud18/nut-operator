@@ -89,6 +89,13 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	result := validateUPSDevice(&device)
 	device.Status.ObservedGeneration = device.Generation
 	device.Status.NUTName = nutDeviceName(device)
+
+	// Which capability profile this device resolves to is a property of the device's identity, so
+	// it is published whether or not a NUTServer is serving it yet and whether or not telemetry is
+	// flowing. A device sitting unserved still has a profile, and that is exactly when someone is
+	// looking at it.
+	capabilityMatch, capabilityDiagnostics, capabilityErr := resolveDeviceCapabilityMatch(ctx, r.Client, &device)
+	device.Status.Capability = capabilityStatusFromMatch(capabilityMatch, capabilityDiagnostics, capabilityErr)
 	reconcileResult := ctrl.Result{}
 	var telemetryRecord polling.Result
 	telemetryRecordCluster := ""
@@ -268,7 +275,12 @@ func (r *UPSDeviceReconciler) resolveTelemetryTarget(ctx context.Context, device
 		// reporting a non-standard name still produces canonical derived
 		// fields. A matching failure must not take telemetry down with it: the
 		// device still polls, just without alias resolution.
-		if match, err := resolveDeviceCapabilityMatch(ctx, r.Client, device); err == nil {
+		//
+		// Only the aliases are taken here. The resolution itself is published
+		// from Reconcile, because it depends on the device's identity and not
+		// on whether a NUTServer is serving it yet -- doing it here left every
+		// device without a ready telemetry target reporting no profile at all.
+		if match, _, err := resolveDeviceCapabilityMatch(ctx, r.Client, device); err == nil {
 			target.TelemetryAliases = telemetryAliasesFromMatch(match)
 		}
 		return target, telemetryTargetResolution{

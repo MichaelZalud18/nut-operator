@@ -107,6 +107,58 @@ type UPSDeviceIdentitySpec struct {
 	Firmware string `json:"firmware,omitempty"`
 }
 
+// UPSDeviceCapabilityStatus reports which capability profile this device resolved to.
+//
+// The resolution happens on every reconcile and used to be invisible: the controller took the
+// profile's alias map and discarded the rest, so nothing on the cluster could answer which profile
+// a device matched, whether it fell back to the universal floor, or which quirks were in force
+// after firmware scoping. A device silently matching nothing behaves like one matching a product
+// profile until a trigger needs a variable the floor does not declare.
+//
+// Every field here is read from the match or computed from current state, per EX-28 -- no judgement
+// about whether the resolution is good, which is the reader's to make from the tier.
+type UPSDeviceCapabilityStatus struct {
+	// profileID is the capability profile this device currently resolves to.
+	// +optional
+	ProfileID string `json:"profileID,omitempty"`
+
+	// profileVersion is that profile's semantic version.
+	// +optional
+	ProfileVersion string `json:"profileVersion,omitempty"`
+
+	// profileSource records whether the profile came from the bundled catalog or a CRD.
+	// +optional
+	ProfileSource string `json:"profileSource,omitempty"`
+
+	// profileHash identifies the exact profile content the match was computed against, so a
+	// resolution can be tied to a specific catalog revision.
+	// +optional
+	ProfileHash string `json:"profileHash,omitempty"`
+
+	// tier is the precedence tier that produced the match, from an exact model and firmware match
+	// down to the unidentified floor.
+	// +optional
+	Tier string `json:"tier,omitempty"`
+
+	// unidentified is true when no profile matched this device and the universal floor was used.
+	// +optional
+	Unidentified bool `json:"unidentified,omitempty"`
+
+	// quirks names the profile quirks in force for this device after firmware scoping.
+	// +optional
+	// +listType=atomic
+	Quirks []string `json:"quirks,omitempty"`
+
+	// reason carries the machine-readable reason the resolution is not a clean product match, or
+	// the reason it could not be computed at all. Empty on a clean match.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// message explains reason in one sentence.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
 // UPSDeviceStatus defines the observed state of UPSDevice.
 type UPSDeviceStatus struct {
 	// observedGeneration is the last generation reconciled by the controller.
@@ -144,6 +196,10 @@ type UPSDeviceStatus struct {
 	// loadPercent is the last observed ups.load value.
 	// +optional
 	LoadPercent *int32 `json:"loadPercent,omitempty"`
+
+	// capability reports the capability profile this device resolves to.
+	// +optional
+	Capability *UPSDeviceCapabilityStatus `json:"capability,omitempty"`
 
 	// conditions represent the current state of the UPSDevice resource.
 	// +listType=map

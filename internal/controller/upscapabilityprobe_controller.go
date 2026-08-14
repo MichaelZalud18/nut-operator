@@ -134,7 +134,7 @@ func (r *UPSCapabilityProbeReconciler) runProbe(ctx context.Context, probe *powe
 	// today, and the verification record compares that same profile against
 	// this same read. Resolving twice could report a match in status that the
 	// verification row disagrees with.
-	match, matchErr := resolveDeviceCapabilityMatch(ctx, r.Client, &device)
+	match, _, matchErr := resolveDeviceCapabilityMatch(ctx, r.Client, &device)
 
 	r.recordDraft(probe, &device, pollResult, match, matchErr)
 	r.recordVerification(ctx, probe, &device, pollResult, match, matchErr, resolution.ManagementClusterName)

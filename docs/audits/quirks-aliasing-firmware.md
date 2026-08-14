@@ -128,3 +128,75 @@ happens in one place or two.
 **OD-23 · Telemetry variable aliasing.** Whether alias mappings live in the profile telemetry
 section, and how collisions and precedence resolve when a canonical name is both aliased and
 natively reported.
+
+## Findings — wiring pass, 2026-08-14
+
+Asked whether capability profiles are fully wired up. Traced every exported function in
+`internal/capability` and every `MatchResult` field to its production consumers.
+
+**Wired end to end, confirmed by call site rather than by reading the design doc:**
+
+- Telemetry aliases: `Match` → `telemetryAliasesFromMatch` (`declarative_inventory_resolver.go:288`)
+  → `polling.Target.TelemetryAliases` (`upsdevice_controller.go`) → `telemetry.Sample.Aliases`
+  (`polling/poller.go:112`) → `applyAliases` (`telemetry/normalize.go:264`). This is `F-25`'s fix
+  and the chain is complete.
+- Trigger feasibility: `RequiredVariablesForTrigger` and `CoarserTriggerForFallback` in
+  `planner/triggers.go` and `webhook/v1alpha1/shutdownflow_webhook.go`.
+- Runtime estimate: `MatchResult.SupportsTimingAdaptation` gates adaptive timing in
+  `shutdownflow_adaptive.go:355` (`CR-4`).
+- Probe drafting and verification: `Verify` and `BuildDraft` in `upscapabilityprobe_controller.go`.
+
+**Not wired, and correctly so — recorded here so it is not repeatedly rediscovered:**
+
+- `capability.MatchPDU` has **zero** production call sites. `pduCapabilityProfileFromCRD` is called
+  once, to compute a status hash, and the converted profile is discarded. There is no PDU device
+  kind in the API — `UPSDevice` is the only device kind — so there is nothing for PDU matching to
+  match against. This is `OD-25` as written: *"Scaffolding only in v1."* The matcher, its universal
+  fallback, selector specificity, version preference, and switchable-outlet validation are all
+  implemented and tested ahead of the device model, deliberately.
+- `MatchResult.ActuationBehaviors` has zero consumers. This is `F-27`: the UniFi profiles declare no
+  actuation behaviors pending firmware verification, no instant-command work exists to gate
+  (`OD-20`), and the verification-gated posture is the one this audit already says to preserve.
+- `capability.SupportsTrigger` is an exported wrapper with no production caller;
+  `MatchResult.SupportsTriggerType` is the form in use. Both delegate to `satisfiesTrigger`. Dead
+  surface rather than a wiring gap.
+
+**F-79 · A device's capability resolution was computed every reconcile and discarded.** Fixed
+2026-08-14.
+
+`upsdevice_controller.go` called `resolveDeviceCapabilityMatch`, took `TelemetryAliases`, and threw
+away the rest: profile identity, version, source, hash, tier, `Unidentified`, the firmware-scoped
+`Quirks`, the matcher's diagnostics (discarded at the call as `_`), and the error itself, which was
+swallowed by an `err == nil` guard. `UPSDeviceStatus` carried nothing about capability, so a device
+that matched **nothing** and fell back to the universal floor was indistinguishable, from the
+cluster, from one that matched its product profile. The difference surfaces later, when a trigger
+needs a variable the floor does not declare — and `MatchResult.Quirks` meant the matcher's whole
+firmware-scoping pass produced a result nobody could read.
+
+`UPSDevice.status.capability` now publishes the resolution. Facts only per `EX-28`: the reader
+judges the match from the tier rather than being told whether it is good. Measured on `kind` with
+two devices differing only in `spec.identity.model`:
+
+```console
+$ kubectl get upsdevice cap-known -o jsonpath='{.status.capability}'
+profileID: ubiquiti-unifi-ups-tower   tier: ModelGlob   profileSource: Bundled
+quirks: [built-in-nut-server-not-reachable, ..., reports-battery.low-instead-of-battery.charge.low]
+reason: QuirkFirmwareUnknown
+message: device "cap-known" reports no firmware, so firmware-scoped quirk
+         "built-in-nut-server-not-reachable" ... is applied conservatively
+
+$ kubectl get upsdevice cap-unknown -o jsonpath='{.status.capability}'
+profileID: nut-bundled-unidentified-device   tier: Unidentified   unidentified: true
+reason: DeviceUnidentified
+```
+
+The `QuirkFirmwareUnknown` line is the clearest gain: it says the device reports no firmware and
+quirks are therefore being applied conservatively, which the matcher already knew and nothing could
+previously see.
+
+Published from `Reconcile` rather than from `resolveTelemetryTarget`, and that placement is the
+finding's one real trap. The first implementation put it beside the alias assignment, inside the
+branch that runs only when a ready NUTServer is serving the device — so every device without a
+telemetry target reported no profile at all. The match depends on `spec.identity`, not on whether
+anything is serving the device yet, and an unserved device is exactly when someone is reading its
+status. Caught by running it on a cluster; both devices came back empty.

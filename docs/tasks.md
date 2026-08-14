@@ -57,9 +57,13 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 
 `UPSCapabilityProfile` and `PDUCapabilityProfile` CRDs over one shared five-tier match precedence
 chain, firmware-scoped quirks, telemetry aliasing, bundled UPS and PDU catalogs at `1.0.0` with drift
-tests, and `UPSCapabilityProbe` advisory drafting with probe history.
+tests, and `UPSCapabilityProbe` advisory drafting with probe history. A device publishes the profile
+it resolves to on `status.capability` — identity, tier, the quirks in force after firmware scoping,
+and the matcher's own reason when the match is anything but a clean product hit — so a device that
+fell back to the universal floor is distinguishable from one that matched its product profile.
+PDU matching is scaffolding per `OD-25` and has no device kind to match against.
 
-Closed: `F-25`, `F-26`, `RS-7`–`RS-10`, `PL-30`, `OD-22`, `OD-23`, `OD-25`, `OD-31`.
+Closed: `F-25`, `F-26`, `F-79`, `RS-7`–`RS-10`, `PL-30`, `OD-22`, `OD-23`, `OD-25`, `OD-31`.
 
 #### Open Work
 

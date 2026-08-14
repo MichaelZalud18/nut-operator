@@ -257,12 +257,12 @@ func unmatchedInventoryNodeDiagnostics(snapshot inventory.Snapshot, clusterNodes
 // set the structural resolver uses. Telemetry polling needs the matched
 // profile before any ShutdownFlow compiles, so this is a device-scoped lookup
 // rather than a second copy of the matching rules.
-func resolveDeviceCapabilityMatch(ctx context.Context, reader client.Reader, device *powerv1alpha1.UPSDevice) (capability.MatchResult, error) {
+func resolveDeviceCapabilityMatch(ctx context.Context, reader client.Reader, device *powerv1alpha1.UPSDevice) (capability.MatchResult, []capability.Diagnostic, error) {
 	profiles := capability.BundledProfiles()
 
 	var capabilityProfiles powerv1alpha1.UPSCapabilityProfileList
 	if err := reader.List(ctx, &capabilityProfiles); err != nil {
-		return capability.MatchResult{}, fmt.Errorf("list UPSCapabilityProfile resources: %w", err)
+		return capability.MatchResult{}, nil, fmt.Errorf("list UPSCapabilityProfile resources: %w", err)
 	}
 	for i := range capabilityProfiles.Items {
 		obj := &capabilityProfiles.Items[i]
@@ -273,16 +273,16 @@ func resolveDeviceCapabilityMatch(ctx context.Context, reader client.Reader, dev
 	}
 
 	entity := inventoryEntityFromUPSDevice(device)
-	match, _, err := capability.Match(capability.Device{
+	match, diagnostics, err := capability.Match(capability.Device{
 		ID:           entity.ID,
 		Model:        entity.Model,
 		Firmware:     entity.Firmware,
 		DriverFamily: entity.DriverFamily,
 	}, profiles)
 	if err != nil {
-		return capability.MatchResult{}, err
+		return capability.MatchResult{}, nil, err
 	}
-	return match, nil
+	return match, diagnostics, nil
 }
 
 // telemetryAliasesFromMatch hands the matched profile's alias map to the
@@ -309,4 +309,45 @@ func resolverDiagnosticsHaveErrors(diagnostics []resolver.Diagnostic) bool {
 		}
 	}
 	return false
+}
+
+// capabilityStatusFromMatch publishes what a device resolved to.
+//
+// Facts only, per EX-28: the profile identity, the tier that produced it, the quirks in force after
+// firmware scoping, and the machine reason when the resolution is anything other than a clean
+// product match. Whether that is acceptable is the reader's call to make from the tier -- a
+// driver-family match is normal for a device the catalog has never seen and alarming for one it
+// should know.
+//
+// A failed match still produces a status rather than nothing. The device keeps polling without
+// alias resolution, so the failure is real but partial, and silence would present it as success.
+func capabilityStatusFromMatch(match capability.MatchResult, diagnostics []capability.Diagnostic, err error) *powerv1alpha1.UPSDeviceCapabilityStatus {
+	if err != nil {
+		return &powerv1alpha1.UPSDeviceCapabilityStatus{
+			Reason:  "CapabilityMatchFailed",
+			Message: "capability profile resolution failed, so telemetry polls without alias resolution: " + err.Error(),
+		}
+	}
+
+	status := &powerv1alpha1.UPSDeviceCapabilityStatus{
+		ProfileID:      match.ProfileID,
+		ProfileVersion: match.ProfileVersion,
+		ProfileSource:  string(match.ProfileSource),
+		ProfileHash:    match.ProfileHash,
+		Tier:           string(match.Tier),
+		Unidentified:   match.Unidentified,
+		Quirks:         append([]string(nil), match.Quirks...),
+	}
+
+	// The matcher already decided why a match is imperfect and said so in a diagnostic. Carrying the
+	// first warning through rather than re-deriving it here keeps one explanation of a fallback
+	// instead of two that can disagree.
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity == capability.DiagnosticWarning && (diagnostic.Subject == "" || diagnostic.Subject == match.DeviceID) {
+			status.Reason = diagnostic.Reason
+			status.Message = diagnostic.Message
+			break
+		}
+	}
+	return status
 }
