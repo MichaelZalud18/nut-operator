@@ -264,6 +264,16 @@ spec:
                 description: capability reports the capability profile this device
                   resolves to.
                 properties:
+                  actuationBehaviors:
+                    description: |-
+                      actuationBehaviors names the actuation behaviors the matched profile declares as verified for
+                      this device. Empty is the normal and deliberate state: profiles declare nothing until the
+                      behavior has been verified against real firmware (F-27), so an empty list means "not
+                      verified", never "not capable".
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
                   message:
                     description: message explains reason in one sentence.
                     type: string

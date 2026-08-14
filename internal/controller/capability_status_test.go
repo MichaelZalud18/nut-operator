@@ -123,3 +123,22 @@ func TestCapabilityStatusCopiesQuirks(t *testing.T) {
 		t.Error("published quirks must be a copy, not an alias of the match's slice")
 	}
 }
+
+// F-27 needs a device to be able to say which actuation behaviors its profile currently claims, and
+// until now it could not. Empty is the normal state and means "not verified", never "not capable" --
+// which is why it is published as a list rather than inferred from silence.
+func TestCapabilityStatusPublishesDeclaredActuationBehaviors(t *testing.T) {
+	status := capabilityStatusFromMatch(capability.MatchResult{
+		ProfileID:          "some-verified-pdu-backed-ups",
+		ActuationBehaviors: []string{"load.off", "shutdown.return"},
+	}, nil, nil)
+
+	if len(status.ActuationBehaviors) != 2 {
+		t.Fatalf("declared actuation behaviors must be published, got %v", status.ActuationBehaviors)
+	}
+
+	empty := capabilityStatusFromMatch(capability.MatchResult{ProfileID: "ubiquiti-unifi-ups-tower"}, nil, nil)
+	if len(empty.ActuationBehaviors) != 0 {
+		t.Errorf("a profile declaring none must publish none, got %v", empty.ActuationBehaviors)
+	}
+}

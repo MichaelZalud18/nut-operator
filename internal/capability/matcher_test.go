@@ -145,9 +145,12 @@ func TestMatchRejectsInvalidProfiles(t *testing.T) {
 }
 
 func TestSupportsTriggerDerivesFromTelemetryVariables(t *testing.T) {
-	profile := Profile{
-		ID:      "runtime-capable",
-		Version: "1.0.0",
+	// Asserted through MatchResult.SupportsTriggerType, the form the planner and webhook actually
+	// use. A parallel exported SupportsTrigger(Profile, ...) wrapper existed with no production
+	// caller and was removed rather than left as a second way to ask the same question.
+	match := MatchResult{
+		ProfileID:      "runtime-capable",
+		ProfileVersion: "1.0.0",
 		TelemetryVariables: []string{
 			"battery.runtime",
 			"ups.status",
@@ -163,8 +166,8 @@ func TestSupportsTriggerDerivesFromTelemetryVariables(t *testing.T) {
 		TriggerType("Custom"): false,
 	}
 	for trigger, want := range cases {
-		if got := SupportsTrigger(profile, trigger); got != want {
-			t.Fatalf("SupportsTrigger(%q) = %t, want %t", trigger, got, want)
+		if got := match.SupportsTriggerType(trigger); got != want {
+			t.Fatalf("SupportsTriggerType(%q) = %t, want %t", trigger, got, want)
 		}
 	}
 }

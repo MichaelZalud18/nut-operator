@@ -146,7 +146,7 @@ Asked whether capability profiles are fully wired up. Traced every exported func
   `shutdownflow_adaptive.go:355` (`CR-4`).
 - Probe drafting and verification: `Verify` and `BuildDraft` in `upscapabilityprobe_controller.go`.
 
-**Not wired, and correctly so — recorded here so it is not repeatedly rediscovered:**
+**Not wired, and partly fixed in the same pass:**
 
 - `capability.MatchPDU` has **zero** production call sites. `pduCapabilityProfileFromCRD` is called
   once, to compute a status hash, and the converted profile is discarded. There is no PDU device
@@ -157,9 +157,52 @@ Asked whether capability profiles are fully wired up. Traced every exported func
 - `MatchResult.ActuationBehaviors` has zero consumers. This is `F-27`: the UniFi profiles declare no
   actuation behaviors pending firmware verification, no instant-command work exists to gate
   (`OD-20`), and the verification-gated posture is the one this audit already says to preserve.
-- `capability.SupportsTrigger` is an exported wrapper with no production caller;
-  `MatchResult.SupportsTriggerType` is the form in use. Both delegate to `satisfiesTrigger`. Dead
-  surface rather than a wiring gap.
+- `capability.SupportsTrigger` was an exported wrapper with no production caller;
+  `MatchResult.SupportsTriggerType` is the form in use. Both delegated to `satisfiesTrigger`. The
+  wrapper is removed and its test retargeted, rather than left as a second way to ask one question.
+
+**F-80 · A PDU profile set that cannot resolve was reported nowhere.** Fixed 2026-08-14.
+
+Per-profile validation runs in the webhook and the reconciler, and cannot see this class of problem:
+two profiles that are each individually perfect can declare the same id and version, or both claim
+`selector.universal`, and the set then has no deterministic answer for any device. Those checks
+existed — `DuplicatePDUProfile` and `MultipleUniversalPDUProfiles` — but only inside `MatchPDU`,
+which has no caller while there is no PDU device kind. A cluster could hold two universal PDU
+profiles with both reporting `Accepted` and nothing anywhere saying the set was unusable.
+
+`capability.ValidatePDUProfileSet` exposes the set-level checks independently of matching, and the
+reconciler runs them. `Accepted` stays true, because the profile's own spec really is valid; `Ready`
+goes false, because the profile cannot be used for resolution while the conflict stands. Only
+already-accepted profiles are folded into the set, so an invalid profile cannot make a valid one
+report a duplicate against it.
+
+The first implementation was half-wired, and only running it showed why. The reconciler watched its
+own kind through `For` alone, so creating a second universal profile reconciled only that profile:
+
+```console
+floor-a: phase=Accepted Ready=True                                  <- stale, set is unresolvable
+floor-b: phase=Error    Ready=False  reason=MultipleUniversalPDUProfiles
+```
+
+A set-level conflict belongs to every member of the set, and the profile that was already there is
+the one nobody re-reads. Adding a fan-out watch that enqueues every profile on any change fixes both
+directions — both now report it, and deleting the conflicting profile returns the survivor to
+`Ready=True` rather than leaving it stuck on a conflict that no longer exists.
+
+**What remains for PDU is a device kind, which is `OD-25`'s call and not a wiring fix.** `MatchPDU`
+still has no production caller because there is nothing to match: no `PDUDevice` CRD, and no
+`EntityKindPDU` in `internal/inventory` either, so PDUs are absent from the topology model as well as
+from the API. Wiring it means introducing both, which is the work `OD-25` defers with *"scaffolding
+only in v1."* Everything that can be reached without a device kind now is.
+
+**`ActuationBehaviors` is published, still unconsumed, and that is now visible rather than silent.**
+`UPSDevice.status.capability.actuationBehaviors` carries what the matched profile declares. Nothing
+gates on it because there is no instant-command path to gate — the only `instcmds` in the codebase is
+`instcmds = ALL` in the rendered `upsd.users`, which grants the NUT server's own user permission
+rather than issuing anything. That is `F-27`, and the lifecycle it asks for needs this field as a
+precondition: verification cannot be tracked against a declaration nobody can read. Empty means "not
+verified", never "not capable", and publishing it as a list rather than leaving it to silence is what
+keeps those two apart.
 
 **F-79 · A device's capability resolution was computed every reconcile and discarded.** Fixed
 2026-08-14.

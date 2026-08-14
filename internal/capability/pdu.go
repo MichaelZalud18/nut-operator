@@ -155,6 +155,21 @@ type pduCandidate struct {
 	shared   candidate
 }
 
+// ValidatePDUProfileSet reports conflicts that only exist across a set of PDU profiles.
+//
+// Each profile validates on its own in the admission webhook and the reconciler, and those checks
+// cannot see this class of problem: two profiles that are individually perfect can still declare the
+// same id and version, or both claim selector.universal, and the set then has no deterministic
+// answer for any device. That was unreachable until now -- the checks live inside MatchPDU, which
+// has no caller while there is no PDU device kind (OD-25), so a cluster could hold two universal PDU
+// profiles with both reporting Accepted and nothing anywhere saying the set was unusable.
+//
+// Exported separately from MatchPDU precisely so the conflict is reported when the profiles are
+// written, rather than at the first resolution attempt, which may be a release away.
+func ValidatePDUProfileSet(profiles []PDUProfile) []Diagnostic {
+	return validatePDUProfiles(normalizePDUProfiles(profiles))
+}
+
 // validatePDUProfiles rejects profile sets that cannot resolve deterministically.
 func validatePDUProfiles(profiles []PDUProfile) []Diagnostic {
 	var diagnostics []Diagnostic

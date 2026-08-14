@@ -61,9 +61,11 @@ tests, and `UPSCapabilityProbe` advisory drafting with probe history. A device p
 it resolves to on `status.capability` — identity, tier, the quirks in force after firmware scoping,
 and the matcher's own reason when the match is anything but a clean product hit — so a device that
 fell back to the universal floor is distinguishable from one that matched its product profile.
-PDU matching is scaffolding per `OD-25` and has no device kind to match against.
+A PDU profile set that cannot resolve — duplicate ids, two universal profiles — is
+reported on every profile in the set. PDU device matching itself is scaffolding per `OD-25`, with no
+device kind and no inventory entity kind to match against.
 
-Closed: `F-25`, `F-26`, `F-79`, `RS-7`–`RS-10`, `PL-30`, `OD-22`, `OD-23`, `OD-25`, `OD-31`.
+Closed: `F-25`, `F-26`, `F-79`, `F-80`, `RS-7`–`RS-10`, `PL-30`, `OD-22`, `OD-23`, `OD-25`, `OD-31`.
 
 #### Open Work
 

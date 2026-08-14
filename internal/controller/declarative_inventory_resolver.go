@@ -337,6 +337,10 @@ func capabilityStatusFromMatch(match capability.MatchResult, diagnostics []capab
 		Tier:           string(match.Tier),
 		Unidentified:   match.Unidentified,
 		Quirks:         append([]string(nil), match.Quirks...),
+		// Published even though nothing consumes it yet. F-27 is the missing verification
+		// lifecycle, and the first thing that lifecycle needs is for a device to be able to say
+		// which behaviors its profile currently claims -- which until now it could not.
+		ActuationBehaviors: append([]string(nil), match.ActuationBehaviors...),
 	}
 
 	// The matcher already decided why a match is imperfect and said so in a diagnostic. Carrying the

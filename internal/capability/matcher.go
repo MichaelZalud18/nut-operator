@@ -109,11 +109,6 @@ func Match(device Device, profiles []Profile) (MatchResult, []Diagnostic, error)
 	return result, diagnostics, nil
 }
 
-// SupportsTrigger derives trigger support from declared telemetry variables.
-func SupportsTrigger(profile Profile, trigger TriggerType) bool {
-	return satisfiesTrigger(profile.TelemetryVariables, trigger)
-}
-
 // satisfiesTrigger reports whether a declared variable set covers a trigger
 // class. Aliases are deliberately not consulted here: an alias renames a
 // variable the device already reports, and the profile is expected to declare

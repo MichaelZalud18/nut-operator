@@ -149,6 +149,14 @@ type UPSDeviceCapabilityStatus struct {
 	// +listType=atomic
 	Quirks []string `json:"quirks,omitempty"`
 
+	// actuationBehaviors names the actuation behaviors the matched profile declares as verified for
+	// this device. Empty is the normal and deliberate state: profiles declare nothing until the
+	// behavior has been verified against real firmware (F-27), so an empty list means "not
+	// verified", never "not capable".
+	// +optional
+	// +listType=atomic
+	ActuationBehaviors []string `json:"actuationBehaviors,omitempty"`
+
 	// reason carries the machine-readable reason the resolution is not a clean product match, or
 	// the reason it could not be computed at all. Empty on a clean match.
 	// +optional
