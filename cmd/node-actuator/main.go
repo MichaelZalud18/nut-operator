@@ -33,11 +33,23 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "-h", "--help", "help":
-			_, _ = fmt.Fprintln(os.Stdout, "Usage: node-actuator [--help|--version]")
+			_, _ = fmt.Fprintln(os.Stdout, "Usage: node-actuator [--help|--version|--ready]")
 			_, _ = fmt.Fprintln(os.Stdout, "Watches POWER_SIGNAL_PATH, validates structured shutdown signals, and performs the configured actuator policy.")
 			return
 		case "--version", "version":
 			_, _ = fmt.Fprintln(os.Stdout, version)
+			return
+		case "--ready", "ready":
+			// F-64: this is what the readiness probe runs, and unlike --version it can fail.
+			//
+			// It deliberately re-reads the environment rather than sharing state with the running
+			// process: an exec probe is a separate process with the same environment, so the only
+			// thing it can observe about the loop is what the loop wrote down.
+			if err := checkActuatorReady(loadActuatorConfig(), time.Now().UTC()); err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "not ready: %v\n", err)
+				os.Exit(1)
+			}
+			_, _ = fmt.Fprintln(os.Stdout, "ready")
 			return
 		default:
 			_, _ = fmt.Fprintf(os.Stderr, "unknown argument %q\n", os.Args[1])
@@ -47,17 +59,9 @@ func main() {
 
 	logger := log.New(os.Stdout, "node-actuator ", log.LstdFlags|log.LUTC)
 
-	mode := env("POWER_AGENT_MODE", "DryRun")
-	policy := env("POWER_ACTUATOR_POLICY", policyStub)
-	config := actuatorConfig{
-		Mode:        mode,
-		Policy:      policy,
-		NodeName:    env("POWER_NODE_NAME", ""),
-		SignalPath:  env("POWER_SIGNAL_PATH", "/run/power-agent/shutdown.json"),
-		SignalPaths: signalPaths(env("POWER_SIGNAL_PATHS", ""), env("POWER_SIGNAL_PATH", "/run/power-agent/shutdown.json")),
-		SignalTTL:   parseDuration(env("POWER_SIGNAL_TTL", "2m"), 2*time.Minute),
-		Interval:    parseDuration(env("POWER_ACTUATOR_INTERVAL", "5s"), 5*time.Second),
-	}
+	config := loadActuatorConfig()
+	mode := config.Mode
+	policy := config.Policy
 
 	logger.Printf("starting mode=%s policy=%s node=%s signalPaths=%s signalTTL=%s poweroff=reboot-syscall(POWER_OFF)", config.Mode, config.Policy, config.NodeName, strings.Join(config.SignalPaths, ","), config.SignalTTL)
 
@@ -95,6 +99,27 @@ type actuatorConfig struct {
 	SignalPaths []string
 	SignalTTL   time.Duration
 	Interval    time.Duration
+	// StatePath is where the watch loop records each completed pass, and the only thing the
+	// readiness probe can observe about it (F-64).
+	StatePath string
+}
+
+// loadActuatorConfig reads the actuator's configuration from the environment.
+//
+// Both the running process and the `--ready` probe go through here, so a probe cannot end up
+// judging the loop against a different idea of what was configured.
+func loadActuatorConfig() actuatorConfig {
+	signalPath := env("POWER_SIGNAL_PATH", "/run/power-agent/shutdown.json")
+	return actuatorConfig{
+		Mode:        env("POWER_AGENT_MODE", "DryRun"),
+		Policy:      env("POWER_ACTUATOR_POLICY", policyStub),
+		NodeName:    env("POWER_NODE_NAME", ""),
+		SignalPath:  signalPath,
+		SignalPaths: signalPaths(env("POWER_SIGNAL_PATHS", ""), signalPath),
+		SignalTTL:   parseDuration(env("POWER_SIGNAL_TTL", "2m"), 2*time.Minute),
+		Interval:    parseDuration(env("POWER_ACTUATOR_INTERVAL", "5s"), 5*time.Second),
+		StatePath:   env("POWER_ACTUATOR_STATE_PATH", "/run/actuator/state.json"),
+	}
 }
 
 type actuatorFunc func(*log.Logger, actuatorConfig, nodeagent.SignalStatus) error
@@ -156,6 +181,9 @@ func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFun
 	ticker := time.NewTicker(config.Interval)
 	defer ticker.Stop()
 	seen := map[string]struct{}{}
+	// Logged on transition only, so a persistently unwritable state volume does not bury the
+	// actuation log under one line per interval.
+	stateWriteFailed := false
 
 	for {
 		for _, path := range config.SignalPaths {
@@ -171,6 +199,27 @@ func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFun
 				logger.Printf("ignoring shutdown signal path=%s reason=%s", status.Path, status.Reason)
 			}
 		}
+
+		// Record the completed pass (F-64). This is the only evidence readiness has that the loop
+		// is running at all, so a failure to write it must be visible rather than swallowed -- a
+		// silently unwritten state file would read as a stalled loop, which is the correct
+		// conclusion but for the wrong reason, and the log line is what separates the two.
+		state := actuatorState{
+			Timestamp:            time.Now().UTC().Format(time.RFC3339),
+			Policy:               config.Policy,
+			IntervalSeconds:      config.Interval.Seconds(),
+			UnreadableSignalDirs: unreadableSignalDirs(config.SignalPaths),
+		}
+		if err := writeActuatorState(config.StatePath, state); err != nil {
+			if !stateWriteFailed {
+				stateWriteFailed = true
+				logger.Printf("cannot record watch-loop state at %s, so readiness will fail: %v", config.StatePath, err)
+			}
+		} else if stateWriteFailed {
+			stateWriteFailed = false
+			logger.Printf("recording watch-loop state at %s again", config.StatePath)
+		}
+
 		<-ticker.C
 	}
 }

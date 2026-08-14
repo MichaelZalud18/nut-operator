@@ -37,10 +37,14 @@ import (
 )
 
 const (
-	nodePowerAgentConfigFile                        = "nut.conf"
-	nodePowerAgentProjectedSignalDirectory          = "/var/lib/power-agent/signals"
-	nodePowerAgentProjectedSignalPath               = nodePowerAgentProjectedSignalDirectory + "/$(POWER_NODE_NAME).json"
-	nodePowerAgentSignalReason                      = "upsmon-fsd"
+	nodePowerAgentConfigFile               = "nut.conf"
+	nodePowerAgentProjectedSignalDirectory = "/var/lib/power-agent/signals"
+	nodePowerAgentProjectedSignalPath      = nodePowerAgentProjectedSignalDirectory + "/$(POWER_NODE_NAME).json"
+	nodePowerAgentSignalReason             = "upsmon-fsd"
+	// nodePowerAgentActuatorStateDirectory is the actuator-only volume holding the record of its
+	// watch loop, which is what makes readiness able to fail (F-64).
+	nodePowerAgentActuatorStateDirectory            = "/run/actuator"
+	nodePowerAgentActuatorStatePath                 = nodePowerAgentActuatorStateDirectory + "/state.json"
 	nodePowerAgentSignalWriterPath                  = "/usr/local/bin/power-signal-writer"
 	nodePowerAgentDefaultPriorityClassName          = "system-node-critical"
 	nodePowerAgentDefaultTerminationGracePeriodSecs = 60
@@ -807,6 +811,16 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				},
 			},
 			{
+				// The actuator's own health evidence, mounted into the actuator and nowhere else
+				// (F-64). It is deliberately not the power-agent-run emptyDir the signal writer
+				// also has open for writing: health evidence a neighbouring container can rewrite
+				// is not evidence, and F-57 is already open on that shared boundary.
+				Name: "power-agent-actuator-state",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: resource.NewQuantity(1024*1024, resource.BinarySI)},
+				},
+			},
+			{
 				Name: "power-agent-signals",
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
@@ -905,12 +919,14 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 					{Name: "POWER_SIGNAL_PATH", Value: nodePowerAgentSignalPath(agent)},
 					{Name: "POWER_SIGNAL_PATHS", Value: nodePowerAgentSignalPath(agent) + "," + nodePowerAgentProjectedSignalPath},
 					{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
+					{Name: "POWER_ACTUATOR_STATE_PATH", Value: nodePowerAgentActuatorStatePath},
 				},
 				SecurityContext: actuatorContainerSecurityContext(hostPoweroff),
 				ReadinessProbe:  actuatorReadinessProbe(),
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "power-agent-run", MountPath: "/run/power-agent"},
 					{Name: "power-agent-signals", MountPath: nodePowerAgentProjectedSignalDirectory, ReadOnly: true},
+					{Name: "power-agent-actuator-state", MountPath: nodePowerAgentActuatorStateDirectory},
 				},
 			})
 		}
@@ -1036,6 +1052,24 @@ func upsmonLivenessProbe() *corev1.Probe {
 	}
 }
 
+// upsmonReadinessProbe checks that every UPS this agent is configured to monitor is actually being
+// served to it (F-65).
+//
+// Two things were wrong with the previous script, and the first is the serious one. It piped the
+// `MONITOR` targets into a `while` loop, so with zero targets the loop body never ran and the
+// pipeline exited 0 -- a rendering bug that dropped every monitor line presented as a healthy agent.
+// The rewrite counts the targets first and fails on none, and runs the loop in the current shell so
+// `set -e` applies to it.
+//
+// Second, it ran `upsc -l "$server"`, an anonymous LIST UPS against the host half of the target.
+// That proves a NUT server is listening and nothing else: it does not check that the UPS this agent
+// monitors is among the ones served, which is the actual precondition for upsmon working. Querying
+// the full `<ups>@<server>` target does.
+//
+// What this still does not cover is the MONITOR credentials and the TLS posture rendered into the
+// same file -- the exact gap `F-40` fell into, where upsmon failed with an SSL error against a
+// server `upsc` reached fine. `upsc` does not read upsmon.conf, so it cannot exercise either from
+// here; `F-68`'s NOTIFYCMD state file is the NUT-native source for a check that would.
 func upsmonReadinessProbe() *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
@@ -1043,7 +1077,13 @@ func upsmonReadinessProbe() *corev1.Probe {
 				Command: []string{
 					"sh",
 					"-ec",
-					`test -r /etc/nut/upsmon.conf && awk '/^MONITOR[[:space:]]/ {print $2}' /etc/nut/upsmon.conf | while IFS= read -r target; do server="${target#*@}"; test "$server" != "$target"; upsc -l "$server" >/dev/null; done`,
+					`test -r /etc/nut/upsmon.conf
+targets=$(awk '/^MONITOR[[:space:]]/ {print $2}' /etc/nut/upsmon.conf)
+test -n "$targets"
+for target in $targets; do
+  case "$target" in *@*) ;; *) exit 1 ;; esac
+  upsc "$target" >/dev/null
+done`,
 				},
 			},
 		},
@@ -1054,11 +1094,23 @@ func upsmonReadinessProbe() *corev1.Probe {
 	}
 }
 
+// actuatorReadinessProbe asks whether the watch loop is running (F-64).
+//
+// It used to exec `--version`, which prints a string and returns before any configuration is
+// parsed. That passed on a process parked forever in block(), on one whose signal directory had
+// never appeared, and on one that had stopped looping entirely -- the three things readiness is for.
+// `F-46` retired the same instruction on the server image: a check that cannot fail is worse than no
+// check, because it reads as coverage.
+//
+// `--ready` reads the state file the loop writes after each pass and fails on a missing, stale, or
+// unparseable record, or on a signal directory the loop could not see. Under a Disabled policy it
+// passes without consulting it, because a process whose configured job is to block has no loop to
+// report on and the exec itself proves the container is alive.
 func actuatorReadinessProbe() *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
 			Exec: &corev1.ExecAction{
-				Command: []string{"/node-actuator", "--version"},
+				Command: []string{"/node-actuator", "--ready"},
 			},
 		},
 		InitialDelaySeconds: 5,

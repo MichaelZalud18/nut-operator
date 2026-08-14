@@ -112,5 +112,21 @@ RUN upsmon -V 2>&1 | grep -q "${NUT_VERSION}" \
     && ! ldd /usr/sbin/upsmon | grep -q libnss3
 
 USER 65532:65532
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD upsmon -V >/dev/null || exit 1
+# Same question the readiness probe asks: every UPS this agent is configured to monitor is being
+# served to it (F-65). Kubernetes ignores Docker HEALTHCHECK, so under this operator the probe is
+# what runs -- but the image is also runnable directly, and there it should answer the same question
+# the same way rather than drift into a second definition of healthy.
+#
+# The previous instruction ran `upsmon -V`, which proves only that the binary executes: it would
+# have passed on a container whose upsmon was dead, whose credentials were wrong, or whose config
+# named no UPS at all. A check that cannot fail is worse than none, because it reads as coverage
+# (F-64, and F-46 before it).
+#
+# Zero MONITOR targets fails rather than passing vacuously, which is the specific bug the probe's
+# old `while` pipeline had.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD test -r /etc/nut/upsmon.conf \
+    && targets=$(awk '/^MONITOR[[:space:]]/ {print $2}' /etc/nut/upsmon.conf) \
+    && test -n "$targets" \
+    && for target in $targets; do upsc "$target" >/dev/null || exit 1; done
 ENTRYPOINT ["upsmon"]

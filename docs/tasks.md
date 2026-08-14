@@ -314,21 +314,39 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`.
 
 ##### Checks that cannot fail
 
-- **`F-64` · `F-46`'s rule never crossed to the agent side.** The actuator's readiness probe is
-  `/node-actuator --version`, which a process blocked forever in `block()` passes.
-  `images/upsmon-agent/Dockerfile` still carries `HEALTHCHECK CMD upsmon -V` and
-  `images/node-actuator/Dockerfile` carries `--version`. Actuator readiness should reflect the watch
-  loop: signal directory readable, TTL clock sane, mode and policy parsed.
+- **`F-64` closed 2026-08-14.** Actuator readiness ran `--version`, which prints a string and
+  returns before any config is parsed, so it passed on a process parked forever in `block()` and on
+  one that had stopped looping. Replaced with `/node-actuator --ready`, which reads a state file the
+  watch loop rewrites after each pass and fails on a missing, stale, or unparseable record or an
+  unreadable signal directory; the staleness bound follows the loop's configured interval. A
+  `Disabled` policy passes without a loop, since blocking is its job. State goes to an
+  actuator-only volume, not the emptyDir shared with the signal writer (`F-57`). Verified both ways
+  on a rendered agent: with the state volume read-only, `--version` exits 0 and `--ready` exits 1
+  naming the cause. Both image `HEALTHCHECK`s updated to match, per `F-46`'s precedent.
 
-- **`F-65` · The `upsmon` readiness probe is blind to authentication and TLS.** It runs
-  `upsc -l <server>` per MONITOR line — an anonymous `LIST UPS` over plaintext that exercises neither
-  the `MONITOR` credentials nor the TLS posture `upsmon` was told to enforce. It would have reported
-  Ready throughout `F-40`, where `upsmon` logged `connect failed: SSL error` against a server `upsc`
-  reached fine. It also passes trivially when the rendered secret contains zero MONITOR lines, since
-  the `while` body never runs. With `F-35`'s `pgrep` liveness, nothing proves `upsmon` holds a live
-  authenticated session. `F-68`'s `NOTIFYCMD` state file is the NUT-native source for a real check.
+- **`F-65` partly closed 2026-08-14; the auth/TLS half stays open.** The vacuous pass is fixed and
+  was reproduced first: the old script piped targets into `while read`, so zero `MONITOR` lines
+  exited 0 with `upsc` stubbed to always fail. The rewrite fails on no targets and queries the full
+  `<ups>@<server>` instead of an anonymous `LIST UPS` against the host — measured against a real
+  dummy-ups server, the old query returns 0 for a UPS the server does not serve and the new one
+  returns 1. Still uncovered: the `MONITOR` credentials and TLS posture, the exact gap `F-40` fell
+  into. `upsc` does not read `upsmon.conf`, so no rearrangement of this probe reaches them; `F-68`'s
+  `NOTIFYCMD` state file remains the source for a check that would.
 
-##### NUT mechanisms inert or unused
+- **`F-78` · The manager image's `HEALTHCHECK` is `--version`, the same defect as `F-64`/`F-46`.**
+  `Dockerfile:59`. No in-image remedy: distroless, no shell, no HTTP client for its own `/healthz`,
+  no readiness subcommand. Either add one mirroring the actuator's `--ready`, or drop the
+  instruction — Kubernetes ignores `HEALTHCHECK` and `config/manager` already probes `/healthz` and
+  `/readyz`. Dropping is defensible here where it was not for the operands, which are also run
+  directly. See [operator-maturity-benchmarks.md](audits/operator-maturity-benchmarks.md).
+
+- **`F-77` · CI publishes an image that no e2e run ever tested.** `images.yml` and `test-e2e.yml`
+  trigger on the same events with no `needs:` edge, so nothing gates publication on e2e passing, and
+  the suite builds its own `example.com/*:v0.0.1` rather than pulling what was published. Same shape
+  as `F-61` — the verified artifact is not the shipped one. Fix is one edge, not a stage system:
+  build once, have e2e pull that digest, gate the `:main` tag on the result. Cost is serializing the
+  e2e run onto the path to a published `:main`. A shell-bearing "dev" image tier was considered and
+  declined; the reasoning is recorded in the audit so it is not re-proposed.
 
 - **`F-66` · `POWERDOWNFLAG` is written and structurally unreadable, and the PID file is never
   written.** The flag points into `/run/power-agent`, an `emptyDir` that dies with the pod, and

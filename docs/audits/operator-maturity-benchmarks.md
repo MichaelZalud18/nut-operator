@@ -455,3 +455,58 @@ One related item found while reading: `docs/images.md:26` states the driver allo
 `powerman-pdu`, which the operand image does not contain. That is `F-50`, recorded in
 [nut-usage-audit.md](nut-usage-audit.md) — the allowlist appears in two places and both need the
 same correction.
+
+## Findings — seventh pass, 2026-08-14 (CI stage structure)
+
+Raised while asking whether the pipeline has stages that would justify a shell-bearing "dev" image
+tier. It does not, and the interesting part is what that costs — which is nothing to do with what is
+inside the images.
+
+**F-77 · The published image is never the image `test-e2e` tested.** `.github/workflows/images.yml`
+and `.github/workflows/test-e2e.yml` both trigger on `push` to `main` and on `pull_request`, with no
+`needs:` edge between them and no shared artifact. They run concurrently.
+
+Two consequences, both verified by reading the workflows and the suite:
+
+- Nothing gates publication on e2e passing. `images.yml` pushes `:main`, `:sha-<short>`, and the
+  branch tag on every push to `main` regardless of what `test-e2e` concludes, because it never
+  learns the result.
+- `test/e2e/e2e_suite_test.go:35-48` builds `example.com/nut-operator:v0.0.1` and the three operand
+  images in `BeforeSuite` and loads them into Kind. The suite therefore exercises a different build
+  of the same source than the one published — different tags, different digests, and on `main` a
+  different platform set, since `images.yml` builds multi-platform there and the PR path builds
+  `linux/amd64` only.
+
+This is the same shape as `F-61`: the artifact that was verified is not the artifact that ships. It
+is milder, because both are built from one commit by one Dockerfile, so they should be equivalent —
+but "should be equivalent" is exactly the assumption `F-61` was resting on, and the `=ep`
+crash-loop was found only by running the real image.
+
+The fix does not need stages in the general sense, only one edge: build once, have `test-e2e` pull
+that digest instead of building its own, and gate the `:main` tag on the result. The `sha-<short>`
+tag already exists to hang it on. It would also make `test-e2e` faster, since it currently rebuilds
+two images that compile NUT from source — which is why its timeout is 30 minutes.
+
+The cost is real and should be weighed rather than assumed away: it serializes the e2e run onto the
+path to a published `:main`, on a repository where `main` receives only its own maintainer's
+commits.
+
+*Not adopted, and recorded so it is not re-proposed:* a "dev" image tier carrying shells for
+testing, with promotion to the locked-down images. For the actuator specifically it would invert the
+result it was meant to check — `F-61` measured `CapPrm 0x400000` when the runtime execs the binary
+and `0` when a shell in the container does, so a shell-bearing variant of that image answers the
+capability question wrongly. More generally it institutionalizes exactly the tested-artifact /
+shipped-artifact gap above. `kubectl debug --target` supplies a shell beside a distroless container
+without altering it, and only two of the four images are distroless — `nut-server` and
+`upsmon-agent` already carry shells because NUT tooling needs them.
+
+**F-78 · The manager image's `HEALTHCHECK` cannot fail.** `Dockerfile:59` is
+`HEALTHCHECK ... CMD ["/manager", "--version"]`, the same defect `F-64` fixed on `node-actuator` and
+`F-46` fixed on `nut-server`: it proves the binary executes and nothing else.
+
+Unlike those two it has no in-image remedy — the base is `gcr.io/distroless/static:nonroot`, so
+there is no shell and no HTTP client to reach the manager's own `/healthz`, and the binary exposes
+no readiness subcommand. The options are to add one, mirroring `--ready`, or to drop the instruction
+outright on the grounds that Kubernetes ignores `HEALTHCHECK` and `config/manager` already renders
+real liveness and readiness probes against `/healthz` and `/readyz`. Dropping it is defensible here
+in a way it was not for the operands, which are also run directly; the manager is not.

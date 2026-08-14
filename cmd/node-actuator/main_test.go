@@ -40,7 +40,10 @@ func TestRunPoweroffInvokesTheSyscall(t *testing.T) {
 // reintroduce a configurable poweroff mechanism without revisiting that decision.
 func TestPoweroffTakesNoConfiguration(t *testing.T) {
 	config := actuatorConfig{}
-	if reflect.TypeOf(config).NumField() != 7 {
+	// Bumped from 7 to 8 for StatePath (F-64), which is where the watch loop records that it ran.
+	// It carries no poweroff mechanism: readiness reads it and the syscall path never consults it.
+	// The count is the point of the test, so raising it is a deliberate act, not a fix.
+	if reflect.TypeOf(config).NumField() != 8 {
 		t.Fatalf("actuatorConfig gained or lost a field; confirm no poweroff mechanism became configurable: %+v", config)
 	}
 	for _, field := range []string{"PoweroffMethod", "PoweroffCommand", "PoweroffArgs"} {

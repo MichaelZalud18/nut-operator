@@ -97,5 +97,13 @@ LABEL org.opencontainers.image.title="NUT Operator Node Actuator" \
 WORKDIR /
 COPY --from=capabilities /out/node-actuator .
 USER 65532:65532
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/node-actuator", "--version"]
+# Same question the readiness probe asks: has the watch loop completed a pass recently (F-64).
+#
+# This was `--version`, which prints a string and returns before any configuration is parsed -- it
+# passed on a process parked forever in block() and on one that had stopped looping. F-46 retired
+# the same instruction on the server image for the same reason.
+#
+# Run bare with no state volume this reports unhealthy, which is correct rather than awkward: there
+# is no watch loop recording anything, so there is nothing to be healthy about.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/node-actuator", "--ready"]
 ENTRYPOINT ["/node-actuator"]

@@ -692,6 +692,37 @@ unchanged: a check that cannot fail is worse than no check, because it reads as 
 Actuator readiness should reflect the watch loop — signal directory readable, TTL clock sane, mode
 and policy parsed.
 
+*Resolved 2026-08-14, verified against a running agent.* The probe now execs `/node-actuator
+--ready`, which reads a state file the watch loop rewrites after every pass and fails on a missing,
+stale, unparseable record or on a signal directory the loop could not stat. The staleness bound is
+derived from the loop's own interval (3×, floored at 30s) rather than fixed, so slowing the loop
+down does not fail a correctly-running actuator.
+
+Under a `Disabled` policy it passes without consulting the file. A process whose configured job is
+to block has no loop to report on, and the exec itself is the evidence the container is alive;
+demanding a loop there would leave every `Disabled` agent permanently NotReady.
+
+The state file goes to a volume mounted into the actuator and nowhere else, deliberately not to the
+`power-agent-run` emptyDir the signal writer also has open for writing. Health evidence a
+neighbouring container can rewrite is not evidence, and `F-57` is already open on that boundary.
+
+Both probes were run side by side on a rendered agent whose state volume was mounted read-only —
+a real failure, not a simulated one:
+
+```console
+$ kubectl exec ... -- /node-actuator --version
+77ab7ad-dirty
+exit=0
+$ kubectl exec ... -- /node-actuator --ready
+not ready: the Stub watch loop has not recorded a pass at /run/actuator/state.json: open
+/run/actuator/state.json: no such file or directory
+exit=1
+```
+
+The loop also logs the write failure once, on transition, so the cause is visible from the container
+log and not only from the probe. `images/node-actuator/Dockerfile`'s `HEALTHCHECK` now asks the same
+question, following the precedent `F-46` set on the server image.
+
 **F-65 · The `upsmon` readiness probe is blind to authentication and TLS.**
 `upsmonReadinessProbe` (`nodepoweragent_render.go:965-981`) parses `MONITOR` lines out of
 `upsmon.conf`, takes the host half of each `<ups>@<server>` target, and runs `upsc -l "$server"` —
@@ -709,6 +740,41 @@ target would present as a healthy agent.
 With `F-35`'s `pgrep -x upsmon` liveness (`:951-963`), nothing anywhere proves `upsmon` holds a live
 authenticated session. `F-68`'s `NOTIFYCMD` state file is the NUT-native source for a check that
 would.
+
+*Partly resolved 2026-08-14; the authentication and TLS half stays open and is now stated as such.*
+
+The vacuous-pass defect is fixed and was reproduced first rather than taken on trust. The old script
+piped targets into `while read`, so with zero `MONITOR` lines the loop body never ran and the
+pipeline's status was the loop's:
+
+```console
+$ # old script, upsmon.conf with no MONITOR lines, upsc stubbed to always fail
+$ sh -ec '... | while IFS= read -r target; do ... upsc -l "$server"; done'; echo $?
+0
+$ # rewritten script, same file
+1
+```
+
+The rewrite counts the targets first, fails on none, and runs the loop in the current shell so
+`set -e` applies to its body.
+
+The query also changed from `upsc -l "$server"` — an anonymous `LIST UPS` against the host half of
+the target — to `upsc "$target"`, the full `<ups>@<server>`. Measured against a real `dummy-ups`
+backed server:
+
+| Query | UPS the server serves | UPS it does not |
+| --- | --- | --- |
+| `upsc -l <server>` (old) | `0` | `0` |
+| `upsc <ups>@<server>` (new) | `0` | `1` |
+
+So a rendering bug that put the wrong UPS name in a `MONITOR` line passed the old probe and fails
+the new one.
+
+What is still not covered is the part `F-40` fell into: the `MONITOR` credentials and the TLS
+posture rendered into the same file. `upsc` does not read `upsmon.conf`, so it cannot exercise
+either from here, and no rearrangement of this probe will change that — `F-68`'s `NOTIFYCMD` state
+file remains the NUT-native source for a check that would. `images/upsmon-agent/Dockerfile`'s
+`HEALTHCHECK` was `upsmon -V` and now asks the same question this probe does.
 
 ### NUT mechanisms inert or unused
 
