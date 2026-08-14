@@ -150,8 +150,11 @@ func signalPaths(value, fallback string) []string {
 		}
 		return []string{fallback}
 	}
+	// Not ':' (F-75). A colon is a legal character in a path, and splitting on it fragmented any
+	// such path into pieces that do not exist -- each failing as SignalMissing, the one reason
+	// watchSignals deliberately never logs. The failure was silent by construction.
 	fields := strings.FieldsFunc(value, func(r rune) bool {
-		return r == ',' || r == ':' || r == '\n' || r == '\t' || r == ' '
+		return r == ',' || r == '\n' || r == '\t' || r == ' '
 	})
 	out := make([]string, 0, len(fields))
 	seen := map[string]struct{}{}
@@ -180,7 +183,19 @@ func block(logger *log.Logger, reason string) {
 func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFunc) {
 	ticker := time.NewTicker(config.Interval)
 	defer ticker.Stop()
+	// Seeded from the state file so a container restart cannot re-actuate (F-58). `seen` is
+	// in-memory and the emptyDir holding the signal is pod-scoped, so an actuator that restarted
+	// while a still-fresh signal sat on disk used to act on it a second time. The same volume that
+	// makes readiness able to fail carries the keys across the restart.
 	seen := map[string]struct{}{}
+	if previous, err := readActuatorState(config.StatePath); err == nil {
+		for _, key := range previous.ActuatedKeys {
+			seen[key] = struct{}{}
+		}
+		if len(previous.ActuatedKeys) > 0 {
+			logger.Printf("restored %d already-actuated signal key(s) from %s", len(previous.ActuatedKeys), config.StatePath)
+		}
+	}
 	// Logged on transition only, so a persistently unwritable state volume does not bury the
 	// actuation log under one line per interval.
 	stateWriteFailed := false
@@ -209,6 +224,7 @@ func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFun
 			Policy:               config.Policy,
 			IntervalSeconds:      config.Interval.Seconds(),
 			UnreadableSignalDirs: unreadableSignalDirs(config.SignalPaths),
+			ActuatedKeys:         actuatedKeys(seen),
 		}
 		if err := writeActuatorState(config.StatePath, state); err != nil {
 			if !stateWriteFailed {

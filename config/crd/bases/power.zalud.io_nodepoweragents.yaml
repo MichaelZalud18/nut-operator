@@ -1343,8 +1343,18 @@ spec:
                   hostSync:
                     description: hostSync sets HOSTSYNC.
                     type: string
+                  noCommWarnTime:
+                    description: |-
+                      noCommWarnTime sets NOCOMMWARNTIME: how long upsmon tolerates having no contact with any
+                      monitored UPS before it starts complaining. Defaults to 5m (F-68).
+                    type: string
                   pollFrequency:
                     description: pollFrequency sets POLLFREQ.
+                    type: string
+                  replaceBatteryWarnTime:
+                    description: |-
+                      replaceBatteryWarnTime sets RBWARNTIME: how often upsmon repeats a replace-battery warning.
+                      Defaults to 12h (F-68).
                     type: string
                 type: object
             required:
@@ -1527,6 +1537,19 @@ spec:
                   observed ready agent pod.
                 format: int32
                 type: integer
+              uncoveredNodes:
+                description: |-
+                  uncoveredNodes names nodes the power inventory describes that this agent's spec.nodeSelector
+                  does not match (F-74).
+
+                  Every other count here is computed over nodes the selector already matched, which answers "is
+                  the pod I scheduled healthy" and cannot answer "is there a node I was supposed to cover and
+                  did not". A node the inventory considers in scope but the selector excludes is not degraded
+                  and not unavailable — it is absent from every count, and the agent reports fully ready.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
             type: object
         required:
         - spec

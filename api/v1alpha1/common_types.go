@@ -156,6 +156,13 @@ type ServiceEndpointStatus struct {
 	// +optional
 	DNSName string `json:"dnsName,omitempty"`
 
+	// clusterIP is the Service's allocated cluster IP, published so consumers can address the
+	// Service without cluster DNS. CoreDNS is an ordinary workload inside a shutdown flow's own
+	// path, and a name that stops resolving mid-flow takes every agent's reconnect with it (F-71).
+	// Empty for a headless Service or before allocation.
+	// +optional
+	ClusterIP string `json:"clusterIP,omitempty"`
+
 	// port is the service port.
 	// +optional
 	Port int32 `json:"port,omitempty"`

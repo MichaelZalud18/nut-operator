@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -31,6 +32,42 @@ type actuatorState struct {
 	// pass. A missing signal *file* is the normal case and is not recorded here; a missing
 	// directory means the volume never arrived.
 	UnreadableSignalDirs []string `json:"unreadableSignalDirs,omitempty"`
+	// ActuatedKeys are the signal keys this actuator has already acted on (F-58). Kept here rather
+	// than only in memory because the map and the signal file have different lifetimes: `seen` dies
+	// with the container, the emptyDir holding the signal lives as long as the pod, so a restart
+	// used to find a still-fresh signal it had already acted on and act again.
+	//
+	// Bounded by pruneActuatedKeys, because the key includes the signal timestamp and would
+	// otherwise gain an entry per distinct signal for the pod's whole life (F-75).
+	ActuatedKeys []string `json:"actuatedKeys,omitempty"`
+}
+
+// maxActuatedKeys bounds the retained history.
+//
+// Large enough that no realistic flow re-actuates something it already handled -- a node receives
+// one signal per execution, and an execution is a rare event -- and small enough that the file stays
+// a small write on every tick.
+const maxActuatedKeys = 64
+
+// actuatedKeys renders the seen set deterministically and bounded.
+func actuatedKeys(seen map[string]struct{}) []string {
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return pruneActuatedKeys(keys)
+}
+
+// pruneActuatedKeys keeps the newest keys when the set outgrows its bound.
+//
+// Signal keys carry the timestamp they were issued with, so lexical order is chronological for the
+// RFC3339 stamps InspectSignal validates, and dropping from the front drops the oldest.
+func pruneActuatedKeys(keys []string) []string {
+	if len(keys) <= maxActuatedKeys {
+		return keys
+	}
+	return keys[len(keys)-maxActuatedKeys:]
 }
 
 // writeActuatorState records a completed watch-loop pass.

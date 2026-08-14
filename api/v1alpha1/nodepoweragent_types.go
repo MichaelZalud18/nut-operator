@@ -104,6 +104,17 @@ type NodePowerAgentStatus struct {
 	// +optional
 	UnavailableNodeCount int32 `json:"unavailableNodeCount,omitempty"`
 
+	// uncoveredNodes names nodes the power inventory describes that this agent's spec.nodeSelector
+	// does not match (F-74).
+	//
+	// Every other count here is computed over nodes the selector already matched, which answers "is
+	// the pod I scheduled healthy" and cannot answer "is there a node I was supposed to cover and
+	// did not". A node the inventory considers in scope but the selector excludes is not degraded
+	// and not unavailable — it is absent from every count, and the agent reports fully ready.
+	// +optional
+	// +listType=atomic
+	UncoveredNodes []string `json:"uncoveredNodes,omitempty"`
+
 	// nodeStatuses records per-node agent pod coverage observed from Kubernetes pod readiness.
 	// It is the Kubernetes-native node-agent heartbeat used by shutdown execution safety gates.
 	// +listType=map
@@ -209,6 +220,16 @@ type UpsmonConfigSpec struct {
 	// finalDelay sets FINALDELAY.
 	// +optional
 	FinalDelay *metav1.Duration `json:"finalDelay,omitempty"`
+
+	// noCommWarnTime sets NOCOMMWARNTIME: how long upsmon tolerates having no contact with any
+	// monitored UPS before it starts complaining. Defaults to 5m (F-68).
+	// +optional
+	NoCommWarnTime *metav1.Duration `json:"noCommWarnTime,omitempty"`
+
+	// replaceBatteryWarnTime sets RBWARNTIME: how often upsmon repeats a replace-battery warning.
+	// Defaults to 12h (F-68).
+	// +optional
+	ReplaceBatteryWarnTime *metav1.Duration `json:"replaceBatteryWarnTime,omitempty"`
 }
 
 // ActuatorPolicy controls the host-action actuator container.

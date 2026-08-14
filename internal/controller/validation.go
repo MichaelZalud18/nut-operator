@@ -24,6 +24,8 @@ import (
 	"sort"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
@@ -255,6 +257,21 @@ func validateNUTServer(obj *powerv1alpha1.NUTServer) validationResult {
 func validateNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) validationResult {
 	if len(obj.Spec.NUTServerRefs) == 0 {
 		return rejected("NUTServerRefsRequired", "spec.nutServerRefs requires at least one NUTServer reference")
+	}
+	// F-73: PullPolicy Always makes the agent unable to start at the moment it is needed.
+	//
+	// The hazard is specific to this operand. The images may live in a registry running inside the
+	// cluster being shut down, so Always turns the one workload that must survive a power event into
+	// one that cannot start without the thing the power event is taking away. IfNotPresent is the
+	// default and the only safe value here; the image is pinned by tag or digest either way.
+	for name, image := range map[string]powerv1alpha1.ImageReference{
+		"upsmon":   obj.Spec.Images.Upsmon,
+		"actuator": obj.Spec.Images.Actuator,
+	} {
+		if image.PullPolicy == corev1.PullAlways {
+			return rejected("AgentImagePullPolicyAlways",
+				"spec.images.%s.pullPolicy cannot be Always: the agent may need to start while the registry serving its image is itself being shut down", name)
+		}
 	}
 	if obj.Spec.Mode == powerv1alpha1.NodePowerAgentModeActuate &&
 		obj.Spec.Shutdown.ActuatorPolicy == powerv1alpha1.ActuatorPolicySystemdPoweroff {

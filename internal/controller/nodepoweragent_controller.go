@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -64,7 +65,7 @@ type NodePowerAgentReconciler struct {
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
-// +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers;upsdevices;powermanagementclusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers;upsdevices;powermanagementclusters;powerinventorynodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps;secrets;serviceaccounts,verbs=get;list;watch;create;update;patch
@@ -130,6 +131,7 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			agent.Status.NodeStatuses = rendered.NodeStatuses
 			agent.Status.ConfigHash = rendered.ConfigHash
 			agent.Status.ManagedResources = rendered.ManagedResources
+			agent.Status.UncoveredNodes = rendered.UncoveredNodes
 			setAcceptedCondition(&agent.Status.Conditions, agent.Generation, result)
 			ready := rendered.NumberReady >= rendered.DesiredNumberScheduled && rendered.UnavailableNodeCount == 0
 			reason := "AwaitingDaemonSet"
@@ -159,13 +161,24 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			// admission, and the only place that shows is a kubelet event on a pod that does not
 			// exist. Naming the exception here is the difference between a five-minute fix and an
 			// afternoon.
+			// F-74: a node the inventory describes and this agent does not select is not
+			// unavailable and not degraded by any other measure -- it is simply absent, and the
+			// agent reports ready over a fleet it partly covers. Ranked below admission rejection,
+			// which stops the agent existing at all, and above a TLS downgrade, which still
+			// monitors.
+			if rendered.PodSecurityConflict == "" && len(rendered.UncoveredNodes) > 0 {
+				degradedReason = "InventoryNodesUncovered"
+				degradedMessage = fmt.Sprintf("spec.nodeSelector does not match %d node(s) the power inventory describes: %s",
+					len(rendered.UncoveredNodes), strings.Join(rendered.UncoveredNodes, ", "))
+			}
 			if rendered.PodSecurityConflict != "" {
 				degradedReason = "PodSecurityRejectsActuation"
 				degradedMessage = rendered.PodSecurityConflict
 			}
 			degraded := rendered.UnavailableNodeCount > 0 ||
 				rendered.TLSDowngradeReason != "" ||
-				rendered.PodSecurityConflict != ""
+				rendered.PodSecurityConflict != "" ||
+				len(rendered.UncoveredNodes) > 0
 			setDegradedCondition(&agent.Status.Conditions, agent.Generation, degraded, degradedReason, degradedMessage)
 		}
 	} else {
@@ -261,9 +274,35 @@ func (r *NodePowerAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.DaemonSet{}).
 		Owns(&corev1.ConfigMap{}).
 		WatchesRawSource(podSource).
+		// F-74's coverage check is computed against the inventory, so it has to be recomputed when
+		// the inventory changes and not only when the agent does. Without this the check answered
+		// correctly and answered late: adding a PowerInventoryNode the selector misses left every
+		// agent reporting Ready until something unrelated happened to trigger a reconcile.
+		Watches(&powerv1alpha1.PowerInventoryNode{}, handler.EnqueueRequestsFromMapFunc(r.nodePowerAgentRequestsForInventory)).
 		Owns(&corev1.Secret{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Named("nodepoweragent").
 		Complete(r)
+}
+
+// nodePowerAgentRequestsForInventory enqueues every agent when the power inventory changes.
+//
+// Coverage is a property of the inventory and the agent's selector together (F-74), so either side
+// changing can turn a covered fleet into a partly covered one. There is no cheap way to know which
+// agents a given inventory node affects -- the answer depends on each agent's selector -- and the
+// number of NodePowerAgents in a cluster is small, so all of them are re-evaluated.
+func (r *NodePowerAgentReconciler) nodePowerAgentRequestsForInventory(ctx context.Context, _ client.Object) []reconcile.Request {
+	var agents powerv1alpha1.NodePowerAgentList
+	if err := r.List(ctx, &agents); err != nil {
+		logf.FromContext(ctx).Error(err, "failed to list NodePowerAgent resources for inventory coverage re-evaluation")
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(agents.Items))
+	for i := range agents.Items {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: agents.Items[i].Name},
+		})
+	}
+	return requests
 }

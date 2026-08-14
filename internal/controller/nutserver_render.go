@@ -240,6 +240,9 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 				Name:      service.Name,
 				Namespace: namespace,
 				DNSName:   fmt.Sprintf("%s.%s.svc.cluster.local", service.Name, namespace),
+				// Published so agents can monitor the server without cluster DNS (F-71). Empty
+				// for a headless Service and before allocation, which is why the DNS name stays.
+				ClusterIP: serviceClusterIP(service),
 				Port:      servicePort(server),
 			},
 		},
@@ -1564,4 +1567,15 @@ func hashByteMap(data map[string][]byte) string {
 		hasher.Write([]byte{0})
 	}
 	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// serviceClusterIP returns the Service's allocated cluster IP, if it has a usable one.
+//
+// "None" is what a headless Service reports, and it is not an address. Returning it would render a
+// MONITOR line pointing at a literal "None" that fails every connection with no obvious cause.
+func serviceClusterIP(service *corev1.Service) string {
+	if service == nil || service.Spec.ClusterIP == corev1.ClusterIPNone {
+		return ""
+	}
+	return service.Spec.ClusterIP
 }

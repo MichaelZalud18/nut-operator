@@ -805,6 +805,11 @@ func (in *NodePowerAgentStatus) DeepCopyInto(out *NodePowerAgentStatus) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.UncoveredNodes != nil {
+		in, out := &in.UncoveredNodes, &out.UncoveredNodes
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.NodeStatuses != nil {
 		in, out := &in.NodeStatuses, &out.NodeStatuses
 		*out = make([]NodePowerAgentNodeStatus, len(*in))
@@ -3211,6 +3216,16 @@ func (in *UpsmonConfigSpec) DeepCopyInto(out *UpsmonConfigSpec) {
 	}
 	if in.FinalDelay != nil {
 		in, out := &in.FinalDelay, &out.FinalDelay
+		*out = new(metav1.Duration)
+		**out = **in
+	}
+	if in.NoCommWarnTime != nil {
+		in, out := &in.NoCommWarnTime, &out.NoCommWarnTime
+		*out = new(metav1.Duration)
+		**out = **in
+	}
+	if in.ReplaceBatteryWarnTime != nil {
+		in, out := &in.ReplaceBatteryWarnTime, &out.ReplaceBatteryWarnTime
 		*out = new(metav1.Duration)
 		**out = **in
 	}

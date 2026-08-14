@@ -60,6 +60,12 @@ func runProbeScript(t *testing.T, upsmonConf string, upscExit int) error {
 	if err := os.WriteFile(filepath.Join(binDir, "upsc"), []byte(stub), 0o755); err != nil {
 		t.Fatalf("write upsc stub: %v", err)
 	}
+	// The probe's third step asks upsmon's own notification record whether it still has a session
+	// (F-65). Stubbed to pass so these cases stay about the upsc half; the check itself is covered
+	// in cmd/power-notify-writer.
+	if err := os.WriteFile(filepath.Join(binDir, "power-notify-writer"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write power-notify-writer stub: %v", err)
+	}
 
 	script := upsmonReadinessProbe().Exec.Command[2]
 	// The rendered script hard-codes the container's absolute config path; point it at the fixture.

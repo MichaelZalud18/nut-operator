@@ -322,6 +322,12 @@ that one is a two-word change and is not a fix by itself.
 container restart that the map does not. An actuator that restarts while a signal is still inside
 its TTL re-reads it, finds `seen` empty, and actuates again.
 
+*Resolved 2026-08-14.* The actuated keys are written to the actuator's own state volume — the one
+`F-64` added — and read back when the watch loop starts, so a container restart no longer re-actuates
+a signal that is still inside its TTL. Bounded at 64 keys, which also closes `F-75`'s unbounded-`seen`
+item: the key carries the signal timestamp, so lexical order is chronological and the oldest are
+dropped first.
+
 Nothing persists an actuated-signal record, and nothing in the executor retracts a Secret key after
 a node goes down. This is a shutdown-side obligation, not a recovery concern — `OD-1` does not cover
 it.
@@ -351,6 +357,17 @@ the node disappearing.
 its channel is a design decision, not a TODO. Note while deciding: the agent ServiceAccount is
 created with no Role or RoleBinding, so flipping automount on for a heartbeat grants whatever is
 bound at that time to **both** containers, including the one holding `CAP_SYS_BOOT`.
+
+*Accepted as designed, 2026-08-14, on the owner's call.* The pod already contains a container that
+can report: `upsmon` speaks to the NUT server, is not fail-closed, and — since `F-68` — records its
+own events to a file the readiness probe reads. The actuator's silence is the point of the
+two-component split (`SB-3`, `SB-4`): it holds `CAP_SYS_BOOT`, no ServiceAccount token, and no
+policy authority, and giving it a reporting channel means giving it credentials.
+
+So the boundary stays one-way. What the original finding got right is that success is still inferred
+from the node disappearing, and that remains true — but the inference is sound for the only action
+the actuator takes, and `F-63` now records the one case where it is not (a `reboot(2)` that returns
+success without halting the host, which `hostPID` prevents).
 
 ### Privilege model
 
@@ -801,11 +818,42 @@ masked at runtime.
 The cost is `-c reload`, `-c fsd`, and `-K` together: all three signal a running process located
 through its PID file, and there is no PID file.
 
+*Partly withdrawn and partly resolved, 2026-08-14 — the PID-file half of this finding was a harness
+artifact.* It was verified by running the image with `docker run`, where `/run` is an ordinary image
+directory. In the rendered pod `/run` is the `upsmon-run` `emptyDir`, so it is writable, and upsmon
+writes its PID file there:
+
+```console
+$ find / -name '*.pid'
+/run/upsmon.pid
+$ upsmon -c reload; echo "exit=$?"
+Exiting upsmon instance after sending a signal to the running daemon successfully
+exit=0
+# and in the upsmon log:
+Signal 1: User requested RELOAD
+Reloading configuration
+```
+
+So `-c reload`, `-c fsd`, and `-K` were never broken in a deployed agent — the cost this finding
+records was never paid. The file is at `/run/upsmon.pid` rather than under the configured
+`--with-altpidpath=/run/nut`, which is why looking for it there found nothing. A `/run/nut` mount was
+added while chasing this and then removed: it stayed empty, and an unused mount that looks like it
+does something is worse than no mount.
+
+What remains is `POWERDOWNFLAG`, and it is inert by design rather than broken. It points into the
+pod-scoped `emptyDir`, so it does not survive the reboot it exists to communicate across, and nothing
+runs `upsmon -K`. Both are correct here: `-K` belongs to a host init script deciding whether to tell
+the UPS to cut power on the next boot, and this operator does not own the host's init. The operand's
+equivalent is the signal file and the actuator. It is left rendered because upsmon expects the
+directive, and recorded here as vestigial so the next reader does not go looking for its consumer.
+
 **F-67 · `Args: ["-D"]` should be `-F`.** `nodepoweragent_render.go:811`. **Verified from
 `upsmon -h` on the built image:** `-D` is "raise debugging level (and stay foreground by default)"
 while `-F` is "stay foregrounded even if no debugging is enabled". Foregrounding is a side effect of
 the debug flag, so the agent runs at debug level permanently on every node. `upsmon` has no `-FF`
 and does not need one — unlike `upsd` it has no PID-file-on-foreground variant to select.
+
+*Resolved 2026-08-14.* `Args: ["-F"]`, verified on the rendered pod.
 
 **F-68 · The whole notification surface is unused.** A search of the render path for `NOTIFYFLAG`,
 `NOTIFYCMD`, `NOTIFYMSG`, `RBWARNTIME`, `NOCOMMWARNTIME`, and `SHUTDOWNEXIT` returns nothing;
@@ -821,6 +869,19 @@ which is absent from the operand image — the run logged `Warning: no custom no
 defined` followed by `sh: wall: not found`. The notifications are not merely unused; they currently
 fail.
 
+*Resolved 2026-08-14.* `NOTIFYCMD` dispatches to `power-notify-writer`, a new binary in the agent
+image that appends each event to a JSON file and interprets nothing. `NOTIFYFLAG` is `SYSLOG+EXEC`
+for the nine events worth recording, and `NOCOMMWARNTIME` / `RBWARNTIME` are rendered from new spec
+fields.
+
+This is what closed `F-65`'s remaining half. `power-notify-writer --check` fails when upsmon's most
+recent word on a UPS was `COMMBAD` or `NOCOMM`, and the readiness probe runs it as its third step —
+so readiness now depends on upsmon's own session, which is the one thing `upsc` cannot reach.
+Deliberately excluded: `ONBATT` and `LOWBATT`, because a node on battery has a working session with
+a UPS telling it something important, and failing readiness there would pull the agent out of
+service at the moment it matters. Silence passes too — an agent that has dispatched no event has
+nothing to report, and treating that as unhealthy would fail every rollout.
+
 **F-69 · `subPath` mounts do not receive updates.** `nut-client-config` and `upsmon-config` are both
 mounted with `SubPath` (`nodepoweragent_render.go:818-819`), as is the server-CA source on the init
 container (`:849-855`).
@@ -831,6 +892,21 @@ ConfigMap or Secret updates.
 If that holds, the config-hash rolling restart (`:743-745`) is not merely the chosen path but the
 only one that works, and adding `upsmon -c reload` requires converting to directory mounts first —
 on top of `F-66`'s missing PID file, without which the reload cannot be signaled at all.
+
+*Resolved 2026-08-14.* The two `subPath` mounts are replaced by one projected volume carrying both
+files, mounted as a directory at `/etc/nut`. upsmon reads its config from a compiled-in sysconfdir
+and has no flag to point it elsewhere — `-c` takes a command, not a path — so the files have to
+arrive under their real names at that path, which is what a projected volume with two sources
+achieves through a single mount that does propagate updates.
+
+Masking `/etc/nut` costs nothing: the image ships only `*.sample` files there. The TLS CApath moved
+from `/etc/nut/tls/server-ca.d` to `/var/lib/nut-tls/server-ca.d` so the projection cannot shadow it,
+and the init container reads the CA bundle through its own Secret mount rather than out of the
+agent's `/etc/nut`, which now deliberately carries only `upsmon.conf` and `nut.conf`.
+
+With `F-66`'s PID file turning out to have been present all along, `upsmon -c reload` is now
+reachable end to end. Nothing uses it yet — the config-hash rolling restart is still what runs — but
+it is a choice again rather than the only option.
 
 ### Event-time coupling
 
@@ -845,6 +921,13 @@ delivery at **~44 seconds**. Nothing connects the two numbers, and kubelet sync 
 can push the worst case toward the bound. TTL and the Urgent tier's budget should both derive from
 the delivery bound rather than sit next to it as independent constants.
 
+*Resolved 2026-08-14.* The webhook rejects a `signalTTL` below `minimumSignalTTL` (90s), which is the
+measured ~44s delivery plus room for kubelet's sync period. The point is not strictness: a TTL under
+the delivery bound does not make the system safer, it makes every correctly delivered signal arrive
+already expired, rejected as `SignalStale` on every node at once, evidenced only by a container log
+line. The constant carries the measurement it derives from so the next person to change it has to
+argue with the number rather than guess.
+
 **F-71 · `MONITOR` targets and the readiness probe both depend on cluster DNS.**
 `nodepoweragent_render.go:514` builds every monitor target as
 `fmt.Sprintf("%s.%s.svc.cluster.local", server.Name, namespace)`, and the readiness probe
@@ -856,6 +939,19 @@ reconnect capability and flips NotReady together, and the probe cannot distingui
 server being down. Rendering the Service ClusterIP or adding `hostAliases` removes the dependency;
 either way DNS needs an explicit tier position.
 
+*Resolved 2026-08-14.* `NUTServer` publishes its Service's `clusterIP` in `status.serviceEndpoints`,
+and the agent renders that in preference to the DNS name. Verified on `kind`:
+
+```console
+$ awk '/^MONITOR/ {print $2}' /etc/nut/upsmon.conf
+ds-ups@10.96.19.168
+```
+
+The DNS name stays as the fallback rather than being removed: a server that has not yet published an
+endpoint still has to be addressable, and a name that resolves later beats no target at all. A
+headless Service reports `None`, which is not an address, so it is filtered out rather than rendered
+into a `MONITOR` line that fails every connection for no visible reason.
+
 **F-72 · Rollout shape leaves nodes unmonitored and is not suppressed during a flow.**
 `nodepoweragent_render.go:736-741` sets `RollingUpdate` with `MaxUnavailable: 1`, no `MaxSurge`, and
 no `MinReadySeconds`. Every rollout therefore leaves one node with no agent for a full
@@ -864,6 +960,11 @@ pull-and-start window.
 `maxSurge: 1, maxUnavailable: 0` is the better shape for a workload whose absence is the failure, and
 nothing blocks it: a search of the render path for `HostPort` and `HostNetwork` returns nothing, so
 no port conflict prevents two agent pods coexisting on a node during the swap.
+
+*Resolved 2026-08-14.* `maxSurge: 1, maxUnavailable: 0`, confirmed on the rendered DaemonSet. The
+rollout-suppression half is not done and is not a shape change: nothing prevents a rollout starting
+mid-flow, and deciding what does — a paused DaemonSet, an admission guard, a flow-active condition —
+is a design question rather than a field to set.
 
 Separately, a search for rollout suppression — a paused DaemonSet, a flow-active guard — returns
 nothing. Nothing prevents a rollout starting while a `ShutdownFlow` is executing.
@@ -876,6 +977,12 @@ the right default. Nothing rejects a user-supplied `Always`, and `ImageReference
 The hazard is specific to this operand: the images may live in a registry running inside the cluster
 being shut down, so `Always` turns the agent into a workload that cannot start at exactly the moment
 it is needed.
+
+*Resolved 2026-08-14.* `validateNodePowerAgent` rejects `pullPolicy: Always` on either agent image
+with `AgentImagePullPolicyAlways`. Rejected rather than defaulted-over, because silently rewriting a
+value the user set is how the setting comes back in a later manifest with nobody noticing. The digest
+half of the finding is left as it is: `ImageReference` accepts a digest and does not require one,
+which is a supply-chain preference rather than the availability hazard this finding is about.
 
 ### Coverage
 
@@ -897,6 +1004,16 @@ count, and the agent reports fully ready.
 
 That is the inverse of readiness and the check that catches placement mistakes: not "is the pod I
 scheduled healthy" but "is there a node I was supposed to cover and did not".
+
+*Resolved 2026-08-14.* `status.uncoveredNodes` names every `PowerInventoryNode` whose `nodeName` this
+agent's selector does not match, and the agent reports `Degraded` with reason
+`InventoryNodesUncovered`. Nodes marked `powerPlanningExempt` are excluded — the inventory has
+already said they are outside the planning model, and reporting them would train the reader to ignore
+the field.
+
+Ranked below `F-62`'s admission rejection, which stops the agent existing at all, and above a TLS
+downgrade, which still monitors. It is the only signal in the agent computed against something other
+than its own selector, which is precisely why it can catch a selector that is wrong.
 
 ### Naming and hygiene
 
@@ -925,6 +1042,16 @@ Three smaller items to fold in while there, all in the same two files:
 - `seen` (`cmd/node-actuator/main.go:148`) is keyed on `SignalKey`, which includes the timestamp
   (`internal/nodeagent/signal.go:92-94`), so it gains an entry per distinct signal and never loses
   one over the pod's lifetime.
+
+*Partly resolved 2026-08-14.* Two of the three smaller items are fixed. `signalPaths` no longer
+splits on `:`, which is a legal path character and fragmented any such path into pieces that failed
+as `SignalMissing` — the one reason the watcher deliberately never logs, so the failure was silent
+by construction. `seen` is now bounded at 64 keys and persisted, which `F-58` needed anyway.
+
+The rename itself is not done, and neither is the duplicate `POWER_SIGNAL_PATH` /
+`POWER_SIGNAL_PATHS` pair. Both change the CRD's published enum or the container contract, so they
+belong with a deliberate alpha API revision rather than folded into a fix pass — renaming the enum
+value silently breaks every existing CR that sets it.
 
 ## Not findings — 2026-08-12 privilege-model reading
 

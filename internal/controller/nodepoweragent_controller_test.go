@@ -298,7 +298,12 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(*daemonSet.Spec.Template.Spec.AutomountServiceAccountToken).To(BeFalse())
 			Expect(daemonSet.Spec.UpdateStrategy.Type).To(Equal(appsv1.RollingUpdateDaemonSetStrategyType))
 			Expect(daemonSet.Spec.UpdateStrategy.RollingUpdate).NotTo(BeNil())
-			Expect(daemonSet.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable.IntVal).To(Equal(int32(1)))
+			// F-72: surge rather than go unavailable. maxUnavailable: 1 left a node with no agent
+			// for a full pull-and-start window on every rollout, on the workload whose absence is
+			// the failure it exists to prevent.
+			Expect(daemonSet.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable.IntVal).To(Equal(int32(0)))
+			Expect(daemonSet.Spec.UpdateStrategy.RollingUpdate.MaxSurge).NotTo(BeNil())
+			Expect(daemonSet.Spec.UpdateStrategy.RollingUpdate.MaxSurge.IntVal).To(Equal(int32(1)))
 			Expect(daemonSet.Spec.Template.Spec.HostPID).To(BeFalse())
 			Expect(daemonSet.Spec.Template.Spec.PriorityClassName).To(Equal("system-node-critical"))
 			Expect(*daemonSet.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(60)))

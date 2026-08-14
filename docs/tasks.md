@@ -212,7 +212,8 @@ the actuating pod is reported on the agent's `Degraded` condition rather than re
 containers' readiness probes can fail: the actuator's reflects its watch loop, and `upsmon`'s
 queries every `<ups>@<server>` it monitors instead of anonymously listing the host.
 
-Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-61`–`F-64`.
+Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-58`, `F-60`, `F-61`–`F-65`, `F-67`–`F-71`,
+`F-73`, `F-74`.
 
 #### Open Work
 
@@ -233,110 +234,48 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-61`–`F-64`.
   statement of what ordering guarantee is surrendered when it fires — or it is a bypass and should
   be bound to prior authorization per `F-57`. Leaving it undeclared is what makes `F-54` a surprise.
 
-- **`F-55` · `PlanConfigHash`, `ExecutionID`, and `ShutdownFlow` are validated for presence, never
-  for value.** `InspectSignal` checks non-empty and stops. The actuator container's env carries only
-  `POWER_AGENT_MODE`, `POWER_ACTUATOR_POLICY`, `POWER_NODE_NAME`, `POWER_SIGNAL_PATH`,
-  `POWER_SIGNAL_PATHS`, and `POWER_SIGNAL_TTL` — `POWER_PLAN_CONFIG_HASH` and `POWER_SHUTDOWN_FLOW`
-  go to the `upsmon` container only, so the check cannot be written without a render change.
-  `resiliency-and-partitions.md` calls signals plan-hash-bound and execution-bound; at the
-  enforcement point they are neither. Same class as `F-25`/`F-33`/`F-37`.
+- **`F-55` · Signal fields are validated for presence, never for value.** `PlanConfigHash`,
+  `ExecutionID`, and `ShutdownFlow` are checked non-empty and no further, and the actuator's env
+  does not carry the values needed to check them, so the fix needs a render change. Blocked on
+  `F-54`/`OD-37`.
 
 - **`F-56` · `DryRun` looks like authorization and carries no independent information.** The writer
-  sets it from `POWER_AGENT_MODE`; the actuator gates on it; the same render injects that env var
-  into both containers. The actuator is reading its own configuration back out of a file. Whatever
-  replaces it has to originate outside the pod.
+  sets it from `POWER_AGENT_MODE` and the actuator gates on it, so the actuator is reading its own
+  configuration back out of a file. Whatever replaces it must originate outside the pod. Blocked on
+  `F-54`/`OD-37`.
 
 - **`F-57` · The trust boundary between the two containers is a shared writable tmpfs.**
   `power-agent-run` is read-write in both, and `signalPaths` evaluates it before the API-gated
-  projected Secret, so the network-facing container can halt the host by writing one file. Three
-  structurally different fixes, to be picked deliberately; mount the actuator's copy `ReadOnly`
-  regardless. Blocked on `F-54`/`OD-37` ([node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md)).
-
-- **`F-58` · A signal can actuate twice.** `seen` is an in-memory map in `watchSignals`; `emptyDir`
-  is pod-scoped, not container-scoped. An actuator restart clears the map while the file survives, so
-  a still-fresh signal actuates again. Nothing persists an actuated-key record, and nothing obliges
-  the executor to retract its Secret key after a node goes down. Shutdown-side obligation, not a
-  recovery concern — `OD-1` does not cover it.
+  projected Secret, so the network-facing container can halt the host by writing one file. Mount the
+  actuator's copy `ReadOnly` regardless. Blocked on `F-54`/`OD-37`.
 
 - **`F-59` · TTL spans two clocks with no stated assumption.** The executor stamps `Timestamp`; the
-  actuator compares against the node clock, tolerating ±`SignalTTL` in each direction. Inside that
-  window real skew is invisible; past it every operator-issued signal is rejected fleet-wide as
-  `SignalStale` or `SignalFromFuture`, evidenced only by a container log line. Needs a stated NTP
-  assumption plus a condition or metric for "this node rejects what I send it".
-
-- **`F-60` · The boundary is one-way — the actuator cannot report anything.** No receipt, metric,
-  or event, and `AutomountServiceAccountToken: false` at both levels means no channel exists, so the
-  executor infers success from the node disappearing. Choosing the channel is a design decision, not
-  a TODO — and note that the agent's ServiceAccount has no Role bound, so enabling automount grants
-  whatever is bound then to both containers ([node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md)).
+  actuator compares against the node clock. Past the window every operator-issued signal is rejected
+  fleet-wide, evidenced only by a container log line. Needs a stated NTP assumption plus a condition
+  or metric for "this node rejects what I send it".
 
 ##### Checks that cannot fail
 
-- **`F-65` · The `upsmon` readiness probe still cannot see credentials or TLS.** The vacuous-pass
-  and wrong-UPS halves are fixed; `upsc` does not read `upsmon.conf`, so no rearrangement of this
-  probe reaches the `MONITOR` credentials or the TLS posture — the gap `F-40` fell into. Blocked on
-  `F-68`'s `NOTIFYCMD` state file, which is the NUT-native source for a check that would.
+- **`F-68` remainder · nothing consumes the recorded notifications beyond readiness.** The events are
+  written and read by `power-notify-writer --check`; publishing them upward is `F-60`'s channel
+  question, which is closed as designed.
 
-- **`F-66` · `POWERDOWNFLAG` is written and structurally unreadable, and the PID file is never
-  written.** The flag points into `/run/power-agent`, an `emptyDir` that dies with the pod, and
-  nothing ever runs `upsmon -K`. Separately the agent image never creates `/run/nut`
-  (`--with-altpidpath=/run/nut`) and the DaemonSet mounts an `emptyDir` over `/run` anyway; `upsmon`
-  writes its PID file unconditionally, unlike `upsd`, so this is a silent `writepid` failure that
-  costs `-c reload`, `-c fsd`, and `-K` together.
+##### NUT mechanisms inert or unused
 
-- **`F-67` · `Args: ["-D"]` should be `-F`.** `-D` raises the debugging level and foregrounds as a
-  side effect, so the agent runs at debug level permanently. `upsmon` has no `-FF` and does not need
-  one.
-
-- **`F-68` · The whole notification surface is unused.** `NOTIFYFLAG`, `NOTIFYCMD`, `NOTIFYMSG`,
-  `RBWARNTIME`, `NOCOMMWARNTIME`, `SHUTDOWNEXIT`. This is the NUT-native way for a node to publish
-  its own events, and `COMMOK`/`COMMBAD`/`NOCOMM` via `EXEC` into a state file is the fix `F-65`
-  needs.
-
-- **`F-69` · `subPath` mounts do not receive updates.** `upsmon-config` and `nut-client-config` are
-  both mounted with `SubPath`, so Kubernetes never propagates Secret or ConfigMap changes into them.
-  The config-hash rolling restart is therefore not merely the chosen path, it is the only one that
-  works — adding `upsmon -c reload` requires directory mounts first, on top of `F-66`'s PID file.
+- **`F-66` remainder · `POWERDOWNFLAG` is rendered and vestigial.** Recorded as inert by design; drop
+  it or leave it, but do not go looking for a consumer
+  ([node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md)).
 
 ##### Event-time coupling
 
-- **`F-70` · Signal TTL is set beside the delivery bound rather than derived from it.** TTL defaults
-  to 2m; measured projected-Secret delivery was ~44s, and kubelet sync period plus cache TTL can push
-  worst case toward or past that. Derive TTL and the Urgent tier's budget from the delivery bound.
-
-- **`F-71` · `MONITOR` targets and the readiness probe both depend on cluster DNS.** Both use
-  `<name>.<ns>.svc.cluster.local`, and CoreDNS is an ordinary workload inside the flow's path — when
-  it goes, every agent loses reconnect capability and flips NotReady together. Render the Service
-  ClusterIP or add `hostAliases`; either way DNS needs an explicit tier position.
-
-- **`F-72` · Rollout shape leaves nodes unmonitored and is not suppressed during a flow.**
-  `maxUnavailable: 1` with no `maxSurge` and no `minReadySeconds` means every rollout leaves one node
-  uncovered for a full pull-and-start window. `maxSurge: 1, maxUnavailable: 0` is the better shape —
-  no hostPort or hostNetwork blocks it — and nothing currently prevents a rollout while a flow is
-  active.
-
-- **`F-73` · Agent image residency is unguarded.** `IfNotPresent` is the right default and nothing
-  prevents a user setting `Always`, while the images may live in a registry inside the cluster being
-  shut down. `ImageReference` supports digests and does not require them.
-
-##### Coverage
-
-- **`F-74` · Coverage is measured against the agent's own selector, not against the inventory.**
-  Narrowed from its original framing while writing up the audit: an untolerated taint *is* already
-  detected, as `AgentPodMissing` on a selected node. The gap is the frame of reference — every count
-  is computed over nodes `spec.nodeSelector` already matched, so a node the inventory considers in
-  scope but the selector excludes is absent from every count and the agent reports fully ready. The
-  inverse of readiness, and the check that catches placement mistakes.
+- **`F-72` remainder · nothing suppresses a rollout during a flow.** The shape is fixed; the guard is
+  a design question — a paused DaemonSet, an admission check, or a flow-active condition.
 
 ##### Naming and hygiene
 
-- **`F-75` · `policySystemdPoweroff = "SystemdPoweroff"` is the enum a user sets to enable real
-  actuation, and since `F-36` it performs `reboot(2)` and never touches systemd.** Reviewers asking
-  what privileges the container needs are told dbus and host PID when the answer is `CAP_SYS_BOOT`.
-  Rename with the CRD enum. Fold in while there: `signalPaths` splits on `:` as well as `,`, so any
-  path containing a colon fragments into nonexistent paths and fails as `SignalMissing`, the one
-  reason the watcher deliberately does not log; `POWER_SIGNAL_PATH` and `POWER_SIGNAL_PATHS` are both
-  rendered with overlapping content; and `seen` grows unbounded over the pod's life.
+- **`F-75` remainder · rename `SystemdPoweroff`, and drop the duplicate signal-path env pair.** Both
+  change the published CRD enum or the container contract, so they belong with a deliberate alpha API
+  revision rather than a fix pass — renaming the enum silently breaks every CR that sets it.
 
 ---
 

@@ -41,6 +41,12 @@ const (
 	nodePowerAgentProjectedSignalDirectory = "/var/lib/power-agent/signals"
 	nodePowerAgentProjectedSignalPath      = nodePowerAgentProjectedSignalDirectory + "/$(POWER_NODE_NAME).json"
 	nodePowerAgentSignalReason             = "upsmon-fsd"
+	// A directory mount rather than subPath, so config updates reach the container (F-69).
+	nodePowerAgentConfigDirectory = "/etc/nut"
+	// nodePowerAgentNotifyWriterPath receives upsmon's NOTIFYCMD dispatches (F-68).
+	nodePowerAgentNotifyWriterPath = "/usr/local/bin/power-notify-writer"
+	// nodePowerAgentNotifyStatePath is where those dispatches land for something else to read.
+	nodePowerAgentNotifyStatePath = "/run/power-agent/notify.json"
 	// nodePowerAgentActuatorStateDirectory is the actuator-only volume holding the record of its
 	// watch loop, which is what makes readiness able to fail (F-64).
 	nodePowerAgentActuatorStateDirectory            = "/run/actuator"
@@ -54,7 +60,8 @@ const (
 	// concatenated CA bundle for every NUTServer this agent monitors.
 	nodePowerAgentServerCAFile = "server-ca.pem"
 	// nodePowerAgentServerCASourcePath is where that bundle is mounted read-only.
-	nodePowerAgentServerCASourcePath = "/etc/nut/" + nodePowerAgentServerCAFile
+	nodePowerAgentServerCASourceDirectory = "/etc/nut-tls-source"
+	nodePowerAgentServerCASourcePath      = nodePowerAgentServerCASourceDirectory + "/" + nodePowerAgentServerCAFile
 	// nodePowerAgentServerCAPath is what upsmon's CERTPATH points at, and it must be a
 	// directory rather than the bundle above.
 	//
@@ -64,7 +71,7 @@ const (
 	// a directory of hash-named certificates, so a file there loads without error and then
 	// fails every verification -- CERTVERIFY plus FORCESSL turns that into a connection
 	// that cannot be established at all (F-40).
-	nodePowerAgentServerCAPath = "/etc/nut/tls/server-ca.d"
+	nodePowerAgentServerCAPath = "/var/lib/nut-tls/server-ca.d"
 )
 
 type renderedNodePowerAgent struct {
@@ -85,6 +92,8 @@ type renderedNodePowerAgent struct {
 	// PodSecurityConflict is set when the operand namespace enforces a Pod Security level that
 	// will reject the actuating agent pod (F-62).
 	PodSecurityConflict string
+	// UncoveredNodes names inventory nodes this agent's selector does not match (F-74).
+	UncoveredNodes []string
 }
 
 type agentMonitorTarget struct {
@@ -257,6 +266,11 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		return renderedNodePowerAgent{}, err
 	}
 
+	uncoveredNodes, err := r.uncoveredInventoryNodes(ctx, selectedNodes)
+	if err != nil {
+		return renderedNodePowerAgent{}, err
+	}
+
 	return renderedNodePowerAgent{
 		Namespace:              namespace,
 		SelectedNodes:          selectedNodes,
@@ -268,6 +282,7 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		ConfigHash:             configHash,
 		TLSDowngradeReason:     tlsPosture.DowngradeReason,
 		PodSecurityConflict:    podSecurityConflict,
+		UncoveredNodes:         uncoveredNodes,
 		ManagedResources: []powerv1alpha1.ManagedResourceStatus{
 			{APIVersion: "v1", Kind: "Namespace", Name: namespace},
 			{APIVersion: "v1", Kind: "ServiceAccount", Namespace: namespace, Name: serviceAccount.Name},
@@ -520,7 +535,23 @@ func (r *NodePowerAgentReconciler) serverCABundle(ctx context.Context, server *p
 	return bundle, nil
 }
 
+// nutServerDNSName is the address agents monitor a server at.
+//
+// The ClusterIP is preferred over the DNS name when the server publishes one (F-71). CoreDNS is an
+// ordinary workload inside the flow's own path: when it goes, every agent resolving
+// <name>.<ns>.svc.cluster.local loses the ability to reconnect and flips NotReady together, and the
+// readiness probe cannot tell that apart from the server being down. A ClusterIP is stable for the
+// life of the Service and needs nothing running to resolve.
+//
+// The DNS name remains the fallback rather than being removed, because a server that has not yet
+// published an endpoint still has to be addressable, and a name that resolves later is better than
+// no target at all.
 func nutServerDNSName(server *powerv1alpha1.NUTServer, namespace string) string {
+	for _, endpoint := range server.Status.ServiceEndpoints {
+		if endpoint.ClusterIP != "" {
+			return endpoint.ClusterIP
+		}
+	}
 	for _, endpoint := range server.Status.ServiceEndpoints {
 		if endpoint.DNSName != "" {
 			return endpoint.DNSName
@@ -545,6 +576,22 @@ func renderNodePowerAgentSecret(agent *powerv1alpha1.NodePowerAgent, targets []a
 	fmt.Fprintf(&out, "DEADTIME %d\n", durationSeconds(agent.Spec.Upsmon.DeadTime, 45))
 	fmt.Fprintf(&out, "POWERDOWNFLAG %s\n", shellQuotedNUTValue(powerdownFlagPath(agent)))
 	fmt.Fprintf(&out, "FINALDELAY %d\n", durationSeconds(agent.Spec.Upsmon.FinalDelay, 10))
+
+	// The notification surface (F-68). Without NOTIFYCMD upsmon does not stay quiet -- it falls back
+	// to `wall`, which the operand image does not ship, so every notification logged
+	// "Warning: no custom notification command defined" followed by "sh: wall: not found". The
+	// notifications were not merely unused; they were failing.
+	//
+	// EXEC rather than SYSLOG on the communication events, because these are the ones something
+	// else needs to read: COMMOK/COMMBAD/NOCOMM are how a node reports whether it still holds a
+	// working session with its server, which is the check F-65's readiness probe cannot make from
+	// upsc alone. The writer records them to a file; nothing here interprets them.
+	fmt.Fprintf(&out, "NOTIFYCMD %s\n", shellQuotedNUTValue(nodePowerAgentNotifyWriterPath))
+	for _, event := range nodePowerAgentNotifyEvents {
+		fmt.Fprintf(&out, "NOTIFYFLAG %s SYSLOG+EXEC\n", event)
+	}
+	fmt.Fprintf(&out, "NOCOMMWARNTIME %d\n", durationSeconds(agent.Spec.Upsmon.NoCommWarnTime, 300))
+	fmt.Fprintf(&out, "RBWARNTIME %d\n", durationSeconds(agent.Spec.Upsmon.ReplaceBatteryWarnTime, 43200))
 
 	for _, target := range targets {
 		serverAddress := target.ServerDNS
@@ -624,6 +671,16 @@ func durationSeconds(duration *metav1.Duration, fallback int64) int64 {
 		return 1
 	}
 	return seconds
+}
+
+// nodePowerAgentNotifyEvents are the upsmon events dispatched through NOTIFYCMD (F-68).
+//
+// The communication events are the load-bearing ones -- they are what say whether this node still
+// holds a working session with its server. The power events are included because a node that saw
+// ONBATT and then went quiet is a different story from one that never saw it, and that distinction
+// is only available if both were recorded.
+var nodePowerAgentNotifyEvents = []string{
+	"ONLINE", "ONBATT", "LOWBATT", "FSD", "COMMOK", "COMMBAD", "NOCOMM", "REPLBATT", "SHUTDOWN",
 }
 
 func powerdownFlagPath(agent *powerv1alpha1.NodePowerAgent) string {
@@ -761,7 +818,12 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 		daemonSet.Spec.UpdateStrategy = appsv1.DaemonSetUpdateStrategy{
 			Type: appsv1.RollingUpdateDaemonSetStrategyType,
 			RollingUpdate: &appsv1.RollingUpdateDaemonSet{
-				MaxUnavailable: ptrIntOrStringFromInt32(1),
+				// Surge rather than go unavailable (F-72). maxUnavailable: 1 left a node with no
+				// agent for a full pull-and-start window on every rollout, and this is a workload
+				// whose absence is the failure it exists to prevent. Nothing blocks two agent pods
+				// briefly coexisting: the pod declares no hostPort and no hostNetwork.
+				MaxUnavailable: ptrIntOrStringFromInt32(0),
+				MaxSurge:       ptrIntOrStringFromInt32(1),
 			},
 		}
 		daemonSet.Spec.Template.Labels = labels
@@ -787,20 +849,40 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 		}
 		daemonSet.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
-				Name: "nut-client-config",
+				// One projected volume rather than two subPath mounts (F-69).
+				//
+				// A subPath mount is resolved once at container start and never receives ConfigMap
+				// or Secret updates, which is why the config-hash rolling restart was the only
+				// mechanism that could work rather than the one chosen. upsmon reads its config
+				// from a compiled-in sysconfdir and has no flag to point it elsewhere -- -c takes a
+				// command, not a path -- so the files have to arrive at /etc/nut under their real
+				// names. A projected volume is what lets both sources do that through one mount
+				// that does propagate updates.
+				//
+				// Masking /etc/nut costs nothing: the image ships only *.sample files there, and
+				// the TLS CApath deliberately lives outside it so this mount does not shadow it.
+				Name: "upsmon-etc",
 				VolumeSource: corev1.VolumeSource{
-					ConfigMap: &corev1.ConfigMapVolumeSource{
-						LocalObjectReference: corev1.LocalObjectReference{Name: spec.ConfigMapName},
-						DefaultMode:          ptrInt32(0440),
-					},
-				},
-			},
-			{
-				Name: "upsmon-config",
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName:  spec.SecretName,
+					Projected: &corev1.ProjectedVolumeSource{
 						DefaultMode: ptrInt32(0440),
+						Sources: []corev1.VolumeProjection{
+							{
+								ConfigMap: &corev1.ConfigMapProjection{
+									LocalObjectReference: corev1.LocalObjectReference{Name: spec.ConfigMapName},
+									Items: []corev1.KeyToPath{
+										{Key: nodePowerAgentConfigFile, Path: nodePowerAgentConfigFile},
+									},
+								},
+							},
+							{
+								Secret: &corev1.SecretProjection{
+									LocalObjectReference: corev1.LocalObjectReference{Name: spec.SecretName},
+									Items: []corev1.KeyToPath{
+										{Key: upsmonConfigFile, Path: upsmonConfigFile},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -843,15 +925,19 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				Image:           spec.UpsmonImage,
 				ImagePullPolicy: spec.UpsmonPullPolicy,
 				Command:         []string{"upsmon"},
-				Args:            []string{"-D"},
+				// -F, not -D (F-67). Both foreground upsmon, but -D does it as a side effect of
+				// raising the debugging level, so every agent in the fleet ran at debug level
+				// permanently to get a behavior -F provides on its own. upsmon has no -FF: unlike
+				// upsd it has no PID-file-on-foreground variant to select.
+				Args:            []string{"-F"},
 				Resources:       agent.Spec.Resources.Upsmon,
 				SecurityContext: restrictedContainerSecurityContext(),
 				ReadinessProbe:  upsmonReadinessProbe(),
 				LivenessProbe:   upsmonLivenessProbe(),
 				Env:             nodePowerAgentSignalEnv(agent, spec.ConfigHash, spec.SelectedUPSDevices),
 				VolumeMounts: []corev1.VolumeMount{
-					{Name: "nut-client-config", MountPath: "/etc/nut/nut.conf", SubPath: nodePowerAgentConfigFile, ReadOnly: true},
-					{Name: "upsmon-config", MountPath: "/etc/nut/" + upsmonConfigFile, SubPath: upsmonConfigFile, ReadOnly: true},
+					// A directory mount, so config updates reach the container (F-69).
+					{Name: "upsmon-etc", MountPath: nodePowerAgentConfigDirectory, ReadOnly: true},
 					{Name: "upsmon-run", MountPath: "/run"},
 					{Name: "power-agent-run", MountPath: "/run/power-agent"},
 				},
@@ -863,6 +949,18 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 			// init container rehashes the bundle into an emptyDir and upsmon reads that.
 			daemonSet.Spec.Template.Spec.Volumes = append(
 				daemonSet.Spec.Template.Spec.Volumes,
+				corev1.Volume{
+					Name: "upsmon-server-ca-source",
+					VolumeSource: corev1.VolumeSource{
+						Secret: &corev1.SecretVolumeSource{
+							SecretName:  spec.SecretName,
+							DefaultMode: ptrInt32(0440),
+							Items: []corev1.KeyToPath{
+								{Key: nodePowerAgentServerCAFile, Path: nodePowerAgentServerCAFile},
+							},
+						},
+					},
+				},
 				corev1.Volume{
 					Name: "upsmon-server-ca",
 					VolumeSource: corev1.VolumeSource{
@@ -883,9 +981,10 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 					SecurityContext: restrictedContainerSecurityContext(),
 					VolumeMounts: []corev1.VolumeMount{
 						{
-							Name:      "upsmon-config",
-							MountPath: nodePowerAgentServerCASourcePath,
-							SubPath:   nodePowerAgentServerCAFile,
+							// Its own Secret mount: the agent's /etc/nut projection deliberately
+							// carries only upsmon.conf, so the CA bundle is not there to read.
+							Name:      "upsmon-server-ca-source",
+							MountPath: nodePowerAgentServerCASourceDirectory,
 							ReadOnly:  true,
 						},
 						{Name: "upsmon-server-ca", MountPath: nodePowerAgentServerCAPath},
@@ -1066,10 +1165,12 @@ func upsmonLivenessProbe() *corev1.Probe {
 // monitors is among the ones served, which is the actual precondition for upsmon working. Querying
 // the full `<ups>@<server>` target does.
 //
-// What this still does not cover is the MONITOR credentials and the TLS posture rendered into the
-// same file -- the exact gap `F-40` fell into, where upsmon failed with an SSL error against a
-// server `upsc` reached fine. `upsc` does not read upsmon.conf, so it cannot exercise either from
-// here; `F-68`'s NOTIFYCMD state file is the NUT-native source for a check that would.
+// The credentials and TLS posture are covered by the third step rather than by upsc, which cannot
+// reach them: upsc does not read upsmon.conf, so it exercises neither. That was the gap `F-40` fell
+// into, where upsmon failed with an SSL error against a server upsc reached fine. COMMOK/COMMBAD
+// come from upsmon's own session, so `power-notify-writer --check` answers the question upsc cannot
+// -- it fails when upsmon's last word on a UPS was that it lost contact (`F-68` supplies the
+// events). Silence passes: an agent that has never dispatched one has nothing to report.
 func upsmonReadinessProbe() *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
@@ -1083,7 +1184,8 @@ test -n "$targets"
 for target in $targets; do
   case "$target" in *@*) ;; *) exit 1 ;; esac
   upsc "$target" >/dev/null
-done`,
+done
+power-notify-writer --check`,
 				},
 			},
 		},
@@ -1135,6 +1237,7 @@ func nodePowerAgentSignalEnv(agent *powerv1alpha1.NodePowerAgent, configHash str
 		{Name: "POWER_SELECTED_UPS_DEVICES", Value: strings.Join(selectedUPSDevices, ",")},
 		{Name: "POWER_SHUTDOWN_FLOW", Value: nodePowerAgentShutdownFlowName(agent)},
 		{Name: "POWER_SIGNAL_REASON", Value: nodePowerAgentSignalReason},
+		{Name: "POWER_NOTIFY_STATE_PATH", Value: nodePowerAgentNotifyStatePath},
 	}
 }
 
@@ -1458,4 +1561,38 @@ func nodePowerAgentServiceAccountName(agent *powerv1alpha1.NodePowerAgent) strin
 
 func nodePowerAgentNetworkPolicyName(agent *powerv1alpha1.NodePowerAgent) string {
 	return agent.Name + "-node-power-agent"
+}
+
+// uncoveredInventoryNodes names nodes the power inventory describes that this agent does not select.
+//
+// The inverse of readiness (F-74). Every other count the agent publishes is computed over nodes
+// spec.nodeSelector already matched, so a placement mistake -- a selector that misses a rack, a
+// label that was never applied -- produces no unavailable pod and no degraded node. It produces
+// silence, and an agent reporting fully ready over a fleet it only partly covers.
+//
+// Nodes marked powerPlanningExempt are excluded: the inventory has already said they are outside
+// the planning model, and reporting them as uncovered would train the reader to ignore this field.
+func (r *NodePowerAgentReconciler) uncoveredInventoryNodes(ctx context.Context, selectedNodes []string) ([]string, error) {
+	var inventory powerv1alpha1.PowerInventoryNodeList
+	if err := r.List(ctx, &inventory); err != nil {
+		return nil, fmt.Errorf("list PowerInventoryNode resources: %w", err)
+	}
+
+	selected := make(map[string]struct{}, len(selectedNodes))
+	for _, node := range selectedNodes {
+		selected[node] = struct{}{}
+	}
+
+	var uncovered []string
+	for i := range inventory.Items {
+		record := &inventory.Items[i]
+		if record.Spec.PowerPlanningExempt != nil && *record.Spec.PowerPlanningExempt {
+			continue
+		}
+		if _, covered := selected[record.Spec.NodeName]; !covered {
+			uncovered = append(uncovered, record.Spec.NodeName)
+		}
+	}
+	sort.Strings(uncovered)
+	return uncovered, nil
 }

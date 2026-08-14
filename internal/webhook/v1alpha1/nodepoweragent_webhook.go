@@ -18,7 +18,9 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
 	"path"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -35,6 +37,15 @@ import (
 var nodepoweragentlog = logf.Log.WithName("nodepoweragent-resource")
 
 const defaultNodePowerAgentPriorityClassName = "system-node-critical"
+
+// minimumSignalTTL is derived from the delivery bound rather than chosen beside it (F-70).
+//
+// A shutdown signal reaches the actuator through a projected Secret, and this project's own
+// measurement put that at ~44 seconds; kubelet's sync period and cache TTL push the worst case
+// higher. A TTL below that window does not make the system stricter, it makes every correctly
+// delivered signal arrive already expired -- rejected as SignalStale on every node at once, at the
+// moment the flow needed them. 90s is the measured bound with room for the sync period on top.
+const minimumSignalTTL = 90 * time.Second
 
 // SetupNodePowerAgentWebhookWithManager registers the webhook for NodePowerAgent in the manager.
 func SetupNodePowerAgentWebhookWithManager(mgr ctrl.Manager) error {
@@ -255,6 +266,17 @@ func validateAgentShutdown(pathField *field.Path, obj *powerv1alpha1.NodePowerAg
 		}
 	}
 	errs = append(errs, validatePositiveDuration(pathField.Child("signalTTL"), shutdown.SignalTTL)...)
+
+	// F-70: the TTL has to cover how long delivery actually takes.
+	//
+	// The measured projected-Secret delivery on this project's own smoke run was ~44s, and kubelet
+	// sync period plus cache TTL push the worst case above that. A TTL under the delivery bound
+	// means the actuator rejects operator-issued signals as SignalStale fleet-wide, evidenced only
+	// by a container log line -- so it is refused here rather than discovered during an outage.
+	if shutdown.SignalTTL != nil && shutdown.SignalTTL.Duration > 0 && shutdown.SignalTTL.Duration < minimumSignalTTL {
+		errs = append(errs, field.Invalid(pathField.Child("signalTTL"), shutdown.SignalTTL.Duration.String(),
+			fmt.Sprintf("must be at least %s: projected Secret delivery was measured at ~44s and kubelet sync period plus cache TTL push the worst case higher, so a shorter TTL rejects signals that arrived correctly", minimumSignalTTL)))
+	}
 	errs = append(errs, validateAnnotationKey(pathField.Child("approvalAnnotation"), shutdown.ApprovalAnnotation)...)
 	return errs
 }

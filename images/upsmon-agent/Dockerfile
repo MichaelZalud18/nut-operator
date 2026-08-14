@@ -12,8 +12,10 @@ COPY go.mod go.mod
 COPY go.sum go.sum
 RUN go mod download
 COPY cmd/power-signal-writer/ cmd/power-signal-writer/
+COPY cmd/power-notify-writer/ cmd/power-notify-writer/
 COPY internal/nodeagent/ internal/nodeagent/
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-X main.version=${VERSION}" -o power-signal-writer ./cmd/power-signal-writer
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-X main.version=${VERSION}" -o power-signal-writer ./cmd/power-signal-writer \
+    && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-X main.version=${VERSION}" -o power-notify-writer ./cmd/power-notify-writer
 
 # NUT is built from source for the reasons in images/nut-server/Dockerfile (F-39).
 # The agent needs the same treatment and for the same reason: the operator renders
@@ -103,6 +105,9 @@ RUN apk add --no-cache ca-certificates openssl libltdl \
 
 COPY --from=nut-builder /out/ /
 COPY --from=builder /workspace/power-signal-writer /usr/local/bin/power-signal-writer
+# Receives upsmon NOTIFYCMD dispatches (F-68). Without a NOTIFYCMD upsmon falls back to `wall`,
+# which this image does not ship, so every notification failed rather than being merely unused.
+COPY --from=builder /workspace/power-notify-writer /usr/local/bin/power-notify-writer
 
 # The client-side half of the check in images/nut-server/Dockerfile: an agent told
 # to verify its server can only do so if it was linked against the backend whose
