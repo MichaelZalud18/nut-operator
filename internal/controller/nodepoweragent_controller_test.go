@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
 var _ = Describe("NodePowerAgent Controller", func() {
@@ -286,6 +287,10 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			signalSecret := &corev1.Secret{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-signals"}, signalSecret)).To(Succeed())
 			Expect(signalSecret.Type).To(Equal(corev1.SecretTypeOpaque))
+			// F-86: the Secret is never empty, so the projected directory always has a file in it.
+			// An empty Secret mounts exactly like a Secret that does not exist, which is what made a
+			// dead delivery channel indistinguishable from a quiet one.
+			Expect(signalSecret.Data).To(HaveKey(nodeagent.DeliveryChannelMarker))
 
 			networkPolicy := &networkingv1.NetworkPolicy{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, networkPolicy)).To(Succeed())
@@ -344,10 +349,24 @@ var _ = Describe("NodePowerAgent Controller", func() {
 					FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"},
 				},
 			}))
+			// F-57/OD-37: the projected Secret is the only path with authority. The local tmpfs
+			// path the upsmon container writes through SHUTDOWNCMD used to lead this list.
 			Expect(daemonSet.Spec.Template.Spec.Containers[1].Env).To(ContainElement(corev1.EnvVar{
 				Name:  "POWER_SIGNAL_PATHS",
-				Value: "/run/power-agent/shutdown.json,/var/lib/power-agent/signals/$(POWER_NODE_NAME).json",
+				Value: "/var/lib/power-agent/signals/$(POWER_NODE_NAME).json",
 			}))
+			for _, variable := range daemonSet.Spec.Template.Spec.Containers[1].Env {
+				if variable.Name == "POWER_SIGNAL_PATH" || variable.Name == "POWER_SIGNAL_PATHS" {
+					Expect(variable.Value).NotTo(ContainSubstring("/run/power-agent"),
+						"the actuator must not watch the tmpfs the network-facing container can write (F-57)")
+				}
+			}
+			// Not mounted read-only -- not mounted. The actuator reads no local signal, and the
+			// halt came from reading rather than writing, so removing the mount is what closes it.
+			for _, mount := range daemonSet.Spec.Template.Spec.Containers[1].VolumeMounts {
+				Expect(mount.Name).NotTo(Equal("power-agent-run"),
+					"the actuator must not mount the shared signal tmpfs at all (F-57)")
+			}
 			// F-36: the poweroff mechanism is fixed to the reboot(2) syscall and is not configurable.
 			// No env var should be able to redirect it to an arbitrary host command.
 			for _, variable := range daemonSet.Spec.Template.Spec.Containers[1].Env {
@@ -358,6 +377,15 @@ var _ = Describe("NodePowerAgent Controller", func() {
 				MountPath: "/var/lib/power-agent/signals",
 				ReadOnly:  true,
 			}))
+			// F-86: kubelet substitutes an empty directory for an absent optional Secret, so the
+			// agent came up healthy against a channel that could never deliver.
+			for _, volume := range daemonSet.Spec.Template.Spec.Volumes {
+				if volume.Name == "power-agent-signals" {
+					Expect(volume.Secret).NotTo(BeNil())
+					Expect(*volume.Secret.Optional).To(BeFalse(),
+						"the only authorized delivery channel must not be optional (F-86)")
+				}
+			}
 
 			By("publishing ready pod coverage for the selected node")
 			heartbeat := metav1.NewTime(time.Date(2026, 8, 3, 9, 0, 0, 0, time.UTC))

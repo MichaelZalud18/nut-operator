@@ -270,6 +270,30 @@ contrast against), and a written statement of what ordering guarantee is surrend
 — or it is a bypass and should be bound to prior authorization per `F-57`. Leaving it undeclared is
 what makes `F-54` a surprise rather than a policy.
 
+*Closed 2026-08-14, as a bypass — not as a backstop.* This audit was written expecting the backstop
+arm, and it went the other way. Recorded here so the reasoning above is read as the case that was
+argued and lost, not as the standing position.
+
+The backstop reading fails on its own terms. It is only reached when the operator is unreachable,
+and that is precisely when ordering matters most — so the moment it engages is the moment its
+inability to order becomes the entire problem. `MINSUPPLIES 1` on every agent is not a detail to be
+tuned around it: one UPS at OB+LB releases everything it covers, at once. That is not a safety net
+under the sequencer, it is a second and worse sequencer that runs when nobody is watching, which is
+the objection `OD-36` already used to decline `clone` and `upssched`.
+
+So the local path is a bypass and is bound as one. The mechanism stays — writer binary, signal
+format, local file — because the shape is worth keeping for a later authorization model. Its
+authority does not: the actuator watches only the projected Secret, and `power-agent-run` is no
+longer mounted into it at all, so `F-57` is the enforcement rather than a mitigation. Read-only was
+the obvious shape and is the wrong one — the halt came from the actuator *reading* that path, so
+closing the write direction would have addressed a threat nobody posed. The accepted cost is
+recorded in `SB-3`: an undeliverable signal leaves nodes running until the UPS dies, which is
+observable and bounded where an unordered fleet halt is neither.
+
+`F-55`–`F-57` are the implementation, and they resolve in the opposite direction from what this
+section anticipated: nothing needs a name, a spec field, or a distinct `reason`, because nothing
+authorizes anything.
+
 **F-55 · `PlanConfigHash`, `ExecutionID`, and `ShutdownFlow` are validated for presence, never for
 value.** `internal/nodeagent/signal.go:64` rejects a payload only when one of those fields is
 empty. No comparison against an expected value exists anywhere in the actuator.
@@ -1101,3 +1125,100 @@ first, for the reason the exposure note above gives.
    first: where an actuated-signal record persists, what channel carries a receipt, what the delivery
    bound actually is, where DNS sits in the tier order, and what "covered" is measured against.
    `F-59` and `F-70` both resolve into `F-60`'s channel choice, so sequence that one ahead of them.
+
+## Findings — v1 triage pass, 2026-08-14
+
+Continues the `F-n` namespace from `F-85`. Scope: the signal delivery channel and the actuator's
+dedupe, read while triaging the section for v1 alongside the `OD-37` decision above.
+
+**F-86 · A dead delivery channel is indistinguishable from a quiet one.** `power-agent-signals` is a
+Secret volume marked `Optional: true` (`nodepoweragent_render.go:911`). When the Secret is absent
+kubelet mounts an empty directory rather than failing the pod, so `unreadableSignalDirs` finds a
+directory it can stat, records nothing, and readiness passes. An operator that never created the
+Secret, or stopped updating it, presents exactly as a cluster with no flow running.
+
+This matters more after `OD-37` than it did before it: the projected Secret is now the only channel
+with authority, so its silence is the single failure that ends in nodes never being released.
+
+The 2026-08-12 "not findings" list credits `Optional` with the fact that the volume updates in
+place. That is wrong and is corrected here — in-place updates come from the absence of `subPath`
+(`F-69`), and `Optional` governs only what kubelet does when the Secret does not exist.
+
+*Closed, and `Optional: false` alone would not have done it.* The obvious fix stops kubelet
+substituting an empty directory for a Secret that is missing, but the operator creates this Secret
+with no data at all until a flow writes a node's signal into it — and an empty Secret projects as an
+empty directory too. The state the finding describes was reachable with the Secret present and
+correct.
+
+So the Secret always carries a `delivery-channel` key (`internal/nodeagent.DeliveryChannelMarker`),
+valued with the agent's namespace, name, and generation. Generation rather than a timestamp on
+purpose: the value has to be stable across reconciles, or every pass would rewrite the Secret and
+re-trigger kubelet projection on every node for nothing. The actuator records directories missing
+the marker as `unprojectedSignalDirs`, kept distinct from `unreadableSignalDirs` because the two
+mean different things — one is "the volume never arrived", the other is "something is mounted here
+and it is not the operator's Secret". Readiness fails on either. `Optional: false` stays as the
+outer guard, which is now coherent since the Secret is never empty.
+
+What this does not detect, stated so nobody assumes otherwise: an operator that stopped reconciling
+leaves a valid marker behind. Agent readiness is the wrong place to observe manager liveness, and
+the manager has its own health endpoints and leader election for it.
+
+**F-87 · A rollout mid-flow can re-actuate a signal inside its TTL.** `F-58` persists actuated keys
+so a restarted actuator does not act twice on one signal, but the state lives on a per-pod emptyDir.
+`F-72` set `maxSurge: 1`, so a rollout brings up a second pod whose `seen` set is empty, watching
+the same projected signal the old pod already acted on. Within the TTL that is a second actuation of
+one episode — the outcome `F-58` was closed to prevent, reachable through the change `F-72` made.
+
+Neither finding is wrong on its own; the interaction between them was never recorded. It resolves
+with `F-72`'s remaining half — suppressing rollouts while a flow is live — rather than by moving the
+state somewhere node-scoped, which would mean a host mount the actuator does not otherwise need.
+
+**F-88 · Dedupe is per-source, not per-episode.** `watchSignals` iterates every configured path
+without breaking after it acts, and `SignalKey` (`internal/nodeagent/signal.go:93`) is built from
+the payload — execution ID, node, plan hash, timestamp. Two sources describing one episode produce
+two payloads and therefore two keys, so the `seen` map does not deduplicate across them.
+
+*Closed.* `OD-37` removes the second source, and the pass now returns at the first live signal
+rather than continuing, so the shape is gone as well as the case. The per-pass scan was split out of
+`watchSignals` into `scanSignalPaths` to make the at-most-once property testable — the loop around
+it never returns, and a rule nothing can exercise is a rule that quietly stops holding.
+`TestScanActuatesOnceWhenTwoPathsCarryTheSameEpisode` was confirmed against the unfixed code and
+reports two actuations for one episode.
+
+**F-89 · The signal Secret mounts whole on every node. Declined.** One Secret carries the signals
+for the entire DaemonSet, so any agent can read the payload addressed to any other node. The
+node-name check in `InspectSignal` keeps this to exposure — a node cannot act on another node's
+signal — and the payload carries flow identity, plan hash, timestamp, and reason, but no
+credentials.
+
+Declined rather than fixed. Per-node Secrets multiply API objects by node count and widen the
+operator's write surface for no confidentiality gain over what a cluster-scoped reader can already
+see. The cheap alternative, `subPathExpr` with the node name, cannot be used at all: `subPath`
+mounts do not receive updates (`F-69`), and a signal that never updates is a signal that never
+arrives. Revisit only if the payload gains something worth protecting.
+
+**F-90 · Signal TTL versus kubelet Secret propagation is an unstated assumption.** The TTL bounds
+how long a signal stays actionable; kubelet's sync period plus cache TTL bounds how long it takes to
+appear in the pod. Nothing states the relationship, and `F-70`'s 90-second floor was derived from
+one measurement (~44s) rather than from a stated bound. Folded into `F-59`, which has the same shape
+on the clock axis.
+
+**`F-66` remainder closed.** `POWERDOWNFLAG` is no longer rendered. upsmon writes that file so a
+system's own late-boot script can ask "did we power off because of the UPS?" and call
+`upsdrvctl shutdown`; this operand has no such script and no init system to run one, so the
+directive named a path nothing would ever read. Removed rather than left inert, because a rendered
+NUT directive invites the next reader to assume a consumer exists — which is how this audit came to
+be written in the first place. The PID-file half of `F-66` was withdrawn earlier as a harness
+artifact: `upsmon` writes `/run/upsmon.pid` in the pod and `upsmon -c reload` works.
+
+**`F-57` closed, in a different shape than proposed.** The recommendation was to mount the
+actuator's `power-agent-run` copy `ReadOnly`. That is the wrong fix and would have looked like the
+right one: the host halts because the actuator *reads* the local signal, so closing the write
+direction addresses a threat nobody posed. The mount is removed instead — a volume the actuator does
+not mount is a volume it cannot be reached through — and the local path is out of both
+`POWER_SIGNAL_PATH` and `POWER_SIGNAL_PATHS`.
+
+The actuator's own compiled-in default moved with it. It was `/run/power-agent/shutdown.json`, so a
+failure to inject `POWER_SIGNAL_PATH` did not disarm the actuator — it repointed it at exactly the
+path `OD-37` declines to trust. The default is now derived from `POWER_NODE_NAME`, and with no node
+name there is no path at all: the actuator watches nothing rather than guessing.

@@ -122,8 +122,8 @@ that make it attributable and staleness-checkable. That is the only path with au
 NUT's own `SHUTDOWNCMD` is the conventional way a `upsmon` secondary releases its host, and this
 project declines it as an authorization path. The mechanism stays in the codebase — the writer
 binary, the signal format, the local file — because the shape is worth keeping and a later version
-may want it. It cannot authorize a halt: the actuator does not read the local path, and the tmpfs
-the two containers share is mounted read-only on the actuator's side, so writing to it releases
+may want it. It cannot authorize a halt: the actuator watches only the projected Secret, and the
+tmpfs the two containers share is not mounted into the actuator at all, so writing to it releases
 nothing. There is no supported configuration that turns it on.
 
 This resolves the choice `OD-37` posed against the last-resort-backstop reading. A backstop is
@@ -420,7 +420,6 @@ for defense in depth.
 | OD-28 | Relationship to OD-12: OD-12 decides what to do with an infeasible plan before it starts; timing adaptation re-decides during | Adaptive execution |
 | OD-29 | Tier ascent trigger: what power condition moves the tier pointer up | Adaptive execution |
 | OD-30 | Cadence intervals: publish interval during idle versus active flow, and whether it is global or per-flow | Adaptive execution |
-| OD-37 | What the node agent's local `upsmon` signal path is for: an intentional last-resort backstop, in which case it needs a name, a spec field, a distinct `reason`, and a written statement of the ordering guarantee surrendered when it fires — or a bypass, in which case it is bound to prior authorization per `F-57`. Leaving it undeclared is what makes `F-54` a surprise rather than a policy | `F-54` – `F-57`, node agent authorization |
 
 ## Closed Decisions
 
@@ -441,6 +440,7 @@ for defense in depth.
 | OD-26 | Dropped for v1. No `provenance` field exists in the API or internal profile model; `ProfileSource` (`CRD` versus `Bundled`) is the only modeled source distinction and it controls match precedence, not trust semantics. |
 | OD-33 | No opt-in hook-completion wait exists in v1alpha1. A `ShutdownHook` is a bounded delivery attempt. Hook-level timeout wins, `PowerManagementCluster.spec.hooks.defaultTimeout` fills omitted hook timeouts, and shutdown proceeds after the attempt. |
 | OD-34 | Hook failures are advisory. Failed or timed-out hooks record evidence and mark the owning `ShutdownFlow` degraded, but never engage `abortPolicy` and never hold a shutdown wave. |
+| OD-37 | The operator path is the only path with authority to halt a node: an executor-issued signal delivered through an API-gated projected Secret, carrying flow identity, plan hash, and timestamp. NUT's local `SHUTDOWNCMD` path is declined as an authorization path and locked down — the writer, the signal format, and the local file stay in the codebase, but the actuator watches only the projected Secret and the shared tmpfs is not mounted into it, so no supported configuration turns it on. Decided against the last-resort-backstop reading: a backstop engages when the operator is unreachable, which is when ordering matters most, and `upsmon`'s local view cannot order anything — `MONITOR ... 1 ... secondary` with `MINSUPPLIES 1` fires on every node one UPS covers, at once, with an execution ID indistinguishable from the executor's. `SB-2b` reserves sequencing for the operator, and this applies that to the release signal. The accepted cost is stated in SB-3: an undeliverable signal means nodes are not released and the UPS runs down under a live cluster — observable and bounded, where an unordered fleet halt is neither. |
 | OD-36 | The `clone`, `clone-outlet`, and `failover` drivers are deliberately declined, joining FSD (`F-20`) and `upssched` (`F-21`) as NUT mechanisms this project does not use. `clone` and `clone-outlet` are staged-shutdown sequencers — a virtual UPS presenting earlier thresholds than the device it shadows, so one physical UPS can drive several shutdown stages — and `SB-2b` reserves sequencing for the operator. Admitting either would put a second sequencer in the system with no view of the cluster, which is the same objection that declined `upssched`, and the closer upstream analog makes it more dangerous rather than less: `clone` looks like it would work. `failover` presents several physical devices as one, which sounds like the multi-supply-per-host topology `F-45` records as inexpressible — but that gap is in the render and the inventory model, not the driver layer, so the driver would not close it. Revisit `failover` only if `F-45` is built. All three ship in the operand image as part of `NUTSW_DRIVERLIST` and are not separately configurable at build time, so this decision governs the admission allowlist and the documentation, not the image. |
 
 ---
@@ -494,3 +494,23 @@ TBD, not blocking:
 - Whether an in-cluster audit store should be protected by tier 0 or tier 1 placement in addition
   to the local spool.
 - Label key and central CR shape.
+
+**2026-08-14 — OD-37 closed: one authorized path to a halt.** The operator path is authoritative;
+NUT's local `SHUTDOWNCMD` path is declined as an authorization path and locked down. Written up in
+SB-3; the mechanics are `F-55`–`F-57`.
+
+Decided against the backstop reading the audit had carried as the likelier arm. The argument that
+changed it: a backstop is only reached when the operator is unreachable, and that is exactly when
+ordering matters most, so the moment it engages is the moment its inability to order becomes the
+whole problem. Every agent renders `MONITOR ... 1 ... secondary` with `MINSUPPLIES 1`, which means
+one UPS reaching OB+LB releases every node it covers simultaneously — a fleet-wide halt in arbitrary
+order, stamped with an execution ID nothing distinguishes from a planned one.
+
+What is kept: the writer binary, the signal format, and the local file. The shape is sound and a
+later version may want it under a different authorization model, so it is disabled rather than
+deleted.
+
+Accepted cost, recorded so a later reader does not mistake it for an oversight: when the operator
+cannot deliver a signal, nodes are not released, and the UPS discharges under a cluster that stays
+up. That failure is visible and bounded. The alternative is not, and a second shutdown
+implementation that engages when nobody is watching is worse than none.

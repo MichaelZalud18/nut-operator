@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
 // actuatorState is the actuator's own record that its watch loop ran, and what it found when it did.
@@ -32,6 +34,11 @@ type actuatorState struct {
 	// pass. A missing signal *file* is the normal case and is not recorded here; a missing
 	// directory means the volume never arrived.
 	UnreadableSignalDirs []string `json:"unreadableSignalDirs,omitempty"`
+	// UnprojectedSignalDirs lists signal directories that exist but carry no delivery-channel
+	// marker (F-86). Distinct from unreadable on purpose: the directory is there and readable, it
+	// just is not the operator's Secret, which is the case an empty mount and a working-but-quiet
+	// channel used to share.
+	UnprojectedSignalDirs []string `json:"unprojectedSignalDirs,omitempty"`
 	// ActuatedKeys are the signal keys this actuator has already acted on (F-58). Kept here rather
 	// than only in memory because the map and the signal file have different lifetimes: `seen` dies
 	// with the container, the emptyDir holding the signal lives as long as the pod, so a restart
@@ -113,6 +120,26 @@ func unreadableSignalDirs(paths []string) []string {
 	return unreadable
 }
 
+// unprojectedSignalDirs returns signal directories that carry no delivery-channel marker.
+//
+// The marker is a key the operator always writes into the signal Secret, so its absence means the
+// directory is not that Secret: either the volume is an empty stand-in kubelet mounted for a Secret
+// that does not exist, or something else is mounted there. A directory that cannot be stat'd at all
+// is unreadableSignalDirs' case and is deliberately not repeated here.
+func unprojectedSignalDirs(paths []string) []string {
+	var unprojected []string
+	for _, path := range paths {
+		directory := filepath.Dir(path)
+		if _, err := os.Stat(directory); err != nil {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(directory, nodeagent.DeliveryChannelMarker)); err != nil {
+			unprojected = append(unprojected, directory)
+		}
+	}
+	return unprojected
+}
+
 // actuatorStaleAfter is how old a recorded pass may be before readiness fails.
 //
 // Derived from the loop's own interval rather than fixed, so a deployment that slows the loop down
@@ -143,6 +170,10 @@ func checkActuatorReady(config actuatorConfig, now time.Time) error {
 	}
 	if len(state.UnreadableSignalDirs) > 0 {
 		return fmt.Errorf("signal directories unreadable on the last pass: %v", state.UnreadableSignalDirs)
+	}
+	if len(state.UnprojectedSignalDirs) > 0 {
+		return fmt.Errorf("signal directories carry no %q marker, so the operator's delivery channel is not mounted there: %v",
+			nodeagent.DeliveryChannelMarker, state.UnprojectedSignalDirs)
 	}
 
 	recorded, err := time.Parse(time.RFC3339, state.Timestamp)

@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
 const (
@@ -574,7 +575,11 @@ func renderNodePowerAgentSecret(agent *powerv1alpha1.NodePowerAgent, targets []a
 	fmt.Fprintf(&out, "POLLFREQALERT %d\n", durationSeconds(agent.Spec.Upsmon.AlertPollFrequency, 5))
 	fmt.Fprintf(&out, "HOSTSYNC %d\n", durationSeconds(agent.Spec.Upsmon.HostSync, 15))
 	fmt.Fprintf(&out, "DEADTIME %d\n", durationSeconds(agent.Spec.Upsmon.DeadTime, 45))
-	fmt.Fprintf(&out, "POWERDOWNFLAG %s\n", shellQuotedNUTValue(powerdownFlagPath(agent)))
+	// No POWERDOWNFLAG (F-66). upsmon writes that file so the system's own late-boot shutdown
+	// scripts can ask "did we power off because of the UPS?" and call `upsdrvctl shutdown`. This
+	// operand has no such script and no init system to run one, so the directive named a path
+	// nothing would ever read. Rendering an inert NUT directive invites a future reader to assume
+	// there is a consumer.
 	fmt.Fprintf(&out, "FINALDELAY %d\n", durationSeconds(agent.Spec.Upsmon.FinalDelay, 10))
 
 	// The notification surface (F-68). Without NOTIFYCMD upsmon does not stay quiet -- it falls back
@@ -683,14 +688,6 @@ var nodePowerAgentNotifyEvents = []string{
 	"ONLINE", "ONBATT", "LOWBATT", "FSD", "COMMOK", "COMMBAD", "NOCOMM", "REPLBATT", "SHUTDOWN",
 }
 
-func powerdownFlagPath(agent *powerv1alpha1.NodePowerAgent) string {
-	signalPath := nodePowerAgentSignalPath(agent)
-	if strings.HasSuffix(signalPath, ".json") {
-		return strings.TrimSuffix(signalPath, ".json") + ".powerdown"
-	}
-	return signalPath + ".powerdown"
-}
-
 func nodePowerAgentSignalPath(agent *powerv1alpha1.NodePowerAgent) string {
 	if agent.Spec.Shutdown.SignalPath != "" {
 		return agent.Spec.Shutdown.SignalPath
@@ -767,6 +764,15 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentSignalSecret(ctx context.
 		if secret.Data == nil {
 			secret.Data = map[string][]byte{}
 		}
+		// The marker the actuator's readiness looks for (F-86). An empty Secret projects as an empty
+		// directory, which is exactly what kubelet mounts when the Secret is missing entirely, so
+		// without a key that is always present there is nothing to tell "no flow running" apart from
+		// "this channel does not exist".
+		//
+		// The value is the agent's generation rather than a timestamp: it has to be stable across
+		// reconciles, or every pass would rewrite the Secret and re-trigger kubelet projection on
+		// every node for no reason.
+		secret.Data[nodeagent.DeliveryChannelMarker] = []byte(fmt.Sprintf("%s/%s@%d", agent.Namespace, agent.Name, agent.Generation))
 		return controllerutil.SetControllerReference(agent, secret, r.Scheme)
 	})
 	return secret, err
@@ -908,7 +914,12 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 					Secret: &corev1.SecretVolumeSource{
 						SecretName:  spec.SignalSecretName,
 						DefaultMode: ptrInt32(0440),
-						Optional:    ptrBool(true),
+						// Not optional (F-86). The operator reconciles this Secret before the
+						// DaemonSet and it always carries the delivery-channel marker, so a missing
+						// one is not a startup race -- it means the only authorized path to a halt
+						// does not exist, and a pod that refuses to start says that far louder than
+						// one that runs blind against an empty directory.
+						Optional: ptrBool(false),
 					},
 				},
 			},
@@ -1015,15 +1026,24 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 							FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"},
 						},
 					},
-					{Name: "POWER_SIGNAL_PATH", Value: nodePowerAgentSignalPath(agent)},
-					{Name: "POWER_SIGNAL_PATHS", Value: nodePowerAgentSignalPath(agent) + "," + nodePowerAgentProjectedSignalPath},
+					// The projected Secret, and nothing else (F-57, OD-37). The local tmpfs path the
+					// upsmon container writes through SHUTDOWNCMD used to lead this list, which made
+					// the network-facing container able to halt the host by writing one file. It is
+					// gone from both variables rather than reordered: the operator path is the only
+					// path with authority, so a second entry here is not a fallback, it is the
+					// bypass.
+					{Name: "POWER_SIGNAL_PATH", Value: nodePowerAgentProjectedSignalPath},
+					{Name: "POWER_SIGNAL_PATHS", Value: nodePowerAgentProjectedSignalPath},
 					{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
 					{Name: "POWER_ACTUATOR_STATE_PATH", Value: nodePowerAgentActuatorStatePath},
 				},
 				SecurityContext: actuatorContainerSecurityContext(hostPoweroff),
 				ReadinessProbe:  actuatorReadinessProbe(),
+				// power-agent-run is deliberately absent. The actuator no longer reads the local
+				// signal, and a volume it does not read is a volume it cannot be tricked through --
+				// stronger than mounting the shared tmpfs read-only, which would have left the read
+				// path open while closing a write path that was never the threat.
 				VolumeMounts: []corev1.VolumeMount{
-					{Name: "power-agent-run", MountPath: "/run/power-agent"},
 					{Name: "power-agent-signals", MountPath: nodePowerAgentProjectedSignalDirectory, ReadOnly: true},
 					{Name: "power-agent-actuator-state", MountPath: nodePowerAgentActuatorStateDirectory},
 				},

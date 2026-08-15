@@ -1,10 +1,14 @@
 package main
 
 import (
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
@@ -102,4 +106,105 @@ func TestSystemdPoweroffActuatorHonorsDryRun(t *testing.T) {
 			t.Fatalf("expected exactly one poweroff syscall, got %d", *calls)
 		}
 	})
+}
+
+// F-57/OD-37. The old default was the local tmpfs path the upsmon container writes, so a failure to
+// inject POWER_SIGNAL_PATH did not disarm the actuator -- it repointed it at the one path the
+// operator declines to give authority.
+func TestDefaultSignalPathIsTheProjectedSecretNotTheSharedTmpfs(t *testing.T) {
+	path := defaultSignalPath("node-a")
+
+	if strings.Contains(path, "/run/power-agent") {
+		t.Fatalf("the actuator must never default to the shared tmpfs path, got %q", path)
+	}
+	if path != "/var/lib/power-agent/signals/node-a.json" {
+		t.Fatalf("expected the node's projected signal path, got %q", path)
+	}
+}
+
+// Defaults fail safe: with no node name there is no per-node path to build, and guessing one would
+// be worse than watching nothing.
+func TestDefaultSignalPathIsEmptyWithoutANodeName(t *testing.T) {
+	if path := defaultSignalPath(""); path != "" {
+		t.Fatalf("expected no default path without a node name, got %q", path)
+	}
+}
+
+// F-88: two paths describing one shutdown episode.
+//
+// SignalKey is built from the payload, not the path, so the two files below hash to different keys
+// and `seen` cannot connect them. Before the pass stopped at the first live signal, one episode
+// delivered through two sources actuated twice -- on a real node, that is a second reboot(2) issued
+// against a host already going down.
+func TestScanActuatesOnceWhenTwoPathsCarryTheSameEpisode(t *testing.T) {
+	directory := t.TempDir()
+	now := time.Now().UTC()
+
+	write := func(name, executionID string) string {
+		path := filepath.Join(directory, name)
+		payload := nodeagent.ShutdownSignal{
+			Timestamp:      now.Format(time.RFC3339),
+			NodeName:       "node-a",
+			ExecutionID:    executionID,
+			PlanConfigHash: "hash-1",
+			ShutdownFlow:   "flow-1",
+			Reason:         "test",
+		}
+		if err := nodeagent.WriteSignalAtomic(path, payload); err != nil {
+			t.Fatalf("write signal %s: %v", name, err)
+		}
+		return path
+	}
+
+	config := actuatorConfig{
+		NodeName:  "node-a",
+		SignalTTL: 2 * time.Minute,
+		SignalPaths: []string{
+			write("local.json", "upsmon-node-a-123"),
+			write("projected.json", "exec-1"),
+		},
+	}
+
+	actuations := 0
+	logger := log.New(io.Discard, "", 0)
+	scanSignalPaths(logger, config, func(*log.Logger, actuatorConfig, nodeagent.SignalStatus) error {
+		actuations++
+		return nil
+	}, map[string]struct{}{})
+
+	if actuations != 1 {
+		t.Fatalf("one shutdown episode must actuate once, got %d", actuations)
+	}
+}
+
+// The dedupe F-58 added still has to hold across passes, which the early return must not skip.
+func TestScanDoesNotReactuateASignalAlreadySeen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shutdown.json")
+	payload := nodeagent.ShutdownSignal{
+		Timestamp:      time.Now().UTC().Format(time.RFC3339),
+		NodeName:       "node-a",
+		ExecutionID:    "exec-1",
+		PlanConfigHash: "hash-1",
+		ShutdownFlow:   "flow-1",
+		Reason:         "test",
+	}
+	if err := nodeagent.WriteSignalAtomic(path, payload); err != nil {
+		t.Fatalf("write signal: %v", err)
+	}
+
+	config := actuatorConfig{NodeName: "node-a", SignalTTL: 2 * time.Minute, SignalPaths: []string{path}}
+	seen := map[string]struct{}{}
+	actuations := 0
+	actuate := func(*log.Logger, actuatorConfig, nodeagent.SignalStatus) error {
+		actuations++
+		return nil
+	}
+	logger := log.New(io.Discard, "", 0)
+
+	scanSignalPaths(logger, config, actuate, seen)
+	scanSignalPaths(logger, config, actuate, seen)
+
+	if actuations != 1 {
+		t.Fatalf("a signal already actuated must not fire again on the next pass, got %d", actuations)
+	}
 }

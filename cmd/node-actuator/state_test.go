@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
 func statePath(t *testing.T) string {
@@ -151,5 +153,78 @@ func TestUnreadableSignalDirsNamesOnlyMissingDirectories(t *testing.T) {
 	// progress -- and must never be reported.
 	if len(unreadable) != 1 || unreadable[0] != "/definitely/not/here" {
 		t.Fatalf("expected only the missing directory, got: %v", unreadable)
+	}
+}
+
+// F-86: the case that used to read as healthy.
+//
+// kubelet mounts an empty directory for a Secret that does not exist, so before the marker there was
+// nothing separating "the operator has issued no signal" from "the only authorized delivery channel
+// was never created". Both presented as a readable directory with no signal file in it.
+func TestReadinessFailsWhenTheSignalDirectoryCarriesNoDeliveryChannelMarker(t *testing.T) {
+	root := t.TempDir()
+	signalDir := filepath.Join(root, "signals")
+	if err := os.MkdirAll(signalDir, 0o755); err != nil {
+		t.Fatalf("create signal dir: %v", err)
+	}
+
+	config := actuatorConfig{
+		Policy:      policyStub,
+		SignalPaths: []string{filepath.Join(signalDir, "node-a.json")},
+		StatePath:   filepath.Join(root, "state.json"),
+		Interval:    5 * time.Second,
+	}
+	now := time.Now().UTC()
+	if err := writeActuatorState(config.StatePath, actuatorState{
+		Timestamp:             now.Format(time.RFC3339),
+		Policy:                config.Policy,
+		IntervalSeconds:       5,
+		UnprojectedSignalDirs: unprojectedSignalDirs(config.SignalPaths),
+	}); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	err := checkActuatorReady(config, now)
+	if err == nil {
+		t.Fatal("an empty signal directory is a channel that cannot deliver, and must fail readiness (F-86)")
+	}
+	if !strings.Contains(err.Error(), nodeagent.DeliveryChannelMarker) {
+		t.Fatalf("the failure must name the missing marker, got: %v", err)
+	}
+}
+
+// The other half: a genuinely mounted channel with nothing to say stays ready. Absence of a signal
+// is the normal state and must never be confused with absence of a channel.
+func TestReadinessPassesWhenTheChannelIsMountedButQuiet(t *testing.T) {
+	root := t.TempDir()
+	signalDir := filepath.Join(root, "signals")
+	if err := os.MkdirAll(signalDir, 0o755); err != nil {
+		t.Fatalf("create signal dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(signalDir, nodeagent.DeliveryChannelMarker), []byte("power-system/agent-a@1"), 0o440); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	config := actuatorConfig{
+		Policy:      policyStub,
+		SignalPaths: []string{filepath.Join(signalDir, "node-a.json")},
+		StatePath:   filepath.Join(root, "state.json"),
+		Interval:    5 * time.Second,
+	}
+	now := time.Now().UTC()
+	if unprojected := unprojectedSignalDirs(config.SignalPaths); len(unprojected) != 0 {
+		t.Fatalf("a directory carrying the marker must not be reported unprojected, got %v", unprojected)
+	}
+	if err := writeActuatorState(config.StatePath, actuatorState{
+		Timestamp:             now.Format(time.RFC3339),
+		Policy:                config.Policy,
+		IntervalSeconds:       5,
+		UnprojectedSignalDirs: unprojectedSignalDirs(config.SignalPaths),
+	}); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	if err := checkActuatorReady(config, now); err != nil {
+		t.Fatalf("a mounted channel with no pending signal must stay ready: %v", err)
 	}
 }

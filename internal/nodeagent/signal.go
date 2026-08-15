@@ -26,6 +26,18 @@ import (
 	"time"
 )
 
+// DeliveryChannelMarker is the file the operator always projects alongside the per-node signals.
+//
+// Without it, an operator that never created the signal Secret and an operator with nothing to say
+// look identical to the actuator: kubelet mounts an empty directory either way, so the directory
+// stats fine, no signal file is found, and readiness passes on a channel that can never deliver
+// (F-86). The marker makes the projection itself provable — absent means the volume is not carrying
+// the operator's Secret, which after OD-37 is the only path a halt can arrive on.
+//
+// Deliberately not suffixed `.json`: signal keys are `<node>.json`, so nothing a node can be named
+// collides with this.
+const DeliveryChannelMarker = "delivery-channel"
+
 // ShutdownSignal is the structured handoff consumed by node actuators.
 type ShutdownSignal struct {
 	DryRun             bool     `json:"dryRun"`

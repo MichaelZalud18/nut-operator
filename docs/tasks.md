@@ -205,8 +205,9 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 `internal/nodeagent`. Audits: `docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`,
 `F-33`–`F-36`, `F-54`–`F-75`, `OD-37`). The task lines below are pointers; the evidence and the
 recommended order are in the audit. The privilege group it sequenced first is closed, and `OD-37` is
-now decided — the operator path is the authoritative shutdown path, so `F-55`–`F-57` are unblocked
-and become the implementation of that lockdown.
+decided and recorded — the operator path is the authoritative shutdown path. `F-57` implemented that
+lockdown; `F-55` and `F-56` are the remainder, and they narrow now that only one source can deliver
+a signal.
 
 #### Built
 
@@ -219,26 +220,23 @@ under the pod's `RuntimeDefault` seccomp profile, and keeps `hostPID`, without w
 kills the container and reports success. An operand namespace whose Pod Security level would reject
 the actuating pod is reported on the agent's `Degraded` condition rather than relabelled. Both
 containers' readiness probes can fail: the actuator's reflects its watch loop, and `upsmon`'s
-queries every `<ups>@<server>` it monitors instead of anonymously listing the host.
+queries every `<ups>@<server>` it monitors instead of anonymously listing the host. One path
+authorizes a halt: the actuator watches only the operator's projected Secret, `power-agent-run` is
+not mounted into it, and its own default signal path is derived from the node name rather than
+falling back to the shared tmpfs. NUT's local `SHUTDOWNCMD` path keeps its writer, format, and file
+and holds no authority (`OD-37`). A pass stops at the first live signal, so one episode delivered
+twice actuates once. The signal Secret always carries a delivery-channel marker and mounts
+non-optionally, so a channel that cannot deliver fails readiness instead of resembling a quiet one.
 
-Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-58`, `F-60`, `F-61`–`F-65`, `F-67`–`F-71`,
-`F-73`, `F-74`.
+Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`, `F-57`, `F-58`, `F-60`, `F-61`–`F-65`,
+`F-66`, `F-67`–`F-71`, `F-73`, `F-74`, `F-86`, `F-88`, `OD-37`. `F-89` declined — the signal Secret
+mounts whole on every node, but the payload carries no credentials and the node-name check holds it
+to exposure rather than actuation; recorded in
+[node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md).
 
 #### Open Work
 
 ##### Signal authority and the two-component boundary
-
-`OD-37` is decided: the operator path is the authoritative shutdown path — ordered, planned,
-tier-aware, originating from the projected Secret. The local `upsmon` `SHUTDOWNCMD` path stays in the
-codebase as scaffolding and is locked down: disabled by default, with no supported way to enable it
-in v1. `F-54` resolves as a consequence, and the three items below are that lockdown's
-implementation.
-
-- **`F-57` · Close the tmpfs trust boundary.** Mount the actuator's `power-agent-run` copy
-  `ReadOnly`, and take the local path out of `POWER_SIGNAL_PATHS` — or gate it behind the
-  locked-down scaffold. It is read-write in both containers today, and `signalPaths` evaluates it
-  before the API-gated projected Secret, so the network-facing container can halt the host by writing
-  one file.
 
 - **`F-56` · Stop carrying `DryRun` in the signal file.** The writer sets it from `POWER_AGENT_MODE`
   and the actuator gates on it, so the actuator reads its own configuration back out of a file.
@@ -249,24 +247,7 @@ implementation.
   against them. `PlanConfigHash`, `ExecutionID`, and `ShutdownFlow` are checked non-empty and no
   further.
 
-- Record `OD-37` in [decision-index.md](design/decision-index.md), `scope-boundaries.md`, and the
-  DaemonSet design and audit docs. The audit currently reads `OD-37` as an open choice with a
-  last-resort backstop as one arm; it resolved the other way, and the text must say so rather than
-  stay ambiguous. Record `F-89` in the same pass, as declined: the signal Secret mounts whole on
-  every node, so a node can read another node's signal, and the node-name check keeps that to
-  exposure rather than actuation. Accepted — the payload carries no credentials, per-node Secrets
-  multiply objects by node count, and the `subPathExpr` alternative would stop the volume updating
-  in place.
-
 ##### Signal delivery and dedupe
-
-- **`F-86` · A dead delivery channel reads as healthy.** `power-agent-signals` is a Secret volume
-  with `Optional: true` (`nodepoweragent_render.go:911`), so an operator that never creates or stops
-  updating it leaves kubelet mounting a readable empty directory: `unreadableSignalDirs` stays empty
-  and readiness passes. With `OD-37` making this the only authorized channel, its silence has to be
-  distinguishable from "no flow running". The audit's 2026-08-12 "not findings" list credits
-  `Optional` with the in-place updates that actually come from the absence of `subPath` — correct
-  that entry in the same change. Not yet written up in an audit.
 
 - **`F-87` · A rollout mid-flow can re-actuate a signal inside its TTL.** `F-58`'s actuated-key state
   lives on a per-pod emptyDir, while `F-72`'s `maxSurge: 1` brings up a second pod with an empty
@@ -277,12 +258,6 @@ implementation.
 - **`F-72` remainder · nothing suppresses a rollout during a flow.** The shape is fixed; the guard is
   the open half — a paused DaemonSet, an admission check, or a flow-active condition. `F-87` is what
   makes this a defect rather than a preference.
-
-- **`F-88` · Dedupe is per-source, not per-episode.** `watchSignals` (`cmd/node-actuator/main.go:204`)
-  iterates every configured path without breaking, and `SignalKey`
-  (`internal/nodeagent/signal.go:93`) is built from the payload, so two sources produce two keys for
-  one episode. The `OD-37` lockdown leaves one source and resolves most of it; break out of the loop
-  after actuating so the remainder cannot return. Not yet written up in an audit.
 
 ##### Clock and propagation assumptions
 
@@ -299,9 +274,6 @@ implementation.
   factually wrong — the actuator calls `reboot(2)` with `LINUX_REBOOT_CMD_POWER_OFF` and there is no
   systemd anywhere in that path. A deliberate alpha API revision that breaks every CR setting the
   enum, and it lands in v1 rather than shipping a misleading name.
-
-- **`F-66` remainder · drop the vestigial `POWERDOWNFLAG` from the render.** Inert by design, and a
-  rendered NUT directive with no consumer is the class of thing this audit exists to remove.
 
 ---
 

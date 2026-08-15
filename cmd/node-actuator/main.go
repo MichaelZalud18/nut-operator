@@ -109,11 +109,12 @@ type actuatorConfig struct {
 // Both the running process and the `--ready` probe go through here, so a probe cannot end up
 // judging the loop against a different idea of what was configured.
 func loadActuatorConfig() actuatorConfig {
-	signalPath := env("POWER_SIGNAL_PATH", "/run/power-agent/shutdown.json")
+	nodeName := env("POWER_NODE_NAME", "")
+	signalPath := env("POWER_SIGNAL_PATH", defaultSignalPath(nodeName))
 	return actuatorConfig{
 		Mode:        env("POWER_AGENT_MODE", "DryRun"),
 		Policy:      env("POWER_ACTUATOR_POLICY", policyStub),
-		NodeName:    env("POWER_NODE_NAME", ""),
+		NodeName:    nodeName,
 		SignalPath:  signalPath,
 		SignalPaths: signalPaths(env("POWER_SIGNAL_PATHS", ""), signalPath),
 		SignalTTL:   parseDuration(env("POWER_SIGNAL_TTL", "2m"), 2*time.Minute),
@@ -141,6 +142,19 @@ func parseDuration(value string, fallback time.Duration) time.Duration {
 		return time.Duration(seconds) * time.Second
 	}
 	return fallback
+}
+
+// defaultSignalPath is where the operator's projected Secret lands, derived rather than fixed.
+//
+// The old default was the local tmpfs path the upsmon container writes, which meant a failure to
+// inject POWER_SIGNAL_PATH did not disarm the actuator -- it repointed it at the one path OD-37
+// declines to give authority. Defaults fail safe here: with no node name there is nothing to build
+// a per-node path from, so the actuator watches nothing rather than guessing.
+func defaultSignalPath(nodeName string) string {
+	if nodeName == "" {
+		return ""
+	}
+	return "/var/lib/power-agent/signals/" + nodeName + ".json"
 }
 
 func signalPaths(value, fallback string) []string {
@@ -180,6 +194,37 @@ func block(logger *log.Logger, reason string) {
 	select {}
 }
 
+// scanSignalPaths runs one pass over the configured signal paths, actuating at most once.
+//
+// Split out of watchSignals so the at-most-once property is reachable by a test: the loop around it
+// never returns, and a rule nothing can exercise is a rule that quietly stops holding.
+//
+// `seen` is updated in place, which is what carries the actuated keys into the state file the caller
+// writes at the end of each pass (F-58).
+func scanSignalPaths(logger *log.Logger, config actuatorConfig, actuate actuatorFunc, seen map[string]struct{}) {
+	for _, path := range config.SignalPaths {
+		status := nodeagent.InspectSignal(path, config.SignalTTL, time.Now().UTC(), config.NodeName)
+		if !status.Active {
+			// SignalMissing is the normal case on every tick and is deliberately not logged.
+			if status.Reason != "SignalMissing" {
+				logger.Printf("ignoring shutdown signal path=%s reason=%s", status.Path, status.Reason)
+			}
+			continue
+		}
+		if _, alreadySeen := seen[status.Key]; !alreadySeen {
+			seen[status.Key] = struct{}{}
+			if err := actuate(logger, config, status); err != nil {
+				logger.Printf("actuator rejected signal path=%s executionID=%s node=%s reason=%s error=%v", status.Path, status.Payload.ExecutionID, status.Payload.NodeName, status.Reason, err)
+			}
+		}
+		// One live signal ends the pass (F-88). SignalKey is built from the payload, so two paths
+		// describing one episode produce two keys and `seen` does not connect them -- continuing
+		// past an active signal is how one shutdown became two actuations. OD-37 removes the second
+		// source, and this removes the shape that let it matter.
+		return
+	}
+}
+
 func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFunc) {
 	ticker := time.NewTicker(config.Interval)
 	defer ticker.Stop()
@@ -201,30 +246,19 @@ func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFun
 	stateWriteFailed := false
 
 	for {
-		for _, path := range config.SignalPaths {
-			status := nodeagent.InspectSignal(path, config.SignalTTL, time.Now().UTC(), config.NodeName)
-			if status.Active {
-				if _, alreadySeen := seen[status.Key]; !alreadySeen {
-					seen[status.Key] = struct{}{}
-					if err := actuate(logger, config, status); err != nil {
-						logger.Printf("actuator rejected signal path=%s executionID=%s node=%s reason=%s error=%v", status.Path, status.Payload.ExecutionID, status.Payload.NodeName, status.Reason, err)
-					}
-				}
-			} else if status.Reason != "SignalMissing" {
-				logger.Printf("ignoring shutdown signal path=%s reason=%s", status.Path, status.Reason)
-			}
-		}
+		scanSignalPaths(logger, config, actuate, seen)
 
 		// Record the completed pass (F-64). This is the only evidence readiness has that the loop
 		// is running at all, so a failure to write it must be visible rather than swallowed -- a
 		// silently unwritten state file would read as a stalled loop, which is the correct
 		// conclusion but for the wrong reason, and the log line is what separates the two.
 		state := actuatorState{
-			Timestamp:            time.Now().UTC().Format(time.RFC3339),
-			Policy:               config.Policy,
-			IntervalSeconds:      config.Interval.Seconds(),
-			UnreadableSignalDirs: unreadableSignalDirs(config.SignalPaths),
-			ActuatedKeys:         actuatedKeys(seen),
+			Timestamp:             time.Now().UTC().Format(time.RFC3339),
+			Policy:                config.Policy,
+			IntervalSeconds:       config.Interval.Seconds(),
+			UnreadableSignalDirs:  unreadableSignalDirs(config.SignalPaths),
+			UnprojectedSignalDirs: unprojectedSignalDirs(config.SignalPaths),
+			ActuatedKeys:          actuatedKeys(seen),
 		}
 		if err := writeActuatorState(config.StatePath, state); err != nil {
 			if !stateWriteFailed {
