@@ -47,3 +47,6 @@ burst-capacity -> application-workloads -> data-workloads -> storage-services ->
 
 Apply order for a real cluster would be the management cluster, network UPS and NUT server, node
 agents, then the hook and flow.
+
+Where each pod lands under these manifests, and what does or does not pin it, is drawn in
+[example-pod-placement.md](../../diagrams/example-pod-placement.md).

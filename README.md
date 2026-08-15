@@ -216,6 +216,7 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [Installation](docs/install.md)
 - [Architecture](docs/architecture.md)
 - [System architecture diagram](docs/diagrams/system-architecture.md)
+- [Example pod placement diagram](docs/diagrams/example-pod-placement.md)
 - [Security](docs/security.md)
 - [Image strategy](docs/images.md)
 - [Shutdown flow design](docs/shutdown-flow.md)

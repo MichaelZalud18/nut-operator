@@ -53,11 +53,13 @@ competing flows — strictly worse than a single replica. See
 fifty. Given the operator is the component that saves the cluster during an outage, 2–3 replicas
 with leader election enabled is reasonable at any scale.
 
-**Related placement note.** The current example placement puts `upsd` and the operator on the same
-control-plane node, which concentrates the decision-maker and the telemetry source on one host.
-With three control-plane nodes available, separating them is the more defensible layout once
-placement is actually enforced — see the placement caveat in the example pod placement diagram
-(pending a refresh before it lands in `docs/diagrams/`), and F-18.
+**Related placement note.** Only `upsd` is pinned to the control plane. The manager sets no
+`nodeSelector`, tolerations, or affinity, so co-locating the decision-maker with the telemetry
+source is possible but never arranged — and separation is equally unarranged. Concentrating both on
+one host means a single power loss removes the operator's input and its ability to act in one step,
+but nothing today expresses a preference either way; that would be anti-affinity on the shipped
+manager manifest. See the placement caveat in
+[example-pod-placement.md](../diagrams/example-pod-placement.md).
 
 ## Node agent — scales inherently
 

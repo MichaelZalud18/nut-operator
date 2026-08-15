@@ -371,12 +371,13 @@ component.
 #### Built
 
 Component-scoped design docs with stable identifier namespaces, governing principles and scope
-boundaries, the decision index, the references under `docs/`, and the audit records under
-`docs/audits/`.
+boundaries, the decision index, the references under `docs/`, the audit records under
+`docs/audits/`, and the diagrams under `docs/diagrams/`. Example node naming is role-based per
+CONTRIBUTING.md — no new decision, that is the example policy applied.
 
 #### Open Work
 
-- Redraw the example pod placement diagram into `docs/diagrams/`. Blocked on deciding node naming.
+None.
 
 ---
 
