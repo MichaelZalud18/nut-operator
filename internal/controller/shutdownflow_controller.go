@@ -176,12 +176,10 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		planEstimate = bestPlanEstimate(compiledFlow.ObservedDuration, compiledFlow.EstimatedDuration)
 		estimateConfidence = compiledFlow.EstimateConfidence
 		metrics.ShutdownFlowCompileDurationSeconds.WithLabelValues(flow.Name).Observe(time.Since(compileStart).Seconds())
-		compileResult := "Accepted"
 		if configHash == "" {
 			result = rejected("PlannerFailed", "shutdown flow planner failed after resolver inputs were attached")
-			compileResult = "PlannerFailed"
 		}
-		metrics.ShutdownFlowCompileTotal.WithLabelValues(flow.Name, compileResult).Inc()
+		metrics.ShutdownFlowCompileTotal.WithLabelValues(flow.Name, plannerCompileMetricResult(configHash, plannerDiagnostics)).Inc()
 	}
 	if result.accepted {
 		evaluation, status, holdStates, err := evaluateShutdownFlowTriggers(ctx, r.Client, &flow, observedAt, configHash)
@@ -623,6 +621,19 @@ func firstPlannerDiagnostic(diagnostics []planner.Diagnostic, severity string) *
 		}
 	}
 	return nil
+}
+
+func plannerCompileMetricResult(configHash string, diagnostics []planner.Diagnostic) string {
+	if diagnostic := firstPlannerDiagnostic(diagnostics, planner.DiagnosticError); diagnostic != nil {
+		return diagnostic.Reason
+	}
+	if configHash == "" {
+		return "PlannerFailed"
+	}
+	if diagnostic := firstPlannerDiagnostic(diagnostics, planner.DiagnosticWarning); diagnostic != nil {
+		return diagnostic.Reason
+	}
+	return "Accepted"
 }
 
 func auditDiagnosticsForCompilation(result validationResult, diagnostics []resolver.Diagnostic, plannerDiagnostics []planner.Diagnostic) []audit.DiagnosticRecord {

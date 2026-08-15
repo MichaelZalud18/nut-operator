@@ -108,12 +108,11 @@ SB-10 has nothing project-specific to scrape.
 
 **F-3 update · all seven highest-value candidates are now registered (2026-08-04).** New
 `internal/metrics` package, registered against controller-runtime's own `metrics.Registry` — no new
-endpoint or RBAC. "Compile failures by diagnostic class" landed coarser than the original wording
-implied: `internal/shutdownflow`'s adapter functions discard `planner.Compile`'s diagnostics return
-value before it reaches the reconciler, so `compile_total`'s `result` label uses the same
-already-computed rejection-reason string the `Accepted` condition uses, not the full diagnostic class
-— noted as follow-on work in `docs/tasks.md`, not silently downgraded. Full contract in
-`docs/metrics.md`.
+endpoint or RBAC. The initial "compile failures by diagnostic class" cut landed coarser than the
+original wording implied because `internal/shutdownflow` discarded planner diagnostics before they
+reached the reconciler. That follow-on is now closed: planner diagnostics travel to the reconciler,
+and `compile_total`'s `result` label names the first planner error or warning reason when one exists.
+Full contract in `docs/metrics.md`.
 
 **F-4 · Broad write access to core resources.** The operator holds `create;update;patch` on
 `configmaps`, `secrets`, `serviceaccounts`, `services`, `namespaces`, and `networkpolicies`, plus

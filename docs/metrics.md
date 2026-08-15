@@ -25,7 +25,7 @@ policy engine.
 
 | Metric | Type | Labels | Meaning |
 | --- | --- | --- | --- |
-| `compile_total` | Counter | `shutdownflow`, `result` | Planner compilation attempts. `result` is `Accepted` or the same rejection reason already surfaced on the `Accepted` condition (`PlannerFailed`, `ManagementClusterNotFound`, or a resolver diagnostic reason). |
+| `compile_total` | Counter | `shutdownflow`, `result` | Planner compilation attempts. `result` is `Accepted`, the first planner error or warning reason, or `PlannerFailed` when planner compilation produced no diagnostic to name. Validation and resolver rejections that happen before planner compilation are surfaced on the `Accepted` condition and audit diagnostics instead. |
 | `compile_duration_seconds` | Histogram | `shutdownflow` | Time spent in the `planner.Compile` call for one reconcile. |
 | `plan_hash_changes_total` | Counter | `shutdownflow` | Incremented when a successful compile's plan hash differs from the previously observed one — how often the compiled plan is actually changing shape, not just re-confirming. |
 | `trigger_evaluations_total` | Counter | `shutdownflow`, `eligible` (`true`/`false`) | Trigger evaluations, by eligibility outcome. |

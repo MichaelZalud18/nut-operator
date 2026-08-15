@@ -34,9 +34,8 @@ import (
 const namespace = "nutoperator"
 
 var (
-	// ShutdownFlowCompileTotal counts planner compilations by result: "Accepted" or the same rejection
-	// reason string already surfaced on the Accepted condition (e.g. "PlannerFailed",
-	// "ManagementClusterNotFound", or a resolver diagnostic reason).
+	// ShutdownFlowCompileTotal counts planner compilations by result: "Accepted", the first planner
+	// diagnostic reason, or "PlannerFailed" when no diagnostic was available.
 	ShutdownFlowCompileTotal = promauto.With(metrics.Registry).NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
 		Subsystem: "shutdownflow",

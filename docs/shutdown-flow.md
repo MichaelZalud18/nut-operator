@@ -250,6 +250,39 @@ There is no dedicated UI for v1. The primary interface is Kubernetes:
 A future UI is a separate subscriber. It consumes the same artifacts as every other integration and
 does not participate in reconciliation, planning, or execution.
 
+### Delivery Contract
+
+There is no bundled message broker in v1. The Kubernetes API watch stream for `ShutdownFlow` is the
+pub/sub delivery surface for current planner artifacts and execution summaries. Consumers watch the
+resource, cache `metadata.resourceVersion`, and relist when the API server returns a stale watch
+window such as `410 Gone`.
+
+Delivery channels have separate jobs:
+
+- `ShutdownFlow.status` is the compact current artifact contract.
+- Kubernetes Events are transition breadcrumbs for humans and alert pipelines, not artifact storage.
+- PostgreSQL is the durable query and history path for audit, telemetry, decisions, and executions.
+- Controller logs carry operator-detail context when debugging a reconcile.
+
+`status.lastPublishTime` and `nutoperator_shutdownflow_publish_timestamp_seconds` are the liveness
+heartbeat. They advance on a fixed cadence even when the compiled plan did not change, so subscribers
+can distinguish a quiet power state from a stalled publisher.
+
+### Public Conditions
+
+These condition types are part of the public subscriber contract:
+
+- `Accepted`: the flow's structural and planner inputs were accepted. `False` means no compiled plan
+  should be treated as trustworthy.
+- `Ready`: the flow has a current compiled review surface. `True` does not imply an outage trigger
+  is active.
+- `Degraded`: an advisory problem exists, including warning diagnostics, audit degradation, or hook
+  failure evidence. It is alertable, but it does not automatically block all published artifacts.
+- `TriggerEligible`: the current trigger evaluation result. `True` means this flow's trigger criteria
+  are eligible now.
+- `ExecutionReady`: the execution handoff state. It reports whether execution has started, is blocked
+  by a gate, or is recording degraded evidence.
+
 ### Published Facts
 
 The operator publishes facts, not external commands:
@@ -302,6 +335,36 @@ The boundary is:
 
 Recovery is a subscriber concern. The operator may publish advisory startup wave projections, but it
 does not execute recovery or become the bring-up controller.
+
+### Worked Subscriber Example
+
+A simple subscriber can use the Kubernetes watch stream directly:
+
+```sh
+kubectl get shutdownflows.power.zalud.io rack-a-conservation \
+  --watch --output-watch-events -o json |
+jq -c '
+  select(.type != "ERROR") |
+  .object as $flow |
+  {
+    resourceVersion: $flow.metadata.resourceVersion,
+    configHash: $flow.status.configHash,
+    lastPublishTime: $flow.status.lastPublishTime,
+    compiledWaves: $flow.status.compiledWaves,
+    graphEdges: $flow.status.publishedArtifact.graph.edges,
+    triggerEligible: ($flow.status.conditions[]? | select(.type == "TriggerEligible")),
+    executionReady: ($flow.status.conditions[]? | select(.type == "ExecutionReady"))
+  }'
+```
+
+That subscriber stores the last seen `metadata.resourceVersion` for watch continuity and the last
+seen `status.configHash` for artifact change detection. It regenerates diagrams, documentation, or
+dashboards only when the config hash changes. It treats stale `status.lastPublishTime` or a stale
+`nutoperator_shutdownflow_publish_timestamp_seconds` series as a publisher liveness problem.
+
+Recovery automation reads `status.publishedArtifact.startupWaves` after its own power-return logic
+says recovery is appropriate. The operator publishing a startup projection is not an instruction to
+start anything.
 
 ### Visualization
 

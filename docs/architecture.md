@@ -134,6 +134,10 @@ The operator publishes facts, not external commands. The planner and executor pu
 
 Publishing targets are Kubernetes status for compact current state, Kubernetes Events for state transitions, logs for operator-readable detail, and PostgreSQL for durable history. Visualization is exported from the same structured artifacts as Mermaid, Graphviz/DOT, and D2; those rendered formats are views, not sources of truth.
 
+No message broker is bundled for v1. Kubernetes API watch semantics on `ShutdownFlow` status are the
+pub/sub surface for current artifacts; Events, logs, and PostgreSQL provide transitions, operator
+detail, and durable history.
+
 Subscribers can include recovery orchestration, dashboards, documentation generators, monitoring systems, and future automation. The boundary is explicit: `nut-operator` owns power-event planning and shutdown; other systems consume the published plan.
 
 ## Shutdown Flow Compilation

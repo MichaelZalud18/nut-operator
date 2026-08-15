@@ -944,7 +944,7 @@ and the agent renders that in preference to the DNS name. Verified on `kind`:
 
 ```console
 $ awk '/^MONITOR/ {print $2}' /etc/nut/upsmon.conf
-ds-ups@10.96.19.168
+ds-ups@192.0.2.42
 ```
 
 The DNS name stays as the fallback rather than being removed: a server that has not yet published an
