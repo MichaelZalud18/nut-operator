@@ -582,7 +582,9 @@ func (r Runner) runHTTPHook(ctx context.Context, action executor.Action, hook *p
 	if err != nil {
 		return blocked(err), fmt.Errorf("deliver ShutdownHook %s/%s to %s: %w", hook.Namespace, hook.Name, invocation.HTTP.URL, err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
 		err := fmt.Errorf("deliver ShutdownHook %s/%s to %s: status %d %s",
@@ -685,7 +687,7 @@ func (r Runner) applySecretHeaders(ctx context.Context, req *http.Request, heade
 		}
 		value, exists := secret.Data[header.ValueFrom.Key]
 		if !exists {
-			return fmt.Errorf("Secret %s/%s does not contain key %q for ShutdownHook header %q",
+			return fmt.Errorf("secret %s/%s does not contain key %q for ShutdownHook header %q",
 				key.Namespace, key.Name, header.ValueFrom.Key, header.Name)
 		}
 		req.Header.Set(header.Name, string(value))

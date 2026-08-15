@@ -763,18 +763,6 @@ func (r *ShutdownFlowReconciler) nodeTargets(ctx context.Context, target powerv1
 	return dedupeExecutorTargets(targets), nil
 }
 
-func (r *ShutdownFlowReconciler) workflowTargets(ctx context.Context, target powerv1alpha1.ShutdownStepTarget) ([]executorpkg.Target, error) {
-	namespaces, err := r.selectedTargetNamespaces(ctx, target)
-	if err != nil {
-		return nil, err
-	}
-	targets := make([]executorpkg.Target, 0, len(namespaces))
-	for _, namespace := range namespaces {
-		targets = append(targets, executorpkg.Target{APIVersion: "v1", Kind: "Namespace", Name: namespace})
-	}
-	return dedupeExecutorTargets(targets), nil
-}
-
 func (r *ShutdownFlowReconciler) selectedTargetNamespaces(ctx context.Context, target powerv1alpha1.ShutdownStepTarget) ([]string, error) {
 	namespaces := append([]string(nil), target.Namespaces...)
 	if target.NamespaceSelector != nil {
