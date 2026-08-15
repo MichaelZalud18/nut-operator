@@ -83,8 +83,11 @@ func plannerPowerDomains(bundle StructuralBundle) []planner.PowerDomainMembershi
 	domains := make([]planner.PowerDomainMembership, 0, len(bundle.Topology.Domains))
 	for _, domain := range bundle.Topology.Domains {
 		domains = append(domains, planner.PowerDomainMembership{
-			Name:       domain.Name,
-			UPSDevices: append([]string(nil), domain.UPSDevices...),
+			Name:           domain.Name,
+			UPSDevices:     append([]string(nil), domain.UPSDevices...),
+			Members:        append([]string(nil), domain.Members...),
+			Nodes:          append([]string(nil), domain.Nodes...),
+			Infrastructure: append([]string(nil), domain.Infrastructure...),
 		})
 	}
 	sort.SliceStable(domains, func(left, right int) bool {

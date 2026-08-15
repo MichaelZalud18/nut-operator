@@ -182,7 +182,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		metrics.ShutdownFlowCompileTotal.WithLabelValues(flow.Name, plannerCompileMetricResult(configHash, plannerDiagnostics)).Inc()
 	}
 	if result.accepted {
-		evaluation, status, holdStates, err := evaluateShutdownFlowTriggers(ctx, r.Client, &flow, observedAt, configHash)
+		evaluation, status, holdStates, err := evaluateShutdownFlowTriggers(ctx, r.Client, &flow, bundle, observedAt, configHash)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("evaluate ShutdownFlow %q triggers: %w", flow.Name, err)
 		}

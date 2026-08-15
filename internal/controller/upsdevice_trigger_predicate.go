@@ -33,13 +33,15 @@ import (
 // F-31 fixed the conflicts by making status writes patches; this removes the work
 // underneath them.
 //
-// The admitted set is derived from what the trigger path actually consumes, in
-// triggerInputsFromDevices: spec.powerDomains, status.phase, status.runtimeSeconds
-// and status.batteryChargePercent. Deliberately excluded are lastPollTime,
-// lastStatus, and loadPercent. lastPollTime is the churn source -- it moves on
-// every poll by definition -- and while it is copied onto the evaluator's UPSState,
-// nothing in evaluation reads it: staleness reaches the evaluator through
-// status.phase, which the UPSDevice controller derives.
+// The admitted set is derived from what the trigger path actually consumes:
+// status.phase, status.runtimeSeconds, and status.batteryChargePercent. Spec
+// edits are still admitted because they can change the resolver's derived
+// power-domain closure and therefore which domain-scoped triggers this device
+// belongs to. Deliberately excluded are lastPollTime, lastStatus, and
+// loadPercent. lastPollTime is the churn source -- it moves on every poll by
+// definition -- and while it is copied onto the evaluator's UPSState, nothing in
+// evaluation reads it: staleness reaches the evaluator through status.phase,
+// which the UPSDevice controller derives.
 //
 // Erring toward admitting is deliberate. A missed enqueue means a flow evaluating
 // against telemetry that has already moved, which is a correctness failure during

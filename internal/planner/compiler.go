@@ -453,7 +453,13 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 	})
 	for i := range normalized.PowerDomains {
 		normalized.PowerDomains[i].UPSDevices = append([]string(nil), normalized.PowerDomains[i].UPSDevices...)
+		normalized.PowerDomains[i].Members = append([]string(nil), normalized.PowerDomains[i].Members...)
+		normalized.PowerDomains[i].Nodes = append([]string(nil), normalized.PowerDomains[i].Nodes...)
+		normalized.PowerDomains[i].Infrastructure = append([]string(nil), normalized.PowerDomains[i].Infrastructure...)
 		sort.Strings(normalized.PowerDomains[i].UPSDevices)
+		sort.Strings(normalized.PowerDomains[i].Members)
+		sort.Strings(normalized.PowerDomains[i].Nodes)
+		sort.Strings(normalized.PowerDomains[i].Infrastructure)
 	}
 	sort.SliceStable(normalized.PowerDomains, func(left, right int) bool {
 		return normalized.PowerDomains[left].Name < normalized.PowerDomains[right].Name

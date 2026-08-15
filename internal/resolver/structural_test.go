@@ -18,6 +18,7 @@ package resolver
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
@@ -193,6 +194,17 @@ func TestAttachResolvedInputHashMarksPlannerInput(t *testing.T) {
 	bundle := StructuralBundle{
 		Hash:       "resolver-hash",
 		ObservedAt: "2026-08-01T00:00:00Z",
+		Topology: inventory.Topology{
+			Domains: []inventory.PowerDomain{
+				{
+					Name:           "rack-a",
+					UPSDevices:     []string{"ups-a"},
+					Members:        []string{"node-a", "switch-a", "ups-a"},
+					Nodes:          []string{"node-a"},
+					Infrastructure: []string{"switch-a"},
+				},
+			},
+		},
 	}
 
 	attached := AttachResolvedInputHash(flow, bundle)
@@ -204,6 +216,17 @@ func TestAttachResolvedInputHashMarksPlannerInput(t *testing.T) {
 	}
 	if flow.ResolvedInputHash != "" {
 		t.Fatalf("expected original flow input to remain unchanged, got %q", flow.ResolvedInputHash)
+	}
+	if len(attached.PowerDomains) != 1 {
+		t.Fatalf("expected one planner power domain, got %#v", attached.PowerDomains)
+	}
+	domain := attached.PowerDomains[0]
+	if domain.Name != "rack-a" ||
+		!slices.Equal(domain.UPSDevices, []string{"ups-a"}) ||
+		!slices.Equal(domain.Members, []string{"node-a", "switch-a", "ups-a"}) ||
+		!slices.Equal(domain.Nodes, []string{"node-a"}) ||
+		!slices.Equal(domain.Infrastructure, []string{"switch-a"}) {
+		t.Fatalf("expected full derived power-domain closure to reach planner input, got %#v", domain)
 	}
 }
 

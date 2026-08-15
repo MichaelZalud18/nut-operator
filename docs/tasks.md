@@ -33,22 +33,17 @@ resolver/adapter that feeds it into reconciliation. Design contract: `docs/desig
 
 The `internal/inventory` pure compiler, all four inventory CRDs with webhooks and validators,
 numbered shutdown tiers, and compilation wired into `ShutdownFlow` with the topology hash in plan
-identity.
+identity. The resolver carries full derived power-domain closure — UPS roots, members, nodes, and
+infrastructure — into planner inputs, and runtime trigger evaluation consumes that same closure, so
+domain-scoped triggers select devices from topology membership rather than raw `UPSDevice` labels.
 
 Closed: `IN-1`, `IN-3`, `IN-5`, `IN-7`, `IN-9`–`IN-14`, `IN-16`, `OD-4`, `OD-16`.
 
 #### Open Work
 
-- Carry derived domain membership across the resolver boundary. `plannerPowerDomains`
-  (`resolver/planner.go:79`) maps `Name` and `UPSDevices` only, so the compiler's derived
-  `domain.Nodes` and `domain.Infrastructure` are dropped before the planner ever sees them, and
-  `planner.PowerDomainMembership` has no field to receive them. `ControlPlane` and
-  `ControlPlaneQuorumMember` reach `inventory.Entity` (`inventory/types.go:52`) and stop there —
-  `plannerNodeTiers` (`resolver/planner.go:44`) carries name and tier only. Data plumbing, no policy.
 - Wire domain membership into wave compilation once it arrives, so a plan can be scoped to a domain
   (`OD-14`). Wanted in v1: this is a planner capability, not a policy question, and it is sequenced
-  after the plumbing line above rather than blocked on a decision.
-- Feed trigger evaluation from the derived closure instead of live telemetry snapshots.
+  after the plumbing now in place rather than blocked on missing domain data.
 - `F-81` correct `snapshotage.go:33` — it claims the declarative provider restamps `ObservedAt` every
   resolve, and nothing sets that field at all. Pin the hazard with a test in the same change:
   `Compile` hashes the normalized snapshot including `ObservedAt` (`compiler.go:45`, `compiler.go:336`),
@@ -432,14 +427,16 @@ Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`
 
 `internal/nut` as a real protocol client rather than an `upsc` wrapper, `internal/telemetry`
 normalization with profile-declared aliases, `internal/polling` per-target transport, `internal/trigger`
-pure evaluation wired into `ShutdownFlow`, and `dummy-ups` repeater mode for upstream NUT appliances.
+pure evaluation wired into `ShutdownFlow`, domain-scoped trigger evaluation against resolver-derived
+power-domain membership, and `dummy-ups` repeater mode for upstream NUT appliances.
 
 Closed: `F-22` relay half, `F-25` runtime half, `OD-9`, `CR-4`.
 
 #### Open Work
 
-- `OD-14` partial-domain outage plan scope — owned in Planning & Execution Logic, blocks trigger
-  firing against multi-domain topology.
+- `OD-14` partial-domain outage plan scope — owned in Planning & Execution Logic. Trigger selection
+  now uses derived domain membership; what remains is whether the compiled plan itself stays
+  cluster-wide or is pruned to the affected domain.
 
 ---
 

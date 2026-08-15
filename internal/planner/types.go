@@ -89,10 +89,16 @@ type DeviceCapability struct {
 	RuntimeEstimate string `json:"runtimeEstimate,omitempty"`
 }
 
-// PowerDomainMembership names the UPS devices derived into one power domain.
+// PowerDomainMembership names the inventory entities derived into one power
+// domain. UPSDevices are the roots used for trigger capability checks. Members,
+// Nodes, and Infrastructure are the closure the planner needs before OD-14 can
+// prune plans by affected domain.
 type PowerDomainMembership struct {
-	Name       string   `json:"name"`
-	UPSDevices []string `json:"upsDevices,omitempty"`
+	Name           string   `json:"name"`
+	UPSDevices     []string `json:"upsDevices,omitempty"`
+	Members        []string `json:"members,omitempty"`
+	Nodes          []string `json:"nodes,omitempty"`
+	Infrastructure []string `json:"infrastructure,omitempty"`
 }
 
 // TierPolicy assigns default shutdown tiers for groups that do not carry an

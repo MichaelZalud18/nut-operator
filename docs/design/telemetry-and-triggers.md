@@ -70,7 +70,7 @@ definitions, and any prior hold state.
 Inputs:
 
 - trigger definitions
-- normalized UPS phase, charge, runtime, power domains, and stale markers
+- normalized UPS phase, charge, runtime, derived power-domain membership, and stale markers
 - prior hold state for `spec.triggers[].for`
 - caller-provided observation time
 
@@ -89,7 +89,9 @@ read the wall clock.
 
 A trigger is eligible when at least one selected UPS satisfies the trigger condition and its optional
 hold duration has elapsed. `upsDeviceRefs` and `powerDomains` narrow selection; an empty selector
-means all supplied UPS states.
+means all supplied UPS states. Domain selection uses the resolver-derived `feeds` closure when the
+controller has resolved topology, not the authored `UPSDevice.spec.powerDomains` root labels. The
+authored labels are only a fallback for pure package callers without resolver context.
 
 `RuntimeBelow` and `ChargeBelow` require both a configured threshold and matching telemetry. Missing
 thresholds are errors. Missing telemetry is a warning and does not produce an optimistic match.

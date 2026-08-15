@@ -18,17 +18,19 @@ package controller
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 	"github.com/MichaelZalud18/nut-operator/internal/telemetry"
 	triggerpkg "github.com/MichaelZalud18/nut-operator/internal/trigger"
 )
 
-func evaluateShutdownFlowTriggers(ctx context.Context, k8sClient client.Client, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, configHash string) (triggerpkg.Evaluation, *powerv1alpha1.ShutdownTriggerEvaluationStatus, []powerv1alpha1.ShutdownTriggerHoldStateStatus, error) {
+func evaluateShutdownFlowTriggers(ctx context.Context, k8sClient client.Client, flow *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, observedAt time.Time, configHash string) (triggerpkg.Evaluation, *powerv1alpha1.ShutdownTriggerEvaluationStatus, []powerv1alpha1.ShutdownTriggerHoldStateStatus, error) {
 	var devices powerv1alpha1.UPSDeviceList
 	if err := k8sClient.List(ctx, &devices); err != nil {
 		return triggerpkg.Evaluation{}, nil, nil, err
@@ -37,7 +39,7 @@ func evaluateShutdownFlowTriggers(ctx context.Context, k8sClient client.Client, 
 	evaluation := triggerpkg.Evaluate(triggerpkg.Inputs{
 		ObservedAt: observedAt,
 		Triggers:   triggerInputsFromFlow(flow.Spec.Triggers),
-		UPSStates:  triggerUPSStatesFromDevices(devices.Items),
+		UPSStates:  triggerUPSStatesFromDevices(devices.Items, bundle),
 		Holds:      triggerHoldsFromStatus(flow.Status.TriggerHoldStates),
 	})
 	status := triggerEvaluationStatus(evaluation, effectiveShutdownFlowMode(flow.Spec.Mode), configHash)
@@ -72,12 +74,13 @@ func triggerUPSDeviceNames(refs []powerv1alpha1.ObjectNameReference) []string {
 	return names
 }
 
-func triggerUPSStatesFromDevices(devices []powerv1alpha1.UPSDevice) []triggerpkg.UPSState {
+func triggerUPSStatesFromDevices(devices []powerv1alpha1.UPSDevice, bundle resolver.StructuralBundle) []triggerpkg.UPSState {
 	states := make([]triggerpkg.UPSState, 0, len(devices))
+	domainsByDevice := triggerPowerDomainsByUPSDevice(bundle)
 	for _, device := range devices {
 		state := triggerpkg.UPSState{
 			UPSDevice:      device.Name,
-			PowerDomains:   device.Spec.PowerDomains,
+			PowerDomains:   triggerPowerDomainsForDevice(device, domainsByDevice),
 			Phase:          telemetryPhaseFromUPSDevice(device.Status.Phase),
 			OnBattery:      device.Status.Phase == powerv1alpha1.UPSDevicePhaseOnBattery || device.Status.Phase == powerv1alpha1.UPSDevicePhaseLowBattery,
 			LowBattery:     device.Status.Phase == powerv1alpha1.UPSDevicePhaseLowBattery,
@@ -91,6 +94,47 @@ func triggerUPSStatesFromDevices(devices []powerv1alpha1.UPSDevice) []triggerpkg
 		states = append(states, state)
 	}
 	return states
+}
+
+func triggerPowerDomainsForDevice(device powerv1alpha1.UPSDevice, derived map[string][]string) []string {
+	if derived != nil {
+		return append([]string(nil), derived[device.Name]...)
+	}
+	return append([]string(nil), device.Spec.PowerDomains...)
+}
+
+func triggerPowerDomainsByUPSDevice(bundle resolver.StructuralBundle) map[string][]string {
+	if len(bundle.Topology.Domains) == 0 {
+		return nil
+	}
+	domainsByDevice := map[string]map[string]struct{}{}
+	for _, domain := range bundle.Topology.Domains {
+		if domain.Name == "" {
+			continue
+		}
+		for _, device := range domain.UPSDevices {
+			if device == "" {
+				continue
+			}
+			if domainsByDevice[device] == nil {
+				domainsByDevice[device] = map[string]struct{}{}
+			}
+			domainsByDevice[device][domain.Name] = struct{}{}
+		}
+	}
+	if len(domainsByDevice) == 0 {
+		return nil
+	}
+	derived := make(map[string][]string, len(domainsByDevice))
+	for device, domains := range domainsByDevice {
+		names := make([]string, 0, len(domains))
+		for domain := range domains {
+			names = append(names, domain)
+		}
+		sort.Strings(names)
+		derived[device] = names
+	}
+	return derived
 }
 
 func telemetryPhaseFromUPSDevice(phase powerv1alpha1.UPSDevicePhase) string {

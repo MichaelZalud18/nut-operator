@@ -91,6 +91,15 @@ func TestCompileDoesNotMutateStructuralInput(t *testing.T) {
 				PowerDomains: []string{"domain-b", "domain-a"},
 			},
 		},
+		PowerDomains: []PowerDomainMembership{
+			{
+				Name:           "domain-a",
+				UPSDevices:     []string{"ups-b", "ups-a"},
+				Members:        []string{"switch-a", "node-a", "ups-a"},
+				Nodes:          []string{"node-b", "node-a"},
+				Infrastructure: []string{"switch-b", "switch-a"},
+			},
+		},
 		Groups: []Group{
 			{
 				Name:   "databases",
@@ -121,6 +130,11 @@ func TestCompileDoesNotMutateStructuralInput(t *testing.T) {
 	}
 	originalTriggerUPSDevices := append([]string(nil), input.Triggers[0].UPSDevices...)
 	originalTriggerPowerDomains := append([]string(nil), input.Triggers[0].PowerDomains...)
+	originalDomain := input.PowerDomains[0]
+	originalDomain.UPSDevices = append([]string(nil), originalDomain.UPSDevices...)
+	originalDomain.Members = append([]string(nil), originalDomain.Members...)
+	originalDomain.Nodes = append([]string(nil), originalDomain.Nodes...)
+	originalDomain.Infrastructure = append([]string(nil), originalDomain.Infrastructure...)
 	originalGroupNames := []string{input.Groups[0].Name, input.Groups[1].Name, input.Groups[2].Name}
 	originalBefore := append([]string(nil), input.Groups[1].Before...)
 
@@ -134,6 +148,9 @@ func TestCompileDoesNotMutateStructuralInput(t *testing.T) {
 	}
 	if !reflect.DeepEqual(input.Triggers[0].PowerDomains, originalTriggerPowerDomains) {
 		t.Fatalf("compile mutated trigger power domains: got %#v, want %#v", input.Triggers[0].PowerDomains, originalTriggerPowerDomains)
+	}
+	if !reflect.DeepEqual(input.PowerDomains[0], originalDomain) {
+		t.Fatalf("compile mutated power domain membership: got %#v, want %#v", input.PowerDomains[0], originalDomain)
 	}
 	if got := []string{input.Groups[0].Name, input.Groups[1].Name, input.Groups[2].Name}; !reflect.DeepEqual(got, originalGroupNames) {
 		t.Fatalf("compile mutated group order: got %#v, want %#v", got, originalGroupNames)
