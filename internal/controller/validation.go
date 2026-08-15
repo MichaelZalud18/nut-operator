@@ -251,7 +251,6 @@ func isSupportedNetworkUPSDriver(driver string) bool {
 	case "dummy-ups",
 		"snmp-ups",
 		"netxml-ups",
-		"powerman-pdu",
 		"apcupsd-ups":
 		return true
 	default:

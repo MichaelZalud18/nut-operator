@@ -80,6 +80,25 @@ func TestValidateUPSDeviceRejectsUnknownDriverOutsideNetworkAllowlist(t *testing
 	}
 }
 
+func TestValidateUPSDeviceRejectsPowermanPDU(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			Driver: "powerman-pdu",
+			Endpoint: &powerv1alpha1.UPSEndpointSpec{
+				Host: "ups-rack-a.example.net",
+			},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if result.accepted {
+		t.Fatal("expected powerman-pdu to be rejected")
+	}
+	if result.reason != "DriverUnsupported" {
+		t.Fatalf("expected DriverUnsupported, got %q", result.reason)
+	}
+}
+
 func TestValidateUPSDeviceRejectsFirmwareIdentityWithoutModel(t *testing.T) {
 	device := &powerv1alpha1.UPSDevice{
 		Spec: powerv1alpha1.UPSDeviceSpec{

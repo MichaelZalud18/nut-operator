@@ -54,46 +54,33 @@ Closed: `IN-1`, `IN-3`, `IN-5`, `IN-7`, `IN-9`–`IN-14`, `IN-16`, `OD-4`, `OD-1
 ### Capability Profiles
 
 Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundled catalog under
-`config/catalog/`, and the device-quirk/aliasing/provenance design surface. Design docs:
+`config/catalog/`, and the device-quirk/aliasing/profile-source design surface. Design docs:
 `docs/design/capability-profiles.md`.
 
 #### Built
 
 `UPSCapabilityProfile` and `PDUCapabilityProfile` CRDs over one shared five-tier match precedence
 chain, firmware-scoped quirks, telemetry aliasing, bundled UPS and PDU catalogs at `1.0.0` with drift
-tests, and `UPSCapabilityProbe` advisory drafting with probe history. A device publishes the profile
+tests, deterministic profile hashing across reordered telemetry, actuation, quirk, and firmware-match
+sets, and `UPSCapabilityProbe` advisory drafting with probe history. A device publishes the profile
 it resolves to on `status.capability` — identity, tier, the quirks in force after firmware scoping,
 and the matcher's own reason when the match is anything but a clean product hit — so a device that
-fell back to the universal floor is distinguishable from one that matched its product profile.
+fell back to the unidentified-device profile is distinguishable from one that matched its product
+profile.
 A PDU profile set that cannot resolve — duplicate ids, two universal profiles — is
-reported on every profile in the set. PDU device matching itself is scaffolding per `OD-25`, with no
-device kind and no inventory entity kind to match against. `OD-21` is decided as the code already
-behaves: driver configuration is owned by `UPSDevice` spec in NUT's own vocabulary.
+reported on every profile in the set. PDU device matching itself is scaffolding per `OD-25`, and
+the CRD description says so: no device kind, inventory entity, render path, or actuation path
+consumes it. `OD-21` is decided as the code already behaves: driver configuration is owned by
+`UPSDevice` spec in NUT's own vocabulary.
 
-Closed: `F-25`, `F-26`, `F-79`, `F-80`, `RS-7`–`RS-10`, `PL-30`, `OD-21`, `OD-22`, `OD-23`, `OD-25`,
-`OD-31`. `OD-26` dropped — the `provenance` field whose semantics it decides was never
+Closed: `F-25`, `F-26`, `F-79`, `F-80`, `F-83`, `F-84`, `RS-7`–`RS-10`, `PL-30`, `OD-21`, `OD-22`,
+`OD-23`, `OD-25`, `OD-31`. `OD-26` dropped — the `provenance` field whose semantics it decides was never
 built, and `ProfileSource` already draws the only distinction that exists.
 
 #### Open Work
 
-- `F-83` sort `Quirks` in `normalizeProfiles` (`matcher.go:374`) alongside `TelemetryVariables` and
-  `ActuationBehaviors`. Without it, reordering quirks with no semantic change moves the published
-  `status.capability.profileHash`. Not yet written up in an audit.
-- `F-84` state the PDU kind's v1 scaffolding status in the CRD description. It reaches the catalog
-  YAML and the `PDUCapabilityProfileSpec` godoc, so `kubectl explain pducapabilityprofile` — where a
-  user meets the kind — is the one surface that does not say it actuates nothing. Not yet written up
-  in an audit.
-- Record `OD-21` in [decision-index.md](design/decision-index.md), `scope-boundaries.md`, and
-  `capability-profiles.md`, with its decline: a profile-supplied *defaulting* layer for driver
-  configuration is refused, because it would make the rendered `ups.conf` depend on which profile
-  matched and reintroduce the second source of truth `OD-21` just removed. Validation is already
-  served by the driver allowlist (`RB-2`) and the `ups.conf` token/value checks.
-- Record the `OD-26` drop in [decision-index.md](design/decision-index.md) and
-  `capability-profiles.md`: `internal/capability/types.go` has no `Provenance` field, so the question
-  decides the semantics of something that was never built. `ProfileSource` (`CRD` vs `Bundled`)
-  already draws the only distinction that matters, including in match precedence, and the bundled
-  catalog is entirely first-party — there is no `Community` tier to hold apart. Revisit when an
-  external contributor catalog exists.
+None currently tracked. Future capability-profile work should start from new device evidence or
+from the deferred instant-command/PDU actuation decisions rather than from this section.
 
 ---
 

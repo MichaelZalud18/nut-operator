@@ -184,11 +184,23 @@ func TestMatchIsDeterministicAndDoesNotMutateProfiles(t *testing.T) {
 			},
 			TelemetryVariables: []string{"ups.status", "battery.runtime"},
 			ActuationBehaviors: []string{"outlet.off", "shutdown.return"},
+			Quirks: []Quirk{
+				{Name: "zulu-defect"},
+				{Name: "alpha-defect", Firmware: &QuirkFirmware{Matches: []string{"1.6.*", "1.5.*"}}},
+			},
 		},
 		profile("universal", "1.0.0", ProfileSourceBundled, ProfileSelector{Universal: true}),
 	}
 	originalTelemetry := append([]string(nil), profiles[0].TelemetryVariables...)
 	originalActuation := append([]string(nil), profiles[0].ActuationBehaviors...)
+	originalQuirks := append([]Quirk(nil), profiles[0].Quirks...)
+	for i := range originalQuirks {
+		if originalQuirks[i].Firmware != nil {
+			firmware := *originalQuirks[i].Firmware
+			firmware.Matches = append([]string(nil), originalQuirks[i].Firmware.Matches...)
+			originalQuirks[i].Firmware = &firmware
+		}
+	}
 
 	first, diagnostics, err := Match(device, profiles)
 	if err != nil {
@@ -207,6 +219,57 @@ func TestMatchIsDeterministicAndDoesNotMutateProfiles(t *testing.T) {
 	}
 	if !reflect.DeepEqual(profiles[0].ActuationBehaviors, originalActuation) {
 		t.Fatalf("matcher mutated actuation behaviors: got %#v, want %#v", profiles[0].ActuationBehaviors, originalActuation)
+	}
+	if !reflect.DeepEqual(profiles[0].Quirks, originalQuirks) {
+		t.Fatalf("matcher mutated quirks: got %#v, want %#v", profiles[0].Quirks, originalQuirks)
+	}
+}
+
+func TestMatchProfileHashIgnoresQuirkOrder(t *testing.T) {
+	build := func(order int) []Profile {
+		profile := Profile{
+			ID:      "model",
+			Version: "1.0.0",
+			Source:  ProfileSourceCRD,
+			Selector: ProfileSelector{
+				Model: "Vendor Model",
+			},
+			Quirks: []Quirk{
+				{Name: "zulu-defect"},
+				{Name: "alpha-defect", Firmware: &QuirkFirmware{Matches: []string{"1.6.*", "1.5.*"}}},
+			},
+		}
+		if order == 1 {
+			profile.Quirks = []Quirk{
+				{Name: "alpha-defect", Firmware: &QuirkFirmware{Matches: []string{"1.5.*", "1.6.*"}}},
+				{Name: "zulu-defect"},
+			}
+		}
+		return []Profile{
+			profile,
+			{
+				ID:       "universal",
+				Version:  "1.0.0",
+				Source:   ProfileSourceBundled,
+				Selector: ProfileSelector{Universal: true},
+			},
+		}
+	}
+
+	left, diagnostics, err := Match(Device{ID: "ups-a", Model: "Vendor Model", Firmware: "1.6.1"}, build(0))
+	if err != nil {
+		t.Fatalf("expected match to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+	right, diagnostics, err := Match(Device{ID: "ups-a", Model: "Vendor Model", Firmware: "1.6.1"}, build(1))
+	if err != nil {
+		t.Fatalf("expected second match to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	if left.ProfileHash != right.ProfileHash {
+		t.Fatalf("profile hash differs by quirk order: %q vs %q", left.ProfileHash, right.ProfileHash)
+	}
+	if !reflect.DeepEqual(left.Quirks, right.Quirks) {
+		t.Fatalf("resolved quirks differ by quirk order: %#v vs %#v", left.Quirks, right.Quirks)
 	}
 }
 

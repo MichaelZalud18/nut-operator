@@ -17,8 +17,11 @@ spec:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: PDUCapabilityProfile is the Schema for the pducapabilityprofiles
-          API
+        description: |-
+          PDUCapabilityProfile declares capability metadata for NUT-managed PDUs.
+          In v1alpha1 it is scaffolding only: profiles validate and publish catalog
+          metadata, but no PDU inventory entity, driver allowlist entry, render path, or
+          actuation path consumes them.
         properties:
           apiVersion:
             description: |-

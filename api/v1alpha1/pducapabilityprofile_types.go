@@ -149,7 +149,10 @@ const (
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
 
-// PDUCapabilityProfile is the Schema for the pducapabilityprofiles API
+// PDUCapabilityProfile declares capability metadata for NUT-managed PDUs.
+// In v1alpha1 it is scaffolding only: profiles validate and publish catalog
+// metadata, but no PDU inventory entity, driver allowlist entry, render path, or
+// actuation path consumes them.
 type PDUCapabilityProfile struct {
 	metav1.TypeMeta `json:",inline"`
 

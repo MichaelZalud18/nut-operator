@@ -193,47 +193,47 @@ Related and already recorded: VPA is inappropriate for `upsd` for independent re
 predictable load, and resizing requires a restart that drops every client session. See
 `scaling-and-sizing.md`.
 
-### What profiles should influence, and currently do not
+### Driver settings deliberately stay outside profiles
 
-These are legitimate per-device configuration inputs. None are wired to profiles today; driver
-settings come from `UPSDevice` spec directly.
+These are legitimate per-device configuration inputs, but `OD-21` keeps them authored on
+`UPSDevice` spec. They are recorded here because they look profile-shaped and were the tempting
+defaulting path.
 
-**Driver selection.** Which NUT network driver the device requires — `snmp-ups`, `netxml-ups`,
-`powerman-pdu`, `apcupsd-ups`. The profile is the natural home for this knowledge, since it is a
-property of the model, not of the individual deployment. Today the driver is specified per
-`UPSDevice`, which means the same fact is re-entered for every device of the same model.
+**Driver selection.** Which NUT network driver the device requires. In v1, the supported direct
+allowlist is `snmp-ups`, `netxml-ups`, and `apcupsd-ups`, with `dummy-ups` reserved for tests and
+upstream relays. The profile may record the driver's family for matching, but the rendered driver
+comes from the device spec.
 
 **Poll interval and polling behavior.** Some SNMP management cards degrade or drop responses under
-aggressive polling. This is a genuine per-device quirk and precisely what the profile's actuation
-and quirk section exists to capture. Currently there is no path for a profile to constrain polling.
+aggressive polling. That is a real model quirk, but the poll setting remains explicit device
+configuration until there is a separate design for safely authoring profile hints.
 
-**Driver-specific parameters.** MIB selection, SNMP version, retry counts, timeout values. All
-model-dependent, all currently manual.
+**Driver-specific parameters.** MIB selection, SNMP version, retry counts, timeout values. These can
+be model-dependent, but the v1 escape hatch is `UPSDevice.spec.driverOptions` behind the allowlist
+and render-time token/value checks.
 
 **Instant command support.** Already identified as F-22 in `docs/audits/nut-usage-audit.md`. Which of
 `shutdown.return`, `load.off`, `load.on`, `test.battery.start`, and the writable delay variables the
 device actually supports. Profile-declared per CR-2, and tracked as OD-20.
 
-### Design consequence
+### Driver configuration boundary
 
-The capability profile's influence on the `upsd` operand is **config rendering only**. A profile
-should be able to change which driver runs, how it is parameterised, and how it is polled. It
-should never change the pod's shape, replica count, resource allocation, or scheduling.
+**OD-21 is closed: capability profiles do not render NUT driver configuration.** Driver name, poll
+interval, and driver-specific parameters stay on `UPSDevice` spec in NUT's own vocabulary. Profiles
+declare capabilities, aliases, and quirks consumed by matching, planning, verification, and status;
+they do not default or override the `ups.conf` content.
 
-Stated as a boundary for the capability schema doc:
+A profile-supplied defaulting layer was declined. It would make rendered NUT config depend on which
+profile happened to match and would reintroduce a second source of truth for driver settings. Driver
+validation is already handled by the v1 allowlist (`snmp-ups`, `netxml-ups`, `apcupsd-ups`,
+`dummy-ups`) and the render-time token/value checks.
 
-> Capability profiles render into NUT configuration. They do not render into Kubernetes pod
-> specification.
+Stated as a boundary:
 
-### Open items this raises
+> Capability profiles describe device behavior. They do not render into NUT configuration or
+> Kubernetes pod specification.
 
-**OD-21 · Driver configuration ownership.** Whether driver name, poll interval, and driver-specific
-parameters move from `UPSDevice` spec into capability profiles, or remain in spec with profiles
-supplying defaults and validation. Moving them removes per-device duplication; leaving them keeps
-deployment-specific overrides simple. A hybrid — profile supplies the default, spec overrides — is
-consistent with the precedence chain in RS-5 and is the likely answer.
-
-## Scope, Provenance, and Non-NUT Power Devices
+## Scope, Source, and Non-NUT Power Devices
 
 *Components: Capability Profiles.*
 
@@ -254,7 +254,7 @@ The dividing line is **queried versus topological**.
 | Class | Profile? | Rationale |
 | --- | --- | --- |
 | UPS | Yes — `UPSCapabilityProfile` | Queried; telemetry and actuation vary by model and firmware |
-| NUT-managed PDU | Yes — scaffolded, see below | Queried via `powerman-pdu`; switchable outlets are device-specific |
+| NUT-managed PDU | Yes — scaffolded, see below | Queryable in principle through NUT PDU drivers, but v1 has no PDU inventory/render/actuation consumer |
 | Switch, router, transfer switch, power panel | No | Topological only; `PowerInfrastructure` inventory |
 | Non-NUT power devices (RPS and similar) | No | Topological in v1; actuation deferred |
 
@@ -264,16 +264,17 @@ recorded because the symmetry is tempting and wrong.
 
 ### PDU profiles — parallel kind, scaffolding only
 
-`powerman-pdu` is already in the driver allowlist (RB-2). A NUT-managed PDU with switchable outlets
-is genuinely queryable and has device-specific instant-command behavior, so it will need capability
-declarations once instant commands enter scope under OD-20.
+No PDU driver is admitted or rendered in v1. A NUT-managed PDU with switchable outlets is genuinely
+queryable and has device-specific behavior, so it will need capability declarations once there is a
+PDU inventory entity and instant commands enter scope under OD-20.
 
 **Decision: a parallel profile kind, not an extension of `UPSCapabilityProfile`.** Reusing the UPS
 kind would keep the CRD count lower but make the name progressively misleading and force
 UPS-specific fields to be optional-and-ignored for PDUs. A separate kind keeps each schema honest.
 
-**Scope for v1: scaffolding only.** The kind exists with a minimal schema and a matcher path, and
-no PDU actuation is implemented. The purpose is to establish the shape so that PDU support is an
+**Scope for v1: scaffolding only.** The kind exists with a minimal schema, bundled catalog entries,
+validation, and a matcher path. No PDU inventory entity, driver allowlist entry, `ups.conf` render
+path, or actuation path consumes it. The purpose is to establish the shape so that PDU support is an
 additive change later rather than a refactor of the UPS profile schema.
 
 Bundled catalog entries were originally excluded from that scope. They are included now: a schema
@@ -281,9 +282,9 @@ with no real device in it is a schema nobody has tested, and the first real prof
 "the shape is established" from an assertion into something checkable. `spec.outlets` describes
 layout only — declaring that an outlet switches is not a claim that this operator switches it.
 
-Shared machinery that should be factored rather than duplicated when this is built: the deterministic
-precedence chain (RS-5), semver rules (SB-9), the unidentified-device profile concept (PL-33), and the
-verification lifecycle once OD-23 resolves it.
+Shared machinery that should stay factored rather than duplicated when this grows: the deterministic
+precedence chain (RS-5), semver rules (SB-9), the unidentified-device profile concept (PL-33), and
+the verification lifecycle.
 
 ### Non-NUT power devices — RPS and the second actuation path
 
@@ -321,27 +322,16 @@ new isolated actuation boundary and its own security rationale; non-NUT device a
 the same. Deciding them together avoids two incompatible answers to one architectural question, and
 avoids weakening RB-1 and SB-2a twice in separate increments.
 
-### Profile provenance
+### Profile source, not provenance
 
-Users should be able to contribute profiles, and consumers should be able to tell what a profile's
-claims rest on.
+**OD-26 is dropped for v1.** No `provenance` field exists in the API or internal profile model, so
+there is no `ProjectVerified`/`Community`/`UserLocal` resolution rule to define. The only modeled
+distinction is `ProfileSource`: `CRD` versus `Bundled`.
 
-**Proposed field: `provenance`**, with three values.
-
-| Value | Meaning |
-| --- | --- |
-| `ProjectVerified` | Exercised against real hardware by the project maintainer |
-| `Community` | Contributed and accepted into the catalog; not independently hardware-verified |
-| `UserLocal` | Authored in-cluster by the operator's own user; never shipped |
-
-This is a claim about **testing**, not expertise. `ProjectVerified` means someone ran the device;
-it does not imply authority beyond that, and it is more than most device catalogs offer.
-
-Realistic catalog shape: a small `ProjectVerified` set (currently the two UniFi UPS families), the
-unidentified-device profile, and a growing `Community` set. The project cannot verify hardware it does not own,
-and the provenance field is what makes that limitation legible rather than hidden.
-
-`UserLocal` needs no maintainer action — it is simply what a user's own CRD profile is.
+`ProfileSource` is operational, not a trust taxonomy. It controls precedence within a match tier:
+a user-authored CRD profile outranks bundled data. The bundled catalog is first-party in v1, and
+there is no external/community catalog tier to hold apart. If that catalog exists later, provenance
+should be designed then against a real contributor path rather than carried now as unused metadata.
 
 ### Upgrade safety for user profiles
 
@@ -371,12 +361,14 @@ devices without NUT drivers, or whether they remain permanently topological. Def
 alongside OD-10 (USB and serial UPS support), since both concern control surfaces outside the
 NUT-network-only posture of RB-1 and SB-2a.
 
-**OD-25 · PDU profile kind.** Schema shape for the parallel PDU capability kind, and which machinery
-is factored out of `UPSCapabilityProfile` for shared use. Scaffolding only in v1.
+### Closed decisions in this area
 
-**OD-26 · Provenance field semantics.** Whether `provenance` is advisory metadata or affects
-resolution — for example, whether a `Community` profile should require explicit opt-in, or emit a
-warning condition when matched.
+**OD-21 · Driver configuration ownership.** Driver configuration stays on `UPSDevice` spec; profiles
+do not default or render it.
+
+**OD-25 · PDU profile kind.** PDU capability profiles use a parallel kind, with v1 scaffolding only.
+
+**OD-26 · Provenance field semantics.** Dropped for v1 because no `provenance` field exists.
 
 ## Testing Notes
 

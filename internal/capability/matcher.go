@@ -377,6 +377,7 @@ func normalizeProfiles(profiles []Profile) []Profile {
 		normalized[i].TelemetryVariables = append([]string(nil), normalized[i].TelemetryVariables...)
 		normalized[i].TelemetryAliases = copyAliases(normalized[i].TelemetryAliases)
 		normalized[i].ActuationBehaviors = append([]string(nil), normalized[i].ActuationBehaviors...)
+		// copyQuirks also canonicalizes quirk and firmware match ordering.
 		normalized[i].Quirks = copyQuirks(normalized[i].Quirks)
 		sort.Strings(normalized[i].TelemetryVariables)
 		sort.Strings(normalized[i].ActuationBehaviors)
