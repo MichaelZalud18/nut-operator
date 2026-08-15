@@ -281,45 +281,14 @@ type waveExecutionResult struct {
 
 // Execute records the execution in compiled wave order.
 func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
-	if input.ShutdownFlow == "" || input.PlanConfigHash == "" {
-		return Result{}, fmt.Errorf("executor input requires shutdown flow and plan config hash")
-	}
-	if len(input.Waves) == 0 {
-		return Result{}, fmt.Errorf("executor input requires at least one compiled wave")
-	}
-	groups, err := indexGroups(input.Groups)
+	groups, err := validateExecuteInput(input)
 	if err != nil {
 		return Result{}, err
 	}
-	for _, wave := range input.Waves {
-		if len(wave.Groups) == 0 {
-			return Result{}, fmt.Errorf("compiled wave %d requires at least one group", wave.Index)
-		}
-		for _, groupName := range wave.Groups {
-			if _, ok := groups[groupName]; !ok {
-				return Result{}, fmt.Errorf("compiled wave %d references unknown group %q", wave.Index, groupName)
-			}
-		}
-	}
 
 	writer := e.writer()
-	executionID := input.ExecutionID
-	if executionID == "" {
-		executionID = e.newID()
-	}
-	observedAt := input.ObservedAt
-	if observedAt.IsZero() {
-		observedAt = e.now()
-	}
-	mode := input.Mode
-	if mode == "" {
-		mode = ModeDryRun
-	}
+	executionID, observedAt, mode, reason := e.executionDefaults(input)
 	dryRun := effectiveDryRun(input)
-	reason := input.Reason
-	if reason == "" {
-		reason = "TriggerEligible"
-	}
 	startedAt := observedAt
 	result := Result{
 		ExecutionID: executionID,
@@ -361,35 +330,8 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	var tierWindow tierOverrunWindow
 	var pending []<-chan waveExecutionResult
 
-	applyWaveResult := func(run waveExecutionResult) {
-		result.Groups += run.Groups
-		result.ActionAttempts += run.ActionAttempts
-		result.NodeReleases += run.NodeReleases
-		if run.Degraded {
-			result.Degraded = true
-			if result.DegradedReason == "" {
-				result.DegradedReason = run.DegradedReason
-				result.DegradedMessage = run.DegradedMessage
-			}
-		}
-		if run.TierOverrun != nil {
-			result.TierOverruns = append(result.TierOverruns, *run.TierOverrun)
-		}
-	}
-
 	waitForPending := func() (error, string, error) {
-		var firstErr error
-		var failedGroup string
-		var pendingRecordErr error
-		for _, ch := range pending {
-			run := <-ch
-			applyWaveResult(run)
-			pendingRecordErr = errors.Join(pendingRecordErr, run.RecordError)
-			if run.Err != nil && firstErr == nil {
-				firstErr = run.Err
-				failedGroup = run.FailedGroup
-			}
-		}
+		firstErr, failedGroup, pendingRecordErr := drainPending(pending, &result)
 		pending = nil
 		return firstErr, failedGroup, pendingRecordErr
 	}
@@ -514,7 +456,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	}
 
 	handleWaveResult := func(run waveExecutionResult) (Result, error, bool) {
-		applyWaveResult(run)
+		result.absorbWave(run)
 		recordErr = errors.Join(recordErr, run.RecordError)
 		if run.Err == nil {
 			return Result{}, nil, false
@@ -605,51 +547,13 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		recordErr = errors.Join(recordErr, pendingRecordErr)
 	}
 
-	completedAt := e.now()
-	finalDetails := executionDetails(input, map[string]any{
-		"waveCount":      len(input.Waves),
-		"groupCount":     result.Groups,
-		"actionAttempts": result.ActionAttempts,
-		"nodeReleases":   result.NodeReleases,
-	})
-	if len(result.TierOverruns) > 0 {
-		finalDetails["tierOverruns"] = tierOverrunListDetails(result.TierOverruns)
-	}
-	recordErr = errors.Join(recordErr, writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
-		ExecutionID:       executionID,
-		ObservedAt:        completedAt,
-		ShutdownFlow:      input.ShutdownFlow,
-		TriggerDecisionID: input.TriggerDecisionID,
-		Mode:              mode,
-		Phase:             PhaseCompleted,
-		Reason:            reason,
-		PlanConfigHash:    input.PlanConfigHash,
-		InputHash:         input.InputHash,
-		StartedAt:         &startedAt,
-		CompletedAt:       &completedAt,
-		DryRun:            dryRun,
-		Approved:          input.Approved,
-		ApprovalEvidence:  map[string]any{"approved": input.Approved, "requestedMode": mode, "effectiveDryRun": dryRun},
-		Revalidation:      map[string]any{"inputHash": input.InputHash},
-		Details:           finalDetails,
+	recordErr = errors.Join(recordErr, e.recordCompletion(ctx, writer, input, &result, completionRecord{
+		ExecutionID: executionID,
+		Mode:        mode,
+		Reason:      reason,
+		DryRun:      dryRun,
+		StartedAt:   startedAt,
 	}))
-	resumeState := map[string]any{
-		"completedWaveCount": len(input.Waves),
-		"groupCount":         result.Groups,
-		"rehearsal":          input.Rehearsal,
-	}
-	if len(result.TierOverruns) > 0 {
-		resumeState["tierOverruns"] = tierOverrunListDetails(result.TierOverruns)
-	}
-	recordErr = errors.Join(recordErr, writer.UpsertExecutorResumeState(ctx, audit.ExecutorResumeState{
-		ExecutionID:    executionID,
-		ObservedAt:     completedAt,
-		ShutdownFlow:   input.ShutdownFlow,
-		PlanConfigHash: input.PlanConfigHash,
-		Phase:          PhaseCompleted,
-		State:          mergeDetails(finalAdaptiveStateRecord(result.Adaptive), resumeState),
-	}))
-
 	return result, recordErr
 }
 
@@ -1308,4 +1212,165 @@ func waitOutcome(dryRun bool) string {
 		return OutcomeSimulated
 	}
 	return OutcomeSucceeded
+}
+
+// absorbWave folds one wave's outcome into the running result.
+//
+// Degradation is first-wins: the reason and message describe why the execution first stopped being
+// clean, and a later wave overwriting them would replace the cause with a symptom.
+func (r *Result) absorbWave(run waveExecutionResult) {
+	r.Groups += run.Groups
+	r.ActionAttempts += run.ActionAttempts
+	r.NodeReleases += run.NodeReleases
+	if run.Degraded {
+		r.Degraded = true
+		if r.DegradedReason == "" {
+			r.DegradedReason = run.DegradedReason
+			r.DegradedMessage = run.DegradedMessage
+		}
+	}
+	if run.TierOverrun != nil {
+		r.TierOverruns = append(r.TierOverruns, *run.TierOverrun)
+	}
+}
+
+// drainPending waits for every wave still running under an Overlap policy and folds in its outcome.
+//
+// Every channel is drained even after one reports an error: the waves are already running, their
+// evidence still has to be recorded, and returning early would leak goroutines whose sends nobody
+// receives. The first error wins, so the reported failure is the one that happened first rather
+// than the one that finished last.
+func drainPending(pending []<-chan waveExecutionResult, result *Result) (error, string, error) {
+	var firstErr error
+	var failedGroup string
+	var pendingRecordErr error
+	for _, ch := range pending {
+		run := <-ch
+		result.absorbWave(run)
+		pendingRecordErr = errors.Join(pendingRecordErr, run.RecordError)
+		if run.Err != nil && firstErr == nil {
+			firstErr = run.Err
+			failedGroup = run.FailedGroup
+		}
+	}
+	return firstErr, failedGroup, pendingRecordErr
+}
+
+// validateExecuteInput rejects an execution that cannot be run before any evidence is recorded.
+//
+// Every check here is structural: the plan either names a flow and a hash, or it does not; each wave
+// either resolves to real groups, or it does not. None of it depends on power state or timing, so it
+// belongs before the first audit write rather than inside the wave loop, where a failure would leave
+// a half-recorded execution behind.
+func validateExecuteInput(input Input) (map[string]Group, error) {
+	if input.ShutdownFlow == "" || input.PlanConfigHash == "" {
+		return nil, fmt.Errorf("executor input requires shutdown flow and plan config hash")
+	}
+	if len(input.Waves) == 0 {
+		return nil, fmt.Errorf("executor input requires at least one compiled wave")
+	}
+	groups, err := indexGroups(input.Groups)
+	if err != nil {
+		return nil, err
+	}
+	for _, wave := range input.Waves {
+		if len(wave.Groups) == 0 {
+			return nil, fmt.Errorf("compiled wave %d requires at least one group", wave.Index)
+		}
+		for _, groupName := range wave.Groups {
+			if _, ok := groups[groupName]; !ok {
+				return nil, fmt.Errorf("compiled wave %d references unknown group %q", wave.Index, groupName)
+			}
+		}
+	}
+	return groups, nil
+}
+
+// executionDefaults fills the identity and timing an execution needs when the caller left them
+// unset. Kept together so the defaults are read in one place rather than inferred from four
+// scattered zero-value checks; ModeDryRun is the default deliberately, per GP-2.
+func (e Executor) executionDefaults(input Input) (executionID string, observedAt time.Time, mode, reason string) {
+	executionID = input.ExecutionID
+	if executionID == "" {
+		executionID = e.newID()
+	}
+	observedAt = input.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = e.now()
+	}
+	mode = input.Mode
+	if mode == "" {
+		mode = ModeDryRun
+	}
+	reason = input.Reason
+	if reason == "" {
+		reason = "TriggerEligible"
+	}
+	return executionID, observedAt, mode, reason
+}
+
+// completionRecord carries the execution identity a completed run has to stamp on its final audit
+// rows. Grouped into one value so recordCompletion does not take six positional arguments that are
+// all strings and bools and trivially swappable.
+type completionRecord struct {
+	ExecutionID string
+	Mode        string
+	Reason      string
+	DryRun      bool
+	StartedAt   time.Time
+}
+
+// recordCompletion writes the terminal execution row and resume state for a run that finished.
+//
+// Split out of Execute rather than inlined: it is the only place two audit writes have to agree on
+// one completedAt and one details map, and reading that agreement was hard when it sat under three
+// hundred lines of wave orchestration.
+func (e Executor) recordCompletion(ctx context.Context, writer audit.Writer, input Input, result *Result, rec completionRecord) error {
+	var recordErr error
+	completedAt := e.now()
+	finalDetails := executionDetails(input, map[string]any{
+		"waveCount":      len(input.Waves),
+		"groupCount":     result.Groups,
+		"actionAttempts": result.ActionAttempts,
+		"nodeReleases":   result.NodeReleases,
+	})
+	if len(result.TierOverruns) > 0 {
+		finalDetails["tierOverruns"] = tierOverrunListDetails(result.TierOverruns)
+	}
+	recordErr = errors.Join(recordErr, writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
+		ExecutionID:       rec.ExecutionID,
+		ObservedAt:        completedAt,
+		ShutdownFlow:      input.ShutdownFlow,
+		TriggerDecisionID: input.TriggerDecisionID,
+		Mode:              rec.Mode,
+		Phase:             PhaseCompleted,
+		Reason:            rec.Reason,
+		PlanConfigHash:    input.PlanConfigHash,
+		InputHash:         input.InputHash,
+		StartedAt:         &rec.StartedAt,
+		CompletedAt:       &completedAt,
+		DryRun:            rec.DryRun,
+		Approved:          input.Approved,
+		ApprovalEvidence:  map[string]any{"approved": input.Approved, "requestedMode": rec.Mode, "effectiveDryRun": rec.DryRun},
+		Revalidation:      map[string]any{"inputHash": input.InputHash},
+		Details:           finalDetails,
+	}))
+	resumeState := map[string]any{
+		"completedWaveCount": len(input.Waves),
+		"groupCount":         result.Groups,
+		"rehearsal":          input.Rehearsal,
+	}
+	if len(result.TierOverruns) > 0 {
+		resumeState["tierOverruns"] = tierOverrunListDetails(result.TierOverruns)
+	}
+	recordErr = errors.Join(recordErr, writer.UpsertExecutorResumeState(ctx, audit.ExecutorResumeState{
+		ExecutionID:    rec.ExecutionID,
+		ObservedAt:     completedAt,
+		ShutdownFlow:   input.ShutdownFlow,
+		PlanConfigHash: input.PlanConfigHash,
+		Phase:          PhaseCompleted,
+		State:          mergeDetails(finalAdaptiveStateRecord(result.Adaptive), resumeState),
+	}))
+
+	return recordErr
 }
