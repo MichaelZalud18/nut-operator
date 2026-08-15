@@ -144,6 +144,11 @@ otherwise read a signal that was already spent. The sharpest case is power resto
 boot back up inside the TTL of the signal that halted them. A signal that outlives its episode is a
 standing order nobody issued.
 
+Withdrawal requires positive evidence that the episode ended, and a failed lookup is not evidence.
+Where the flow cannot be read at all — a deleted flow and one the cache has not synced look the same —
+the signal is kept until its TTL runs out and then retired, because past the TTL it is refused anyway
+and removing it is bookkeeping rather than a withdrawal of authority.
+
 One thing is deliberately not withdrawn: a signal whose episode is still live stays, because a pod
 that restarts before its node has actually halted should read it and finish the job. The TTL remains
 as a backstop for the case where the operator is not around to withdraw anything, which during a
@@ -542,3 +547,14 @@ hazard, but a kubelet restart, an OOM kill, or an eviction produce the same empt
 touching the DaemonSet. Rollout suppression is still worth doing as hygiene and is filed as `F-92`.
 Also rejected: moving the actuator's dedupe state to node annotations, which would hand node-patch
 RBAC to a container holding `CAP_SYS_BOOT` and undo the API-less posture `OD-37` just established.
+
+Revised the same day: a flow that cannot be read is no longer treated as proof the episode ended.
+That reading let a cold cache cancel a live shutdown, and it was caught by the `F-77` gate rather
+than by review. Recorded in the node-agent audit under `F-87`.
+
+**2026-08-15 — DaemonSet writes held during a live flow (F-92).** Added to SB-3's neighbourhood
+rather than to it: the agent's spec write is deferred while any flow is mid-episode and requeued
+until it settles, so a config change cannot roll the fleet's monitoring during an outage. The hold is
+cluster-wide and includes `DryRun` flows, because what makes a flow live is a power event and that is
+when churn is least welcome anywhere. A DaemonSet that does not exist yet is created regardless — no
+agent at all is worse than one that restarts at an awkward moment.

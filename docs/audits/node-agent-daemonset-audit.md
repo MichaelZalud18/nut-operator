@@ -1213,6 +1213,41 @@ than merely narrowing it. A pod that restarts before its node has actually halte
 signal and finish the job — the node was told to power off and is still running. Re-actuation inside
 a live episode is the correct outcome, not the defect. The defect is re-actuation after it.
 
+*Revised 2026-08-15, and the revision matters more than the original rule.* Both conditions above
+presuppose the flow can be read. The first cut treated a flow that could not be found as a third way
+to prove the episode was over — "the flow that authorized the halt is gone, nothing can re-authorize
+this" — and that reasoning is wrong twice.
+
+A flow the controller's cache has not synced yet is indistinguishable from one that was deleted, so a
+cold cache could withdraw a signal for a shutdown that is actively running. And "I cannot find the
+flow" is not evidence about whether the halt it authorized already happened; it is evidence about the
+lookup. Revocation is supposed to need positive proof that an episode ended, and a failed lookup is
+the absence of proof, not proof of absence.
+
+The rule now keeps a signal whose flow cannot be found until its TTL runs out, then retires it. Past
+the TTL `InspectSignal` refuses the signal anyway, so removing it is bookkeeping rather than a
+withdrawal of authority — which is the honest description of what deletion means when there is no
+evidence either way. The TTL is read from the same `spec.shutdown.signalTTL` the actuator's env is
+rendered from, so revocation and the actuator cannot disagree about how long a signal lives.
+
+Nothing changes where the flow *is* readable, which is where the entire value of `F-87` sits: a
+superseded execution or a cleared `triggerActive` still withdraws immediately, and the
+power-restoration case that motivated the finding has the flow present throughout.
+
+Found by the `F-77` gate on its first run, not by review. The signal-handoff e2e spec writes a signal
+naming a flow that does not exist, and the operator deleted it out from under the actuator before the
+poll could see it. That spec is the closest thing this project has to the real handoff and it was
+right to fail; the finding is recorded here rather than as a new `F-` number because it is a defect in
+`F-87`'s own fix, not a separate one.
+
+Two things surfaced alongside it, both of which had been latent. The spec asserted on `stub actuator
+accepted shutdown signal`, which `F-75` renamed to `simulate actuator` — the assertion had been
+broken since that commit and no completed run had reported it, because every run since was cancelled
+by a superseding push. And the spec applied a fixture whose kinds all carry mutating webhooks without
+waiting for the webhook server, so it only ever passed because earlier specs happened to give the
+manager time. Both are fixed, and the spec now passes run in isolation, which is the property that was
+missing rather than an incidental improvement.
+
 The case that makes this urgent is not the rollout at all. It is power restoration: nodes halt, mains
 returns, and they boot inside the TTL of the very signal that took them down. Actuator pods start
 with empty `seen` sets, read signals that are still nominally valid, and take the fleet back down. TTL

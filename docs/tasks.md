@@ -202,11 +202,9 @@ None.
 Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_render.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
 `internal/nodeagent`. Audits: `docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`,
-`F-33`–`F-36`, `F-54`–`F-75`, `OD-37`). The task lines below are pointers; the evidence and the
-recommended order are in the audit. The privilege group it sequenced first is closed, and `OD-37` is
-decided and recorded — the operator path is the authoritative shutdown path. `F-57` implemented that
-lockdown; `F-55` and `F-56` are the remainder, and they narrow now that only one source can deliver
-a signal.
+`F-33`–`F-36`, `F-54`–`F-92`, `OD-37`). The evidence and the reasoning are in the audit; this
+section is a receipt. `OD-37` is decided and recorded — the operator path is the authoritative
+shutdown path, and the local `upsmon` `SHUTDOWNCMD` path is scaffolded but holds no authority.
 
 #### Built
 
@@ -234,8 +232,10 @@ so the failure reaches `status.nodeStatuses` instead of a container log nobody r
 removed — and the actuator's env carries one signal-path variable and a config hash named for what
 it hashes (`F-75`, `F-91`). Signals are withdrawn once the episode that authorized them ends, so
 absence is the record and a node that boots back up inside the old TTL finds nothing to act on
-(`F-87`). DaemonSet spec writes are deferred while any flow is mid-episode and requeued until it
-settles, so a config change cannot roll the fleet's monitoring during an outage (`F-92`).
+(`F-87`); where the flow cannot be read at all the signal is kept until its TTL retires it, because a
+failed lookup is not evidence the episode ended. DaemonSet spec writes are deferred while any flow is
+mid-episode and requeued until it settles, so a config change cannot roll the fleet's monitoring
+during an outage (`F-92`).
 
 Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-60`, `F-61`–`F-65`,
 `F-66`, `F-67`–`F-71`, `F-72`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`–`F-92`, `OD-37`. `F-89` declined — the signal Secret
