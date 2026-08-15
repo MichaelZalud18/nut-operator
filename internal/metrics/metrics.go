@@ -194,6 +194,88 @@ var (
 		Name:      "read_errors_total",
 		Help:      "Total failures to read or parse a mounted serving certificate.",
 	}, []string{"certificate"})
+
+	// UPSDeviceTelemetryPollsTotal counts UPS telemetry polls at the device reconciler boundary.
+	// Result is a bounded enum: "Succeeded" or "Failed".
+	UPSDeviceTelemetryPollsTotal = promauto.With(metrics.Registry).NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "upsdevice",
+		Name:      "telemetry_polls_total",
+		Help:      "Total UPSDevice telemetry poll attempts, by result.",
+	}, []string{"upsdevice", "result"})
+
+	// UPSDeviceTelemetryPollDurationSeconds times one live NUT telemetry poll.
+	UPSDeviceTelemetryPollDurationSeconds = promauto.With(metrics.Registry).NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Subsystem: "upsdevice",
+		Name:      "telemetry_poll_duration_seconds",
+		Help:      "Time spent polling live NUT telemetry for one UPSDevice.",
+		Buckets:   prometheus.DefBuckets,
+	}, []string{"upsdevice", "result"})
+
+	// UPSDeviceTelemetryLastSuccessTimestampSeconds records the last successful telemetry poll time.
+	UPSDeviceTelemetryLastSuccessTimestampSeconds = promauto.With(metrics.Registry).NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "upsdevice",
+		Name:      "telemetry_last_success_timestamp_seconds",
+		Help:      "Unix timestamp of the last successful UPSDevice telemetry poll.",
+	}, []string{"upsdevice"})
+
+	// CapabilityMatchTotal counts capability profile resolution attempts by outcome and match tier.
+	CapabilityMatchTotal = promauto.With(metrics.Registry).NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "capability",
+		Name:      "match_total",
+		Help:      "Total capability profile match attempts, by result, tier, and unidentified flag.",
+	}, []string{"result", "tier", "unidentified"})
+
+	// InventoryCompileTotal counts declarative inventory compiler/resolver attempts.
+	InventoryCompileTotal = promauto.With(metrics.Registry).NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "inventory",
+		Name:      "compile_total",
+		Help:      "Total declarative inventory compile attempts, by result.",
+	}, []string{"result"})
+
+	// InventoryEntities records the current accepted inventory entity count by kind.
+	InventoryEntities = promauto.With(metrics.Registry).NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "inventory",
+		Name:      "entities",
+		Help:      "Current accepted declarative inventory entity count by kind.",
+	}, []string{"kind"})
+
+	// InventoryEdges records the current accepted inventory edge count by relation.
+	InventoryEdges = promauto.With(metrics.Registry).NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "inventory",
+		Name:      "edges",
+		Help:      "Current accepted declarative inventory edge count by relation.",
+	}, []string{"relation"})
+
+	// InventoryPowerDomains records how many derived power domains the current bundle contains.
+	InventoryPowerDomains = promauto.With(metrics.Registry).NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "inventory",
+		Name:      "power_domains",
+		Help:      "Current accepted derived power-domain count.",
+	})
+
+	// InventoryOrphanNodes records nodes rejected by the power-planning orphan rule.
+	InventoryOrphanNodes = promauto.With(metrics.Registry).NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "inventory",
+		Name:      "orphan_nodes",
+		Help:      "Nodes currently reported as unreachable from any UPS feeds path.",
+	})
+
+	// InventoryCommunicationPathUnmodeledNodes records nodes without a modeled carries path.
+	InventoryCommunicationPathUnmodeledNodes = promauto.With(metrics.Registry).NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "inventory",
+		Name:      "communication_path_unmodeled_nodes",
+		Help:      "Nodes currently reported without a modeled carries path.",
+	})
 )
 
 // BoolToFloat renders a boolean as a Prometheus gauge value (1 for true, 0 for false).

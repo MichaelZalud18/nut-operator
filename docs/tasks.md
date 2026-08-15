@@ -331,19 +331,20 @@ Design doc: `docs/shutdown-flow.md`, Published Artifacts section (`GP-6`/`GP-7`)
 #### Built
 
 A single structured planner artifact, the dependency graph as normalized vertices/edges with
-provenance and explanations, deterministic Mermaid/Graphviz/D2 renderers, advisory startup wave
-projections, and `internal/metrics` on controller-runtime's registry. Delivery is Kubernetes API
-watch over `ShutdownFlow.status` for the current artifact stream, plus Events, logs, and PostgreSQL
-for transitions, operator detail, and durable history. Kubernetes-first interface only — CRDs,
-status, Events, logs, PostgreSQL, no UI and no bundled broker.
+provenance and explanations, resolver-derived power-domain closure artifacts, deterministic
+Mermaid/Graphviz/D2 renderers, advisory startup wave projections, and `internal/metrics` on
+controller-runtime's registry. Delivery is Kubernetes API watch over `ShutdownFlow.status` for the
+current artifact stream, plus Events, logs, and PostgreSQL for transitions, operator detail, and
+durable history. Kubernetes-first interface only — CRDs, status, Events, logs, PostgreSQL, no UI and
+no bundled broker. Metrics now cover telemetry polls, capability-match attempts, inventory compiler
+counts, domain counts, orphan nodes, and unmodeled communication paths.
 
 Closed: `PL-45`–`PL-48`, `OD-1`, `OD-5`, `F-3`, `F-6`.
 
 #### Open Work
 
-- Add telemetry-poll, capability-match, and inventory-compiler metrics (`docs/metrics.md` Open Work).
-- Publish the richer graph/domain artifacts once the planner consumes derived domains and
-  communication ordering (see Planning & Execution Logic).
+- Publish communication-ordering artifacts once the planner consumes `carries` ordering (see Planning
+  & Execution Logic).
 
 ---
 

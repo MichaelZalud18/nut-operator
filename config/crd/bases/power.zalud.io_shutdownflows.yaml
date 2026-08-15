@@ -1307,6 +1307,45 @@ spec:
                           type: object
                         type: array
                     type: object
+                  powerDomains:
+                    description: powerDomains are the resolver-derived power-domain
+                      closures available to subscribers.
+                    items:
+                      description: PublishedPowerDomainStatus is one resolver-derived
+                        power-domain closure.
+                      properties:
+                        infrastructure:
+                          description: infrastructure are non-node, non-UPS entities
+                            in the derived feeds closure.
+                          items:
+                            type: string
+                          type: array
+                        members:
+                          description: members are all inventory entities in the derived
+                            feeds closure.
+                          items:
+                            type: string
+                          type: array
+                        name:
+                          description: name is the domain label declared on one or
+                            more UPS roots.
+                          type: string
+                        nodes:
+                          description: nodes are Kubernetes nodes in the derived feeds
+                            closure.
+                          items:
+                            type: string
+                          type: array
+                        upsDevices:
+                          description: upsDevices are the UPSDevice roots that feed
+                            this domain.
+                          items:
+                            type: string
+                          type: array
+                      required:
+                      - name
+                      type: object
+                    type: array
                   startupWaves:
                     description: startupWaves is the advisory reverse-order projection
                       for subscriber-owned recovery.

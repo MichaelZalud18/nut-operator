@@ -329,6 +329,39 @@ func TestCompilePublishesGraphArtifactAndDiagramExports(t *testing.T) {
 	}
 }
 
+func TestCompilePublishesPowerDomainArtifacts(t *testing.T) {
+	input := StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery", PowerDomains: []string{"rack-a"}}},
+		PowerDomains: []PowerDomainMembership{{
+			Name:           "rack-a",
+			UPSDevices:     []string{"ups-a"},
+			Members:        []string{"ups-a", "switch-a", "node-a"},
+			Nodes:          []string{"node-a"},
+			Infrastructure: []string{"switch-a"},
+		}},
+		Groups: []Group{{
+			Name:   "applications",
+			Action: "ScaleWorkload",
+		}},
+	}
+
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	want := []PowerDomainArtifact{{
+		Name:           "rack-a",
+		UPSDevices:     []string{"ups-a"},
+		Members:        []string{"node-a", "switch-a", "ups-a"},
+		Nodes:          []string{"node-a"},
+		Infrastructure: []string{"switch-a"},
+	}}
+	if !reflect.DeepEqual(plan.PowerDomains, want) {
+		t.Fatalf("expected published power domains %#v, got %#v", want, plan.PowerDomains)
+	}
+}
+
 func TestCompileLinearStepsPublishesPolicyGraph(t *testing.T) {
 	input := StructuralInputs{
 		Triggers: []Trigger{{Type: "OnBattery"}},

@@ -396,6 +396,7 @@ func APICompiledWaves(waves []planner.Wave) []powerv1alpha1.CompiledShutdownWave
 func APIPlannerArtifact(plan planner.Plan) *powerv1alpha1.PublishedPlannerArtifactStatus {
 	return &powerv1alpha1.PublishedPlannerArtifactStatus{
 		Graph:        APIPlannerGraph(plan.Graph),
+		PowerDomains: APIPlannerPowerDomains(plan.PowerDomains),
 		StartupWaves: APICompiledWaves(plan.StartupWaves),
 		Explanations: APIPlannerExplanations(plan.Explanations),
 		Diagrams: powerv1alpha1.PlannerDiagramExportsStatus{
@@ -404,6 +405,24 @@ func APIPlannerArtifact(plan planner.Plan) *powerv1alpha1.PublishedPlannerArtifa
 			D2:          plan.Diagrams.D2,
 		},
 	}
+}
+
+// APIPlannerPowerDomains converts derived planner power domains into the published status shape.
+func APIPlannerPowerDomains(domains []planner.PowerDomainArtifact) []powerv1alpha1.PublishedPowerDomainStatus {
+	if len(domains) == 0 {
+		return nil
+	}
+	status := make([]powerv1alpha1.PublishedPowerDomainStatus, 0, len(domains))
+	for _, domain := range domains {
+		status = append(status, powerv1alpha1.PublishedPowerDomainStatus{
+			Name:           domain.Name,
+			UPSDevices:     append([]string(nil), domain.UPSDevices...),
+			Members:        append([]string(nil), domain.Members...),
+			Nodes:          append([]string(nil), domain.Nodes...),
+			Infrastructure: append([]string(nil), domain.Infrastructure...),
+		})
+	}
+	return status
 }
 
 // APIPlannerGraph converts a pure planner graph into the ShutdownFlow status shape.

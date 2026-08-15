@@ -290,6 +290,7 @@ The operator publishes facts, not external commands:
 - Current execution state.
 - Compiled execution plan.
 - Dependency graph.
+- Resolver-derived power-domain closures.
 - Shutdown waves.
 - Advisory startup wave projection.
 - Wave progress.
@@ -303,6 +304,11 @@ PostgreSQL records.
 ### Explanations
 
 Every dependency explains itself.
+
+`status.publishedArtifact.powerDomains` publishes one entry per derived power domain: the domain
+name, the UPS roots, the full member closure, and the node/infrastructure split. It is the same
+resolver-derived closure trigger evaluation uses; `UPSDevice.spec.powerDomains` remains the authored
+root label, not the subscriber-facing membership list.
 
 Examples:
 
@@ -351,6 +357,7 @@ jq -c '
     configHash: $flow.status.configHash,
     lastPublishTime: $flow.status.lastPublishTime,
     compiledWaves: $flow.status.compiledWaves,
+    powerDomains: $flow.status.publishedArtifact.powerDomains,
     graphEdges: $flow.status.publishedArtifact.graph.edges,
     triggerEligible: ($flow.status.conditions[]? | select(.type == "TriggerEligible")),
     executionReady: ($flow.status.conditions[]? | select(.type == "ExecutionReady"))

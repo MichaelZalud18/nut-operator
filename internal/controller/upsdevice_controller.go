@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 	"github.com/MichaelZalud18/nut-operator/internal/nut"
 	"github.com/MichaelZalud18/nut-operator/internal/polling"
 	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
@@ -95,6 +96,7 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// flowing. A device sitting unserved still has a profile, and that is exactly when someone is
 	// looking at it.
 	capabilityMatch, capabilityDiagnostics, capabilityErr := resolveDeviceCapabilityMatch(ctx, r.Client, &device)
+	recordCapabilityMatchMetric(capabilityMatch, capabilityErr)
 	device.Status.Capability = capabilityStatusFromMatch(capabilityMatch, capabilityDiagnostics, capabilityErr)
 	reconcileResult := ctrl.Result{}
 	var telemetryRecord polling.Result
@@ -130,7 +132,11 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			)
 			setDegradedCondition(&device.Status.Conditions, device.Generation, false, "NotDegraded", "telemetry target is not ready yet")
 		} else {
+			pollStart := time.Now()
 			pollResult, pollErr := r.telemetryPoller().Poll(ctx, target)
+			pollResultLabel := telemetryPollMetricResult(pollErr)
+			metrics.UPSDeviceTelemetryPollsTotal.WithLabelValues(device.Name, pollResultLabel).Inc()
+			metrics.UPSDeviceTelemetryPollDurationSeconds.WithLabelValues(device.Name, pollResultLabel).Observe(time.Since(pollStart).Seconds())
 			if pollErr != nil {
 				device.Status.Phase = failedTelemetryPhase(device.Status.LastPollTime)
 				reconcileResult = ctrl.Result{RequeueAfter: telemetryPollInterval(&device, true)}
@@ -147,6 +153,7 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				telemetryRecord = pollResult
 				telemetryRecordCluster = resolution.ManagementClusterName
 				shouldRecordTelemetry = telemetryRecordCluster != ""
+				metrics.UPSDeviceTelemetryLastSuccessTimestampSeconds.WithLabelValues(device.Name).Set(float64(pollResult.Snapshot.ObservedAt.Unix()))
 				reconcileResult = ctrl.Result{RequeueAfter: telemetryPollIntervalForPhase(&device, pollResult.Snapshot.Phase)}
 				degraded, reason, message := telemetryDegradedStatus(pollResult.Snapshot)
 				setReadyCondition(
@@ -460,6 +467,13 @@ func telemetryPollInterval(device *powerv1alpha1.UPSDevice, degraded bool) time.
 		return defaultTelemetryAlertPollInterval
 	}
 	return defaultTelemetryPollInterval
+}
+
+func telemetryPollMetricResult(err error) string {
+	if err != nil {
+		return "Failed"
+	}
+	return "Succeeded"
 }
 
 func (r *UPSDeviceReconciler) upsDeviceRequestsForNUTServer(ctx context.Context, obj client.Object) []reconcile.Request {

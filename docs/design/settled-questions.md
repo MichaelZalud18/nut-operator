@@ -106,8 +106,9 @@ different branch.
 
 ## 7. A lifecycle controller
 
-**Settled by:** permanently rejected, repeatedly. Argo Events plus Argo Workflows is the entire
-orchestration implementation. There is no additional controller that owns lifecycle.
+**Settled by:** permanently rejected, repeatedly. `ShutdownHook` is the bounded external handoff,
+with HTTP CloudEvents as the primary non-Kubernetes transport and generic Kubernetes objects as the
+secondary transport. There is no additional controller that owns lifecycle.
 
 **The tell:** sketching a new controller whose job is to sequence other components.
 

@@ -87,6 +87,7 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 		plan.Steps = steps
 		plan.EstimatedDuration = Duration{Duration: duration}
 	}
+	plan.PowerDomains = powerDomainArtifacts(normalized.PowerDomains)
 	plan.BlockedNodes = blockedNodesFromInversions(detectTierInversions(normalized))
 	plan.Explanations = graphExplanations(plan.Graph, len(plan.Waves), len(plan.StartupWaves))
 	plan.Diagrams = renderDiagramExports(plan.Graph)
@@ -314,6 +315,23 @@ func compileSteps(steps []Step) ([]CompiledStep, time.Duration) {
 		})
 	}
 	return compiled, cumulative
+}
+
+func powerDomainArtifacts(domains []PowerDomainMembership) []PowerDomainArtifact {
+	if len(domains) == 0 {
+		return nil
+	}
+	artifacts := make([]PowerDomainArtifact, 0, len(domains))
+	for _, domain := range domains {
+		artifacts = append(artifacts, PowerDomainArtifact{
+			Name:           domain.Name,
+			UPSDevices:     append([]string(nil), domain.UPSDevices...),
+			Members:        append([]string(nil), domain.Members...),
+			Nodes:          append([]string(nil), domain.Nodes...),
+			Infrastructure: append([]string(nil), domain.Infrastructure...),
+		})
+	}
+	return artifacts
 }
 
 func groupEdges(groups []Group, policy TierPolicy, membership []GroupNodeMembership) map[string][]string {

@@ -223,15 +223,16 @@ type Duration struct {
 
 // Plan is the deterministic compiler output.
 type Plan struct {
-	Hash              string         `json:"hash,omitempty"`
-	StructuralHash    string         `json:"structuralHash,omitempty"`
-	Steps             []CompiledStep `json:"steps,omitempty"`
-	Waves             []Wave         `json:"waves,omitempty"`
-	StartupWaves      []Wave         `json:"startupWaves,omitempty"`
-	Graph             Graph          `json:"graph,omitempty"`
-	Explanations      []Explanation  `json:"explanations,omitempty"`
-	Diagrams          DiagramExports `json:"diagrams,omitempty"`
-	EstimatedDuration Duration       `json:"estimatedDuration,omitempty"`
+	Hash              string                `json:"hash,omitempty"`
+	StructuralHash    string                `json:"structuralHash,omitempty"`
+	Steps             []CompiledStep        `json:"steps,omitempty"`
+	Waves             []Wave                `json:"waves,omitempty"`
+	StartupWaves      []Wave                `json:"startupWaves,omitempty"`
+	Graph             Graph                 `json:"graph,omitempty"`
+	PowerDomains      []PowerDomainArtifact `json:"powerDomains,omitempty"`
+	Explanations      []Explanation         `json:"explanations,omitempty"`
+	Diagrams          DiagramExports        `json:"diagrams,omitempty"`
+	EstimatedDuration Duration              `json:"estimatedDuration,omitempty"`
 	// ObservedDuration is the plan total recomputed from what previous executions
 	// actually took (EX-32). Zero when nothing has been observed. Deliberately not part
 	// of the plan hash: identity is about the plan, not about its current estimate.
@@ -256,6 +257,15 @@ type BlockedNode struct {
 	NodeTier int32    `json:"nodeTier"`
 	Groups   []string `json:"groups,omitempty"`
 	Message  string   `json:"message"`
+}
+
+// PowerDomainArtifact is the publishable resolver-derived power-domain closure.
+type PowerDomainArtifact struct {
+	Name           string   `json:"name"`
+	UPSDevices     []string `json:"upsDevices,omitempty"`
+	Members        []string `json:"members,omitempty"`
+	Nodes          []string `json:"nodes,omitempty"`
+	Infrastructure []string `json:"infrastructure,omitempty"`
 }
 
 // CompiledStep is the flattened review view for status and audit surfaces.

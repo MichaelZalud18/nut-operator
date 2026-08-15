@@ -108,6 +108,41 @@ absent(nutoperator_certificate_not_after_timestamp_seconds{certificate="webhook"
 Every replica publishes its own mount's expiry; the reporter deliberately does not take the leader
 election, since a standby whose mount has gone stale is exactly the condition worth seeing.
 
+## `nutoperator_upsdevice_*`
+
+Telemetry polling metrics are recorded at the `UPSDevice` reconciler boundary, where the operator
+has both the target and the result.
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `telemetry_polls_total` | Counter | `upsdevice`, `result` (`Succeeded`/`Failed`) | Live NUT telemetry poll attempts by result. |
+| `telemetry_poll_duration_seconds` | Histogram | `upsdevice`, `result` (`Succeeded`/`Failed`) | Time spent polling live NUT telemetry for one `UPSDevice`. |
+| `telemetry_last_success_timestamp_seconds` | Gauge | `upsdevice` | Unix timestamp of the last successful telemetry poll for that `UPSDevice`. |
+
+## `nutoperator_capability_*`
+
+Capability metrics count profile-resolution attempts. A successful unidentified-device floor match
+is still a match, with `unidentified="true"` and the match tier label naming the floor that produced
+it.
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `match_total` | Counter | `result`, `tier`, `unidentified` | Capability profile match attempts from UPSDevice status publication and ShutdownFlow structural resolution. `result` is `Matched` or `Failed`. |
+
+## `nutoperator_inventory_*`
+
+Inventory metrics publish the current accepted resolver/compiler shape and the diagnostic counts
+that matter when the shape is rejected.
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `compile_total` | Counter | `result` (`Accepted`/`Rejected`/`Failed`) | Declarative inventory compile attempts. `Rejected` means structural diagnostics rejected the snapshot; `Failed` means the controller could not read required inputs or the resolver failed outside ordinary rejection. |
+| `entities` | Gauge | `kind` (`UPSDevice`/`Node`/`PowerInfrastructure`) | Current accepted inventory entity count by kind. |
+| `edges` | Gauge | `relation` (`feeds`/`carries`) | Current accepted inventory edge count by relation. |
+| `power_domains` | Gauge | — | Current accepted derived power-domain count. |
+| `orphan_nodes` | Gauge | — | Nodes currently reported by the power-planning orphan rule. This is populated from diagnostics, so it survives rejected snapshots. |
+| `communication_path_unmodeled_nodes` | Gauge | — | Nodes currently reported without a modeled `carries` path. |
+
 ## Design notes
 
 - Collectors live in `internal/metrics`, registered via `promauto.With(metrics.Registry)` against
@@ -118,10 +153,9 @@ election, since a standby whose mount has gone stale is exactly the condition wo
   `internal/planner` or `internal/trigger`. Both are deliberately pure — no I/O, no wall-clock reads —
   and a global Prometheus counter is a side effect; keeping it out of those packages keeps their unit
   tests independent of global registry state.
-- Every label set is a bounded enum or a `ShutdownFlow` object name (small by the operator's own
-  design). No workload, node, or namespace name is ever used as a label value.
+- Every label set is a bounded enum or a `ShutdownFlow`/`UPSDevice` object name (small by the
+  operator's own design). No workload, node, or namespace name is ever used as a label value.
 
 ## Open work
 
-Not yet covered: per-`UPSDevice` telemetry poll metrics, capability-match metrics, and inventory
-compiler metrics (domain/orphan counts). See `docs/tasks.md`'s Outputs & Publishing section.
+None.

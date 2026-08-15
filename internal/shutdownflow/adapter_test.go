@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/inventory"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
@@ -115,6 +116,50 @@ func TestCompileArtifactWithTierPolicyPublishesTierStatus(t *testing.T) {
 	}
 	if len(artifact.Graph.Edges) != 1 || artifact.Graph.Edges[0].Relation != "ShutdownTier" {
 		t.Fatalf("expected one shutdown tier graph edge, got %#v", artifact.Graph.Edges)
+	}
+}
+
+func TestCompileArtifactPublishesResolvedPowerDomains(t *testing.T) {
+	flow := &powerv1alpha1.ShutdownFlow{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-flow"},
+		Spec: powerv1alpha1.ShutdownFlowSpec{
+			Triggers: []powerv1alpha1.ShutdownTrigger{{
+				Type:         powerv1alpha1.ShutdownTriggerOnBattery,
+				PowerDomains: []string{"rack-a"},
+			}},
+			Groups: []powerv1alpha1.ShutdownGroup{{
+				Name:   "applications",
+				Action: powerv1alpha1.ShutdownStepScaleWorkload,
+			}},
+		},
+	}
+	bundle := resolver.StructuralBundle{
+		Hash: "inventory-hash",
+		Topology: inventory.Topology{
+			Domains: []inventory.PowerDomain{{
+				Name:           "rack-a",
+				UPSDevices:     []string{"ups-a"},
+				Members:        []string{"node-a", "switch-a", "ups-a"},
+				Nodes:          []string{"node-a"},
+				Infrastructure: []string{"switch-a"},
+			}},
+		},
+	}
+
+	_, _, _, _, artifact := CompileArtifactWithResolvedInputs(flow, bundle)
+	if artifact == nil {
+		t.Fatal("expected published artifact")
+	}
+
+	want := []powerv1alpha1.PublishedPowerDomainStatus{{
+		Name:           "rack-a",
+		UPSDevices:     []string{"ups-a"},
+		Members:        []string{"node-a", "switch-a", "ups-a"},
+		Nodes:          []string{"node-a"},
+		Infrastructure: []string{"switch-a"},
+	}}
+	if !reflect.DeepEqual(artifact.PowerDomains, want) {
+		t.Fatalf("expected resolved power domains %#v, got %#v", want, artifact.PowerDomains)
 	}
 }
 

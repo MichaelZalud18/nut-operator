@@ -104,3 +104,51 @@ func TestActuatorActionDurationSecondsRecordsObservations(t *testing.T) {
 		t.Fatalf("ActuatorActionDurationSeconds series count did not grow: before=%d after=%d", before, after)
 	}
 }
+
+func TestUPSDeviceTelemetryPollMetricsRecordAttempts(t *testing.T) {
+	before := testutil.ToFloat64(UPSDeviceTelemetryPollsTotal.WithLabelValues("test-ups", "Succeeded"))
+	UPSDeviceTelemetryPollsTotal.WithLabelValues("test-ups", "Succeeded").Inc()
+	UPSDeviceTelemetryPollDurationSeconds.WithLabelValues("test-ups", "Succeeded").Observe(0.2)
+	UPSDeviceTelemetryLastSuccessTimestampSeconds.WithLabelValues("test-ups").Set(1234)
+	after := testutil.ToFloat64(UPSDeviceTelemetryPollsTotal.WithLabelValues("test-ups", "Succeeded"))
+	if after != before+1 {
+		t.Fatalf("UPSDeviceTelemetryPollsTotal did not increment: before=%v after=%v", before, after)
+	}
+	if got := testutil.ToFloat64(UPSDeviceTelemetryLastSuccessTimestampSeconds.WithLabelValues("test-ups")); got != 1234 {
+		t.Fatalf("UPSDeviceTelemetryLastSuccessTimestampSeconds = %v, want 1234", got)
+	}
+}
+
+func TestCapabilityMatchTotalCountsByMatchResult(t *testing.T) {
+	before := testutil.ToFloat64(CapabilityMatchTotal.WithLabelValues("Matched", "ExactModel", "false"))
+	CapabilityMatchTotal.WithLabelValues("Matched", "ExactModel", "false").Inc()
+	after := testutil.ToFloat64(CapabilityMatchTotal.WithLabelValues("Matched", "ExactModel", "false"))
+	if after != before+1 {
+		t.Fatalf("CapabilityMatchTotal did not increment: before=%v after=%v", before, after)
+	}
+}
+
+func TestInventoryMetricsPublishCurrentCompilerCounts(t *testing.T) {
+	before := testutil.ToFloat64(InventoryCompileTotal.WithLabelValues("Accepted"))
+	InventoryCompileTotal.WithLabelValues("Accepted").Inc()
+	InventoryEntities.WithLabelValues("Node").Set(3)
+	InventoryEdges.WithLabelValues("feeds").Set(4)
+	InventoryPowerDomains.Set(2)
+	InventoryOrphanNodes.Set(1)
+	InventoryCommunicationPathUnmodeledNodes.Set(5)
+	after := testutil.ToFloat64(InventoryCompileTotal.WithLabelValues("Accepted"))
+	if after != before+1 {
+		t.Fatalf("InventoryCompileTotal did not increment: before=%v after=%v", before, after)
+	}
+	for name, got := range map[string]float64{
+		"entities":                           testutil.ToFloat64(InventoryEntities.WithLabelValues("Node")),
+		"edges":                              testutil.ToFloat64(InventoryEdges.WithLabelValues("feeds")),
+		"power_domains":                      testutil.ToFloat64(InventoryPowerDomains),
+		"orphan_nodes":                       testutil.ToFloat64(InventoryOrphanNodes),
+		"communication_path_unmodeled_nodes": testutil.ToFloat64(InventoryCommunicationPathUnmodeledNodes),
+	} {
+		if got <= 0 {
+			t.Fatalf("%s metric was not set, got %v", name, got)
+		}
+	}
+}

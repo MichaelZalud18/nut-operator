@@ -805,6 +805,10 @@ type PublishedPlannerArtifactStatus struct {
 	// +optional
 	Graph PlannerGraphStatus `json:"graph,omitempty"`
 
+	// powerDomains are the resolver-derived power-domain closures available to subscribers.
+	// +optional
+	PowerDomains []PublishedPowerDomainStatus `json:"powerDomains,omitempty"`
+
 	// startupWaves is the advisory reverse-order projection for subscriber-owned recovery.
 	// +optional
 	StartupWaves []CompiledShutdownWave `json:"startupWaves,omitempty"`
@@ -816,6 +820,28 @@ type PublishedPlannerArtifactStatus struct {
 	// diagrams are deterministic renderings generated from graph.
 	// +optional
 	Diagrams PlannerDiagramExportsStatus `json:"diagrams,omitempty"`
+}
+
+// PublishedPowerDomainStatus is one resolver-derived power-domain closure.
+type PublishedPowerDomainStatus struct {
+	// name is the domain label declared on one or more UPS roots.
+	Name string `json:"name"`
+
+	// upsDevices are the UPSDevice roots that feed this domain.
+	// +optional
+	UPSDevices []string `json:"upsDevices,omitempty"`
+
+	// members are all inventory entities in the derived feeds closure.
+	// +optional
+	Members []string `json:"members,omitempty"`
+
+	// nodes are Kubernetes nodes in the derived feeds closure.
+	// +optional
+	Nodes []string `json:"nodes,omitempty"`
+
+	// infrastructure are non-node, non-UPS entities in the derived feeds closure.
+	// +optional
+	Infrastructure []string `json:"infrastructure,omitempty"`
 }
 
 // PlannerGraphStatus is the normalized dependency graph status shape.

@@ -18,13 +18,16 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
 	"github.com/MichaelZalud18/nut-operator/internal/inventory"
+	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -34,12 +37,79 @@ const declarativeInventorySourceID = "power.zalud.io/v1alpha1/declarative-invent
 func resolveDeclarativeStructuralBundle(ctx context.Context, reader client.Reader) (resolver.StructuralBundle, []resolver.Diagnostic, error) {
 	inputs, diagnostics, err := declarativeStructuralInputs(ctx, reader)
 	if err != nil {
+		recordInventoryCompileMetrics(resolver.StructuralBundle{}, diagnostics, err)
 		return resolver.StructuralBundle{}, diagnostics, err
 	}
 
 	bundle, resolverDiagnostics, err := resolver.ResolveStructural(inputs)
 	diagnostics = append(diagnostics, resolverDiagnostics...)
+	recordInventoryCompileMetrics(bundle, diagnostics, err)
+	if err == nil {
+		for _, match := range bundle.CapabilityMatches {
+			recordCapabilityMatchMetric(match, nil)
+		}
+	}
 	return bundle, diagnostics, err
+}
+
+func recordInventoryCompileMetrics(bundle resolver.StructuralBundle, diagnostics []resolver.Diagnostic, err error) {
+	result := "Accepted"
+	if err != nil {
+		result = "Failed"
+		if errors.Is(err, resolver.ErrRejected) {
+			result = "Rejected"
+		}
+	}
+	metrics.InventoryCompileTotal.WithLabelValues(result).Inc()
+
+	entities := map[inventory.EntityKind]int{
+		inventory.EntityKindUPSDevice:           0,
+		inventory.EntityKindNode:                0,
+		inventory.EntityKindPowerInfrastructure: 0,
+	}
+	for _, entity := range bundle.Topology.Entities {
+		entities[entity.Kind]++
+	}
+	for kind, count := range entities {
+		metrics.InventoryEntities.WithLabelValues(string(kind)).Set(float64(count))
+	}
+
+	edges := map[inventory.EdgeRelation]int{
+		inventory.EdgeRelationFeeds:   0,
+		inventory.EdgeRelationCarries: 0,
+	}
+	for _, edge := range bundle.Topology.Edges {
+		edges[edge.Relation]++
+	}
+	for relation, count := range edges {
+		metrics.InventoryEdges.WithLabelValues(string(relation)).Set(float64(count))
+	}
+
+	metrics.InventoryPowerDomains.Set(float64(len(bundle.Topology.Domains)))
+	metrics.InventoryOrphanNodes.Set(float64(resolverDiagnosticCount(diagnostics, resolver.DiagnosticSourceInventory, "PowerPlanningOrphan")))
+	metrics.InventoryCommunicationPathUnmodeledNodes.Set(float64(resolverDiagnosticCount(diagnostics, resolver.DiagnosticSourceInventory, "CommunicationPathUnmodeled")))
+}
+
+func recordCapabilityMatchMetric(match capability.MatchResult, err error) {
+	if err != nil {
+		metrics.CapabilityMatchTotal.WithLabelValues("Failed", "None", "false").Inc()
+		return
+	}
+	tier := string(match.Tier)
+	if tier == "" {
+		tier = "Unknown"
+	}
+	metrics.CapabilityMatchTotal.WithLabelValues("Matched", tier, strconv.FormatBool(match.Unidentified)).Inc()
+}
+
+func resolverDiagnosticCount(diagnostics []resolver.Diagnostic, source, reason string) int {
+	var count int
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Source == source && diagnostic.Reason == reason {
+			count++
+		}
+	}
+	return count
 }
 
 // snapshotAgeLevels reads the cluster's IN-16 escalation thresholds.
