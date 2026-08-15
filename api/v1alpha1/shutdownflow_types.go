@@ -58,6 +58,12 @@ type ShutdownFlowSpec struct {
 	// +optional
 	TierOverrunPolicy ShutdownTierOverrunPolicy `json:"tierOverrunPolicy,omitempty"`
 
+	// rehearsal controls how explicitly requested rehearsal executions contribute
+	// to observed-duration estimates. Rehearsals are requested by changing the
+	// power.zalud.io/rehearsal-request annotation to a new non-empty token.
+	// +optional
+	Rehearsal ShutdownRehearsalSpec `json:"rehearsal,omitempty"`
+
 	// abortPolicy defines behavior after a failed or unsafe step.
 	// +optional
 	AbortPolicy AbortPolicySpec `json:"abortPolicy,omitempty"`
@@ -379,6 +385,11 @@ type ShutdownExecutionStatus struct {
 	// dryRun is true when the executor suppressed all effectful actions.
 	DryRun bool `json:"dryRun"`
 
+	// rehearsal is true when this execution was explicitly requested as a rehearsal
+	// rather than started by an eligible power trigger.
+	// +optional
+	Rehearsal bool `json:"rehearsal,omitempty"`
+
 	// planConfigHash is the compiled plan hash executed.
 	// +optional
 	PlanConfigHash string `json:"planConfigHash,omitempty"`
@@ -465,6 +476,17 @@ type ShutdownTierOverrunStatus struct {
 	// overrunSeconds is actualSeconds minus effectiveSeconds, rounded up to a whole second.
 	// +optional
 	OverrunSeconds int64 `json:"overrunSeconds,omitempty"`
+}
+
+// ShutdownRehearsalSpec controls deliberately requested execution history.
+type ShutdownRehearsalSpec struct {
+	// includeInEstimates controls whether non-dry-run rehearsal executions are
+	// folded into EX-32 observed-duration estimates. Defaults true: a rehearsal is
+	// real work against real targets, so its durations are evidence unless the
+	// flow author opts out.
+	// +kubebuilder:default=true
+	// +optional
+	IncludeInEstimates *bool `json:"includeInEstimates,omitempty"`
 }
 
 // ShutdownExecutionAdaptiveStatus publishes where a flow progressed to and how
@@ -1048,6 +1070,15 @@ const (
 	ShutdownFlowPhaseAborted   ShutdownFlowPhase = "Aborted"
 	ShutdownFlowPhaseCompleted ShutdownFlowPhase = "Completed"
 	ShutdownFlowPhaseError     ShutdownFlowPhase = "Error"
+)
+
+const (
+	// ShutdownFlowRehearsalRequestAnnotation requests one enforce-mode rehearsal execution
+	// when set to a non-empty token. Changing the token requests another rehearsal.
+	ShutdownFlowRehearsalRequestAnnotation = "power.zalud.io/rehearsal-request"
+	// ShutdownFlowRehearsalReasonAnnotation optionally records a human reason for a
+	// rehearsal request in the execution audit details.
+	ShutdownFlowRehearsalReasonAnnotation = "power.zalud.io/rehearsal-reason"
 )
 
 // +kubebuilder:object:root=true

@@ -337,11 +337,22 @@ problem: the estimates are worst exactly when a cluster is new, which is also wh
 outage experience to fall back on. Waiting for real outages to accumulate samples means the feature
 arrives years late for the deployments that need it most.
 
-So a flow can be run deliberately — a scheduled or on-demand rehearsal, in enforce mode, against real
-targets, recorded like any other execution and labelled as a rehearsal so it is distinguishable in
-the audit trail and can be included in or excluded from estimates. This is not dry-run: dry-run skips
-effects and therefore produces no honest durations at all, which is precisely why it cannot answer
-this question.
+So a flow can be run deliberately — an on-demand rehearsal, in enforce mode, against real targets,
+recorded like any other execution and labelled as a rehearsal so it is distinguishable in the audit
+trail and can be included in or excluded from estimates. This is not dry-run: dry-run skips effects
+and therefore produces no honest durations at all, which is precisely why it cannot answer this
+question.
+
+Delivery is intentionally generic. The operator does not embed a scheduler or workflow engine; a
+GitOps change, Kubernetes `CronJob`, external CI job, dashboard button, or non-Kubernetes automation
+requests a rehearsal by changing the `power.zalud.io/rehearsal-request` annotation to a new non-empty
+token. The request is one-way and idempotent: that token is executed once for the current generation,
+mode, plan hash, and selected UPS devices, then the requester either clears it or changes it to ask
+for a new sample.
+
+Rehearsal samples are included in observed-duration estimates by default because they are real
+enforce-mode work. Flow authors can opt out with `spec.rehearsal.includeInEstimates: false` when a
+run is intentionally unrepresentative.
 
 The operator recommends one when a flow's estimates are thin — a flow whose tiers have never run, or
 have run once, is a flow whose warning surface is built on declared numbers alone, and saying so is

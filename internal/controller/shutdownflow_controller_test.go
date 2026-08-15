@@ -359,6 +359,74 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.LastExecution.TriggerActive).To(BeTrue())
 		})
 
+		It("runs an approved enforce rehearsal from an annotation when triggers are not eligible", func() {
+			observedAt := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
+			createSpoolingPowerCluster(ctx, GinkgoT().TempDir(), nil)
+
+			approvalAnnotation := "power.zalud.io/approved-for-enforce"
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Annotations = map[string]string{
+				approvalAnnotation: "true",
+				powerv1alpha1.ShutdownFlowRehearsalRequestAnnotation: "baseline-001",
+				powerv1alpha1.ShutdownFlowRehearsalReasonAnnotation:  "baseline timing",
+			}
+			resource.Spec.Mode = powerv1alpha1.ShutdownFlowModeEnforce
+			resource.Spec.Safety.ApprovalAnnotation = approvalAnnotation
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+			attachShutdownFlowToPowerCluster(ctx, typeNamespacedName)
+
+			pollTime := metav1.NewTime(observedAt.Add(-10 * time.Second))
+			runtimeSeconds := int64(900)
+			device := &powerv1alpha1.UPSDevice{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnline
+			device.Status.LastPollTime = &pollTime
+			device.Status.RuntimeSeconds = &runtimeSeconds
+			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+
+			store := &fakeAuditStore{}
+			controllerReconciler := &ShutdownFlowReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				StorageConnector: &fakeAuditConnector{store: store},
+				ExecutorRunner:   succeedingControllerActionRunner{},
+				Clock:            func() time.Time { return observedAt },
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.TriggerEvaluation).NotTo(BeNil())
+			Expect(resource.Status.TriggerEvaluation.Eligible).To(BeFalse())
+			Expect(resource.Status.LastExecution).NotTo(BeNil())
+			Expect(resource.Status.LastExecution.Rehearsal).To(BeTrue())
+			Expect(resource.Status.LastExecution.Reason).To(Equal("RehearsalRequested"))
+			Expect(resource.Status.LastExecution.SelectedUPSDevices).To(ConsistOf(shutdownFlowTestUPSName))
+			Expect(resource.Status.LastExecution.Adaptive).NotTo(BeNil())
+			Expect(resource.Status.LastExecution.Adaptive.OnBattery).To(BeFalse())
+			executionReady := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionExecutionReady)
+			Expect(executionReady).NotTo(BeNil())
+			Expect(executionReady.Reason).To(Equal("RehearsalRecorded"))
+
+			Expect(store.shutdownFlowExecutions).To(HaveLen(2))
+			completed := store.shutdownFlowExecutions[1]
+			Expect(completed.Phase).To(Equal("Completed"))
+			Expect(completed.Reason).To(Equal("RehearsalRequested"))
+			Expect(completed.Details).To(HaveKeyWithValue("rehearsal", true))
+			Expect(completed.Details).To(HaveKeyWithValue("rehearsalRequest", "baseline-001"))
+			Expect(completed.Details).To(HaveKeyWithValue("rehearsalReason", "baseline timing"))
+			Expect(store.actionAttempts).To(HaveLen(2))
+			Expect(store.actionAttempts[0].Details).To(HaveKeyWithValue("rehearsal", true))
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.shutdownFlowExecutions).To(HaveLen(2))
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.LastExecution.Reason).To(Equal("RehearsalAlreadyExecuted"))
+		})
+
 		// EX-14: the executor is itself a workload in a cluster that is shutting down, so it may be
 		// killed mid-flow. A restart has no continuity except what reached etcd, which is why this
 		// seeds the persisted record and then reconciles through a second reconciler instance --
@@ -1615,6 +1683,12 @@ func cleanupShutdownFlowResolverFixture(ctx context.Context) {
 
 func boolPtr(value bool) *bool {
 	return &value
+}
+
+type succeedingControllerActionRunner struct{}
+
+func (succeedingControllerActionRunner) RunAction(context.Context, executorpkg.Action) (executorpkg.ActionOutcome, error) {
+	return executorpkg.ActionOutcome{Outcome: executorpkg.OutcomeSucceeded}, nil
 }
 
 // histogramSampleCount reads the current observation count directly off a histogram's Write() output,

@@ -189,8 +189,10 @@ func spoolOnePowerEvent(t *testing.T, writer *SpoolWriter, id string) SpoolStats
 
 func TestSpoolWriterStopsAtItsSizeCap(t *testing.T) {
 	dir := t.TempDir()
+	fixed := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
 	writer, err := NewSpoolWriter(failingAuditWriter{err: errors.New("postgres unavailable")}, SpoolOptions{
 		Directory:   dir,
+		Clock:       func() time.Time { return fixed },
 		DisableSync: true,
 	})
 	if err != nil {
@@ -205,6 +207,7 @@ func TestSpoolWriterStopsAtItsSizeCap(t *testing.T) {
 
 	capped, err := NewSpoolWriter(failingAuditWriter{err: errors.New("postgres unavailable")}, SpoolOptions{
 		Directory:   dir,
+		Clock:       func() time.Time { return fixed },
 		DisableSync: true,
 		MaxBytes:    first.JournalBytes * 2,
 	})

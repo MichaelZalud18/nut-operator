@@ -17,10 +17,13 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 )
 
@@ -89,6 +92,33 @@ func TestThinGroupsAreNamedForRehearsal(t *testing.T) {
 
 	if len(status.ThinGroups) != 2 {
 		t.Fatalf("thin groups = %v, want both named", status.ThinGroups)
+	}
+}
+
+func TestRehearsalHistoryIsIncludedByDefaultAndExcludable(t *testing.T) {
+	flow := &powerv1alpha1.ShutdownFlow{}
+	flow.Name = "history-flow"
+	store := &fakeAuditStore{groupDurationSamples: []audit.GroupDurationSample{
+		{GroupName: "applications", Observed: time.Minute, Rehearsal: true},
+		{GroupName: "databases", Observed: 2 * time.Minute},
+	}}
+
+	history := resolveFlowHistory(context.Background(), store, flow, "plan-hash")
+	if got := len(history.GroupDurations["applications"]); got != 1 {
+		t.Fatalf("default rehearsal history samples = %d, want 1", got)
+	}
+	if got := len(history.GroupDurations["databases"]); got != 1 {
+		t.Fatalf("real history samples = %d, want 1", got)
+	}
+
+	include := false
+	flow.Spec.Rehearsal.IncludeInEstimates = &include
+	history = resolveFlowHistory(context.Background(), store, flow, "plan-hash")
+	if got := len(history.GroupDurations["applications"]); got != 0 {
+		t.Fatalf("excluded rehearsal history samples = %d, want 0", got)
+	}
+	if got := len(history.GroupDurations["databases"]); got != 1 {
+		t.Fatalf("real history samples after rehearsal opt-out = %d, want 1", got)
 	}
 }
 

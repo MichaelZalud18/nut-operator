@@ -69,6 +69,8 @@ type fakeAuditStore struct {
 	nodeReleases             []audit.NodeReleaseRecord
 	nodeSignalHandoffs       []audit.NodeSignalHandoff
 	executorResumeStates     []audit.ExecutorResumeState
+	groupDurationSamples     []audit.GroupDurationSample
+	groupDurationErr         error
 	retentionRuns            []time.Time
 	closeCalls               int
 	eventErr                 error
@@ -200,6 +202,13 @@ func (s *fakeAuditStore) UpsertExecutorResumeState(_ context.Context, state audi
 	}
 	s.executorResumeStates = append(s.executorResumeStates, state)
 	return nil
+}
+
+func (s *fakeAuditStore) GroupDurations(context.Context, string, string, int) ([]audit.GroupDurationSample, error) {
+	if s.groupDurationErr != nil {
+		return nil, s.groupDurationErr
+	}
+	return append([]audit.GroupDurationSample(nil), s.groupDurationSamples...), nil
 }
 
 var _ = Describe("PowerManagementCluster Controller", func() {

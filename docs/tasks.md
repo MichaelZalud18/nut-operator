@@ -121,14 +121,18 @@ group with provenance and sample counts. `OD-12` is surfaced as
 `status.planFeasibility` — plan estimate against reported runtime, warning and never blocking.
 `EX-14` restart resume is covered by envtest: a second reconciler instance holding no
 in-process state resumes the persisted tier and timing mode instead of re-reporting descended tiers as
-new work. `ShutdownHook`/`RunHook` replaces the removed Argo-shaped `RunWorkflow` route: HTTP
-CloudEvents is the primary transport for non-Kubernetes systems, generic Kubernetes objects are the
-secondary transport, hook dry-runs are either authored rehearsals or recorded request summaries, and
-hook failures mark the flow degraded without holding waves or engaging `abortPolicy`. `OD-14`
+new work. `EX-33` rehearsal execution is built as a generic one-way request: changing the
+`power.zalud.io/rehearsal-request` annotation to a new token runs one approved enforce-mode sample,
+labels status and audit details as rehearsal, and feeds those real durations into estimates unless
+`spec.rehearsal.includeInEstimates: false` opts out. `ShutdownHook`/`RunHook` replaces the removed
+Argo-shaped `RunWorkflow` route: HTTP CloudEvents is the primary transport for non-Kubernetes
+systems, generic Kubernetes objects are the secondary transport, hook dry-runs are either authored
+rehearsals or recorded request summaries, and hook failures mark the flow degraded without holding
+waves or engaging `abortPolicy`. `OD-14`
 partial-domain scope is compiled in `internal/planner`: domain- or UPS-scoped triggers prune only
 groups proved wholly outside affected domains, with ambiguous and mixed-domain groups retained.
 
-Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-32`, `OD-4`,
+Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-33`, `OD-4`,
 `OD-11`, `OD-12`, `OD-14`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `OD-33`, `OD-34`, `SB-15`,
 `HK-1`–`HK-10`, `F-31`, `F-42`, `F-44`.
 
@@ -137,11 +141,6 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 - `OD-27` confirm the adaptive defaults against a real outage. The compression amount is measured, so
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).
-- Build `EX-33` rehearsal runs so history exists before the first real outage: an on-demand or
-  scheduled enforce-mode execution, labelled as a rehearsal in the audit trail and includable or
-  excludable from estimates. Dry-run cannot serve this — it skips effects and so produces no honest
-  durations. `status.planFeasibility.thinGroups` already names what a rehearsal would improve; what
-  is missing is the run itself and the label on it.
 - Feed node metrics into the estimates alongside execution history — draw and capacity readings
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target

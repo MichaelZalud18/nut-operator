@@ -410,6 +410,21 @@ spec:
                 - DryRun
                 - Enforce
                 type: string
+              rehearsal:
+                description: |-
+                  rehearsal controls how explicitly requested rehearsal executions contribute
+                  to observed-duration estimates. Rehearsals are requested by changing the
+                  power.zalud.io/rehearsal-request annotation to a new non-empty token.
+                properties:
+                  includeInEstimates:
+                    default: true
+                    description: |-
+                      includeInEstimates controls whether non-dry-run rehearsal executions are
+                      folded into EX-32 observed-duration estimates. Defaults true: a rehearsal is
+                      real work against real targets, so its durations are evidence unless the
+                      flow author opts out.
+                    type: boolean
+                type: object
               safety:
                 description: safety defines global safety gates for this flow.
                 properties:
@@ -1151,6 +1166,11 @@ spec:
                     description: reason explains why the execution was started or
                       skipped.
                     type: string
+                  rehearsal:
+                    description: |-
+                      rehearsal is true when this execution was explicitly requested as a rehearsal
+                      rather than started by an eligible power trigger.
+                    type: boolean
                   selectedUPSDevices:
                     description: selectedUPSDevices is the sorted union of UPS devices
                       that made the trigger eligible.

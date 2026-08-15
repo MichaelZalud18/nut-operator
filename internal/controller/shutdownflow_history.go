@@ -66,8 +66,15 @@ func resolveFlowHistory(ctx context.Context, store audit.Store, flow *powerv1alp
 	}
 
 	durations := make(map[string][]time.Duration, len(samples))
+	includeRehearsals := includeRehearsalHistory(flow)
 	for _, sample := range samples {
+		if sample.Rehearsal && !includeRehearsals {
+			continue
+		}
 		durations[sample.GroupName] = append(durations[sample.GroupName], sample.Observed)
+	}
+	if len(durations) == 0 {
+		return planner.HistoryInputs{}
 	}
 	return planner.HistoryInputs{GroupDurations: durations}
 }

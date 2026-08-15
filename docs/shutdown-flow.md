@@ -399,6 +399,35 @@ Execution records, action attempts, telemetry snapshots, and approval evidence b
 
 Execution also publishes current state and wave progress as facts. Subscribers may watch those facts, but the operator does not delegate shutdown ordering or host actuation to subscribers.
 
+### Rehearsal Execution
+
+A rehearsal is an approved `Enforce` execution requested before a real outage so the planner has
+observed duration history. It is real work against real targets, not dry-run output, and audit
+records plus `status.lastExecution.rehearsal` label it separately from power-triggered executions.
+
+The delivery mechanism is deliberately generic: change the
+`power.zalud.io/rehearsal-request` annotation to a new non-empty token. A Kubernetes `CronJob`,
+GitOps commit, CI job, dashboard action, or non-Kubernetes system can own that token change. The
+operator executes that request once for the current flow generation, mode, plan hash, and selected
+UPS devices.
+
+```yaml
+metadata:
+  annotations:
+    power.zalud.io/approved-for-enforce: "true"
+    power.zalud.io/rehearsal-request: "baseline-2026-08"
+    power.zalud.io/rehearsal-reason: "monthly timing sample"
+spec:
+  mode: Enforce
+  safety:
+    approvalAnnotation: power.zalud.io/approved-for-enforce
+```
+
+Clear the annotation after the requesting system observes completion, or change the token to request
+another sample. Rehearsal samples feed observed-duration estimates by default; set
+`spec.rehearsal.includeInEstimates: false` when a run should remain visible in audit history but not
+shape future estimates.
+
 ## Resource Semantics
 
 Workload controllers such as Deployments and StatefulSets are normally scaled, suspended, or quiesced. Deleting their Pods directly is only appropriate for exceptional overrides because controllers may recreate Pods.

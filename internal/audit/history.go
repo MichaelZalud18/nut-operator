@@ -38,6 +38,11 @@ type GroupDurationSample struct {
 	// that for them.
 	Phase string
 
+	// Rehearsal is true when the execution was deliberately requested to build
+	// history before an outage. The caller decides whether those samples belong in
+	// the current estimate.
+	Rehearsal bool
+
 	// CompletedAt orders the samples, newest first, so a caller can weight recent
 	// runs or cut off old ones without a second query.
 	CompletedAt time.Time
@@ -97,6 +102,7 @@ func (s *SQLStore) GroupDurations(ctx context.Context, flow, planConfigHash stri
 
 	rows, err := querier.QueryContext(ctx, fmt.Sprintf(`SELECT g.group_name, g.wave_index, g.phase,
        g.completed_at,
+       COALESCE((e.details->>'rehearsal')::boolean, false) AS rehearsal,
        EXTRACT(EPOCH FROM (g.completed_at - g.started_at)) AS elapsed_seconds
   FROM %[1]s.shutdownflow_execution_groups g
   JOIN %[1]s.shutdownflow_executions e ON e.execution_id = g.execution_id
@@ -119,7 +125,7 @@ func (s *SQLStore) GroupDurations(ctx context.Context, flow, planConfigHash stri
 			sample  GroupDurationSample
 			seconds float64
 		)
-		if err := rows.Scan(&sample.GroupName, &sample.WaveIndex, &sample.Phase, &sample.CompletedAt, &seconds); err != nil {
+		if err := rows.Scan(&sample.GroupName, &sample.WaveIndex, &sample.Phase, &sample.CompletedAt, &sample.Rehearsal, &seconds); err != nil {
 			return nil, fmt.Errorf("scan group duration for shutdown flow %q: %w", flow, err)
 		}
 		sample.Observed = time.Duration(seconds * float64(time.Second))

@@ -95,6 +95,9 @@ type Input struct {
 	InputHash          string
 	Approved           bool
 	DryRun             bool
+	Rehearsal          bool
+	RehearsalRequest   string
+	RehearsalReason    string
 	SelectedUPSDevices []string
 	SignalTTL          time.Duration
 	TierOverrunPolicy  string
@@ -229,6 +232,7 @@ type Result struct {
 	ExecutionID     string
 	Phase           string
 	DryRun          bool
+	Rehearsal       bool
 	Waves           int
 	Groups          int
 	ActionAttempts  int
@@ -321,6 +325,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		ExecutionID: executionID,
 		Phase:       PhaseCompleted,
 		DryRun:      dryRun,
+		Rehearsal:   input.Rehearsal,
 		Waves:       len(input.Waves),
 	}
 
@@ -346,10 +351,9 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		Revalidation: map[string]any{
 			"inputHash": input.InputHash,
 		},
-		Details: map[string]any{
-			"selectedUPSDevices": append([]string(nil), input.SelectedUPSDevices...),
-			"waveCount":          len(input.Waves),
-		},
+		Details: executionDetails(input, map[string]any{
+			"waveCount": len(input.Waves),
+		}),
 	}))
 
 	adaptiveInput := input.Adaptive
@@ -393,7 +397,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	recordAborted := func(groupErr error, failedGroup string, accumulatedRecordErr error) (Result, error) {
 		result.Phase = PhaseAborted
 		completedAt := e.now()
-		details := map[string]any{}
+		details := executionDetails(input, nil)
 		if failedGroup != "" {
 			details["failedGroup"] = failedGroup
 		}
@@ -485,6 +489,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		}
 		waveDetails := mergeDetails(adaptiveStateRecord(waveState), map[string]any{
 			"dryRun":                dryRun,
+			"rehearsal":             input.Rehearsal,
 			"tierOverrunPolicy":     tierPolicy,
 			"declaredTierSeconds":   durationSeconds(window.DeclaredDuration),
 			"effectiveTierSeconds":  durationSeconds(window.EffectiveDuration),
@@ -601,15 +606,14 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	}
 
 	completedAt := e.now()
-	executionDetails := map[string]any{
-		"selectedUPSDevices": append([]string(nil), input.SelectedUPSDevices...),
-		"waveCount":          len(input.Waves),
-		"groupCount":         result.Groups,
-		"actionAttempts":     result.ActionAttempts,
-		"nodeReleases":       result.NodeReleases,
-	}
+	finalDetails := executionDetails(input, map[string]any{
+		"waveCount":      len(input.Waves),
+		"groupCount":     result.Groups,
+		"actionAttempts": result.ActionAttempts,
+		"nodeReleases":   result.NodeReleases,
+	})
 	if len(result.TierOverruns) > 0 {
-		executionDetails["tierOverruns"] = tierOverrunListDetails(result.TierOverruns)
+		finalDetails["tierOverruns"] = tierOverrunListDetails(result.TierOverruns)
 	}
 	recordErr = errors.Join(recordErr, writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
 		ExecutionID:       executionID,
@@ -627,11 +631,12 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		Approved:          input.Approved,
 		ApprovalEvidence:  map[string]any{"approved": input.Approved, "requestedMode": mode, "effectiveDryRun": dryRun},
 		Revalidation:      map[string]any{"inputHash": input.InputHash},
-		Details:           executionDetails,
+		Details:           finalDetails,
 	}))
 	resumeState := map[string]any{
 		"completedWaveCount": len(input.Waves),
 		"groupCount":         result.Groups,
+		"rehearsal":          input.Rehearsal,
 	}
 	if len(result.TierOverruns) > 0 {
 		resumeState["tierOverruns"] = tierOverrunListDetails(result.TierOverruns)
@@ -653,6 +658,21 @@ func effectiveTierOverrunPolicy(policy string) string {
 		return TierOverrunPolicyWait
 	}
 	return policy
+}
+
+func executionDetails(input Input, details map[string]any) map[string]any {
+	if details == nil {
+		details = map[string]any{}
+	}
+	details["selectedUPSDevices"] = append([]string(nil), input.SelectedUPSDevices...)
+	details["rehearsal"] = input.Rehearsal
+	if input.RehearsalRequest != "" {
+		details["rehearsalRequest"] = input.RehearsalRequest
+	}
+	if input.RehearsalReason != "" {
+		details["rehearsalReason"] = input.RehearsalReason
+	}
+	return details
 }
 
 func lowerTierDueAfter(waves []Wave, index int) bool {
@@ -904,6 +924,7 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 			"timingMode":       string(timingMode),
 			"compression":      waveState.Budget.Compression,
 			"planFits":         waveState.Budget.Fits,
+			"rehearsal":        input.Rehearsal,
 			"declaredTimeout":  durationSeconds(group.Timeout),
 			"effectiveTimeout": durationSeconds(effectiveTimeout),
 			"declaredWait":     durationSeconds(group.WaitDuration),
@@ -924,6 +945,7 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 		DryRun:      dryRun,
 		Details: mergeDetails(outcome.Details, map[string]any{
 			"selectedTargetCount": len(group.SelectedTargets),
+			"rehearsal":           input.Rehearsal,
 		}),
 	}))
 

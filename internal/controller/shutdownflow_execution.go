@@ -25,6 +25,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -47,35 +48,73 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 	if writer == nil || flow == nil || evaluation == nil {
 		return nil
 	}
+	rehearsal := shutdownFlowRehearsalRequest(flow)
+	rehearsalRun := false
+	executionEvaluation := evaluation
 	if !evaluation.Eligible {
-		deactivateLastExecution(&flow.Status.LastExecution)
-		setExecutionReadyCondition(
-			&flow.Status.Conditions,
-			flow.Generation,
-			false,
-			"TriggerNotEligible",
-			"shutdown flow execution has not started because no trigger is eligible",
-		)
-		return nil
+		if rehearsal.Requested {
+			if effectiveShutdownFlowMode(flow.Spec.Mode) != powerv1alpha1.ShutdownFlowModeEnforce {
+				setExecutionReadyCondition(
+					&flow.Status.Conditions,
+					flow.Generation,
+					false,
+					"RehearsalRequiresEnforce",
+					"rehearsal execution requires spec.mode Enforce because dry-run does not produce honest action durations",
+				)
+				return nil
+			}
+			selected := rehearsalSelectedUPSDevices(flow, bundle)
+			if len(selected) == 0 {
+				setExecutionReadyCondition(
+					&flow.Status.Conditions,
+					flow.Generation,
+					false,
+					"RehearsalSelectionEmpty",
+					"rehearsal execution could not select any UPS devices from the flow trigger scopes",
+				)
+				return nil
+			}
+			rehearsalRun = true
+			executionEvaluation = rehearsalExecutionEvaluation(evaluation, selected, configHash)
+		} else {
+			deactivateLastExecution(&flow.Status.LastExecution)
+			setExecutionReadyCondition(
+				&flow.Status.Conditions,
+				flow.Generation,
+				false,
+				"TriggerNotEligible",
+				"shutdown flow execution has not started because no trigger is eligible",
+			)
+			return nil
+		}
 	}
 
-	dedupeKey := shutdownExecutionDeduplicationKey(flow, evaluation, configHash)
+	dedupeKey := shutdownExecutionDeduplicationKey(flow, executionEvaluation, configHash)
+	if rehearsalRun {
+		dedupeKey = shutdownRehearsalDeduplicationKey(flow, rehearsal, configHash, executionEvaluation.SelectedUPSDevices)
+	}
 	if executionAlreadyRecorded(flow.Status.LastExecution, dedupeKey) {
+		reason := "AlreadyExecuted"
+		message := "eligible trigger episode already has execution evidence"
+		if rehearsalRun {
+			reason = "RehearsalAlreadyExecuted"
+			message = "rehearsal request already has execution evidence"
+		}
 		flow.Status.LastExecution.TriggerActive = true
-		flow.Status.LastExecution.Reason = "AlreadyExecuted"
-		flow.Status.LastExecution.Message = "eligible trigger episode already has execution evidence"
+		flow.Status.LastExecution.Reason = reason
+		flow.Status.LastExecution.Message = message
 		applyLastExecutionPhase(flow)
 		setExecutionReadyCondition(
 			&flow.Status.Conditions,
 			flow.Generation,
 			true,
-			"AlreadyExecuted",
-			"eligible trigger episode already has execution evidence",
+			reason,
+			message,
 		)
 		return nil
 	}
 
-	input, err := r.shutdownExecutionInput(ctx, flow, observedAt, inputHash, configHash, evaluation, dedupeKey, bundle)
+	input, err := r.shutdownExecutionInput(ctx, flow, observedAt, inputHash, configHash, executionEvaluation, dedupeKey, bundle, rehearsalRun)
 	if err != nil {
 		setExecutionReadyCondition(
 			&flow.Status.Conditions,
@@ -86,6 +125,10 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		)
 		return err
 	}
+	if rehearsalRun {
+		input.RehearsalRequest = rehearsal.Token
+		input.RehearsalReason = rehearsal.Reason
+	}
 	executeStart := time.Now()
 	result, err := executorpkg.Executor{
 		Writer: writer,
@@ -95,8 +138,8 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		// snapshot: the whole reason to evaluate at boundaries is that power may have
 		// moved since the last one.
 		Observer: r.powerObserverForDevices(
-			evaluation.SelectedUPSDevices,
-			runtimeIsTrustedForFlow(bundle.CapabilityMatches, evaluation.SelectedUPSDevices),
+			executionEvaluation.SelectedUPSDevices,
+			runtimeIsTrustedForFlow(bundle.CapabilityMatches, executionEvaluation.SelectedUPSDevices),
 			input.Adaptive.Observation,
 		),
 	}.Execute(ctx, input)
@@ -114,15 +157,16 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		Phase:              shutdownExecutionPhase(result.Phase, err),
 		Mode:               effectiveShutdownFlowMode(flow.Spec.Mode),
 		DryRun:             result.DryRun,
+		Rehearsal:          rehearsalRun,
 		PlanConfigHash:     configHash,
-		SelectedUPSDevices: append([]string(nil), evaluation.SelectedUPSDevices...),
+		SelectedUPSDevices: append([]string(nil), executionEvaluation.SelectedUPSDevices...),
 		StartedAt:          &metav1.Time{Time: observedAt.UTC()},
 		CompletedAt:        &completedAt,
 		WaveCount:          int32(result.Waves),
 		GroupCount:         int32(result.Groups),
 		ActionAttemptCount: int32(result.ActionAttempts),
 		NodeReleaseCount:   int32(result.NodeReleases),
-		Reason:             evaluation.Reason,
+		Reason:             executionEvaluation.Reason,
 		Adaptive:           adaptiveStatusFromResult(result.Adaptive),
 		TierOverruns:       tierOverrunStatusFromResult(result.TierOverruns),
 	}
@@ -153,17 +197,213 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		)
 	} else {
 		status.Message = "shutdown flow execution evidence recorded"
+		reason := "ExecutionRecorded"
+		if rehearsalRun {
+			status.Message = "shutdown flow rehearsal evidence recorded"
+			reason = "RehearsalRecorded"
+		}
 		setExecutionReadyCondition(
 			&flow.Status.Conditions,
 			flow.Generation,
 			true,
-			"ExecutionRecorded",
-			"shutdown flow execution evidence recorded",
+			reason,
+			status.Message,
 		)
 	}
 	flow.Status.LastExecution = status
 	applyLastExecutionPhase(flow)
 	return err
+}
+
+func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, executionID string, bundle resolver.StructuralBundle, rehearsal bool) (executorpkg.Input, error) {
+	waves := executorWavesFromFlow(flow.Status.CompiledWaves, flow.Status.CompiledSteps)
+	groups, err := r.executorGroupsFromFlow(ctx, flow)
+	if err != nil {
+		return executorpkg.Input{}, err
+	}
+	observation := adaptive.PowerObservation{
+		RuntimeTrusted: runtimeIsTrustedForFlow(bundle.CapabilityMatches, evaluation.SelectedUPSDevices),
+	}
+	if !rehearsal {
+		// Seeded from the trigger-time state so a flow with no Observer still runs against
+		// a real reading rather than an empty one, which would look like mains present.
+		observation.OnBattery = true
+	} else {
+		observation = r.rehearsalPowerObservation(ctx, evaluation.SelectedUPSDevices, observation.RuntimeTrusted)
+	}
+	return executorpkg.Input{
+		ExecutionID:        executionID,
+		ObservedAt:         observedAt,
+		ShutdownFlow:       flow.Name,
+		TriggerDecisionID:  eligibleTriggerDecisionID(evaluation),
+		Mode:               string(effectiveShutdownFlowMode(flow.Spec.Mode)),
+		Reason:             evaluation.Reason,
+		PlanConfigHash:     configHash,
+		InputHash:          inputHash,
+		Approved:           effectiveShutdownFlowMode(flow.Spec.Mode) == powerv1alpha1.ShutdownFlowModeEnforce,
+		DryRun:             effectiveShutdownFlowMode(flow.Spec.Mode) != powerv1alpha1.ShutdownFlowModeEnforce,
+		Rehearsal:          rehearsal,
+		SelectedUPSDevices: append([]string(nil), evaluation.SelectedUPSDevices...),
+		TierOverrunPolicy:  string(effectiveShutdownTierOverrunPolicy(flow.Spec.TierOverrunPolicy)),
+		Waves:              waves,
+		Groups:             groups,
+		Adaptive:           adaptiveInputForFlow(flow, bundle, observation),
+	}, nil
+}
+
+type shutdownRehearsalRequest struct {
+	Requested bool
+	Token     string
+	Reason    string
+}
+
+func shutdownFlowRehearsalRequest(flow *powerv1alpha1.ShutdownFlow) shutdownRehearsalRequest {
+	if flow == nil {
+		return shutdownRehearsalRequest{}
+	}
+	token := strings.TrimSpace(flow.Annotations[powerv1alpha1.ShutdownFlowRehearsalRequestAnnotation])
+	if token == "" {
+		return shutdownRehearsalRequest{}
+	}
+	return shutdownRehearsalRequest{
+		Requested: true,
+		Token:     token,
+		Reason:    strings.TrimSpace(flow.Annotations[powerv1alpha1.ShutdownFlowRehearsalReasonAnnotation]),
+	}
+}
+
+func rehearsalExecutionEvaluation(evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, selected []string, configHash string) *powerv1alpha1.ShutdownTriggerEvaluationStatus {
+	out := &powerv1alpha1.ShutdownTriggerEvaluationStatus{}
+	if evaluation != nil {
+		*out = *evaluation
+		out.Decisions = append([]powerv1alpha1.ShutdownTriggerDecisionStatus(nil), evaluation.Decisions...)
+		out.Diagnostics = append([]powerv1alpha1.ShutdownTriggerDiagnosticStatus(nil), evaluation.Diagnostics...)
+	}
+	out.Eligible = true
+	out.Reason = "RehearsalRequested"
+	out.SelectedUPSDevices = append([]string(nil), selected...)
+	out.PlanConfigHash = configHash
+	return out
+}
+
+func rehearsalSelectedUPSDevices(flow *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle) []string {
+	if flow == nil {
+		return nil
+	}
+	allDevices := allBundleUPSDevices(bundle)
+	domains := bundleUPSDevicesByDomain(bundle)
+	selected := map[string]struct{}{}
+	for _, trigger := range flow.Spec.Triggers {
+		switch {
+		case len(trigger.UPSDeviceRefs) > 0:
+			for _, ref := range trigger.UPSDeviceRefs {
+				if ref.Name != "" {
+					selected[ref.Name] = struct{}{}
+				}
+			}
+		case len(trigger.PowerDomains) > 0:
+			for _, domain := range trigger.PowerDomains {
+				for _, device := range domains[domain] {
+					selected[device] = struct{}{}
+				}
+			}
+		default:
+			for _, device := range allDevices {
+				selected[device] = struct{}{}
+			}
+		}
+	}
+	return sortedStringSet(selected)
+}
+
+func allBundleUPSDevices(bundle resolver.StructuralBundle) []string {
+	selected := map[string]struct{}{}
+	for _, match := range bundle.CapabilityMatches {
+		if match.DeviceID != "" {
+			selected[match.DeviceID] = struct{}{}
+		}
+	}
+	for _, domain := range bundle.Topology.Domains {
+		for _, device := range domain.UPSDevices {
+			if device != "" {
+				selected[device] = struct{}{}
+			}
+		}
+	}
+	return sortedStringSet(selected)
+}
+
+func bundleUPSDevicesByDomain(bundle resolver.StructuralBundle) map[string][]string {
+	out := make(map[string][]string, len(bundle.Topology.Domains))
+	for _, domain := range bundle.Topology.Domains {
+		if domain.Name == "" {
+			continue
+		}
+		devices := append([]string(nil), domain.UPSDevices...)
+		sort.Strings(devices)
+		out[domain.Name] = devices
+	}
+	return out
+}
+
+func sortedStringSet(values map[string]struct{}) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (r *ShutdownFlowReconciler) rehearsalPowerObservation(ctx context.Context, selected []string, trusted bool) adaptive.PowerObservation {
+	devices := make([]powerv1alpha1.UPSDevice, 0, len(selected))
+	for _, name := range selected {
+		var device powerv1alpha1.UPSDevice
+		if err := r.Get(ctx, client.ObjectKey{Name: name}, &device); err != nil {
+			return adaptive.PowerObservation{RuntimeTrusted: trusted}
+		}
+		devices = append(devices, device)
+	}
+	if len(devices) == 0 {
+		return adaptive.PowerObservation{RuntimeTrusted: trusted}
+	}
+	return powerObservationFromDevices(devices, trusted)
+}
+
+func includeRehearsalHistory(flow *powerv1alpha1.ShutdownFlow) bool {
+	if flow == nil || flow.Spec.Rehearsal.IncludeInEstimates == nil {
+		return true
+	}
+	return *flow.Spec.Rehearsal.IncludeInEstimates
+}
+
+func shutdownRehearsalDeduplicationKey(flow *powerv1alpha1.ShutdownFlow, request shutdownRehearsalRequest, configHash string, selectedUPSDevices []string) string {
+	selected := append([]string(nil), selectedUPSDevices...)
+	sort.Strings(selected)
+	keyPayload := struct {
+		Flow               string   `json:"flow"`
+		Generation         int64    `json:"generation"`
+		Mode               string   `json:"mode"`
+		PlanConfigHash     string   `json:"planConfigHash"`
+		RehearsalRequest   string   `json:"rehearsalRequest"`
+		SelectedUPSDevices []string `json:"selectedUPSDevices"`
+	}{
+		Flow:               flow.Name,
+		Generation:         flow.Generation,
+		Mode:               string(effectiveShutdownFlowMode(flow.Spec.Mode)),
+		PlanConfigHash:     configHash,
+		RehearsalRequest:   request.Token,
+		SelectedUPSDevices: selected,
+	}
+	encoded, err := json.Marshal(keyPayload)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
 }
 
 func applyLastExecutionPhase(flow *powerv1alpha1.ShutdownFlow) {
@@ -177,37 +417,6 @@ func applyLastExecutionPhase(flow *powerv1alpha1.ShutdownFlow) {
 	case powerv1alpha1.ShutdownExecutionPhaseAborted, powerv1alpha1.ShutdownExecutionPhaseFailed:
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseAborted
 	}
-}
-
-func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, executionID string, bundle resolver.StructuralBundle) (executorpkg.Input, error) {
-	waves := executorWavesFromFlow(flow.Status.CompiledWaves, flow.Status.CompiledSteps)
-	groups, err := r.executorGroupsFromFlow(ctx, flow)
-	if err != nil {
-		return executorpkg.Input{}, err
-	}
-	// Seeded from the trigger-time state so a flow with no Observer still runs against
-	// a real reading rather than an empty one, which would look like mains present.
-	observation := adaptive.PowerObservation{
-		OnBattery:      true,
-		RuntimeTrusted: runtimeIsTrustedForFlow(bundle.CapabilityMatches, evaluation.SelectedUPSDevices),
-	}
-	return executorpkg.Input{
-		ExecutionID:        executionID,
-		ObservedAt:         observedAt,
-		ShutdownFlow:       flow.Name,
-		TriggerDecisionID:  eligibleTriggerDecisionID(evaluation),
-		Mode:               string(effectiveShutdownFlowMode(flow.Spec.Mode)),
-		Reason:             evaluation.Reason,
-		PlanConfigHash:     configHash,
-		InputHash:          inputHash,
-		Approved:           effectiveShutdownFlowMode(flow.Spec.Mode) == powerv1alpha1.ShutdownFlowModeEnforce,
-		DryRun:             effectiveShutdownFlowMode(flow.Spec.Mode) != powerv1alpha1.ShutdownFlowModeEnforce,
-		SelectedUPSDevices: append([]string(nil), evaluation.SelectedUPSDevices...),
-		TierOverrunPolicy:  string(effectiveShutdownTierOverrunPolicy(flow.Spec.TierOverrunPolicy)),
-		Waves:              waves,
-		Groups:             groups,
-		Adaptive:           adaptiveInputForFlow(flow, bundle, observation),
-	}, nil
 }
 
 func executorWavesFromFlow(compiledWaves []powerv1alpha1.CompiledShutdownWave, compiledSteps []powerv1alpha1.CompiledShutdownStep) []executorpkg.Wave {
