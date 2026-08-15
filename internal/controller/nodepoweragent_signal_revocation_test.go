@@ -35,6 +35,7 @@ const (
 	revocationFlowName  = "rack-a-shutdown"
 	revocationAgentName = "rack-a-agents"
 	revocationNamespace = "power-system"
+	revocationTTL       = 2 * time.Minute
 )
 
 func revocationSignal(nodeName, executionID string, written time.Time) nodeagent.ShutdownSignal {
@@ -64,11 +65,21 @@ func revocationFlow(executionID string, completedAt time.Time, triggerActive boo
 	}
 }
 
+// authorized evaluates the rule as of shortly after the signal was written, which is when a
+// reconcile realistically first sees it. Cases that care about elapsed time pass their own `now`.
+func authorized(payload nodeagent.ShutdownSignal, flow *powerv1alpha1.ShutdownFlow) bool {
+	written, err := time.Parse(time.RFC3339Nano, payload.Timestamp)
+	if err != nil {
+		written = time.Date(2026, 8, 14, 3, 0, 0, 0, time.UTC)
+	}
+	return signalStillAuthorized(payload, flow, revocationTTL, written.Add(time.Second))
+}
+
 func TestSignalIsRevokedOnceItsEpisodeIsOver(t *testing.T) {
 	written := time.Date(2026, 8, 14, 3, 0, 0, 0, time.UTC)
 	flow := revocationFlow("exec-1", written.Add(2*time.Second), false, powerv1alpha1.ShutdownExecutionPhaseCompleted)
 
-	if signalStillAuthorized(revocationSignal("node-a", "exec-1", written), flow) {
+	if authorized(revocationSignal("node-a", "exec-1", written), flow) {
 		t.Fatal("a signal whose trigger episode has ended is still authorized; the file outlives the halt it authorized")
 	}
 }
@@ -79,7 +90,7 @@ func TestSignalSurvivesWhileItsEpisodeIsStillLive(t *testing.T) {
 
 	// The trigger is still eligible, so the node was told to halt and has not. A pod that restarts
 	// here should read the signal and finish the job.
-	if !signalStillAuthorized(revocationSignal("node-a", "exec-1", written), flow) {
+	if !authorized(revocationSignal("node-a", "exec-1", written), flow) {
 		t.Fatal("a signal was revoked while its trigger episode is still active; this cancels a shutdown mid-flow")
 	}
 }
@@ -92,7 +103,7 @@ func TestSignalNewerThanTheExecutionRecordSurvives(t *testing.T) {
 	flow := revocationFlow("exec-previous", previous, false, powerv1alpha1.ShutdownExecutionPhaseCompleted)
 	written := previous.Add(time.Hour)
 
-	if !signalStillAuthorized(revocationSignal("node-a", "exec-now", written), flow) {
+	if !authorized(revocationSignal("node-a", "exec-now", written), flow) {
 		t.Fatal("a signal newer than the flow's last execution record was revoked; that is a live shutdown being cancelled by a status lag")
 	}
 }
@@ -102,16 +113,28 @@ func TestSignalFromASupersededExecutionIsRevoked(t *testing.T) {
 	// A later episode is live, but this signal belongs to the one before it.
 	flow := revocationFlow("exec-2", written.Add(time.Hour), true, powerv1alpha1.ShutdownExecutionPhaseCompleted)
 
-	if signalStillAuthorized(revocationSignal("node-a", "exec-1", written), flow) {
+	if authorized(revocationSignal("node-a", "exec-1", written), flow) {
 		t.Fatal("a signal from a superseded execution is still authorized")
 	}
 }
 
-func TestSignalIsRevokedWhenItsFlowIsGone(t *testing.T) {
+// A flow that cannot be found is not evidence the halt already happened, and a flow the cache has
+// not synced yet is indistinguishable from one that was deleted. So a fresh signal survives and only
+// the TTL retires it -- past which the actuator refuses it anyway and removal is bookkeeping.
+func TestFreshSignalSurvivesAFlowThatCannotBeFound(t *testing.T) {
 	written := time.Date(2026, 8, 14, 3, 0, 0, 0, time.UTC)
 
-	if signalStillAuthorized(revocationSignal("node-a", "exec-1", written), nil) {
-		t.Fatal("a signal naming a ShutdownFlow that no longer exists is still authorized")
+	if !authorized(revocationSignal("node-a", "exec-1", written), nil) {
+		t.Fatal("a signal was revoked because its flow could not be read; a cold cache now cancels live shutdowns")
+	}
+}
+
+func TestSignalWithAMissingFlowIsRetiredOnceItsTTLPasses(t *testing.T) {
+	written := time.Date(2026, 8, 14, 3, 0, 0, 0, time.UTC)
+	payload := revocationSignal("node-a", "exec-1", written)
+
+	if signalStillAuthorized(payload, nil, revocationTTL, written.Add(revocationTTL+time.Second)) {
+		t.Fatal("an expired signal for a missing flow is still projected; nothing will ever clean it up")
 	}
 }
 
@@ -119,7 +142,7 @@ func TestSignalWithNoExecutionRecordSurvives(t *testing.T) {
 	written := time.Date(2026, 8, 14, 3, 0, 0, 0, time.UTC)
 	flow := &powerv1alpha1.ShutdownFlow{ObjectMeta: metav1.ObjectMeta{Name: revocationFlowName}}
 
-	if !signalStillAuthorized(revocationSignal("node-a", "exec-1", written), flow) {
+	if !authorized(revocationSignal("node-a", "exec-1", written), flow) {
 		t.Fatal("a signal was revoked against a flow with no execution evidence; absence of a record is not evidence the episode ended")
 	}
 }
@@ -137,7 +160,7 @@ func TestUnusableSignalsAreRevokedRatherThanLingering(t *testing.T) {
 		"no timestamp at all": {ExecutionID: "exec-1", NodeName: "node-a", ShutdownFlow: revocationFlowName},
 	}
 	for name, payload := range cases {
-		if signalStillAuthorized(payload, live) {
+		if authorized(payload, live) {
 			t.Errorf("%s: a signal InspectSignal would refuse is being kept in the channel", name)
 		}
 	}

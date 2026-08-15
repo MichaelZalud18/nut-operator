@@ -436,10 +436,19 @@ spec:
     signalTTL: 2m
     requireFreshTelemetry: false
 `, agentNamespace, nutServerRepository, nodeName, upsmonAgentRepository, nodeActuatorRepository, operandImageTag)
-			applyCmd := exec.Command("kubectl", "apply", "-f", "-")
-			applyCmd.Stdin = strings.NewReader(manifest)
-			_, err = utils.Run(applyCmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create the dummy-ups signal handoff fixture")
+			// Retried rather than applied once: every kind in this fixture has a mutating webhook, so
+			// the apply fails outright with "connection refused" until the manager's webhook server is
+			// serving. Nothing in this spec's own setup waits for that -- it only ever passed because
+			// earlier specs in the suite happened to give the manager time, which makes it both
+			// unrunnable on its own and a flake waiting for a slow pull.
+			applyFixture := func(g Gomega) {
+				applyCmd := exec.Command("kubectl", "apply", "-f", "-")
+				applyCmd.Stdin = strings.NewReader(manifest)
+				_, err := utils.Run(applyCmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+			Eventually(applyFixture, 2*time.Minute, 5*time.Second).
+				Should(Succeed(), "Failed to create the dummy-ups signal handoff fixture")
 
 			DeferCleanup(func() {
 				By("cleaning up the signal handoff fixture")
@@ -471,7 +480,6 @@ spec:
 			By("writing a shutdown signal directly into the projected signal Secret")
 			executionID := fmt.Sprintf("e2e-signal-%d", time.Now().UnixNano())
 			signalPayload := map[string]any{
-				"dryRun":             true,
 				"executionID":        executionID,
 				"nodeName":           nodeName,
 				"planConfigHash":     "e2e-signal-handoff",
@@ -493,7 +501,7 @@ spec:
 				cmd := exec.Command("kubectl", "-n", agentNamespace, "logs", agentPodName, "-c", "actuator")
 				logs, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(logs).To(ContainSubstring("stub actuator accepted shutdown signal executionID=" + executionID))
+				g.Expect(logs).To(ContainSubstring("simulate actuator accepted shutdown signal executionID=" + executionID))
 			}
 			Eventually(verifySignalObserved, 2*time.Minute, 5*time.Second).Should(Succeed())
 		})

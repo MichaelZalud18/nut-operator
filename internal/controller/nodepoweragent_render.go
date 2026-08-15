@@ -822,6 +822,8 @@ func (r *NodePowerAgentReconciler) revokedSignalKeys(ctx context.Context, agent 
 		return nil, fmt.Errorf("get signal Secret %s/%s for revocation: %w", key.Namespace, key.Name, err)
 	}
 
+	ttl := durationOrDefault(agent.Spec.Shutdown.SignalTTL, 2*time.Minute)
+	now := time.Now().UTC()
 	var revoked map[string]struct{}
 	flows := map[string]*powerv1alpha1.ShutdownFlow{}
 	for name, raw := range secret.Data {
@@ -838,7 +840,7 @@ func (r *NodePowerAgentReconciler) revokedSignalKeys(ctx context.Context, agent 
 		if err != nil {
 			return nil, err
 		}
-		if signalStillAuthorized(payload, flow) {
+		if signalStillAuthorized(payload, flow, ttl, now) {
 			continue
 		}
 		if revoked == nil {
@@ -890,7 +892,15 @@ func (r *NodePowerAgentReconciler) shutdownFlowForSignal(ctx context.Context, na
 //
 // Keeping a signal while its episode is live is deliberate: a pod that restarts before its node has
 // actually halted should read the signal and finish the job.
-func signalStillAuthorized(payload nodeagent.ShutdownSignal, flow *powerv1alpha1.ShutdownFlow) bool {
+//
+// Revocation therefore needs positive evidence that an episode ended. Where there is none -- the
+// flow cannot be found at all -- the signal is kept until its TTL runs out and then cleaned up,
+// because at that point the actuator rejects it anyway and removing it is bookkeeping rather than a
+// withdrawal of authority. Revoking a missing-flow signal on sight was the first shape here and it
+// was wrong twice over: a flow the cache has not synced yet is indistinguishable from one that was
+// deleted, so a cold cache could cancel a live shutdown, and "I cannot find the flow" is not
+// evidence that the halt it authorized already happened.
+func signalStillAuthorized(payload nodeagent.ShutdownSignal, flow *powerv1alpha1.ShutdownFlow, ttl time.Duration, now time.Time) bool {
 	written, err := time.Parse(time.RFC3339Nano, payload.Timestamp)
 	if err != nil || payload.ExecutionID == "" || payload.NodeName == "" || payload.ShutdownFlow == "" {
 		// Nothing an actuator would act on: InspectSignal rejects it on the same grounds. There is
@@ -898,8 +908,7 @@ func signalStillAuthorized(payload nodeagent.ShutdownSignal, flow *powerv1alpha1
 		return false
 	}
 	if flow == nil {
-		// The flow that authorized the halt is gone. Nothing can re-authorize this.
-		return false
+		return now.Sub(written) <= ttl
 	}
 	last := flow.Status.LastExecution
 	if last == nil {
@@ -1526,6 +1535,15 @@ func durationString(duration *metav1.Duration, fallback string) string {
 		return fallback
 	}
 	return duration.Duration.String()
+}
+
+// durationOrDefault mirrors durationString for callers that need the value rather than the rendered
+// env var, so revocation and the actuator cannot disagree about how long a signal lives.
+func durationOrDefault(duration *metav1.Duration, fallback time.Duration) time.Duration {
+	if duration == nil || duration.Duration <= 0 {
+		return fallback
+	}
+	return duration.Duration
 }
 
 func nodePowerAgentPodNodeSelector(agent *powerv1alpha1.NodePowerAgent) (map[string]string, error) {
