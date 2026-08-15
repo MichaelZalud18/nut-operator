@@ -135,6 +135,20 @@ arbitrary order is not a safety net under it — it is a second, worse shutdown 
 engages exactly when nobody is watching. `SB-2b` already reserves sequencing for the operator; this
 is that boundary applied to the release signal itself.
 
+The signal is authorization, not a record, and authorization is withdrawn. The operator deletes a
+node's key from the Secret once the execution that wrote it stops covering it — a superseded
+execution, or the same one after its trigger stops being eligible — so absence is what says the
+episode is over. This matters because the actuator's own memory of what it has acted on is per-pod:
+any replacement pod, from a rollout or a kubelet restart or an OOM kill, starts empty and would
+otherwise read a signal that was already spent. The sharpest case is power restoration, where nodes
+boot back up inside the TTL of the signal that halted them. A signal that outlives its episode is a
+standing order nobody issued.
+
+One thing is deliberately not withdrawn: a signal whose episode is still live stays, because a pod
+that restarts before its node has actually halted should read it and finish the job. The TTL remains
+as a backstop for the case where the operator is not around to withdraw anything, which during a
+site-wide power event is not hypothetical.
+
 The cost is stated rather than hidden: if the operator cannot deliver a signal, nodes are not
 released, and the UPS runs down under a cluster that stays up. That is the failure this project
 accepts, because it is observable and bounded, where the alternative is not.
@@ -514,3 +528,16 @@ Accepted cost, recorded so a later reader does not mistake it for an oversight: 
 cannot deliver a signal, nodes are not released, and the UPS discharges under a cluster that stays
 up. That failure is visible and bounded. The alternative is not, and a second shutdown
 implementation that engages when nobody is watching is worse than none.
+
+**2026-08-15 — signals are withdrawn, not just expired (F-87).** Added to SB-3. The operator deletes
+a node's key from the signal Secret once the execution that wrote it stops covering it, so absence
+is the record that an episode ended. Previously only the TTL bounded a spent signal, and the
+actuator's memory of what it had acted on was per-pod, so any replacement pod inside that window read
+a standing order nobody had issued — sharpest on power restoration, where nodes boot inside the TTL
+of the signal that halted them.
+
+Rejected: suppressing DaemonSet rollouts during a flow as the guard. It treats the rollout as the
+hazard, but a kubelet restart, an OOM kill, or an eviction produce the same empty-state pod without
+touching the DaemonSet. Rollout suppression is still worth doing as hygiene and is filed as `F-92`.
+Also rejected: moving the actuator's dedupe state to node annotations, which would hand node-patch
+RBAC to a container holding `CAP_SYS_BOOT` and undo the API-less posture `OD-37` just established.

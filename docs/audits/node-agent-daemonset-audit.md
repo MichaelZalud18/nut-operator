@@ -1173,6 +1173,90 @@ Neither finding is wrong on its own; the interaction between them was never reco
 with `F-72`'s remaining half — suppressing rollouts while a flow is live — rather than by moving the
 state somewhere node-scoped, which would mean a host mount the actuator does not otherwise need.
 
+*Closed 2026-08-15, and not the way the paragraph above proposed.* Rollout suppression treats the
+rollout as the hazard. It is not: it is one of several ways a pod with an empty `seen` set appears in
+front of a signal that is still in its TTL. A kubelet restart, an OOM kill, an eviction, or a plain
+crash-loop produce the same pod with the same empty state and never touch the DaemonSet, so a guard
+on rollouts would have left the finding open under a different name. The hazard is the signal
+outliving the episode that authorized it.
+
+So the fix is revocation. `ensureNodePowerAgentSignalSecret` now reads the projected Secret at the
+top of each pass and deletes every per-node key whose authorization has ended
+(`revokedSignalKeys`/`signalStillAuthorized` in `internal/controller/nodepoweragent_render.go`).
+Absence becomes the record. This is the property Kured gets for free by putting its sentinel on
+tmpfs — the reboot clears it, so it needs no dedupe memory at all — recovered here for a channel that
+has to survive the pod but not the episode. Moving the actuator's own state to node annotations was
+rejected on the same grounds `OD-37` was decided: the actuator is deliberately API-less after that
+decision, and node-patch RBAC on a container holding `CAP_SYS_BOOT` buys dedupe at the cost of the
+property that makes the container reviewable.
+
+Two conditions have to hold for a signal to stay, and the order is the whole design.
+
+The signal must not be newer than the flow's execution record. `recordShutdownFlowExecution` runs the
+entire executor synchronously and writes `status.lastExecution` only after it returns, so between the
+runner placing a signal in the Secret and the status landing there is a window where the freshest
+signal in the cluster belongs to an execution the flow has not admitted to yet. A reconcile landing
+in that window sees an execution record older than the signal in front of it. Comparing the signal's
+timestamp against `lastExecution.completedAt` closes it exactly, with no grace constant to tune: a
+signal written after the last recorded execution finished can only belong to one still in flight, and
+revoking it would cancel a shutdown mid-flow. A grace period was the first shape considered and
+rejected — it trades an arbitrary number against the residue window it is supposed to be shrinking.
+
+Then the episode must still be live: same `executionID`, and `triggerActive` still set.
+`triggerActive` is the flow's own answer to whether the power event that authorized the halt is still
+happening, cleared by `deactivateLastExecution` the moment the trigger stops being eligible. A signal
+from a superseded execution, or from this one after the trigger cleared, has nothing left to
+authorize.
+
+Keeping a signal while its episode is live is deliberate, and it is why this closes `F-87` rather
+than merely narrowing it. A pod that restarts before its node has actually halted *should* read the
+signal and finish the job — the node was told to power off and is still running. Re-actuation inside
+a live episode is the correct outcome, not the defect. The defect is re-actuation after it.
+
+The case that makes this urgent is not the rollout at all. It is power restoration: nodes halt, mains
+returns, and they boot inside the TTL of the very signal that took them down. Actuator pods start
+with empty `seen` sets, read signals that are still nominally valid, and take the fleet back down. TTL
+alone is a coin flip against boot time. Revocation is decided against flow state rather than elapsed
+time, so it does not care how fast a node boots.
+
+A `ShutdownFlow` watch was added to `SetupWithManager` for the same reason. Revocation is a function
+of `lastExecution`, so the instant that record stops covering a signal is the instant the signal
+becomes withdrawable; without the watch the withdrawal waits for whatever unrelated event next
+reconciles the agent, and the wait it would lose is exactly the one above. The `shutdownflows` RBAC
+marker on the agent controller is new but generates no diff — the manager's ClusterRole is aggregated
+across controllers and already carried the verb — so it documents a dependency rather than granting
+one.
+
+Ordering within the reconcile matters and is deliberate: the Secret is read before
+`CreateOrUpdate`, not inside its mutate function, so the flow lookups happen once per pass instead of
+once per conflict retry. A key appearing between the read and the update is simply not considered
+this time; the next reconcile revokes it if it is spent. Nothing is ever withdrawn on the strength of
+a stale read.
+
+The TTL and `F-58`'s per-pod dedupe both stay. TTL is now the backstop for the case revocation cannot
+cover — the operator not being around to revoke, which during a site-wide power event is not
+hypothetical — and `F-58` remains defense in depth for the pod that is running. Revocation is
+primary; neither of the other two is load-bearing on its own any more.
+
+`signalStillAuthorized` is a pure function over the payload and the flow, which is what makes the
+rule testable without a cluster.
+`TestSignalIsRevokedOnceItsEpisodeIsOver`, `TestSignalSurvivesWhileItsEpisodeIsStillLive`,
+`TestSignalNewerThanTheExecutionRecordSurvives`, `TestSignalFromASupersededExecutionIsRevoked`,
+`TestRevokedSignalKeysWithdrawsOnlySpentSignals`, `TestRevokedSignalKeysLeavesALiveEpisodeAlone`, and
+`TestEnsureSignalSecretWithdrawsSpentSignalsAndKeepsTheMarker` were each confirmed against sabotaged
+code: making `revokedSignalKeys` return nothing (the pre-fix behaviour) fails the withdrawal tests,
+dropping the timestamp comparison fails the mid-flight test, and revoking regardless of
+`triggerActive` fails the live-episode tests. Unusable payloads — unparseable JSON, missing execution
+ID, node, flow, or timestamp — are revoked rather than left to linger, on the grounds that
+`InspectSignal` would refuse them anyway, so there is no live episode to protect.
+
+Revocation also makes an empty signal Secret the steady state rather than an edge case, which raises
+the stakes on `F-86`'s `delivery-channel` marker: it is now the only thing standing between "no flow
+running" and "this channel does not exist". Two tests assert the marker survives revocation.
+
+Rollout suppression during a live flow remains worth doing and is filed separately as `F-92`. It is
+hygiene — avoiding pod churn at the worst possible moment — not the guard `F-87` needed.
+
 **F-88 · Dedupe is per-source, not per-episode.** `watchSignals` iterates every configured path
 without breaking after it acts, and `SignalKey` (`internal/nodeagent/signal.go:93`) is built from
 the payload — execution ID, node, plan hash, timestamp. Two sources describing one episode produce
@@ -1302,3 +1386,21 @@ to carry, which is part of why `OD-37` declined it as an authorization path in t
 This breaks every `NodePowerAgent` that sets `actuatorPolicy`, deliberately and while the API is
 alpha. Nothing converts: `Stub` and `SystemdPoweroff` are rejected by the enum, so a stale manifest
 fails at admission with the valid values named rather than being silently reinterpreted.
+
+## Findings — signal lifetime, 2026-08-15
+
+**F-92 · Nothing suppresses a DaemonSet rollout during a live flow.** `reconcileNodePowerAgentOperands`
+renders and applies the DaemonSet on every pass, so a config change, an image bump, or a spec edit
+lands whenever it arrives — including while a shutdown flow is executing. The rendered spec is
+correct; the timing is the problem. `maxSurge: 1` with `maxUnavailable: 0` means a rollout mid-flow
+replaces monitoring pods on nodes that are in the middle of being released.
+
+This is the remaining half of `F-72`, and it is filed on its own rather than under `F-87` because
+`F-87` no longer depends on it. Signal revocation closed that finding directly: a spent signal is
+withdrawn, so a pod arriving with an empty `seen` set finds nothing to act on regardless of why it
+arrived. What is left here is churn at the worst possible moment, not a path to a wrong halt.
+
+Triaged as v1 open work. The fix shape is settled — skip the spec write while a flow is active and
+requeue — and the guard is the open half: what counts as active, and where the check lives. A
+flow-active condition read from `ShutdownFlow.status` is the obvious candidate now that the agent
+controller already watches flows for revocation, which was not true when `F-72` was written.

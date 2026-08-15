@@ -17,7 +17,7 @@ stays answerable to one question: what is left before v1. Items move there only 
 outside the project gates them or scope-boundaries places them beyond v1 — never merely because
 they are hard or unscheduled. Declined work is recorded where it was declined, not parked here.
 
-Last reviewed: 2026-08-14
+Last reviewed: 2026-08-15
 
 ---
 
@@ -236,27 +236,24 @@ A node whose clock rejects every signal the operator sends reports NotReady rath
 so the failure reaches `status.nodeStatuses` instead of a container log nobody reads mid-outage.
 `ActuatorPolicy` is `Disabled`/`Simulate`/`PowerOff` — `SystemdPoweroff` named a mechanism `F-36`
 removed — and the actuator's env carries one signal-path variable and a config hash named for what
-it hashes (`F-75`, `F-91`).
+it hashes (`F-75`, `F-91`). Signals are withdrawn once the episode that authorized them ends, so
+absence is the record and a node that boots back up inside the old TTL finds nothing to act on
+(`F-87`).
 
 Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-60`, `F-61`–`F-65`,
-`F-66`, `F-67`–`F-71`, `F-73`–`F-75`, `F-86`, `F-88`, `F-90`, `F-91`, `OD-37`. `F-89` declined — the signal Secret
+`F-66`, `F-67`–`F-71`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`, `F-91`, `OD-37`. `F-89` declined — the signal Secret
 mounts whole on every node, but the payload carries no credentials and the node-name check holds it
 to exposure rather than actuation; recorded in
 [node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md).
 
 #### Open Work
 
-##### Signal delivery and dedupe
+##### Rollout hygiene
 
-- **`F-87` · A rollout mid-flow can re-actuate a signal inside its TTL.** `F-58`'s actuated-key state
-  lives on a per-pod emptyDir, while `F-72`'s `maxSurge: 1` brings up a second pod with an empty
-  `seen` set watching the same projected signal — which is exactly what `F-58` was closed to prevent.
-  Unrecorded interaction between the two; resolve it with the `F-72` rollout-suppression remainder
-  below rather than separately. Not yet written up in an audit.
-
-- **`F-72` remainder · nothing suppresses a rollout during a flow.** The shape is fixed; the guard is
-  the open half — a paused DaemonSet, an admission check, or a flow-active condition. `F-87` is what
-  makes this a defect rather than a preference.
+- **`F-92` (`F-72` remainder) · nothing suppresses a DaemonSet rollout during a live flow.** Spec
+  writes land whenever config changes, including mid-outage. Not the guard `F-87` needed — revocation
+  is — so this is churn avoidance at the worst moment, not a correctness fix. The shape is fixed; the
+  guard is the open half: skip the write while a flow is active and requeue.
 
 ---
 

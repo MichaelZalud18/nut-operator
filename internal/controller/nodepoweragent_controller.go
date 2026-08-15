@@ -65,7 +65,7 @@ type NodePowerAgentReconciler struct {
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
-// +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers;upsdevices;powermanagementclusters;powerinventorynodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers;upsdevices;powermanagementclusters;powerinventorynodes;shutdownflows,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps;secrets;serviceaccounts,verbs=get;list;watch;create;update;patch
@@ -278,7 +278,13 @@ func (r *NodePowerAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// the inventory changes and not only when the agent does. Without this the check answered
 		// correctly and answered late: adding a PowerInventoryNode the selector misses left every
 		// agent reporting Ready until something unrelated happened to trigger a reconcile.
-		Watches(&powerv1alpha1.PowerInventoryNode{}, handler.EnqueueRequestsFromMapFunc(r.nodePowerAgentRequestsForInventory)).
+		Watches(&powerv1alpha1.PowerInventoryNode{}, handler.EnqueueRequestsFromMapFunc(r.enqueueAllNodePowerAgents)).
+		// Signal revocation (F-87) is decided against the flow's LastExecution, so the instant that
+		// record stops covering a signal is the instant the signal becomes withdrawable. Without this
+		// watch the withdrawal waits for whatever unrelated event next reconciles the agent, and the
+		// wait it would lose is exactly the one that matters: a node rebooting after power returns,
+		// racing the TTL of the signal that took it down.
+		Watches(&powerv1alpha1.ShutdownFlow{}, handler.EnqueueRequestsFromMapFunc(r.enqueueAllNodePowerAgents)).
 		Owns(&corev1.Secret{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&networkingv1.NetworkPolicy{}).
@@ -286,13 +292,15 @@ func (r *NodePowerAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// nodePowerAgentRequestsForInventory enqueues every agent when the power inventory changes.
+// enqueueAllNodePowerAgents re-evaluates every agent when the inventory or a ShutdownFlow changes.
 //
 // Coverage is a property of the inventory and the agent's selector together (F-74), so either side
-// changing can turn a covered fleet into a partly covered one. There is no cheap way to know which
-// agents a given inventory node affects -- the answer depends on each agent's selector -- and the
-// number of NodePowerAgents in a cluster is small, so all of them are re-evaluated.
-func (r *NodePowerAgentReconciler) nodePowerAgentRequestsForInventory(ctx context.Context, _ client.Object) []reconcile.Request {
+// changing can turn a covered fleet into a partly covered one. Signal revocation (F-87) is likewise
+// a property of a flow's execution record and whichever agents' Secrets carry signals from it. In
+// both cases there is no cheap way to know which agents a given object affects -- the answer depends
+// on each agent's selector, or on Secret contents -- and the number of NodePowerAgents in a cluster
+// is small, so all of them are re-evaluated.
+func (r *NodePowerAgentReconciler) enqueueAllNodePowerAgents(ctx context.Context, _ client.Object) []reconcile.Request {
 	var agents powerv1alpha1.NodePowerAgentList
 	if err := r.List(ctx, &agents); err != nil {
 		logf.FromContext(ctx).Error(err, "failed to list NodePowerAgent resources for inventory coverage re-evaluation")
