@@ -391,27 +391,23 @@ byo-cert install path is covered end to end on `kind`, including rotation; and t
 every scanner that can contribute here — `grype` and `syft` installed from pinned checksum-verified
 archives, `cfn-nag`/`cdk-nag`/`opengrep` excluded by decision.
 
-Closed: `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`.
+The manager image no longer carries a Docker `HEALTHCHECK` that only ran `--version`; Kubernetes
+`/healthz` and `/readyz` probes are the manager readiness contract, and the Dockerfile carries the
+corresponding `CKV_DOCKER_2` skip rationale. `docs/images.md` and `docs/security.md` now distinguish
+current source-build controls from open release-hardening targets.
+The Images workflow signs non-PR published image digests with keyless Sigstore/cosign after the
+published-image vulnerability scan, and `docs/images.md` documents digest verification.
+
+Closed: `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`, `F-52`, `F-78`.
 
 #### Open Work
 
-- Wire keyless Sigstore signing as a release gate, with cosign verification docs and digest-pinned
-  examples (`docs/images.md` describes the target state).
+- Pin base images by digest and add detached NUT source signature verification in addition to the
+  existing NUT version and sha256 checks.
 - Automate triage of new unsuppressed medium-or-higher ASH findings.
 - `F-77` gate image publication on the e2e run and have the suite pull the digest it built rather
   than building its own, so the published image is one that was tested
   ([operator-maturity-benchmarks.md](audits/operator-maturity-benchmarks.md)).
-- `F-78` decide whether the manager image gains a readiness subcommand for its `HEALTHCHECK` or
-  drops the instruction; `--version` cannot fail and distroless leaves no in-image alternative
-  ([operator-maturity-benchmarks.md](audits/operator-maturity-benchmarks.md)).
-- Correct `docs/images.md` to the source-build reality and close the two supply-chain claims it makes
-  that the build does not meet (`F-52`, recorded in
-  [operator-maturity-benchmarks.md](audits/operator-maturity-benchmarks.md)). It still states that the operand Dockerfiles package NUT
-  "from pinned distribution packages" and that `nut-server` "installs `nut`" — both images have built
-  from source since `F-39`. It also lists checksum *and signature* verification of NUT source inputs,
-  where the Dockerfiles verify `sha256` only, and a pinned base image digest, where both use
-  `alpine:3.22` as a tag. The description is a correction; the digest pin and signature verification
-  are real work — do them or restate them as target state, and say which.
 
 ---
 

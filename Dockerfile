@@ -7,6 +7,8 @@ ARG SOURCE=https://github.com/MichaelZalud18/nut-operator
 ARG DOCUMENTATION=https://github.com/MichaelZalud18/nut-operator/blob/main/README.md
 ARG LICENSES=Apache-2.0
 
+# checkov:skip=CKV_DOCKER_2:Manager health is served by Kubernetes /healthz and /readyz probes; distroless has no honest in-image probe.
+
 # Build the manager binary on the native builder platform and cross-compile the target binary.
 FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
 ARG TARGETOS
@@ -56,5 +58,4 @@ WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/manager", "--version"]
 ENTRYPOINT ["/manager"]

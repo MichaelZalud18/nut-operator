@@ -18,7 +18,7 @@ this operator," so the project is graded against it whether or not it opts in.
 | L1 Basic Install | Provision operands, configuration via CR | Met |
 | L2 Seamless Upgrades | Operator and operand version upgrades handled | Partial — no upgrade path exercised, no conversion webhooks |
 | L3 Full Lifecycle | Backup, restore, failure recovery | Partial — recovery execution is external subscriber scope; audit durability OD-6 is closed with local spool fallback |
-| L4 Deep Insights | Metrics, alerts, log processing, workload analysis | Partial (2026-08-04) — the highest-value ShutdownFlow/actuator metrics are registered; per-device telemetry, capability-match, and inventory-compiler metrics are not. See `docs/metrics.md`. |
+| L4 Deep Insights | Metrics, alerts, log processing, workload analysis | Mostly met for the current v1 operator scope (2026-08-14) — ShutdownFlow, actuator, audit-spool, certificate-expiry, per-UPSDevice telemetry, capability-match, inventory-compiler, and publisher-heartbeat metrics are registered. Alert packaging and external log processing remain deployment concerns. See `docs/metrics.md`. |
 | L5 Auto Pilot | Auto-scaling, auto-config tuning, auto-remediation | Out of scope by design (GP-1: non-power triggers excluded) |
 
 Notes specific to this project:
@@ -27,7 +27,8 @@ Notes specific to this project:
   GP-1 and SB-6. State this in the README so the repo is not graded against a level it declines.
 - **L3 is the real gap and the most consequential.** An operator that shuts a cluster down but has
   no defined recovery story sits at L3-incomplete permanently until OD-1 resolves.
-- **L4 is cheap and currently zero.** See audit below.
+- **L4 is now instrumented for the operator-owned surfaces.** See `docs/metrics.md`; packaged
+  alerts and external log processing remain deployment concerns.
 
 Check at: every minor release, and before any `v1beta1` promotion.
 
@@ -369,8 +370,9 @@ audit trail:
 
 All items from the original "Recommended order" list in this audit are now closed: `F-2`/`F-4`/`F-5`
 (2026-08-03/04), `F-30`/`F-1` (2026-08-04), `F-31`/`F-32`/`F-7`/`F-3` (2026-08-04). Open work remaining
-anywhere in Operator Maturity & Hardening: image signing and the container-scanner tooling decision —
-see `docs/tasks.md`.
+anywhere in Operator Maturity & Hardening is tracked in `docs/tasks.md`: base-image digest pinning,
+detached NUT source signature verification, ASH finding triage, and `F-77`'s tested-digest
+publication gate.
 
 ## Findings — fifth pass, 2026-08-08
 
@@ -415,8 +417,8 @@ Recorded here rather than in the two NUT audits it was transferred alongside. `F
 `docs/images.md` claims of the build, which is supply-chain posture and this document's subject,
 not NUT-mechanism fidelity or the `upsd` pod's shape.
 
-**F-52 · `docs/images.md` makes four claims the build does not meet, and they are not the same
-kind of claim.** Two are stale descriptions of a build that changed underneath them; two are
+**F-52 · `docs/images.md` made four claims the build did not meet, and they were not the same
+kind of claim.** Two were stale descriptions of a build that changed underneath them; two were
 aspirations written in the present tense.
 
 Stale descriptions, both left behind by `F-39`'s move from distribution packages to a source build:
@@ -451,10 +453,15 @@ them or move them into the "Roadmap" framing the same file already uses at `:43-
 signatures and digest references. Either is defensible; leaving them in the Build Requirements list
 is not, because a reader takes that list as describing released images.
 
-One related item found while reading: `docs/images.md:26` states the driver allowlist including
+One related item found while reading: `docs/images.md:26` stated the driver allowlist including
 `powerman-pdu`, which the operand image does not contain. That is `F-50`, recorded in
 [nut-usage-audit.md](nut-usage-audit.md) — the allowlist appears in two places and both need the
 same correction.
+
+Closed 2026-08-14 by rewriting `docs/images.md` and `docs/security.md` into current controls versus
+open release-hardening targets. The docs now describe the NUT source build, sha256 verification, and
+OpenSSL assertions as current controls. Base-image digest pinning and detached NUT source signature
+verification remain open work in `docs/tasks.md`.
 
 ## Findings — seventh pass, 2026-08-14 (CI stage structure)
 
@@ -500,7 +507,7 @@ shipped-artifact gap above. `kubectl debug --target` supplies a shell beside a d
 without altering it, and only two of the four images are distroless — `nut-server` and
 `upsmon-agent` already carry shells because NUT tooling needs them.
 
-**F-78 · The manager image's `HEALTHCHECK` cannot fail.** `Dockerfile:59` is
+**F-78 · The manager image's `HEALTHCHECK` could not fail.** `Dockerfile:59` was
 `HEALTHCHECK ... CMD ["/manager", "--version"]`, the same defect `F-64` fixed on `node-actuator` and
 `F-46` fixed on `nut-server`: it proves the binary executes and nothing else.
 
@@ -510,3 +517,12 @@ no readiness subcommand. The options are to add one, mirroring `--ready`, or to 
 outright on the grounds that Kubernetes ignores `HEALTHCHECK` and `config/manager` already renders
 real liveness and readiness probes against `/healthz` and `/readyz`. Dropping it is defensible here
 in a way it was not for the operands, which are also run directly; the manager is not.
+
+Closed 2026-08-14 by dropping the manager image `HEALTHCHECK` and documenting the
+`CKV_DOCKER_2` skip in the Dockerfile. `config/manager` Kubernetes probes remain the manager
+readiness contract; directly runnable images keep their meaningful in-container healthchecks.
+
+Non-F-number release-hardening target closed 2026-08-14: `.github/workflows/images.yml` now installs
+cosign from a pinned `sigstore/cosign-installer` action and signs non-PR published image digests
+after the vulnerability scan using GitHub OIDC keyless signing. `docs/images.md` records the
+verification command.

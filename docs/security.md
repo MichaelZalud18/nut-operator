@@ -93,14 +93,21 @@ Schema validation, admission webhooks, reconciler validation, and status conditi
 
 ## Supply Chain
 
-Release artifacts include:
+Current release artifacts and checks include:
 
 - minimal non-root images
-- pinned base images
-- image healthchecks and Kubernetes liveness/readiness probes
+- version-pinned and sha256-verified NUT source builds for NUT-bearing images
+- OCI source, revision, version, license, documentation, creation time, and vendor labels
+- image healthchecks for directly runnable operand and actuator images
+- Kubernetes liveness/readiness probes for the manager
 - SBOMs
 - vulnerability scans
-- signed images
-- immutable digest references in production manifests
+- keyless Sigstore/cosign signatures for published non-PR images
+- private-address leak scanning
 
-Local process tests are not sufficient evidence for deployment. Image-level smoke tests and in-cluster validation are separate gates.
+Open hardening targets are tracked in `docs/tasks.md`: base-image digest pinning, detached NUT
+source signature verification, and gating mutable image publication on the exact digest exercised by
+e2e.
+
+Local process tests are not sufficient evidence for deployment. Image-level smoke tests and
+in-cluster validation are separate gates.
