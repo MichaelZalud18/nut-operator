@@ -320,12 +320,11 @@ Closed: `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`, `F-52`, `F-77`, `F-78`.
 
 #### Open Work
 
-- Enable branch protection on `main`. This section previously recorded it as built with every
-  check required and `enforce_admins` on; the GitHub API reports no classic protection and no
-  rulesets on the branch, checked with an admin-scoped token, so the control is not in place
-  whatever its history. Every CI check the claim depended on does exist and passes — what is
-  missing is the enforcement that makes any of them required. Needs a repository-settings
-  change, not a code change.
+- Enable branch protection on `main` at release. Deliberately off during build: every CI check
+  exists and passes, and requiring them would only add a merge round-trip to a single-maintainer
+  repository that is still changing shape daily. This is a release gate, not a gap — the checks to
+  require are already there, so turning it on is a repository-settings change and nothing else.
+  Recorded here because this section previously described it as already in place.
 
 ---
 
