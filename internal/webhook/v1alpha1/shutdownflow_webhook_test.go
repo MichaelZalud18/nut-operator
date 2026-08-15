@@ -132,9 +132,17 @@ var _ = Describe("ShutdownFlow Webhook", func() {
 			Expect(err.Error()).To(ContainSubstring("values"))
 		})
 
+		It("Should accept the Overlap tier-overrun policy", func() {
+			obj.Spec = validShutdownFlowSpec()
+			obj.Spec.TierOverrunPolicy = powerv1alpha1.ShutdownTierOverrunOverlap
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
 		It("Should reject an unsupported tier-overrun policy", func() {
 			obj.Spec = validShutdownFlowSpec()
-			obj.Spec.TierOverrunPolicy = powerv1alpha1.ShutdownTierOverrunPolicy("Overlap")
+			obj.Spec.TierOverrunPolicy = powerv1alpha1.ShutdownTierOverrunPolicy("RaceAhead")
 
 			_, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).To(HaveOccurred())

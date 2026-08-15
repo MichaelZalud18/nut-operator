@@ -105,11 +105,12 @@ runs to completion, the pointer ascends as bookkeeping, and whether a new execut
 by trigger eligibility a level up. `Gate` is
 removed from the action enum; `Notify` emits a Kubernetes Event. Tier inversion is published as
 `nutoperator_shutdownflow_tier_inversions`, and the EX-29 cadence heartbeat as
-`nutoperator_shutdownflow_publish_timestamp_seconds` plus `status.lastPublishTime`. `EX-31` has the
-sequential tier-overrun slice built: `spec.tierOverrunPolicy` defaults to `Wait`, `Preempt` cancels
-the tier action context when the next lower tier becomes due, and overruns are recorded in wave/final
-audit details, `status.lastExecution.tierOverruns`, `nutoperator_shutdownflow_tier_overruns_total`,
-and `nutoperator_shutdownflow_tier_overrun_seconds`. Node clearance is re-derived at execution
+`nutoperator_shutdownflow_publish_timestamp_seconds` plus `status.lastPublishTime`. `EX-31` is built:
+`spec.tierOverrunPolicy` defaults to `Wait`, `Overlap` starts the next lower tier on schedule while
+the overrun tier continues, `Preempt` cancels the tier action context when the next lower tier becomes
+due, and overruns are recorded in wave/final audit details, `status.lastExecution.tierOverruns`,
+`nutoperator_shutdownflow_tier_overruns_total`, and
+`nutoperator_shutdownflow_tier_overrun_seconds`. Node clearance is re-derived at execution
 against the pods actually on the node, read uncached, and node-oriented targets accept Kubernetes
 `nodeSelectorRequirements` so authored flows can express native `Gt`/`Lt` label ranges without
 inventing a custom selector language. The provisional `AE-n` identifiers are folded into
@@ -127,8 +128,8 @@ hook failures mark the flow degraded without holding waves or engaging `abortPol
 partial-domain scope is compiled in `internal/planner`: domain- or UPS-scoped triggers prune only
 groups proved wholly outside affected domains, with ambiguous and mixed-domain groups retained.
 
-Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-30`, `OD-4`,
-`OD-11`, `OD-12`, `OD-14`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `OD-33`, `OD-34`, `EX-32`, `SB-15`,
+Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-32`, `OD-4`,
+`OD-11`, `OD-12`, `OD-14`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `OD-33`, `OD-34`, `SB-15`,
 `HK-1`–`HK-10`, `F-31`, `F-42`, `F-44`.
 
 #### Open Work
@@ -136,9 +137,6 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 - `OD-27` confirm the adaptive defaults against a real outage. The compression amount is measured, so
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).
-- Finish `EX-31` `Overlap`: `Wait` and context-driven `Preempt` are built and published through
-  status, audit, and metrics. `Overlap` still needs an executor scheduler that can run the next tier
-  while the previous tier continues, without turning `ShutdownFlow` into a general workflow engine.
 - Build `EX-33` rehearsal runs so history exists before the first real outage: an on-demand or
   scheduled enforce-mode execution, labelled as a rehearsal in the audit trail and includable or
   excludable from estimates. Dry-run cannot serve this — it skips effects and so produces no honest

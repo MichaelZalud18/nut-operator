@@ -53,7 +53,7 @@ type ShutdownFlowSpec struct {
 
 	// tierOverrunPolicy controls what the executor does when a tier reaches its
 	// compiled duration while a lower tier is waiting behind it.
-	// +kubebuilder:validation:Enum=Wait;Preempt
+	// +kubebuilder:validation:Enum=Wait;Overlap;Preempt
 	// +kubebuilder:default=Wait
 	// +optional
 	TierOverrunPolicy ShutdownTierOverrunPolicy `json:"tierOverrunPolicy,omitempty"`
@@ -174,15 +174,18 @@ const (
 // ShutdownTierOverrunPolicy controls how a flow handles a tier that runs past
 // the time allocated to it while a lower tier is waiting.
 //
-// Wait is conservative and lets the tier finish. Preempt cancels the tier's
-// action context when its budget expires, so actions that honor context stop and
-// the lower tier may start.
-// +kubebuilder:validation:Enum=Wait;Preempt
+// Wait is conservative and lets the tier finish. Overlap starts the next tier on
+// schedule while the previous tier continues. Preempt cancels the tier's action
+// context when its budget expires, so actions that honor context stop and the
+// lower tier may start.
+// +kubebuilder:validation:Enum=Wait;Overlap;Preempt
 type ShutdownTierOverrunPolicy string
 
 const (
 	// ShutdownTierOverrunWait starts the next tier only after the current tier finishes.
 	ShutdownTierOverrunWait ShutdownTierOverrunPolicy = "Wait"
+	// ShutdownTierOverrunOverlap starts the next tier on schedule while the current tier continues.
+	ShutdownTierOverrunOverlap ShutdownTierOverrunPolicy = "Overlap"
 	// ShutdownTierOverrunPreempt cancels the current tier when the next tier becomes due.
 	ShutdownTierOverrunPreempt ShutdownTierOverrunPolicy = "Preempt"
 )

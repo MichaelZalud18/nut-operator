@@ -394,11 +394,12 @@ func validateShutdownConcurrencyPolicy(path *field.Path, policy string) field.Er
 
 func validateShutdownTierOverrunPolicy(path *field.Path, policy powerv1alpha1.ShutdownTierOverrunPolicy) field.ErrorList {
 	switch policy {
-	case "", powerv1alpha1.ShutdownTierOverrunWait, powerv1alpha1.ShutdownTierOverrunPreempt:
+	case "", powerv1alpha1.ShutdownTierOverrunWait, powerv1alpha1.ShutdownTierOverrunOverlap, powerv1alpha1.ShutdownTierOverrunPreempt:
 		return nil
 	default:
 		return field.ErrorList{field.NotSupported(path, policy, []string{
 			string(powerv1alpha1.ShutdownTierOverrunWait),
+			string(powerv1alpha1.ShutdownTierOverrunOverlap),
 			string(powerv1alpha1.ShutdownTierOverrunPreempt),
 		})}
 	}

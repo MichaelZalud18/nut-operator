@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 )
 
 type fakeAuditWriter struct {
+	mu                       sync.Mutex
 	powerEvents              []audit.PowerEvent
 	telemetrySnapshots       []audit.TelemetrySnapshot
 	capabilityProfileMatches []audit.CapabilityProfileMatch
@@ -43,66 +45,92 @@ type fakeAuditWriter struct {
 }
 
 func (w *fakeAuditWriter) RecordPowerEvent(_ context.Context, event audit.PowerEvent) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.powerEvents = append(w.powerEvents, event)
 	return nil
 }
 
 func (w *fakeAuditWriter) RecordTelemetrySnapshot(_ context.Context, snapshot audit.TelemetrySnapshot) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.telemetrySnapshots = append(w.telemetrySnapshots, snapshot)
 	return nil
 }
 
 func (w *fakeAuditWriter) RecordCapabilityProfileMatch(_ context.Context, match audit.CapabilityProfileMatch) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.capabilityProfileMatches = append(w.capabilityProfileMatches, match)
 	return nil
 }
 
 func (w *fakeAuditWriter) RecordCapabilityProfileVerification(_ context.Context, verification audit.CapabilityProfileVerification) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.capabilityVerifications = append(w.capabilityVerifications, verification)
 	return nil
 }
 
 func (w *fakeAuditWriter) RecordShutdownFlowCompilation(_ context.Context, compilation audit.ShutdownFlowCompilation) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.shutdownFlowCompilations = append(w.shutdownFlowCompilations, compilation)
 	return nil
 }
 
 func (w *fakeAuditWriter) RecordShutdownFlowDecision(_ context.Context, decision audit.ShutdownFlowDecision) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.shutdownFlowDecisions = append(w.shutdownFlowDecisions, decision)
 	return nil
 }
 
 func (w *fakeAuditWriter) RecordShutdownFlowExecution(_ context.Context, execution audit.ShutdownFlowExecution) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.executions = append(w.executions, execution)
 	return nil
 }
 
 func (w *fakeAuditWriter) RecordShutdownFlowExecutionWave(_ context.Context, wave audit.ShutdownFlowExecutionWave) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.waves = append(w.waves, wave)
 	return nil
 }
 
 func (w *fakeAuditWriter) RecordShutdownFlowExecutionGroup(_ context.Context, group audit.ShutdownFlowExecutionGroup) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.groups = append(w.groups, group)
 	return nil
 }
 
 func (w *fakeAuditWriter) RecordShutdownFlowActionAttempt(_ context.Context, attempt audit.ShutdownFlowActionAttempt) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.actionAttempts = append(w.actionAttempts, attempt)
 	return nil
 }
 
 func (w *fakeAuditWriter) RecordNodeRelease(_ context.Context, release audit.NodeReleaseRecord) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.nodeReleases = append(w.nodeReleases, release)
 	return nil
 }
 
 func (w *fakeAuditWriter) RecordNodeSignalHandoff(_ context.Context, handoff audit.NodeSignalHandoff) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.nodeSignalHandoffs = append(w.nodeSignalHandoffs, handoff)
 	return nil
 }
 
 func (w *fakeAuditWriter) UpsertExecutorResumeState(_ context.Context, state audit.ExecutorResumeState) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.resumeStates = append(w.resumeStates, state)
 	return nil
 }
@@ -334,6 +362,88 @@ func TestExecutorPreemptsTierOverrunAndContinuesLowerTier(t *testing.T) {
 	}
 }
 
+func TestExecutorOverlapsTierOverrunAndWaitsForPreviousTier(t *testing.T) {
+	writer := &fakeAuditWriter{}
+	tier4 := int32(4)
+	tier3 := int32(3)
+	tier4Started := make(chan struct{})
+	tier3Started := make(chan struct{})
+	releaseTier4 := make(chan struct{})
+	var tier4Once sync.Once
+	var tier3Once sync.Once
+	executor := Executor{
+		Writer: writer,
+		NewID:  sequenceIDs(),
+		Sleep: func(ctx context.Context, duration time.Duration) error {
+			if duration > time.Minute {
+				tier4Once.Do(func() { close(tier4Started) })
+				select {
+				case <-releaseTier4:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			tier3Once.Do(func() { close(tier3Started) })
+			return nil
+		},
+	}
+
+	done := make(chan struct {
+		result Result
+		err    error
+	}, 1)
+	go func() {
+		result, err := executor.Execute(context.Background(), Input{
+			ExecutionID:        "execution-overlap-overrun",
+			ShutdownFlow:       "conserve-power",
+			Mode:               ModeDryRun,
+			PlanConfigHash:     "plan-hash-overlap",
+			TierOverrunPolicy:  TierOverrunPolicyOverlap,
+			SelectedUPSDevices: []string{"ups-a"},
+			Waves: []Wave{
+				{Index: 0, ShutdownTier: &tier4, Duration: 15 * time.Millisecond, Groups: []string{"tier-4"}},
+				{Index: 1, ShutdownTier: &tier3, Duration: time.Millisecond, Groups: []string{"tier-3"}},
+			},
+			Groups: []Group{
+				{Name: "tier-4", Action: ActionWait, WaitDuration: time.Hour},
+				{Name: "tier-3", Action: ActionWait, WaitDuration: time.Millisecond},
+			},
+		})
+		done <- struct {
+			result Result
+			err    error
+		}{result: result, err: err}
+	}()
+
+	waitForSignal(t, tier4Started, "tier 4 to start")
+	waitForSignal(t, tier3Started, "tier 3 to start while tier 4 is still running")
+	close(releaseTier4)
+
+	run := waitForExecution(t, done)
+	if run.err != nil {
+		t.Fatalf("Execute returned error: %v", run.err)
+	}
+	if run.result.Phase != PhaseCompleted || run.result.Groups != 2 || run.result.ActionAttempts != 2 {
+		t.Fatalf("expected completed flow with both tiers recorded, got %#v", run.result)
+	}
+	if len(run.result.TierOverruns) != 1 {
+		t.Fatalf("expected one tier overrun, got %#v", run.result.TierOverruns)
+	}
+	overrun := run.result.TierOverruns[0]
+	if overrun.Policy != TierOverrunPolicyOverlap || overrun.Action != TierOverrunActionOverlapped {
+		t.Fatalf("unexpected overlap overrun: %#v", overrun)
+	}
+	details := completedWaveDetails(writer.waves, 0)
+	if details == nil {
+		t.Fatalf("expected completed wave 0 details, got %#v", writer.waves)
+	}
+	tierOverrun, ok := details["tierOverrun"].(map[string]any)
+	if !ok || tierOverrun["action"] != TierOverrunActionOverlapped {
+		t.Fatalf("expected overlapped overrun details, got %#v", details["tierOverrun"])
+	}
+}
+
 func TestExecutorRejectsUnknownWaveGroup(t *testing.T) {
 	executor := Executor{Writer: &fakeAuditWriter{}, NewID: sequenceIDs()}
 	_, err := executor.Execute(context.Background(), Input{
@@ -561,7 +671,10 @@ func (r fakeActionRunner) RunAction(context.Context, Action) (ActionOutcome, err
 
 func sequenceIDs() func() string {
 	var id int
+	var mu sync.Mutex
 	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
 		id++
 		return fmt.Sprintf("00000000-0000-4000-8000-%012d", id)
 	}
@@ -581,6 +694,44 @@ func wavePhases(waves []audit.ShutdownFlowExecutionWave) []string {
 		phases = append(phases, fmt.Sprintf("%d:%s", wave.WaveIndex, wave.Phase))
 	}
 	return phases
+}
+
+func completedWaveDetails(waves []audit.ShutdownFlowExecutionWave, index int32) map[string]any {
+	for _, wave := range waves {
+		if wave.WaveIndex == index && wave.Phase == PhaseCompleted {
+			return wave.Details
+		}
+	}
+	return nil
+}
+
+func waitForSignal(t *testing.T, ch <-chan struct{}, label string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", label)
+	}
+}
+
+func waitForExecution(t *testing.T, ch <-chan struct {
+	result Result
+	err    error
+}) struct {
+	result Result
+	err    error
+} {
+	t.Helper()
+	select {
+	case run := <-ch:
+		return run
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for execution to finish")
+		return struct {
+			result Result
+			err    error
+		}{}
+	}
 }
 
 func resumePhases(states []audit.ExecutorResumeState) []string {

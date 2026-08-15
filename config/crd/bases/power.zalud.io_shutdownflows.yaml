@@ -739,6 +739,7 @@ spec:
                   compiled duration while a lower tier is waiting behind it.
                 enum:
                 - Wait
+                - Overlap
                 - Preempt
                 type: string
               triggers:
@@ -1202,6 +1203,7 @@ spec:
                             used for this overrun.
                           enum:
                           - Wait
+                          - Overlap
                           - Preempt
                           type: string
                         shutdownTier:
