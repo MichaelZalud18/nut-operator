@@ -442,6 +442,7 @@ for defense in depth.
 | OD-1 | Recovery and startup execution are outside project scope. Other systems consume published artifacts. |
 | OD-4 | Numbered shutdown tiers. See the change log entry of 2026-08-03. |
 | OD-5 | Startup ordering is an advisory projection for subscribers, not an operator-executed graph. |
+| OD-14 | Partial-domain outages compile to a domain-scoped shutdown subgraph when the trigger names a power domain or UPS device that maps to one. The planner prunes only groups whose resolved node membership is wholly outside the affected domain set, removes dependencies on those omitted groups, and keeps ambiguous, mixed-domain, and global groups in the plan. |
 | OD-15 | Probe-history persistence uses PostgreSQL `capability_profile_verifications` rows for "last verified against firmware X" and drift evidence. |
 | OD-16 | A node with no modeled `carries` path is a warning (`CommunicationPathUnmodeled`), not a hard failure, and `communicationPathExempt` marks the deliberate cases. Silent-assume stays excluded: the gap is always stated. |
 | OD-18 | Tier inversion blocks the node. A node running a group scheduled to outlive it is withheld from power-off for the whole flow, and the withheld nodes are published on `status.blockedNodeReleases`. `spec.groups[].tierInversionPolicy: Allow` lets a group accept going down with its node. Migration is declined as a general remedy because node-local storage means there is not always anywhere to migrate to. |

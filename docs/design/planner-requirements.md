@@ -296,6 +296,12 @@ Naming follows: "universal floor" implied a guaranteed capability baseline and i
 **PL-34** · Planning succeeds against partial input where structurally possible. The plan is marked
 degraded and the degradation reasons are enumerated.
 
+OD-14 applies that conservative rule to partial-domain outages. A trigger naming `powerDomains` or a
+UPS device that maps to a resolved domain compiles a domain-scoped subgraph: groups whose resolved
+node membership is wholly outside the affected domains are omitted, and dependencies on omitted
+groups are removed. Groups with no resolved node membership, mixed-domain membership, or a global
+trigger remain in the plan.
+
 ---
 
 ## Non-requirements
@@ -433,13 +439,7 @@ with a warning, or configurable.
 against firmware X" and mismatch evidence to PostgreSQL capability profile verification records,
 not CR status.
 
-**OD-14 · Plan scope under partial-domain outage.** The design targets multiple UPS devices and
-multiple power domains, and triggers already reference `powerDomains`. If one domain loses power
-while another does not, the plan scope policy defines whether execution is cluster-wide or a
-domain-scoped subgraph. Partial-domain outage is a realistic scenario for the multi-UPS design and
-is handled explicitly rather than inferred from topology alone. This policy shapes PL-16 semantics
-and PL-23 quorum enforcement, since a domain-scoped plan may need to reason about control-plane
-members outside its own domain.
-
-No longer blocked on missing structure: derived domains (IN-7) plus input-qualified `feeds` edges
-(IN-4) supply the data this decision needed. Only the policy choice remains.
+**OD-14 · Plan scope under partial-domain outage — closed.** Derived domains (IN-7) plus
+input-qualified `feeds` edges (IN-4) supply the membership this policy needs. The planner scopes by
+pruning only groups proven wholly outside the affected power domains; it keeps ambiguous, mixed, or
+global groups rather than assuming them safe to omit.

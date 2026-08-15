@@ -54,20 +54,22 @@ func Compile(structural StructuralInputs, telemetry TelemetryInputs) (Plan, []Di
 // run a flow legitimately has.
 func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, history HistoryInputs) (Plan, []Diagnostic, error) {
 	normalized := normalizeStructuralInputs(structural)
-	diagnostics := validateStructuralInputs(normalized)
+	scoped, scopeDiagnostics := scopeStructuralInputs(normalized)
+	diagnostics := validateStructuralInputs(scoped)
+	diagnostics = append(diagnostics, scopeDiagnostics...)
 	if hasError(diagnostics) {
 		return Plan{}, diagnostics, ErrRejected
 	}
 
 	var plan Plan
-	if len(normalized.Groups) > 0 {
-		plan.Graph = buildGroupGraph(normalized.Groups, normalized.TierPolicy, normalized.GroupNodes)
-		steps, waves, duration := compileGroups(normalized.Groups, plan.Graph)
+	if len(scoped.Groups) > 0 {
+		plan.Graph = buildGroupGraph(scoped.Groups, scoped.TierPolicy, scoped.GroupNodes)
+		steps, waves, duration := compileGroups(scoped.Groups, plan.Graph)
 		plan.Steps = steps
 		plan.Waves = waves
 		plan.StartupWaves = advisoryStartupWaves(waves)
 		plan.EstimatedDuration = Duration{Duration: duration}
-		plan.GroupEstimates = compileGroupEstimates(normalized.Groups, history)
+		plan.GroupEstimates = compileGroupEstimates(scoped.Groups, history)
 		plan.EstimateConfidence = summarizeEstimateConfidence(plan.GroupEstimates)
 		// Published beside EstimatedDuration rather than replacing it, and deliberately
 		// outside the plan hash.
@@ -82,17 +84,17 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 			plan.ObservedDuration = Duration{Duration: observed}
 		}
 	} else {
-		plan.Graph = buildStepGraph(normalized.Steps)
-		steps, duration := compileSteps(normalized.Steps)
+		plan.Graph = buildStepGraph(scoped.Steps)
+		steps, duration := compileSteps(scoped.Steps)
 		plan.Steps = steps
 		plan.EstimatedDuration = Duration{Duration: duration}
 	}
-	plan.PowerDomains = powerDomainArtifacts(normalized.PowerDomains)
-	plan.BlockedNodes = blockedNodesFromInversions(detectTierInversions(normalized))
+	plan.PowerDomains = powerDomainArtifacts(scoped.PowerDomains)
+	plan.BlockedNodes = blockedNodesFromInversions(detectTierInversions(scoped))
 	plan.Explanations = graphExplanations(plan.Graph, len(plan.Waves), len(plan.StartupWaves))
 	plan.Diagrams = renderDiagramExports(plan.Graph)
-	plan.Feasibility = advisoryFeasibility(telemetry, normalized.DeviceCapabilities)
-	plan.StructuralHash = stableHash(normalized)
+	plan.Feasibility = advisoryFeasibility(telemetry, scoped.DeviceCapabilities)
+	plan.StructuralHash = stableHash(scoped)
 	plan.Hash = stableHash(struct {
 		StructuralHash string         `json:"structuralHash"`
 		Steps          []CompiledStep `json:"steps,omitempty"`

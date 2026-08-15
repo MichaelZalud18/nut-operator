@@ -583,6 +583,23 @@ func waveGroups(waves []Wave) [][]string {
 	return groups
 }
 
+func compiledStepIDs(steps []CompiledStep) []string {
+	ids := make([]string, 0, len(steps))
+	for _, step := range steps {
+		ids = append(ids, step.ID)
+	}
+	return ids
+}
+
+func hasCompiledStep(steps []CompiledStep, id string) bool {
+	for _, step := range steps {
+		if step.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func findGraphEdge(edges []GraphEdge, from, to, relation string) *GraphEdge {
 	for i := range edges {
 		if edges[i].From == from && edges[i].To == to && edges[i].Relation == relation {
@@ -608,6 +625,29 @@ func hasExplanationReason(explanations []Explanation, reason string) bool {
 		}
 	}
 	return false
+}
+
+func partialDomainInput(trigger Trigger) StructuralInputs {
+	return StructuralInputs{
+		Triggers: []Trigger{trigger},
+		PowerDomains: []PowerDomainMembership{
+			{Name: "rack-a", UPSDevices: []string{"ups-a"}, Nodes: []string{"node-a"}},
+			{Name: "rack-b", UPSDevices: []string{"ups-b"}, Nodes: []string{"node-b"}},
+		},
+		Groups: []Group{
+			{Name: "drain-rack-a", Action: "DrainNodes", Target: Target{NodeSelector: true}},
+			{Name: "poweroff-rack-a", Action: "AgentShutdown", Target: Target{AgentRefCount: 1}},
+			{Name: "drain-rack-b", Action: "DrainNodes", Target: Target{NodeSelector: true}},
+			{Name: "poweroff-rack-b", Action: "AgentShutdown", Target: Target{AgentRefCount: 1}},
+			{Name: "global-notify", Action: "Notify"},
+		},
+		GroupNodes: []GroupNodeMembership{
+			{Group: "drain-rack-a", Acts: []string{"node-a"}},
+			{Group: "poweroff-rack-a", Releases: []string{"node-a"}},
+			{Group: "drain-rack-b", Acts: []string{"node-b"}},
+			{Group: "poweroff-rack-b", Releases: []string{"node-b"}},
+		},
+	}
 }
 
 func triggerCapabilityInput(devices []DeviceCapability) StructuralInputs {
@@ -852,6 +892,91 @@ func TestNodeClearanceIsDeterministicAndFoldsIntoPlanIdentity(t *testing.T) {
 	}
 	if first.Hash == bare.Hash {
 		t.Fatal("node membership must participate in plan identity")
+	}
+}
+
+func TestCompileScopesDomainTriggeredPlanToAffectedNodes(t *testing.T) {
+	input := partialDomainInput(Trigger{Type: "OnBattery", PowerDomains: []string{"rack-a"}})
+	input.Groups[0].Requires = []string{"poweroff-rack-b"}
+
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	if got, want := compiledStepIDs(plan.Steps), []string{"drain-rack-a", "global-notify", "poweroff-rack-a"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected only rack-a and global groups, got %#v", got)
+	}
+	if got, want := waveGroups(plan.Waves), [][]string{{"drain-rack-a", "global-notify"}, {"poweroff-rack-a"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected rack-a clearance waves after pruning, got %#v", got)
+	}
+	if !hasPlannerDiagnostic(diagnostics, DiagnosticReasonPowerDomainScopeApplied) {
+		t.Fatalf("expected the scope decision to be recorded, got %#v", diagnostics)
+	}
+	if hasPlannerDiagnostic(diagnostics, "UnknownDependency") {
+		t.Fatalf("dependencies on pruned groups should be omitted, got %#v", diagnostics)
+	}
+	for _, edge := range plan.Graph.Edges {
+		if strings.Contains(edge.From, "rack-b") || strings.Contains(edge.To, "rack-b") {
+			t.Fatalf("expected no edge to a pruned rack-b group, got %#v", edge)
+		}
+	}
+}
+
+func TestCompileMapsUPSTriggerToPowerDomainScope(t *testing.T) {
+	input := partialDomainInput(Trigger{Type: "OnBattery", UPSDevices: []string{"ups-b"}})
+
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	if got, want := compiledStepIDs(plan.Steps), []string{"drain-rack-b", "global-notify", "poweroff-rack-b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected only rack-b and global groups, got %#v", got)
+	}
+	if !hasPlannerDiagnostic(diagnostics, DiagnosticReasonPowerDomainScopeApplied) {
+		t.Fatalf("expected the scope decision to be recorded, got %#v", diagnostics)
+	}
+}
+
+func TestCompileKeepsGlobalTriggerClusterWide(t *testing.T) {
+	input := partialDomainInput(Trigger{Type: "OnBattery"})
+
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	if got, want := compiledStepIDs(plan.Steps), []string{"drain-rack-a", "drain-rack-b", "global-notify", "poweroff-rack-a", "poweroff-rack-b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected global trigger to keep every group, got %#v", got)
+	}
+	if hasPlannerDiagnostic(diagnostics, DiagnosticReasonPowerDomainScopeApplied) {
+		t.Fatalf("global triggers should not apply domain scoping, got %#v", diagnostics)
+	}
+}
+
+func TestCompileKeepsMixedAndAmbiguousGroupsInDomainScope(t *testing.T) {
+	input := partialDomainInput(Trigger{Type: "OnBattery", PowerDomains: []string{"rack-a"}})
+	input.Groups = append(input.Groups,
+		Group{Name: "mixed-drain", Action: "DrainNodes", Target: Target{NodeSelector: true}},
+		Group{Name: "namespace-drain", Action: "ScaleWorkload", Target: Target{NamespaceSelector: true}},
+	)
+	input.GroupNodes = append(input.GroupNodes, GroupNodeMembership{Group: "mixed-drain", Acts: []string{"node-a", "node-b"}})
+
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	for _, id := range []string{"mixed-drain", "namespace-drain", "global-notify", "drain-rack-a", "poweroff-rack-a"} {
+		if !hasCompiledStep(plan.Steps, id) {
+			t.Fatalf("expected %q to stay in the scoped plan, got %#v", id, compiledStepIDs(plan.Steps))
+		}
+	}
+	for _, id := range []string{"drain-rack-b", "poweroff-rack-b"} {
+		if hasCompiledStep(plan.Steps, id) {
+			t.Fatalf("expected %q to be pruned from the scoped plan, got %#v", id, compiledStepIDs(plan.Steps))
+		}
 	}
 }
 

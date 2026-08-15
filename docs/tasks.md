@@ -38,16 +38,15 @@ infrastructure — into planner inputs, and runtime trigger evaluation consumes 
 domain-scoped triggers select devices from topology membership rather than raw `UPSDevice` labels.
 The declarative provider leaves snapshot `ObservedAt` unstamped to avoid per-reconcile topology hash
 churn, and cyclic `feeds` graphs are rejected with a `FeedsCycle` diagnostic before closure
-derivation.
+derivation. Planner wave compilation consumes that same membership for `OD-14`, pruning groups
+proved wholly outside the affected domain while keeping ambiguous or mixed-domain groups.
 
 Closed: `IN-1`, `IN-3`, `IN-5`, `IN-7`, `IN-9`–`IN-14`, `IN-16`, `OD-4`, `OD-16`, `F-81`,
-`F-82`.
+`F-82`, `OD-14`.
 
 #### Open Work
 
-- Wire domain membership into wave compilation once it arrives, so a plan can be scoped to a domain
-  (`OD-14`). Wanted in v1: this is a planner capability, not a policy question, and it is sequenced
-  after the plumbing now in place rather than blocked on missing domain data.
+None.
 
 ---
 
@@ -124,10 +123,12 @@ in-process state resumes the persisted tier and timing mode instead of re-report
 new work. `ShutdownHook`/`RunHook` replaces the removed Argo-shaped `RunWorkflow` route: HTTP
 CloudEvents is the primary transport for non-Kubernetes systems, generic Kubernetes objects are the
 secondary transport, hook dry-runs are either authored rehearsals or recorded request summaries, and
-hook failures mark the flow degraded without holding waves or engaging `abortPolicy`.
+hook failures mark the flow degraded without holding waves or engaging `abortPolicy`. `OD-14`
+partial-domain scope is compiled in `internal/planner`: domain- or UPS-scoped triggers prune only
+groups proved wholly outside affected domains, with ambiguous and mixed-domain groups retained.
 
 Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-30`, `OD-4`,
-`OD-11`, `OD-12`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `OD-33`, `OD-34`, `EX-32`, `SB-15`,
+`OD-11`, `OD-12`, `OD-14`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `OD-33`, `OD-34`, `EX-32`, `SB-15`,
 `HK-1`–`HK-10`, `F-31`, `F-42`, `F-44`.
 
 #### Open Work
@@ -145,8 +146,6 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
   is missing is the run itself and the label on it.
 - Feed node metrics into the estimates alongside execution history — draw and capacity readings
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
-- `OD-14` decide partial-domain outage plan scope, then wire domain membership into wave compilation
-  (shared with Inventory System and Telemetry & Triggers).
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
 
@@ -356,15 +355,14 @@ Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`
 `internal/nut` as a real protocol client rather than an `upsc` wrapper, `internal/telemetry`
 normalization with profile-declared aliases, `internal/polling` per-target transport, `internal/trigger`
 pure evaluation wired into `ShutdownFlow`, domain-scoped trigger evaluation against resolver-derived
-power-domain membership, and `dummy-ups` repeater mode for upstream NUT appliances.
+power-domain membership, planner compilation of that same partial-domain scope, and `dummy-ups`
+repeater mode for upstream NUT appliances.
 
-Closed: `F-22` relay half, `F-25` runtime half, `OD-9`, `CR-4`.
+Closed: `F-22` relay half, `F-25` runtime half, `OD-9`, `OD-14`, `CR-4`.
 
 #### Open Work
 
-- `OD-14` partial-domain outage plan scope — owned in Planning & Execution Logic. Trigger selection
-  now uses derived domain membership; what remains is whether the compiled plan itself stays
-  cluster-wide or is pruned to the affected domain.
+None.
 
 ---
 
