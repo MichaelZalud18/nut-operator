@@ -17,7 +17,7 @@ stays answerable to one question: what is left before v1. Items move there only 
 outside the project gates them or scope-boundaries places them beyond v1 — never merely because
 they are hard or unscheduled. Declined work is recorded where it was declined, not parked here.
 
-Last reviewed: 2026-08-10
+Last reviewed: 2026-08-14
 
 ---
 
@@ -39,11 +39,24 @@ Closed: `IN-1`, `IN-3`, `IN-5`, `IN-7`, `IN-9`–`IN-14`, `IN-16`, `OD-4`, `OD-1
 
 #### Open Work
 
-- Wire derived domain membership into wave compilation. Blocked on `OD-14`.
+- Carry derived domain membership across the resolver boundary. `plannerPowerDomains`
+  (`resolver/planner.go:79`) maps `Name` and `UPSDevices` only, so the compiler's derived
+  `domain.Nodes` and `domain.Infrastructure` are dropped before the planner ever sees them, and
+  `planner.PowerDomainMembership` has no field to receive them. `ControlPlane` and
+  `ControlPlaneQuorumMember` reach `inventory.Entity` (`inventory/types.go:52`) and stop there —
+  `plannerNodeTiers` (`resolver/planner.go:44`) carries name and tier only. Data plumbing, no policy.
+- Wire domain membership into wave compilation once it arrives, so a plan can be scoped to a domain
+  (`OD-14`). Wanted in v1: this is a planner capability, not a policy question, and it is sequenced
+  after the plumbing line above rather than blocked on a decision.
 - Feed trigger evaluation from the derived closure instead of live telemetry snapshots.
-- Wire `carries`-based ordering (`PL-21`). Blocked — see Planning & Execution Logic.
-- `SB-8` NetBox provider. Deliberately last: nothing depends on it, and an integration against an
-  external source of truth is worth little until the rest is stable.
+- `F-81` correct `snapshotage.go:33` — it claims the declarative provider restamps `ObservedAt` every
+  resolve, and nothing sets that field at all. Pin the hazard with a test in the same change:
+  `Compile` hashes the normalized snapshot including `ObservedAt` (`compiler.go:45`, `compiler.go:336`),
+  so stamping it churns the topology hash and plan identity on every reconcile. Not yet written up in
+  an audit.
+- `F-82` emit a cycle diagnostic from `feedsClosure` (`compiler.go:312`). The visited set prevents a
+  hang, so a cyclic `feeds` graph compiles silently — this is missing diagnosis, not a crash. Not yet
+  written up in an audit.
 
 ---
 
@@ -63,16 +76,33 @@ and the matcher's own reason when the match is anything but a clean product hit 
 fell back to the universal floor is distinguishable from one that matched its product profile.
 A PDU profile set that cannot resolve — duplicate ids, two universal profiles — is
 reported on every profile in the set. PDU device matching itself is scaffolding per `OD-25`, with no
-device kind and no inventory entity kind to match against.
+device kind and no inventory entity kind to match against. `OD-21` is decided as the code already
+behaves: driver configuration is owned by `UPSDevice` spec in NUT's own vocabulary.
 
-Closed: `F-25`, `F-26`, `F-79`, `F-80`, `RS-7`–`RS-10`, `PL-30`, `OD-22`, `OD-23`, `OD-25`, `OD-31`.
+Closed: `F-25`, `F-26`, `F-79`, `F-80`, `RS-7`–`RS-10`, `PL-30`, `OD-21`, `OD-22`, `OD-23`, `OD-25`,
+`OD-31`. `OD-26` dropped — the `provenance` field whose semantics it decides was never
+built, and `ProfileSource` already draws the only distinction that exists.
 
 #### Open Work
 
-- `F-27` define the actuation verification lifecycle
-  ([quirks-aliasing-firmware.md](audits/quirks-aliasing-firmware.md)).
-- `OD-21` decide driver configuration ownership — profile vs. `UPSDevice` spec, then implement.
-- `OD-26` decide whether provenance ever gates resolution, then implement.
+- `F-83` sort `Quirks` in `normalizeProfiles` (`matcher.go:374`) alongside `TelemetryVariables` and
+  `ActuationBehaviors`. Without it, reordering quirks with no semantic change moves the published
+  `status.capability.profileHash`. Not yet written up in an audit.
+- `F-84` state the PDU kind's v1 scaffolding status in the CRD description. It reaches the catalog
+  YAML and the `PDUCapabilityProfileSpec` godoc, so `kubectl explain pducapabilityprofile` — where a
+  user meets the kind — is the one surface that does not say it actuates nothing. Not yet written up
+  in an audit.
+- Record `OD-21` in [decision-index.md](design/decision-index.md), `scope-boundaries.md`, and
+  `capability-profiles.md`, with its decline: a profile-supplied *defaulting* layer for driver
+  configuration is refused, because it would make the rendered `ups.conf` depend on which profile
+  matched and reintroduce the second source of truth `OD-21` just removed. Validation is already
+  served by the driver allowlist (`RB-2`) and the `ups.conf` token/value checks.
+- Record the `OD-26` drop in [decision-index.md](design/decision-index.md) and
+  `capability-profiles.md`: `internal/capability/types.go` has no `Provenance` field, so the question
+  decides the semantics of something that was never built. `ProfileSource` (`CRD` vs `Bundled`)
+  already draws the only distinction that matters, including in match precedence, and the bundled
+  catalog is entirely first-party — there is no `Community` tier to hold apart. Revisit when an
+  external contributor catalog exists.
 
 ---
 
@@ -107,19 +137,17 @@ input, and published per group with provenance and sample counts. `OD-12` is sur
 `status.planFeasibility` — plan estimate against reported runtime, warning and never blocking.
 `EX-14` restart resume is covered by envtest: a second reconciler instance holding no
 in-process state resumes the persisted tier and timing mode instead of re-reporting descended tiers as
-new work.
+new work. `ShutdownHook`/`RunHook` replaces the removed Argo-shaped `RunWorkflow` route: HTTP
+CloudEvents is the primary transport for non-Kubernetes systems, generic Kubernetes objects are the
+secondary transport, hook dry-runs are either authored rehearsals or recorded request summaries, and
+hook failures mark the flow degraded without holding waves or engaging `abortPolicy`.
 
 Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-30`, `OD-4`,
-`OD-11`, `OD-12`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `EX-32`, `SB-15`, `F-31`, `F-42`, `F-44`.
+`OD-11`, `OD-12`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `OD-33`, `OD-34`, `EX-32`, `SB-15`,
+`HK-1`–`HK-10`, `F-31`, `F-42`, `F-44`.
 
 #### Open Work
 
-- Build the `ShutdownHook` resource and its HTTP/CloudEvents transport
-  ([shutdown-hooks.md](design/shutdown-hooks.md), `HK-1`–`HK-10`). `RunWorkflow` currently refuses any
-  GVK but Argo, so nothing advertises neutrality it lacks in the meantime.
-- `OD-33` decide whether an opt-in bounded wait on hook completion exists, and what happens when the
-  runtime budget expires first.
-- `OD-34` decide whether a failed hook can mark the flow degraded, or stays purely advisory.
 - `OD-27` confirm the adaptive defaults against a real outage. The compression amount is measured, so
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).
@@ -147,7 +175,7 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 
 Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_probe.go`, and the
 `nut-server` operand image. Audit: `docs/audits/nutserver-pod-audit.md` (`F-15`–`F-19`, `F-23`,
-`F-46`–`F-49`, `F-51`, `F-53`, `F-76`); relevant findings from `docs/audits/nut-usage-audit.md`
+`F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`); relevant findings from `docs/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`). The task lines below are pointers; the evidence and the
 recommended order are in the audits.
 
@@ -176,15 +204,19 @@ changes still roll it, because those are the changes `upsd` ignores on reload �
 case of `LISTEN`. The pod shares a process namespace, which is what lets the sidecar signal `upsd`
 and what gives the pause container the orphaned drivers to reap. Verified on `kind`: a killed driver
 is recovered and leaves no zombie, and a device added by patching the ConfigMap is served without
-either container restarting.
+either container restarting. Driver configuration follows NUT's own vocabulary on `UPSDevice` spec,
+with `spec.driverOptions` as the `ups.conf` escape hatch for anything the typed fields do not cover
+(`OD-21`). The escape hatch cannot reach around the allowlist it sits behind: `driver` is reserved
+on both the direct and `upstreamNUT` paths, so a device cannot pass admission declaring one driver
+and render another.
 
 Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `F-47`,
-`F-48`–`F-51`, `F-53`, `F-76`, `NS-1`–`NS-9`, `OD-32`, `OD-36`. `F-19`
+`F-48`–`F-51`, `F-53`, `F-76`, `F-85`, `NS-1`–`NS-9`, `OD-21`, `OD-32`, `OD-36`. `F-19`
 declined — it only matters with an HA `upsd` topology, which is not designed.
 
 #### Open Work
 
-- Advanced driver-specific configuration for the operand render path.
+None.
 
 ---
 
@@ -193,11 +225,10 @@ declined — it only matters with an HA `upsd` topology, which is not designed.
 Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_render.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
 `internal/nodeagent`. Audits: `docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`,
-`F-33`–`F-36`, `F-54`–`F-75`, `OD-37`); `F-45` from `docs/audits/nut-usage-audit.md`. The task lines
-below are pointers; the evidence and the recommended order are in the audit. The privilege group it
-sequenced first is closed, so `F-54` with `OD-37` is next — and the audit records that `F-54`,
-`F-56`, and `F-57` are pre-commitment decisions to lock before actuation ships rather than live
-exposure.
+`F-33`–`F-36`, `F-54`–`F-75`, `OD-37`). The task lines below are pointers; the evidence and the
+recommended order are in the audit. The privilege group it sequenced first is closed, and `OD-37` is
+now decided — the operator path is the authoritative shutdown path, so `F-55`–`F-57` are unblocked
+and become the implementation of that lockdown.
 
 #### Built
 
@@ -217,65 +248,82 @@ Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-58`, `F-60`, `F-61`–`F-65`
 
 #### Open Work
 
-- `F-45` expose the `MONITOR` power value and `MINSUPPLIES` so a host whose supplies are all fed by
-  one UPS can say so ([nut-usage-audit.md](audits/nut-usage-audit.md)). The hardcoded `1`/`1` is
-  correct for every topology currently modeled, so this is a limit, not a defect.
-
 ##### Signal authority and the two-component boundary
 
-- **`F-54` · The local `upsmon` path self-authorizes an unordered fleet-wide halt.** Every agent
-  renders `MONITOR ... 1 ... secondary` with `MINSUPPLIES 1`, so one UPS reaching OB+LB fires
-  `SHUTDOWNCMD` on every node it covers, unordered, with an execution ID nothing distinguishes from
-  the executor's. Resolve with `OD-37`; gates `F-55`–`F-57`
-  ([node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md)).
+`OD-37` is decided: the operator path is the authoritative shutdown path — ordered, planned,
+tier-aware, originating from the projected Secret. The local `upsmon` `SHUTDOWNCMD` path stays in the
+codebase as scaffolding and is locked down: disabled by default, with no supported way to enable it
+in v1. `F-54` resolves as a consequence, and the three items below are that lockdown's
+implementation.
 
-- **`OD-37` · Decide and record what the local path is for.** Either an intentional last-resort
-  backstop — in which case it needs a name, a spec field, a distinct `reason`, and a written
-  statement of what ordering guarantee is surrendered when it fires — or it is a bypass and should
-  be bound to prior authorization per `F-57`. Leaving it undeclared is what makes `F-54` a surprise.
+- **`F-57` · Close the tmpfs trust boundary.** Mount the actuator's `power-agent-run` copy
+  `ReadOnly`, and take the local path out of `POWER_SIGNAL_PATHS` — or gate it behind the
+  locked-down scaffold. It is read-write in both containers today, and `signalPaths` evaluates it
+  before the API-gated projected Secret, so the network-facing container can halt the host by writing
+  one file.
 
-- **`F-55` · Signal fields are validated for presence, never for value.** `PlanConfigHash`,
-  `ExecutionID`, and `ShutdownFlow` are checked non-empty and no further, and the actuator's env
-  does not carry the values needed to check them, so the fix needs a render change. Blocked on
-  `F-54`/`OD-37`.
+- **`F-56` · Stop carrying `DryRun` in the signal file.** The writer sets it from `POWER_AGENT_MODE`
+  and the actuator gates on it, so the actuator reads its own configuration back out of a file.
+  Authorization derives from the projected Secret's provenance and the actuator's own env instead.
 
-- **`F-56` · `DryRun` looks like authorization and carries no independent information.** The writer
-  sets it from `POWER_AGENT_MODE` and the actuator gates on it, so the actuator is reading its own
-  configuration back out of a file. Whatever replaces it must originate outside the pod. Blocked on
-  `F-54`/`OD-37`.
+- **`F-55` · Validate signal fields by value, not presence.** Inject `POWER_PLAN_CONFIG_HASH` and
+  `POWER_SHUTDOWN_FLOW` into the actuator container — they reach `upsmon` only today — and compare
+  against them. `PlanConfigHash`, `ExecutionID`, and `ShutdownFlow` are checked non-empty and no
+  further.
 
-- **`F-57` · The trust boundary between the two containers is a shared writable tmpfs.**
-  `power-agent-run` is read-write in both, and `signalPaths` evaluates it before the API-gated
-  projected Secret, so the network-facing container can halt the host by writing one file. Mount the
-  actuator's copy `ReadOnly` regardless. Blocked on `F-54`/`OD-37`.
+- Record `OD-37` in [decision-index.md](design/decision-index.md), `scope-boundaries.md`, and the
+  DaemonSet design and audit docs. The audit currently reads `OD-37` as an open choice with a
+  last-resort backstop as one arm; it resolved the other way, and the text must say so rather than
+  stay ambiguous. Record `F-89` in the same pass, as declined: the signal Secret mounts whole on
+  every node, so a node can read another node's signal, and the node-name check keeps that to
+  exposure rather than actuation. Accepted — the payload carries no credentials, per-node Secrets
+  multiply objects by node count, and the `subPathExpr` alternative would stop the volume updating
+  in place.
 
-- **`F-59` · TTL spans two clocks with no stated assumption.** The executor stamps `Timestamp`; the
-  actuator compares against the node clock. Past the window every operator-issued signal is rejected
-  fleet-wide, evidenced only by a container log line. Needs a stated NTP assumption plus a condition
-  or metric for "this node rejects what I send it".
+##### Signal delivery and dedupe
 
-##### Checks that cannot fail
+- **`F-86` · A dead delivery channel reads as healthy.** `power-agent-signals` is a Secret volume
+  with `Optional: true` (`nodepoweragent_render.go:911`), so an operator that never creates or stops
+  updating it leaves kubelet mounting a readable empty directory: `unreadableSignalDirs` stays empty
+  and readiness passes. With `OD-37` making this the only authorized channel, its silence has to be
+  distinguishable from "no flow running". The audit's 2026-08-12 "not findings" list credits
+  `Optional` with the in-place updates that actually come from the absence of `subPath` — correct
+  that entry in the same change. Not yet written up in an audit.
 
-- **`F-68` remainder · nothing consumes the recorded notifications beyond readiness.** The events are
-  written and read by `power-notify-writer --check`; publishing them upward is `F-60`'s channel
-  question, which is closed as designed.
-
-##### NUT mechanisms inert or unused
-
-- **`F-66` remainder · `POWERDOWNFLAG` is rendered and vestigial.** Recorded as inert by design; drop
-  it or leave it, but do not go looking for a consumer
-  ([node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md)).
-
-##### Event-time coupling
+- **`F-87` · A rollout mid-flow can re-actuate a signal inside its TTL.** `F-58`'s actuated-key state
+  lives on a per-pod emptyDir, while `F-72`'s `maxSurge: 1` brings up a second pod with an empty
+  `seen` set watching the same projected signal — which is exactly what `F-58` was closed to prevent.
+  Unrecorded interaction between the two; resolve it with the `F-72` rollout-suppression remainder
+  below rather than separately. Not yet written up in an audit.
 
 - **`F-72` remainder · nothing suppresses a rollout during a flow.** The shape is fixed; the guard is
-  a design question — a paused DaemonSet, an admission check, or a flow-active condition.
+  the open half — a paused DaemonSet, an admission check, or a flow-active condition. `F-87` is what
+  makes this a defect rather than a preference.
+
+- **`F-88` · Dedupe is per-source, not per-episode.** `watchSignals` (`cmd/node-actuator/main.go:204`)
+  iterates every configured path without breaking, and `SignalKey`
+  (`internal/nodeagent/signal.go:93`) is built from the payload, so two sources produce two keys for
+  one episode. The `OD-37` lockdown leaves one source and resolves most of it; break out of the loop
+  after actuating so the remainder cannot return. Not yet written up in an audit.
+
+##### Clock and propagation assumptions
+
+- **`F-59` · The TTL window rests on two unstated assumptions.** The executor stamps `Timestamp` and
+  the actuator compares against the node clock, so skew past the window rejects every
+  operator-issued signal fleet-wide, evidenced only by a container log line. `F-90` is the second
+  assumption on the same window: signal TTL versus kubelet Secret propagation delay. State both —
+  NTP and propagation — and add the condition or metric for "this node rejects what I send it".
 
 ##### Naming and hygiene
 
-- **`F-75` remainder · rename `SystemdPoweroff`, and drop the duplicate signal-path env pair.** Both
-  change the published CRD enum or the container contract, so they belong with a deliberate alpha API
-  revision rather than a fix pass — renaming the enum silently breaks every CR that sets it.
+- **`F-75` · Rename the `ActuatorPolicy` enum and drop the duplicate signal-path env pair.**
+  `Disabled`/`Stub`/`SystemdPoweroff` becomes `Disabled`/`Simulate`/`PowerOff`. `SystemdPoweroff` is
+  factually wrong — the actuator calls `reboot(2)` with `LINUX_REBOOT_CMD_POWER_OFF` and there is no
+  systemd anywhere in that path. A deliberate alpha API revision that breaks every CR setting the
+  enum, and it lands in v1 rather than shipping a misleading name.
+
+- **`F-66` remainder · drop the vestigial `POWERDOWNFLAG` from the render.** Inert by design, and a
+  rendered NUT directive with no consumer is the class of thing this audit exists to remove.
 
 ---
 
@@ -429,3 +477,7 @@ boundaries, the decision index, the references under `docs/`, and the audit reco
   records, and approval-gate state before any host action is possible.
 - Day-to-day operation works with CRDs, GitOps, `kubectl`, Events, logs, and audit records; no
   embedded dashboard is required for v1.
+- A dry-run runs against real UPS hardware in a real cluster, not against `kind` and `dummy-ups`.
+  Not reachable yet, and not expected to be until the sections above close.
+- **Open:** whether a live plug-pull is also a v1 gate, or whether the dry-run above is the bar.
+  Undecided in either direction — do not assume one while planning against it.

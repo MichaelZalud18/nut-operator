@@ -1,14 +1,18 @@
 # Pre-Shutdown Hook Transport
 
-Status: findings record and design direction, 2026-08-06, extended 2026-08-09. The direction below is
-now designed in [shutdown-hooks.md](../design/shutdown-hooks.md) (`HK-1`–`HK-10`), and the scope limit
-is recorded as `SB-15`.
+Status: findings record and implemented direction, 2026-08-06, extended 2026-08-09, resolved by
+[shutdown-hooks.md](../design/shutdown-hooks.md) (`HK-1`–`HK-10`). The scope limit is recorded as
+`SB-15`.
 
 Components: Planning & Execution Logic.
 
 Examines the `RunWorkflow` action's claim to be engine-neutral, and what a hook that reaches
 non-Kubernetes systems would have to look like. Findings continue the shared `F-n` namespace from
 F-43.
+
+Resolution: `RunWorkflow` was removed. `ShutdownFlow` now uses `RunHook` with a referenced
+`ShutdownHook`; HTTP/CloudEvents is the primary transport and generic Kubernetes-object creation is
+the secondary transport.
 
 ## The user-facing need
 

@@ -37,6 +37,12 @@ spec:
         name: power-audit
       database: power
       schema: power
+  hooks:
+    defaultTimeout: 10s
+    allowedEndpoints:
+      - scheme: https
+        host: hooks.example.test
+        pathPrefix: /power
   images:
     nutServer:
       repository: ghcr.io/michaelzalud18/nut-server

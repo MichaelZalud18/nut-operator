@@ -150,6 +150,26 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /mutate-power-zalud-io-v1alpha1-shutdownhook
+  failurePolicy: Fail
+  name: mshutdownhook-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - shutdownhooks
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /mutate-power-zalud-io-v1alpha1-upscapabilityprofile
   failurePolicy: Fail
   name: mupscapabilityprofile-v1alpha1.kb.io
@@ -329,6 +349,26 @@ webhooks:
     - UPDATE
     resources:
     - shutdownflows
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-power-zalud-io-v1alpha1-shutdownhook
+  failurePolicy: Fail
+  name: vshutdownhook-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - shutdownhooks
   sideEffects: None
 - admissionReviewVersions:
   - v1

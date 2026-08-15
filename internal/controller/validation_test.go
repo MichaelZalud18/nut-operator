@@ -271,6 +271,29 @@ func TestValidateUPSDeviceRejectsReservedUpstreamNUTDriverOption(t *testing.T) {
 	}
 }
 
+// F-85. The reserved-key loop above ran only for upstreamNUT devices, so a plain network device
+// could name any driver it liked in driverOptions -- including one the allowlist exists to refuse,
+// and including the USB and serial drivers RB-1 keeps out of the API entirely.
+func TestValidateUPSDeviceRejectsDriverOverrideInDriverOptions(t *testing.T) {
+	device := &powerv1alpha1.UPSDevice{
+		Spec: powerv1alpha1.UPSDeviceSpec{
+			Driver:   "snmp-ups",
+			Endpoint: &powerv1alpha1.UPSEndpointSpec{Host: "ups-rack-a.example.net"},
+			DriverOptions: map[string]string{
+				"driver": "usbhid-ups",
+			},
+		},
+	}
+
+	result := validateUPSDevice(device)
+	if result.accepted {
+		t.Fatal("expected a driver override in driverOptions to be rejected")
+	}
+	if result.reason != "ReservedDriverOption" {
+		t.Fatalf("expected ReservedDriverOption, got %q", result.reason)
+	}
+}
+
 func TestValidateUPSDeviceRejectsUpstreamNUTSecretAuthWithoutSecret(t *testing.T) {
 	device := &powerv1alpha1.UPSDevice{
 		Spec: powerv1alpha1.UPSDeviceSpec{

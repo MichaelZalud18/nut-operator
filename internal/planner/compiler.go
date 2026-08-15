@@ -430,6 +430,7 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 		PowerDomains:       append([]PowerDomainMembership(nil), input.PowerDomains...),
 		GroupNodes:         append([]GroupNodeMembership(nil), input.GroupNodes...),
 		NodeTiers:          append([]NodeTier(nil), input.NodeTiers...),
+		HookDigests:        append([]HookDigest(nil), input.HookDigests...),
 	}
 	sort.SliceStable(normalized.NodeTiers, func(left, right int) bool {
 		return normalized.NodeTiers[left].Name < normalized.NodeTiers[right].Name
@@ -457,6 +458,12 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 	sort.SliceStable(normalized.PowerDomains, func(left, right int) bool {
 		return normalized.PowerDomains[left].Name < normalized.PowerDomains[right].Name
 	})
+	sort.SliceStable(normalized.HookDigests, func(left, right int) bool {
+		if normalized.HookDigests[left].Namespace == normalized.HookDigests[right].Namespace {
+			return normalized.HookDigests[left].Name < normalized.HookDigests[right].Name
+		}
+		return normalized.HookDigests[left].Namespace < normalized.HookDigests[right].Namespace
+	})
 	for i := range normalized.Triggers {
 		normalized.Triggers[i].UPSDevices = append([]string(nil), normalized.Triggers[i].UPSDevices...)
 		normalized.Triggers[i].PowerDomains = append([]string(nil), normalized.Triggers[i].PowerDomains...)
@@ -469,17 +476,27 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 		normalized.Groups[i].After = append([]string(nil), normalized.Groups[i].After...)
 		normalized.Groups[i].Phase = copyInt32Ptr(normalized.Groups[i].Phase)
 		normalized.Groups[i].ShutdownTier = copyInt32Ptr(normalized.Groups[i].ShutdownTier)
+		normalized.Groups[i].HookRef = copyHookReference(normalized.Groups[i].HookRef)
 		normalized.Groups[i].Params = copyStringMap(normalized.Groups[i].Params)
 		sort.Strings(normalized.Groups[i].Requires)
 		sort.Strings(normalized.Groups[i].Before)
 		sort.Strings(normalized.Groups[i].After)
 	}
 	for i := range normalized.Steps {
+		normalized.Steps[i].HookRef = copyHookReference(normalized.Steps[i].HookRef)
 		normalized.Steps[i].Params = copyStringMap(normalized.Steps[i].Params)
 	}
 	sortTriggers(normalized.Triggers)
 	sortGroups(normalized.Groups)
 	return normalized
+}
+
+func copyHookReference(input *HookReference) *HookReference {
+	if input == nil {
+		return nil
+	}
+	output := *input
+	return &output
 }
 
 func copyStringMap(input map[string]string) map[string]string {

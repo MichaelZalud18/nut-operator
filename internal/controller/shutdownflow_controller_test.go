@@ -743,11 +743,10 @@ var _ = Describe("ShutdownFlow Controller", func() {
 							},
 						},
 						{
-							Name:   "workflow",
-							Action: powerv1alpha1.ShutdownStepRunWorkflow,
-							Target: powerv1alpha1.ShutdownStepTarget{
-								NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"power.example.com/shutdown-tier": "storage"}},
-							},
+							Name:    "hook",
+							Action:  powerv1alpha1.ShutdownStepRunHook,
+							HookRef: &powerv1alpha1.NamespacedNameReference{Namespace: "storage", Name: "flush"},
+							Timeout: &metav1.Duration{Duration: time.Minute},
 						},
 					},
 				},
@@ -760,7 +759,8 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(groups[0].Params).To(HaveKeyWithValue("replicas", "0"))
 			Expect(groups[0].SelectedTargets).To(ConsistOf(executorpkg.Target{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "apps", Name: "web"}))
 			Expect(groups[1].SelectedTargets).To(ConsistOf(executorpkg.Target{APIVersion: "v1", Kind: "Node", Name: "node-a"}))
-			Expect(groups[2].SelectedTargets).To(ConsistOf(executorpkg.Target{APIVersion: "v1", Kind: "Namespace", Name: "storage"}))
+			Expect(groups[2].SelectedTargets).To(BeEmpty())
+			Expect(groups[2].HookRef).To(Equal(&executorpkg.HookReference{Namespace: "storage", Name: "flush"}))
 		})
 
 		It("maps NodePowerAgent coverage into AgentShutdown releases", func() {

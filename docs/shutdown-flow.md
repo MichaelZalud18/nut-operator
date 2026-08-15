@@ -38,6 +38,8 @@ kind: ShutdownFlow
 metadata:
   name: cluster-power-loss
 spec:
+  managementClusterRef:
+    name: production
   mode: DryRun
   triggers:
     - type: RuntimeBelow
@@ -71,15 +73,14 @@ spec:
       timeout: 10m
 
     - name: storage
-      action: RunWorkflow
+      action: RunHook
       shutdownTier: 2
-      params:
-        workflow.templateRef: flush-storage
-      target:
-        namespaces: [storage]
+      hookRef:
+        namespace: power-system
+        name: flush-storage
       before: [standard-nodes]
       phase: 30
-      timeout: 10m
+      timeout: 15s
 
     - name: standard-nodes
       action: AgentShutdown

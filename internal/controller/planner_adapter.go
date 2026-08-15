@@ -38,6 +38,6 @@ func compileShutdownFlow(obj *powerv1alpha1.ShutdownFlow) ([]powerv1alpha1.Compi
 // hash is stable across compiles, and a plan that has genuinely changed simply
 // finds no history for its new hash and falls back to declared timeouts -- which is
 // the correct answer, since the old timings measured different work.
-func compileShutdownFlowWithHistory(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, policy powerv1alpha1.PowerShutdownTierPolicySpec, history planner.HistoryInputs) shutdownflowadapter.CompiledFlow {
-	return shutdownflowadapter.CompileFlowWithHistory(obj, bundle, policy, history)
+func compileShutdownFlowWithHistory(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, policy powerv1alpha1.PowerShutdownTierPolicySpec, history planner.HistoryInputs, hookDigests []planner.HookDigest) shutdownflowadapter.CompiledFlow {
+	return shutdownflowadapter.CompileFlowWithHistoryAndHooks(obj, bundle, policy, history, hookDigests)
 }

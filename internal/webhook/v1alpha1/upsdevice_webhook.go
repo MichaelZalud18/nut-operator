@@ -115,6 +115,12 @@ func validateUPSDeviceAdmission(obj *powerv1alpha1.UPSDevice) error {
 		} else if !isSupportedNetworkUPSDriver(obj.Spec.Driver) {
 			errs = append(errs, field.NotSupported(specPath.Child("driver"), obj.Spec.Driver, supportedNetworkUPSDrivers()))
 		}
+		// Reserved here for the same reason it is reserved on the upstreamNUT path: ups.conf takes
+		// the last `driver =` line, so overriding it in driverOptions would render a driver the
+		// allowlist above never saw (F-85).
+		if _, exists := obj.Spec.DriverOptions["driver"]; exists {
+			errs = append(errs, field.Forbidden(specPath.Child("driverOptions").Key("driver"), "rendered from spec.driver; overriding it would bypass the driver allowlist"))
+		}
 		if obj.Spec.Driver != "" && obj.Spec.Driver != "dummy-ups" && obj.Spec.Endpoint == nil {
 			errs = append(errs, field.Required(specPath.Child("endpoint"), "required for network-reachable NUT drivers"))
 		}

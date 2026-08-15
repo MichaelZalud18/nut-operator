@@ -98,6 +98,59 @@ func TestRenderUPSConfRendersUpstreamNUTSecretAuthPath(t *testing.T) {
 	}
 }
 
+// F-85: ups.conf resolves a repeated key in favor of the last line, so a `driver` entry in
+// driverOptions rendered below the one built from spec.driver would silently win. renderUPSConf
+// validates every selected device before emitting it, which is what makes admission and the render
+// path fail the same shape rather than only one of them.
+func TestRenderUPSConfRefusesDriverOverrideInDriverOptions(t *testing.T) {
+	_, err := renderUPSConf([]powerv1alpha1.UPSDevice{
+		{
+			ObjectMeta: objectMeta("rack-a-ups"),
+			Spec: powerv1alpha1.UPSDeviceSpec{
+				Driver:   "snmp-ups",
+				Endpoint: &powerv1alpha1.UPSEndpointSpec{Host: "ups-rack-a.example.net"},
+				DriverOptions: map[string]string{
+					"driver": "usbhid-ups",
+				},
+			},
+		},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected renderUPSConf to refuse a device overriding driver in driverOptions")
+	}
+}
+
+// The invariant the check above protects, asserted against a device that uses driverOptions the way
+// it is meant to be used: whatever else is rendered, a section names its driver exactly once.
+func TestRenderUPSConfRendersExactlyOneDriverLinePerDevice(t *testing.T) {
+	conf, err := renderUPSConf([]powerv1alpha1.UPSDevice{
+		{
+			ObjectMeta: objectMeta("rack-a-ups"),
+			Spec: powerv1alpha1.UPSDeviceSpec{
+				Driver:   "snmp-ups",
+				Endpoint: &powerv1alpha1.UPSEndpointSpec{Host: "ups-rack-a.example.net"},
+				DriverOptions: map[string]string{
+					"mibs":         "ietf",
+					"snmp_retries": "3",
+				},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("renderUPSConf returned error: %v", err)
+	}
+
+	var driverLines int
+	for _, line := range strings.Split(conf, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "driver = ") {
+			driverLines++
+		}
+	}
+	if driverLines != 1 {
+		t.Fatalf("expected exactly one driver line, got %d:\n%s", driverLines, conf)
+	}
+}
+
 // F-46: readiness comes from NUT's own driver-state report, not from a shell reimplementation of it.
 func TestUpsdReadinessProbeUsesUpsdrvctlStatus(t *testing.T) {
 	script := upsdReadinessProbeScript()

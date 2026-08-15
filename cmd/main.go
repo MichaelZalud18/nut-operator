@@ -317,6 +317,17 @@ func main() {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "ShutdownFlow")
 			os.Exit(1)
 		}
+		if err := webhookv1alpha1.SetupShutdownHookWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "ShutdownHook")
+			os.Exit(1)
+		}
+	}
+	// nolint:goconst
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := webhookv1alpha1.SetupShutdownHookWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "ShutdownHook")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 

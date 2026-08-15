@@ -116,6 +116,21 @@ var _ = Describe("UPSDevice Webhook", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("spec.driverOptions[authconf]"))
 		})
+
+		// F-85: the reserved-key check lived only on the upstreamNUT path, so this shape was
+		// admitted and then rendered a second `driver =` line that ups.conf resolves in favor of
+		// the unvetted one -- an allowlist rejection turned into a runtime failure.
+		It("Should reject a driver override in driverOptions on a non-upstream device", func() {
+			obj.Spec.Driver = "snmp-ups"
+			obj.Spec.Endpoint = &powerv1alpha1.UPSEndpointSpec{Host: "ups-rack-a.example.net"}
+			obj.Spec.DriverOptions = map[string]string{
+				"driver": "usbhid-ups",
+			}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.driverOptions[driver]"))
+		})
 	})
 
 })

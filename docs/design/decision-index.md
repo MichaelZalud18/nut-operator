@@ -96,8 +96,6 @@ narrative account and now uses the folded numbers.
 | OD-26 | Provenance field semantics: advisory metadata or resolution-affecting | — | Capability schema |
 | OD-27 | Timing adaptation parameters: hysteresis count, improvement margin, and scope | — | Adaptive execution |
 | OD-28 | Relationship to OD-12: infeasible-plan policy before start vs timing re-decisions during | — | Adaptive execution |
-| OD-33 | Hook waiting: whether an opt-in bounded wait on hook completion exists, and what happens when the runtime budget expires first. Default decided (proceed); the mechanism is not | — | Shutdown hooks |
-| OD-34 | Hook failure and abort policy: whether a failed hook can mark the flow degraded, or stays purely advisory | — | Shutdown hooks |
 | OD-35 | *Retired, never a decision.* Raised as "do redundant `feeds` edges change observation aggregation" while recording `F-45`. The premise was invented: `MINSUPPLIES` governs one host's own supplies and never reaches the planner's aggregation. Number burned rather than reused | — | `F-45` |
 | OD-37 | What the node agent's local `upsmon` signal path is for: declared last-resort backstop with its own name, field, and stated ordering cost, or a bypass bound to prior authorization | `F-54` – `F-57` | Node agent authorization |
 
@@ -127,6 +125,8 @@ narrative account and now uses the folded numbers.
 | OD-12 | Infeasible plans warn and run. Not rejected — refusing mid-outage is the worst available outcome (PL-31). Not truncated — dropping tiers substitutes the operator's judgement for the flow author's. The author holds the risk; this operator owes them the numbers, stated plainly and visibly: plan estimate against runtime estimate, per tier and in total | EX-3, settled-questions.md |
 | OD-29 | Ascent is the strict inverse of descent: mains back and no low-battery assertion (`ShouldAscend`). No hysteresis, no hold time, no confirmation window — EX-27 makes ascent bookkeeping that triggers nothing, and EX-26 makes the re-descent that follows a sequence of no-ops, so a flicker costs nothing to get wrong | EX-26, EX-27, settled-questions.md |
 | OD-30 | Publish cadence is cluster-wide, on `PowerManagementCluster.spec.observability.publishCadence`. It describes the publisher's liveness and there is one publisher; per-flow values would make the reconcile rate a workload author's decision and give a subscriber several intervals to reason about. The idle/active split covers the variation that is actually justified, following what a flow is doing rather than what it declared | EX-29 |
+| OD-33 | No opt-in hook-completion wait exists in v1alpha1. A `ShutdownHook` is a bounded delivery attempt. Hook-level timeout wins, `PowerManagementCluster.spec.hooks.defaultTimeout` fills omitted hook timeouts, and shutdown proceeds after the attempt | Shutdown hooks |
+| OD-34 | Hook failures are advisory. Failed or timed-out hooks record evidence and mark the owning `ShutdownFlow` degraded, but never engage `abortPolicy` and never hold a shutdown wave | Shutdown hooks |
 
 ## Glossary
 

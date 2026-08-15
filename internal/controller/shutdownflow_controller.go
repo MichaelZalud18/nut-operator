@@ -62,14 +62,13 @@ type ShutdownFlowReconciler struct {
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows/finalizers,verbs=update
-// +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters;powerinfrastructures;powerinventoryedges;powerinventorynodes;upscapabilityprofiles;upsdevices,verbs=get;list;watch
+// +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters;powerinfrastructures;powerinventoryedges;powerinventorynodes;shutdownhooks;upscapabilityprofiles;upsdevices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=namespaces;nodes;pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=update;patch
 // +kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=argoproj.io,resources=workflows,verbs=create;get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile validates shutdown flow safety and records compiled plan status
@@ -144,16 +143,29 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus
 	var plannerDiagnostics []planner.Diagnostic
 	var blockedNodeReleases []powerv1alpha1.BlockedNodeReleaseStatus
+	var hookDigests []planner.HookDigest
 	var planFeasibility *powerv1alpha1.PlanFeasibilityStatus
 	var planEstimate *time.Duration
 	var estimateConfidence planner.EstimateConfidence
 	var triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus
 	if result.accepted {
+		digests, err := r.shutdownFlowHookDigests(ctx, &flow)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				result = rejected("ShutdownHookNotFound", "referenced ShutdownHook could not be found")
+			} else {
+				return ctrl.Result{}, err
+			}
+		} else {
+			hookDigests = digests
+		}
+	}
+	if result.accepted {
 		compileStart := time.Now()
 		// Keyed off the hash already on status: a plan whose identity has not moved finds
 		// its own history, and one that has moved finds none and keeps declared timeouts.
 		history := r.flowExecutionHistory(ctx, managementCluster, &flow, flow.Status.ConfigHash)
-		compiledFlow := compileShutdownFlowWithHistory(&flow, bundle, shutdownFlowTierPolicy(managementCluster), history)
+		compiledFlow := compileShutdownFlowWithHistory(&flow, bundle, shutdownFlowTierPolicy(managementCluster), history, hookDigests)
 		compiled = compiledFlow.Steps
 		compiledWaves = compiledFlow.Waves
 		estimatedDuration = compiledFlow.EstimatedDuration
@@ -327,6 +339,7 @@ func (r *ShutdownFlowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&powerv1alpha1.PowerInfrastructure{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
 		Watches(&powerv1alpha1.PowerInventoryNode{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
 		Watches(&powerv1alpha1.PowerInventoryEdge{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
+		Watches(&powerv1alpha1.ShutdownHook{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForHookChange), specChanged).
 		Watches(&powerv1alpha1.UPSCapabilityProfile{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
 		Named("shutdownflow").
 		Complete(r)

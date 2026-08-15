@@ -26,7 +26,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
-	"github.com/MichaelZalud18/nut-operator/internal/kubeactions"
 )
 
 var _ = Describe("ShutdownFlow Webhook", func() {
@@ -208,47 +207,47 @@ func validShutdownFlowSpec() powerv1alpha1.ShutdownFlowSpec {
 	}
 }
 
-var _ = Describe("RunWorkflow hook GVK validation", func() {
-	// F-44: workflow.apiVersion/kind read as engine-neutral and are not. The runner always builds
-	// an Argo-shaped body and the operator's RBAC grants only argoproj.io/workflows, so another GVK
-	// is created with fields its CRD does not define, by a manager without permission to create it
-	// -- and the discovery lands mid-outage. Refuse at admission instead.
-	DescribeTable("rejects a GVK the operator cannot create",
-		func(params map[string]string) {
-			errs := validateWorkflowHookGVK(
-				field.NewPath("spec", "groups").Index(0).Child("params"),
-				powerv1alpha1.ShutdownStepRunWorkflow, params)
+var _ = Describe("RunHook validation", func() {
+	It("rejects RunHook without a hookRef", func() {
+		errs := validateRunHookReference(
+			field.NewPath("spec", "groups").Index(0).Child("hookRef"),
+			powerv1alpha1.ShutdownStepRunHook, nil)
 
-			Expect(errs).NotTo(BeEmpty())
-			// The message has to name the supported GVK: "invalid" alone leaves the author guessing.
-			Expect(errs[0].Detail).To(ContainSubstring(kubeactions.SupportedWorkflowKind))
-		},
-		Entry("foreign apiVersion", map[string]string{
-			"workflow.apiVersion": "tekton.dev/v1", "workflow.kind": "Workflow"}),
-		Entry("foreign kind", map[string]string{
-			"workflow.apiVersion": "argoproj.io/v1alpha1", "workflow.kind": "PipelineRun"}),
-		Entry("both foreign", map[string]string{
-			"workflow.apiVersion": "batch/v1", "workflow.kind": "Job"}),
-	)
+		Expect(errs).NotTo(BeEmpty())
+		Expect(errs[0].Detail).To(ContainSubstring("RunHook"))
+	})
 
-	// The supported GVK and an unset one both pass -- unset defaults to Argo in the runner.
-	DescribeTable("accepts the supported GVK",
-		func(params map[string]string) {
-			Expect(validateWorkflowHookGVK(
-				field.NewPath("spec"), powerv1alpha1.ShutdownStepRunWorkflow, params)).To(BeEmpty())
-		},
-		Entry("explicit", map[string]string{
-			"workflow.apiVersion": kubeactions.SupportedWorkflowAPIVersion,
-			"workflow.kind":       kubeactions.SupportedWorkflowKind}),
-		Entry("unset", map[string]string{"workflow.templateRef": "db-snapshot"}),
-		Entry("no params", map[string]string(nil)),
-	)
+	It("rejects hookRef on non-hook actions", func() {
+		errs := validateRunHookReference(
+			field.NewPath("spec", "groups").Index(0).Child("hookRef"),
+			powerv1alpha1.ShutdownStepNotify,
+			&powerv1alpha1.NamespacedNameReference{Namespace: "apps", Name: "flush"})
 
-	// The check is scoped to RunWorkflow. Another action carrying a workflow.* param is meaningless
-	// rather than invalid, and rejecting the flow over it would be a different and wrong claim.
-	It("only applies to RunWorkflow", func() {
-		Expect(validateWorkflowHookGVK(
-			field.NewPath("spec"), powerv1alpha1.ShutdownStepNotify,
-			map[string]string{"workflow.apiVersion": "tekton.dev/v1"})).To(BeEmpty())
+		Expect(errs).NotTo(BeEmpty())
+		Expect(errs[0].Detail).To(ContainSubstring("only valid"))
+	})
+
+	It("rejects legacy workflow params", func() {
+		errs := validateRemovedWorkflowParams(
+			field.NewPath("spec", "groups").Index(0).Child("params"),
+			powerv1alpha1.ShutdownStepRunHook,
+			map[string]string{"workflow.templateRef": "db-snapshot"})
+
+		Expect(errs).NotTo(BeEmpty())
+		Expect(errs[0].Detail).To(ContainSubstring("RunWorkflow was removed"))
+	})
+
+	It("requires managementClusterRef when a flow uses RunHook", func() {
+		obj := &powerv1alpha1.ShutdownFlow{Spec: validShutdownFlowSpec()}
+		obj.Spec.Groups = append(obj.Spec.Groups, powerv1alpha1.ShutdownGroup{
+			Name:    "flush-storage",
+			Action:  powerv1alpha1.ShutdownStepRunHook,
+			HookRef: &powerv1alpha1.NamespacedNameReference{Namespace: "storage", Name: "flush"},
+		})
+
+		errs := validateShutdownHookPolicy(field.NewPath("spec"), obj)
+
+		Expect(errs).NotTo(BeEmpty())
+		Expect(errs[0].Field).To(ContainSubstring("managementClusterRef"))
 	})
 })

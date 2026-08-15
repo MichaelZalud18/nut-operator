@@ -1,0 +1,30 @@
+apiVersion: power.zalud.io/v1alpha1
+kind: ShutdownHook
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  namespace: power-system
+  name: flush-storage
+spec:
+  invocation:
+    transport: HTTP
+    timeout: 15s
+    http:
+      url: https://hooks.example.test/power/flush
+      secretHeaders:
+        - name: Authorization
+          valueFrom:
+            namespace: power-system
+            name: flush-storage-hook
+            key: authorization
+      data:
+        operation: flush-storage
+  dryRun:
+    transport: HTTP
+    timeout: 5s
+    http:
+      url: https://hooks.example.test/power/rehearse
+      data:
+        operation: flush-storage
+        rehearsal: "true"

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -28,7 +29,6 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
-	"github.com/MichaelZalud18/nut-operator/internal/kubeactions"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 )
@@ -128,6 +128,7 @@ func validateShutdownFlowAdmission(obj *powerv1alpha1.ShutdownFlow) (admission.W
 	errs = append(errs, validateShutdownTriggers(specPath.Child("triggers"), obj.Spec.Triggers)...)
 	errs = append(errs, validateShutdownGroups(specPath.Child("groups"), obj.Spec.Groups)...)
 	errs = append(errs, validateShutdownSteps(specPath.Child("steps"), obj.Spec.Steps)...)
+	errs = append(errs, validateShutdownHookPolicy(specPath, obj)...)
 	errs = append(errs, validateShutdownConcurrencyPolicy(specPath.Child("concurrencyPolicy"), obj.Spec.ConcurrencyPolicy)...)
 	errs = append(errs, validateAbortPolicy(specPath.Child("abortPolicy"), obj.Spec.AbortPolicy)...)
 	errs = append(errs, validateFlowSafety(specPath.Child("safety"), obj)...)
@@ -244,6 +245,7 @@ func validateShutdownGroups(path *field.Path, groups []powerv1alpha1.ShutdownGro
 		errs = append(errs, validateIdentifierText(groupPath.Child("name"), group.Name, "group name must not be empty")...)
 		errs = append(errs, validateShutdownStepType(groupPath.Child("action"), group.Action)...)
 		errs = append(errs, validateShutdownTarget(groupPath.Child("target"), group.Target)...)
+		errs = append(errs, validateRunHookReference(groupPath.Child("hookRef"), group.Action, group.HookRef)...)
 		errs = append(errs, validatePositiveDuration(groupPath.Child("timeout"), group.Timeout)...)
 		for j, dependency := range group.Requires {
 			errs = append(errs, validateIdentifierText(groupPath.Child("requires").Index(j), dependency, "dependency name must not be empty")...)
@@ -255,7 +257,7 @@ func validateShutdownGroups(path *field.Path, groups []powerv1alpha1.ShutdownGro
 			errs = append(errs, validateIdentifierText(groupPath.Child("after").Index(j), dependency, "dependency name must not be empty")...)
 		}
 		errs = append(errs, validateStringMap(groupPath.Child("params"), group.Params)...)
-		errs = append(errs, validateWorkflowHookGVK(groupPath.Child("params"), group.Action, group.Params)...)
+		errs = append(errs, validateRemovedWorkflowParams(groupPath.Child("params"), group.Action, group.Params)...)
 	}
 	return errs
 }
@@ -267,42 +269,59 @@ func validateShutdownSteps(path *field.Path, steps []powerv1alpha1.ShutdownStep)
 		errs = append(errs, validateIdentifierText(stepPath.Child("id"), step.ID, "step id must not be empty")...)
 		errs = append(errs, validateShutdownStepType(stepPath.Child("type"), step.Type)...)
 		errs = append(errs, validateShutdownTarget(stepPath.Child("target"), step.Target)...)
+		errs = append(errs, validateRunHookReference(stepPath.Child("hookRef"), step.Type, step.HookRef)...)
 		errs = append(errs, validatePositiveDuration(stepPath.Child("duration"), step.Duration)...)
 		errs = append(errs, validatePositiveDuration(stepPath.Child("timeout"), step.Timeout)...)
 		errs = append(errs, validateStringMap(stepPath.Child("params"), step.Params)...)
-		errs = append(errs, validateWorkflowHookGVK(stepPath.Child("params"), step.Type, step.Params)...)
+		errs = append(errs, validateRemovedWorkflowParams(stepPath.Child("params"), step.Type, step.Params)...)
 	}
 	return errs
 }
 
-// validateWorkflowHookGVK refuses a RunWorkflow target the operator cannot create
-// (F-44).
-//
-// workflow.apiVersion and workflow.kind read as engine-neutral and are not: the
-// runner always builds an Argo-shaped body, and the operator's RBAC grants only
-// argoproj.io/workflows. Accepting another GVK produces an object with fields its
-// CRD does not define, created by a manager without permission to create it, and
-// the discovery lands in the middle of an outage.
-//
-// Refusing at admission is the same remedy F-25 and F-33 received: a field that
-// cannot do what it claims is implemented or rejected, never left to fail quietly
-// in the failure path. Genuine neutrality is docs/design/shutdown-hooks.md.
-func validateWorkflowHookGVK(path *field.Path, action powerv1alpha1.ShutdownStepType, params map[string]string) field.ErrorList {
-	if action != powerv1alpha1.ShutdownStepRunWorkflow || len(params) == 0 {
+func validateShutdownHookPolicy(path *field.Path, obj *powerv1alpha1.ShutdownFlow) field.ErrorList {
+	if !shutdownFlowUsesRunHook(obj) {
 		return nil
 	}
-	var errs field.ErrorList
-	if apiVersion := params["workflow.apiVersion"]; apiVersion != "" && apiVersion != kubeactions.SupportedWorkflowAPIVersion {
-		errs = append(errs, field.Invalid(
-			path.Key("workflow.apiVersion"), apiVersion,
-			fmt.Sprintf("RunWorkflow can only create %s objects; see docs/design/shutdown-hooks.md for transport-neutral hooks",
-				kubeactions.SupportedWorkflowAPIVersion)))
+	if obj.Spec.ManagementClusterRef == nil || obj.Spec.ManagementClusterRef.Name == "" {
+		return field.ErrorList{field.Required(path.Child("managementClusterRef"), "RunHook requires a PowerManagementCluster for outbound endpoint policy")}
 	}
-	if kind := params["workflow.kind"]; kind != "" && kind != kubeactions.SupportedWorkflowKind {
-		errs = append(errs, field.Invalid(
-			path.Key("workflow.kind"), kind,
-			fmt.Sprintf("RunWorkflow can only create %s objects; see docs/design/shutdown-hooks.md for transport-neutral hooks",
-				kubeactions.SupportedWorkflowKind)))
+	return nil
+}
+
+func shutdownFlowUsesRunHook(obj *powerv1alpha1.ShutdownFlow) bool {
+	for _, group := range obj.Spec.Groups {
+		if group.Action == powerv1alpha1.ShutdownStepRunHook {
+			return true
+		}
+	}
+	for _, step := range obj.Spec.Steps {
+		if step.Type == powerv1alpha1.ShutdownStepRunHook {
+			return true
+		}
+	}
+	return false
+}
+
+func validateRunHookReference(path *field.Path, action powerv1alpha1.ShutdownStepType, ref *powerv1alpha1.NamespacedNameReference) field.ErrorList {
+	if action != powerv1alpha1.ShutdownStepRunHook {
+		if ref != nil {
+			return field.ErrorList{field.Forbidden(path, "hookRef is only valid with action RunHook")}
+		}
+		return nil
+	}
+	if ref == nil {
+		return field.ErrorList{field.Required(path, "RunHook requires a ShutdownHook reference")}
+	}
+	return validateNamespacedNameReference(path, *ref)
+}
+
+func validateRemovedWorkflowParams(path *field.Path, action powerv1alpha1.ShutdownStepType, params map[string]string) field.ErrorList {
+	var errs field.ErrorList
+	for key := range params {
+		if strings.HasPrefix(key, "workflow.") {
+			errs = append(errs, field.Forbidden(path.Key(key),
+				fmt.Sprintf("RunWorkflow was removed; action %s must use RunHook with hookRef and a ShutdownHook resource", action)))
+		}
 	}
 	return errs
 }
@@ -336,7 +355,7 @@ func validateShutdownStepType(path *field.Path, stepType powerv1alpha1.ShutdownS
 		powerv1alpha1.ShutdownStepCordonNodes,
 		powerv1alpha1.ShutdownStepDrainNodes,
 		powerv1alpha1.ShutdownStepScaleWorkload,
-		powerv1alpha1.ShutdownStepRunWorkflow,
+		powerv1alpha1.ShutdownStepRunHook,
 		powerv1alpha1.ShutdownStepAgentShutdown:
 		return nil
 	case "":
@@ -418,7 +437,7 @@ func supportedShutdownStepTypes() []string {
 		string(powerv1alpha1.ShutdownStepCordonNodes),
 		string(powerv1alpha1.ShutdownStepDrainNodes),
 		string(powerv1alpha1.ShutdownStepScaleWorkload),
-		string(powerv1alpha1.ShutdownStepRunWorkflow),
+		string(powerv1alpha1.ShutdownStepRunHook),
 		string(powerv1alpha1.ShutdownStepAgentShutdown),
 	}
 }

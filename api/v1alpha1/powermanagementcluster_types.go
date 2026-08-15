@@ -47,6 +47,10 @@ type PowerManagementClusterSpec struct {
 	// +optional
 	Security PowerSecuritySpec `json:"security,omitempty"`
 
+	// hooks configures global policy for ShutdownHook delivery.
+	// +optional
+	Hooks PowerHookPolicySpec `json:"hooks,omitempty"`
+
 	// observability configures metrics, events, and telemetry export defaults.
 	// +optional
 	Observability PowerObservabilitySpec `json:"observability,omitempty"`
@@ -248,6 +252,40 @@ type PowerSecuritySpec struct {
 	// allowedActuatorNamespaces restricts where host-actuator DaemonSets may be created.
 	// +optional
 	AllowedActuatorNamespaces []string `json:"allowedActuatorNamespaces,omitempty"`
+}
+
+// PowerHookPolicySpec configures global ShutdownHook delivery policy.
+type PowerHookPolicySpec struct {
+	// defaultTimeout is used when a hook invocation does not declare its own timeout.
+	// +kubebuilder:default="10s"
+	// +optional
+	DefaultTimeout *metav1.Duration `json:"defaultTimeout,omitempty"`
+
+	// allowedEndpoints is the HTTP endpoint allowlist for ShutdownHook invocation.
+	// HTTP hooks that do not match an entry are refused before delivery.
+	// +optional
+	AllowedEndpoints []PowerHookEndpointAllowlistEntry `json:"allowedEndpoints,omitempty"`
+}
+
+// PowerHookEndpointAllowlistEntry allows one HTTP hook endpoint shape.
+type PowerHookEndpointAllowlistEntry struct {
+	// scheme is the allowed URL scheme.
+	// +kubebuilder:validation:Enum=http;https
+	Scheme string `json:"scheme"`
+
+	// host is the exact DNS name or IP literal allowed for hook delivery.
+	// +kubebuilder:validation:MinLength=1
+	Host string `json:"host"`
+
+	// port is the allowed TCP port. Empty means the scheme default port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	Port *int32 `json:"port,omitempty"`
+
+	// pathPrefix limits delivery to paths under this prefix. Empty allows any path.
+	// +optional
+	PathPrefix string `json:"pathPrefix,omitempty"`
 }
 
 // PowerObservabilitySpec controls telemetry and metrics defaults.

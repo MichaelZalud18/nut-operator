@@ -136,6 +136,9 @@ var _ = BeforeSuite(func() {
 	err = SetupShutdownFlowWebhookWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
+	err = SetupShutdownHookWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
 	// +kubebuilder:scaffold:webhook
 
 	go func() {

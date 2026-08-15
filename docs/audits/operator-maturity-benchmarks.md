@@ -323,6 +323,7 @@ new regression spec) the same day. Recorded here for the audit trail:
   `argoproj.io/workflows` grant (`RunWorkflow` executor action, references `WorkflowTemplate`s by
   name, no `workflowtemplates` RBAC) and the `namespaces create` grant (can't be narrowed by name at
   the RBAC layer; closed at the input layer by `F-4` instead) so neither reads as scope creep again.
+  Superseded by the `ShutdownHook` rebuild: generated RBAC no longer grants `argoproj.io/workflows`.
 
 Still open: `F-3` (metrics), image signing, and the container-scanner tooling decision — unchanged,
 see `docs/tasks.md`.

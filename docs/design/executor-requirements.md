@@ -153,9 +153,10 @@ the plan explicitly compiled an exceptional override.
 
 The Kubernetes action runner is the effectful boundary for these stock mechanisms. It scales
 `Deployment`, `StatefulSet`, and `ReplicaSet` targets, cordons `Node` targets, drains through the
-`pods/eviction` subresource, and creates provider-neutral workflow hook objects from explicit
-`RunWorkflow` parameters. The executor supplies concrete targets that were enumerated at execution
-time and records every action attempt.
+`pods/eviction` subresource, delivers `RunHook` invocations from referenced `ShutdownHook` resources,
+and records every action attempt. The executor supplies concrete targets that were enumerated at
+execution time; hooks are targetless executor actions because the referenced hook owns the delivery
+target.
 
 **EX-14 · Idempotent, resumable execution.** The executor may restart mid-flow (it is itself a
 workload in a cluster that is shutting down). Execution state sufficient to resume — current wave,

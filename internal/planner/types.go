@@ -50,6 +50,10 @@ type StructuralInputs struct {
 	// what makes tier inversion detectable: a node scheduled to power off before
 	// the workloads still running on it (OD-18).
 	NodeTiers []NodeTier `json:"nodeTiers,omitempty"`
+	// HookDigests carries resolved ShutdownHook specs into plan identity. A hook
+	// URL, credential reference, or rehearsal change is failure-path behavior and
+	// must move the plan hash even though hooks live outside ShutdownFlow.
+	HookDigests []HookDigest `json:"hookDigests,omitempty"`
 }
 
 // NodeTier is one node's declared shutdown tier, from inventory rather than
@@ -150,6 +154,7 @@ type Group struct {
 	Name         string            `json:"name"`
 	Description  string            `json:"description,omitempty"`
 	Action       string            `json:"action"`
+	HookRef      *HookReference    `json:"hookRef,omitempty"`
 	Target       Target            `json:"target,omitempty"`
 	Requires     []string          `json:"requires,omitempty"`
 	Before       []string          `json:"before,omitempty"`
@@ -174,11 +179,25 @@ const (
 type Step struct {
 	ID              string            `json:"id"`
 	Action          string            `json:"action"`
+	HookRef         *HookReference    `json:"hookRef,omitempty"`
 	Target          Target            `json:"target,omitempty"`
 	Duration        Duration          `json:"duration,omitempty"`
 	Timeout         Duration          `json:"timeout,omitempty"`
 	ContinueOnError bool              `json:"continueOnError,omitempty"`
 	Params          map[string]string `json:"params,omitempty"`
+}
+
+// HookReference identifies a namespaced ShutdownHook.
+type HookReference struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+}
+
+// HookDigest identifies the resolved hook spec used by one plan.
+type HookDigest struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Hash      string `json:"hash"`
 }
 
 // Target is a compact planner-side target summary input.

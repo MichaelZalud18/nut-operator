@@ -46,9 +46,20 @@ spec:
           matchLabels:
             power.zalud.io/shutdown-tier: "4"
       before:
-        - cordon-standard-workers
+        - flush-storage
       phase: 10
       timeout: 5m
+    - name: flush-storage
+      action: RunHook
+      description: Ask an external storage system to flush before node drain.
+      shutdownTier: 2
+      hookRef:
+        namespace: power-system
+        name: flush-storage
+      before:
+        - cordon-standard-workers
+      phase: 15
+      timeout: 15s
     - name: cordon-standard-workers
       action: CordonNodes
       shutdownTier: 2

@@ -13,6 +13,7 @@ resources:
 - bases/power.zalud.io_powerinventoryedges.yaml
 - bases/power.zalud.io_powerinventorynodes.yaml
 - bases/power.zalud.io_upscapabilityprobes.yaml
+- bases/power.zalud.io_shutdownhooks.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

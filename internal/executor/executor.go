@@ -47,6 +47,7 @@ const (
 	OutcomeTimedOut  = "TimedOut"
 
 	ActionAgentShutdown = "AgentShutdown"
+	ActionRunHook       = "RunHook"
 	// ActionWait holds the flow for a declared duration. Handled here rather than in
 	// the Kubernetes action runner because waiting is not a cluster mutation, and
 	// because its duration is exactly the class of value timing adaptation scales.
@@ -115,6 +116,7 @@ type Group struct {
 	Name            string
 	Action          string
 	Params          map[string]string
+	HookRef         *HookReference
 	SelectedTargets []Target
 	NodeReleases    []NodeRelease
 	Details         map[string]any
@@ -127,6 +129,12 @@ type Group struct {
 	// WaitDuration is how long a Wait group holds the flow. Scaled by the timing
 	// mode on the same terms as Timeout.
 	WaitDuration time.Duration
+}
+
+// HookReference identifies a namespaced ShutdownHook at execution time.
+type HookReference struct {
+	Namespace string
+	Name      string
 }
 
 // Target is an execution-time concrete object selected for an action.
@@ -177,11 +185,21 @@ type NodeRelease struct {
 type Action struct {
 	ExecutionID        string
 	ShutdownFlow       string
+	TriggerReason      string
 	PlanConfigHash     string
 	SelectedUPSDevices []string
 	WaveIndex          int32
 	Group              Group
 	DryRun             bool
+	PowerObservation   ActionPowerObservation
+}
+
+// ActionPowerObservation is the wave-boundary power state passed to action runners.
+type ActionPowerObservation struct {
+	OnBattery      bool
+	LowBattery     bool
+	RuntimeSeconds *int64
+	RuntimeTrusted bool
 }
 
 // ActionOutcome summarizes one action-runner result.
@@ -198,13 +216,16 @@ type ActionRunner interface {
 
 // Result summarizes the evidence emitted by one execution attempt.
 type Result struct {
-	ExecutionID    string
-	Phase          string
-	DryRun         bool
-	Waves          int
-	Groups         int
-	ActionAttempts int
-	NodeReleases   int
+	ExecutionID     string
+	Phase           string
+	DryRun          bool
+	Waves           int
+	Groups          int
+	ActionAttempts  int
+	NodeReleases    int
+	Degraded        bool
+	DegradedReason  string
+	DegradedMessage string
 
 	// Adaptive is the pointer and timing state the run ended on, for the caller to
 	// persist and publish.
@@ -339,6 +360,13 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			result.Groups++
 			result.ActionAttempts += groupResult.ActionAttempts
 			result.NodeReleases += groupResult.NodeReleases
+			if groupResult.Degraded {
+				result.Degraded = true
+				if result.DegradedReason == "" {
+					result.DegradedReason = groupResult.DegradedReason
+					result.DegradedMessage = groupResult.DegradedMessage
+				}
+			}
 			recordErr = errors.Join(recordErr, groupResult.RecordError)
 			if groupErr != nil {
 				result.Phase = PhaseAborted
@@ -444,9 +472,12 @@ func finalAdaptiveStateRecord(result AdaptiveResult) map[string]any {
 }
 
 type groupExecutionResult struct {
-	ActionAttempts int
-	NodeReleases   int
-	RecordError    error
+	ActionAttempts  int
+	NodeReleases    int
+	RecordError     error
+	Degraded        bool
+	DegradedReason  string
+	DegradedMessage string
 }
 
 func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input Input, executionID, mode string, dryRun bool, waveIndex int32, group Group, waveState waveAdaptiveState) (groupExecutionResult, error) {
@@ -490,7 +521,8 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 		}
 	}
 
-	if !dryRun && actionErr == nil {
+	shouldRunAction := !dryRun || group.Action == ActionRunHook
+	if shouldRunAction && actionErr == nil {
 		if e.Runner == nil {
 			actionErr = fmt.Errorf("enforce execution requires an action runner")
 			outcome = ActionOutcome{Outcome: OutcomeBlocked, Error: actionErr.Error()}
@@ -505,11 +537,18 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 			outcome, actionErr = e.Runner.RunAction(actionCtx, Action{
 				ExecutionID:        executionID,
 				ShutdownFlow:       input.ShutdownFlow,
+				TriggerReason:      input.Reason,
 				PlanConfigHash:     input.PlanConfigHash,
 				SelectedUPSDevices: append([]string(nil), input.SelectedUPSDevices...),
 				WaveIndex:          waveIndex,
 				Group:              group,
-				DryRun:             false,
+				DryRun:             dryRun,
+				PowerObservation: ActionPowerObservation{
+					OnBattery:      waveState.Observation.OnBattery,
+					LowBattery:     waveState.Observation.LowBattery,
+					RuntimeSeconds: copyInt64Ptr(waveState.Observation.RuntimeSeconds),
+					RuntimeTrusted: waveState.Observation.RuntimeTrusted,
+				},
 			})
 			timedOut := effectiveTimeout > 0 && actionCtx.Err() != nil && ctx.Err() == nil
 			if cancel != nil {
@@ -589,6 +628,12 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 		releaseCount, releaseErr := e.recordNodeReleases(ctx, writer, input, executionID, dryRun, group, completedAt)
 		result.NodeReleases = releaseCount
 		result.RecordError = errors.Join(result.RecordError, releaseErr)
+	}
+	if group.Action == ActionRunHook && actionErr != nil {
+		result.Degraded = true
+		result.DegradedReason = "ShutdownHookFailed"
+		result.DegradedMessage = actionErr.Error()
+		return result, nil
 	}
 	return result, actionErr
 }
@@ -848,6 +893,14 @@ func copyStringMap(value map[string]string) map[string]string {
 		out[key] = item
 	}
 	return out
+}
+
+func copyInt64Ptr(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	out := *value
+	return &out
 }
 
 func mergeDetails(base map[string]any, extra map[string]any) map[string]any {

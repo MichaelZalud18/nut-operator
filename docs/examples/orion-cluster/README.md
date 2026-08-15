@@ -35,4 +35,5 @@ The conservation flow uses dependency edges as the source of truth:
 burst-capacity -> application-workloads -> data-workloads -> storage-services -> standard-nodes -> controller-node
 ```
 
-Apply order for a real cluster would be the management cluster, network UPS and NUT server, node agents, then the flow.
+Apply order for a real cluster would be the management cluster, network UPS and NUT server, node
+agents, then the hook and flow.

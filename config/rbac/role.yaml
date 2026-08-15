@@ -74,15 +74,6 @@ rules:
   - update
   - watch
 - apiGroups:
-  - argoproj.io
-  resources:
-  - workflows
-  verbs:
-  - create
-  - get
-  - list
-  - watch
-- apiGroups:
   - networking.k8s.io
   resources:
   - networkpolicies
@@ -168,3 +159,11 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - shutdownhooks
+  verbs:
+  - get
+  - list
+  - watch

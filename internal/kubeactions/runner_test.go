@@ -19,6 +19,8 @@ package kubeactions
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -303,12 +305,209 @@ func TestRunnerCordonsNodes(t *testing.T) {
 	}
 }
 
-func TestRunnerCreatesWorkflowHook(t *testing.T) {
+func TestRunnerDeliversHTTPShutdownHookCloudEvent(t *testing.T) {
 	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
 	fixed := time.Date(2026, 8, 2, 21, 0, 0, 0, time.UTC)
+	hookURL := "https://hooks.example.test/hooks/flush"
+	var received map[string]any
+	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", req.Method)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer secret-token" {
+			t.Errorf("Authorization header = %q", got)
+		}
+		if got := req.Header.Get("Content-Type"); got != "application/cloudevents+json" {
+			t.Errorf("Content-Type = %q", got)
+		}
+		if err := json.NewDecoder(req.Body).Decode(&received); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusAccepted,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Header:     http.Header{},
+			Request:    req,
+		}, nil
+	})}
+
+	endpoint := powerv1alpha1.PowerHookEndpointAllowlistEntry{Scheme: "https", Host: "hooks.example.test", PathPrefix: "/hooks"}
 	runner := Runner{
-		Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
-		Clock:  func() time.Time { return fixed },
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			&powerv1alpha1.ShutdownFlow{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-flow"},
+				Spec: powerv1alpha1.ShutdownFlowSpec{
+					ManagementClusterRef: &powerv1alpha1.ObjectNameReference{Name: "production"},
+				},
+			},
+			&powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "production"},
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					Storage: powerv1alpha1.PowerStorageSpec{Mode: powerv1alpha1.PowerStorageDisabled},
+					Hooks:   powerv1alpha1.PowerHookPolicySpec{AllowedEndpoints: []powerv1alpha1.PowerHookEndpointAllowlistEntry{endpoint}},
+				},
+			},
+			&powerv1alpha1.ShutdownHook{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "storage", Name: "flush"},
+				Spec: powerv1alpha1.ShutdownHookSpec{
+					Invocation: powerv1alpha1.ShutdownHookInvocationSpec{
+						Transport: powerv1alpha1.ShutdownHookTransportHTTP,
+						HTTP: &powerv1alpha1.ShutdownHookHTTPSpec{
+							URL: hookURL,
+							SecretHeaders: []powerv1alpha1.ShutdownHookHTTPSecretHeader{{
+								Name: "Authorization",
+								ValueFrom: powerv1alpha1.SecretKeyReference{
+									Namespace: "storage",
+									Name:      "hook-auth",
+									Key:       "authorization",
+								},
+							}},
+							Data: map[string]string{"operation": "flush"},
+						},
+					},
+				},
+			},
+			&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "storage", Name: "hook-auth"},
+				Data:       map[string][]byte{"authorization": []byte("Bearer secret-token")},
+			},
+		).Build(),
+		Clock:      func() time.Time { return fixed },
+		HTTPClient: httpClient,
+	}
+
+	outcome, err := runner.RunAction(context.Background(), executor.Action{
+		ShutdownFlow:   "test-flow",
+		ExecutionID:    "execution-a",
+		TriggerReason:  "RuntimeBelow",
+		PlanConfigHash: "hash-a",
+		Group: executor.Group{
+			Name:   "storage",
+			Action: ActionRunHook,
+			HookRef: &executor.HookReference{
+				Namespace: "storage",
+				Name:      "flush",
+			},
+			Params: map[string]string{"reason": "power-event"},
+		},
+		WaveIndex:          2,
+		SelectedUPSDevices: []string{"ups-a"},
+		PowerObservation: executor.ActionPowerObservation{
+			OnBattery:      true,
+			RuntimeSeconds: ptrInt64(600),
+			RuntimeTrusted: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunAction returned error: %v", err)
+	}
+	if outcome.Outcome != executor.OutcomeSucceeded {
+		t.Fatalf("expected succeeded outcome, got %#v", outcome)
+	}
+	data, ok := received["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected CloudEvents data object, got %#v", received["data"])
+	}
+	if data["executionID"] != "execution-a" || data["shutdownFlow"] != "test-flow" || data["group"] != "storage" {
+		t.Fatalf("unexpected CloudEvents data: %#v", data)
+	}
+	power, ok := data["power"].(map[string]any)
+	if !ok || power["onBattery"] != true {
+		t.Fatalf("expected power observation in CloudEvents data, got %#v", data["power"])
+	}
+	extensions, ok := data["extensions"].(map[string]any)
+	if !ok || extensions["operation"] != "flush" {
+		t.Fatalf("expected hook extension data, got %#v", data["extensions"])
+	}
+}
+
+func TestRunnerSimulatesHTTPShutdownHookWithoutDryRunInvocation(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	endpoint := powerv1alpha1.PowerHookEndpointAllowlistEntry{Scheme: "https", Host: "hooks.example.test", PathPrefix: "/power"}
+	runner := Runner{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			&powerv1alpha1.ShutdownFlow{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-flow"},
+				Spec: powerv1alpha1.ShutdownFlowSpec{
+					ManagementClusterRef: &powerv1alpha1.ObjectNameReference{Name: "production"},
+				},
+			},
+			&powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "production"},
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					Storage: powerv1alpha1.PowerStorageSpec{Mode: powerv1alpha1.PowerStorageDisabled},
+					Hooks:   powerv1alpha1.PowerHookPolicySpec{AllowedEndpoints: []powerv1alpha1.PowerHookEndpointAllowlistEntry{endpoint}},
+				},
+			},
+			&powerv1alpha1.ShutdownHook{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "storage", Name: "flush"},
+				Spec: powerv1alpha1.ShutdownHookSpec{
+					Invocation: powerv1alpha1.ShutdownHookInvocationSpec{
+						Transport: powerv1alpha1.ShutdownHookTransportHTTP,
+						HTTP:      &powerv1alpha1.ShutdownHookHTTPSpec{URL: "https://hooks.example.test/power/flush"},
+					},
+				},
+			},
+		).Build(),
+	}
+
+	outcome, err := runner.RunAction(context.Background(), executor.Action{
+		ShutdownFlow:   "test-flow",
+		ExecutionID:    "execution-a",
+		PlanConfigHash: "hash-a",
+		DryRun:         true,
+		Group: executor.Group{
+			Name:   "storage",
+			Action: ActionRunHook,
+			HookRef: &executor.HookReference{
+				Namespace: "storage",
+				Name:      "flush",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunAction returned error: %v", err)
+	}
+	if outcome.Outcome != executor.OutcomeSimulated {
+		t.Fatalf("expected simulated outcome, got %#v", outcome)
+	}
+	if outcome.Details["wouldSendInvocation"] == nil {
+		t.Fatalf("expected wouldSendInvocation details, got %#v", outcome.Details)
+	}
+}
+
+func TestRunnerCreatesGenericKubernetesObjectShutdownHook(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	rawObject := []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"namespace":"storage","name":"flush-request"}}`)
+	runner := Runner{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			&powerv1alpha1.ShutdownHook{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "storage", Name: "flush"},
+				Spec: powerv1alpha1.ShutdownHookSpec{
+					Invocation: powerv1alpha1.ShutdownHookInvocationSpec{
+						Transport: powerv1alpha1.ShutdownHookTransportKubernetesObject,
+						KubernetesObject: &powerv1alpha1.ShutdownHookKubernetesObjectSpec{
+							Object: runtime.RawExtension{Raw: rawObject},
+						},
+					},
+				},
+			},
+		).Build(),
 	}
 
 	outcome, err := runner.RunAction(context.Background(), executor.Action{
@@ -317,12 +516,11 @@ func TestRunnerCreatesWorkflowHook(t *testing.T) {
 		PlanConfigHash: "hash-a",
 		Group: executor.Group{
 			Name:   "storage",
-			Action: ActionWorkflow,
-			Params: map[string]string{
-				paramWorkflowTemplateRef:                "flush-storage",
-				paramWorkflowParameterPrefix + "reason": "power-event",
+			Action: ActionRunHook,
+			HookRef: &executor.HookReference{
+				Namespace: "storage",
+				Name:      "flush",
 			},
-			SelectedTargets: []executor.Target{{APIVersion: "v1", Kind: "Namespace", Name: "storage"}},
 		},
 	})
 	if err != nil {
@@ -332,24 +530,16 @@ func TestRunnerCreatesWorkflowHook(t *testing.T) {
 		t.Fatalf("expected succeeded outcome, got %#v", outcome)
 	}
 
-	var workflows unstructured.UnstructuredList
-	workflows.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "WorkflowList"})
-	if err := runner.Client.List(context.Background(), &workflows, client.InNamespace("storage")); err != nil {
-		t.Fatalf("list Workflows returned error: %v", err)
+	var objects unstructured.UnstructuredList
+	objects.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "ConfigMapList"})
+	if err := runner.Client.List(context.Background(), &objects, client.InNamespace("storage")); err != nil {
+		t.Fatalf("list ConfigMaps returned error: %v", err)
 	}
-	if len(workflows.Items) != 1 {
-		t.Fatalf("expected one workflow, got %d", len(workflows.Items))
+	if len(objects.Items) != 1 {
+		t.Fatalf("expected one ConfigMap, got %d", len(objects.Items))
 	}
-	spec, ok := workflows.Items[0].Object["spec"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected workflow spec map, got %#v", workflows.Items[0].Object["spec"])
-	}
-	templateRef := spec["workflowTemplateRef"].(map[string]any)
-	if templateRef["name"] != "flush-storage" {
-		t.Fatalf("unexpected workflow template ref: %#v", templateRef)
-	}
-	if workflows.Items[0].GetLabels()[labelShutdownFlowExecution] != "execution-a" {
-		t.Fatalf("workflow labels missing execution ID: %#v", workflows.Items[0].GetLabels())
+	if objects.Items[0].GetLabels()[labelShutdownFlowExecution] != "execution-a" {
+		t.Fatalf("object labels missing execution ID: %#v", objects.Items[0].GetLabels())
 	}
 }
 
@@ -459,6 +649,16 @@ func TestLabelValueIsKubernetesSafe(t *testing.T) {
 
 func objectMeta(namespace, name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{Namespace: namespace, Name: name}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func ptrInt64(value int64) *int64 {
+	return &value
 }
 
 // histogramSampleCount reads the current observation count directly off a histogram's Write() output,

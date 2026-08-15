@@ -78,7 +78,7 @@ spec:
                       - CordonNodes
                       - DrainNodes
                       - ScaleWorkload
-                      - RunWorkflow
+                      - RunHook
                       - AgentShutdown
                       type: string
                     after:
@@ -97,6 +97,22 @@ spec:
                       description: description explains the operator-facing purpose
                         of the group.
                       type: string
+                    hookRef:
+                      description: hookRef references the ShutdownHook invoked by
+                        RunHook.
+                      properties:
+                        name:
+                          description: name is the referenced object's metadata.name.
+                          minLength: 1
+                          type: string
+                        namespace:
+                          description: namespace is the referenced object's namespace.
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - namespace
+                      type: object
                     name:
                       description: name is unique within the flow and is referenced
                         by dependency fields.
@@ -406,6 +422,22 @@ spec:
                     duration:
                       description: duration is used by Wait steps.
                       type: string
+                    hookRef:
+                      description: hookRef references the ShutdownHook invoked by
+                        RunHook.
+                      properties:
+                        name:
+                          description: name is the referenced object's metadata.name.
+                          minLength: 1
+                          type: string
+                        namespace:
+                          description: namespace is the referenced object's namespace.
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - namespace
+                      type: object
                     id:
                       description: id is unique within the flow.
                       minLength: 1
@@ -622,7 +654,7 @@ spec:
                       - CordonNodes
                       - DrainNodes
                       - ScaleWorkload
-                      - RunWorkflow
+                      - RunHook
                       - AgentShutdown
                       type: string
                   required:
@@ -794,7 +826,7 @@ spec:
                       - CordonNodes
                       - DrainNodes
                       - ScaleWorkload
-                      - RunWorkflow
+                      - RunHook
                       - AgentShutdown
                       type: string
                   required:

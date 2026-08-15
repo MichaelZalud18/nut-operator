@@ -1,5 +1,34 @@
 ---
 apiVersion: power.zalud.io/v1alpha1
+kind: ShutdownHook
+metadata:
+  namespace: power-system
+  name: orion-storage-flush
+spec:
+  invocation:
+    transport: HTTP
+    timeout: 15s
+    http:
+      url: https://hooks.example.test/power/orion/storage-flush
+      secretHeaders:
+        - name: Authorization
+          valueFrom:
+            namespace: power-system
+            name: orion-storage-hook
+            key: authorization
+      data:
+        operation: storage-flush
+        site: orion
+  dryRun:
+    transport: HTTP
+    timeout: 5s
+    http:
+      url: https://hooks.example.test/power/orion/rehearse
+      data:
+        operation: storage-flush
+        rehearsal: "true"
+---
+apiVersion: power.zalud.io/v1alpha1
 kind: ShutdownFlow
 metadata:
   name: orion-conservation
@@ -57,19 +86,16 @@ spec:
       phase: 20
       timeout: 10m
     - name: storage-services
-      description: Flush storage after data workloads stop.
-      action: RunWorkflow
+      description: Ask external storage to flush after data workloads stop.
+      action: RunHook
       shutdownTier: 2
-      params:
-        workflow.templateRef: flush-storage
-      target:
-        namespaceSelector:
-          matchLabels:
-            power.example.com/shutdown-tier: "2"
+      hookRef:
+        namespace: power-system
+        name: orion-storage-flush
       before:
         - standard-nodes
       phase: 30
-      timeout: 10m
+      timeout: 15s
     - name: standard-nodes
       description: Power down standard workers before the controller.
       action: AgentShutdown

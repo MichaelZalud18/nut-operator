@@ -41,7 +41,7 @@ Not labeled by `shutdownflow`: every action from every flow passes through the s
 
 | Metric | Type | Labels | Meaning |
 | --- | --- | --- | --- |
-| `action_attempts_total` | Counter | `action`, `mode` (`DryRun`/`Enforce`), `outcome` | Every `RunAction` call, by the executor action type (`ScaleWorkload`, `CordonNodes`, `DrainNodes`, `RunWorkflow`, `AgentShutdown`, `Notify`, `Wait`), mode, and outcome (`Succeeded`, `Simulated`, `Blocked`, `TimedOut`, or `Error`). |
+| `action_attempts_total` | Counter | `action`, `mode` (`DryRun`/`Enforce`), `outcome` | Every `RunAction` call, by the executor action type (`ScaleWorkload`, `CordonNodes`, `DrainNodes`, `RunHook`, `AgentShutdown`, `Notify`, `Wait`), mode, and outcome (`Succeeded`, `Simulated`, `Blocked`, `TimedOut`, or `Error`). |
 | `action_duration_seconds` | Histogram | `action` | Time spent on one `RunAction` call. |
 
 ## `nutoperator_audit_*`

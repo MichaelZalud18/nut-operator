@@ -52,6 +52,9 @@ func validatePowerManagementCluster(obj *powerv1alpha1.PowerManagementCluster) v
 	if result := validatePowerShutdownTiers(obj.Spec.ShutdownTiers); !result.accepted {
 		return result
 	}
+	if result := validatePowerHookPolicy(obj.Spec.Hooks); !result.accepted {
+		return result
+	}
 	switch obj.Spec.Storage.Mode {
 	case "", powerv1alpha1.PowerStorageCNPG:
 		if obj.Spec.Storage.CNPG == nil {
@@ -68,6 +71,40 @@ func validatePowerManagementCluster(obj *powerv1alpha1.PowerManagementCluster) v
 	}
 
 	return accepted("power management cluster contract accepted")
+}
+
+func validatePowerHookPolicy(policy powerv1alpha1.PowerHookPolicySpec) validationResult {
+	if policy.DefaultTimeout != nil && policy.DefaultTimeout.Duration <= 0 {
+		return rejected("HookDefaultTimeoutInvalid", "spec.hooks.defaultTimeout must be greater than zero")
+	}
+	seen := map[string]struct{}{}
+	for _, endpoint := range policy.AllowedEndpoints {
+		if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
+			return rejected("HookEndpointSchemeUnsupported", "spec.hooks.allowedEndpoints only supports http and https schemes")
+		}
+		if endpoint.Host == "" {
+			return rejected("HookEndpointHostRequired", "spec.hooks.allowedEndpoints requires every endpoint to name a host")
+		}
+		if endpoint.Port != nil && (*endpoint.Port < 1 || *endpoint.Port > 65535) {
+			return rejected("HookEndpointPortInvalid", "spec.hooks.allowedEndpoints port must be between 1 and 65535")
+		}
+		if endpoint.PathPrefix != "" && !strings.HasPrefix(endpoint.PathPrefix, "/") {
+			return rejected("HookEndpointPathPrefixInvalid", "spec.hooks.allowedEndpoints pathPrefix must start with /")
+		}
+		key := fmt.Sprintf("%s://%s:%d%s", endpoint.Scheme, endpoint.Host, optionalHookEndpointPort(endpoint.Port), endpoint.PathPrefix)
+		if _, exists := seen[key]; exists {
+			return rejected("DuplicateHookEndpoint", "spec.hooks.allowedEndpoints contains duplicate endpoint %s", key)
+		}
+		seen[key] = struct{}{}
+	}
+	return accepted("hook policy accepted")
+}
+
+func optionalHookEndpointPort(port *int32) int32 {
+	if port == nil {
+		return 0
+	}
+	return *port
 }
 
 func validatePowerShutdownTiers(policy powerv1alpha1.PowerShutdownTierPolicySpec) validationResult {
@@ -115,6 +152,14 @@ func validateUPSDevice(obj *powerv1alpha1.UPSDevice) validationResult {
 	}
 	if !isSupportedNetworkUPSDriver(obj.Spec.Driver) {
 		return rejected("DriverUnsupported", "driver %q is not in the supported network driver allowlist", obj.Spec.Driver)
+	}
+	// F-85. `driver` was reserved only on the upstreamNUT path, so a non-upstream device could set
+	// it in driverOptions and renderUPSConf would emit a second `driver =` line below the one it
+	// renders from spec.driver -- and ups.conf takes the last. That walks straight around the
+	// allowlist three lines up, which is what keeps the API network-only (RB-1, RB-2), turning an
+	// admission rejection into a driver that fails at runtime instead.
+	if _, exists := obj.Spec.DriverOptions["driver"]; exists {
+		return rejected("ReservedDriverOption", "spec.driverOptions[%q] is rendered from spec.driver and cannot be overridden", "driver")
 	}
 	if obj.Spec.Driver != "dummy-ups" && obj.Spec.Endpoint == nil {
 		return rejected("EndpointRequired", "spec.endpoint is required for network-reachable NUT drivers")
@@ -287,6 +332,9 @@ func validateNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) validationResult 
 }
 
 func validateShutdownFlow(obj *powerv1alpha1.ShutdownFlow) validationResult {
+	if result := validateShutdownFlowHooks(obj); !result.accepted {
+		return result
+	}
 	_, diagnostics, err := planner.Compile(shutdownflowadapter.PlannerInputs(obj), planner.TelemetryInputs{})
 	if err != nil {
 		for _, diagnostic := range diagnostics {
@@ -311,6 +359,44 @@ func validateShutdownFlow(obj *powerv1alpha1.ShutdownFlow) validationResult {
 	}
 
 	return accepted("shutdown flow contract accepted")
+}
+
+func validateShutdownFlowHooks(obj *powerv1alpha1.ShutdownFlow) validationResult {
+	usesHook := false
+	validate := func(action powerv1alpha1.ShutdownStepType, ref *powerv1alpha1.NamespacedNameReference, params map[string]string) validationResult {
+		if action != powerv1alpha1.ShutdownStepRunHook {
+			for key := range params {
+				if strings.HasPrefix(key, "workflow.") {
+					return rejected("WorkflowParamsRemoved", "workflow.* params belonged to the removed RunWorkflow action; use action RunHook with spec.hookRef")
+				}
+			}
+			return accepted("shutdown hook contract accepted")
+		}
+		usesHook = true
+		if ref == nil || ref.Namespace == "" || ref.Name == "" {
+			return rejected("HookRefRequired", "RunHook requires hookRef.namespace and hookRef.name")
+		}
+		for key := range params {
+			if strings.HasPrefix(key, "workflow.") {
+				return rejected("WorkflowParamsRemoved", "RunHook does not accept workflow.* params; put the invocation in the referenced ShutdownHook")
+			}
+		}
+		return accepted("shutdown hook contract accepted")
+	}
+	for _, group := range obj.Spec.Groups {
+		if result := validate(group.Action, group.HookRef, group.Params); !result.accepted {
+			return result
+		}
+	}
+	for _, step := range obj.Spec.Steps {
+		if result := validate(step.Type, step.HookRef, step.Params); !result.accepted {
+			return result
+		}
+	}
+	if usesHook && (obj.Spec.ManagementClusterRef == nil || obj.Spec.ManagementClusterRef.Name == "") {
+		return rejected("ManagementClusterRequired", "RunHook requires spec.managementClusterRef so outbound endpoint policy can be enforced")
+	}
+	return accepted("shutdown hook contract accepted")
 }
 
 // validateShutdownFlowDeviceIdentification blocks Enforce mode when a UPS the

@@ -444,3 +444,39 @@ documentation correction owned by Foundation & Documentation.
 `F-50` and `OD-36` are recorded in [nut-usage-audit.md](nut-usage-audit.md) as NUT-mechanism
 fidelity rather than operand-pod findings. `F-50` is independent of this sequence and can be taken
 at any point.
+
+## Findings — v1 triage pass, 2026-08-14
+
+Continues the `F-n` namespace from `F-80`. Scope: the `UPSDevice` admission contract and what
+`renderUPSConf` emits from it, read while triaging the section for v1.
+
+**F-85 · `driverOptions` could name a driver the allowlist never saw.** `validateUpstreamNUTUPSDevice`
+reserved `port`, `driver`, `mode`, `authconf`, and `repeater_disable_strict_start`
+(`internal/controller/validation.go:172`, mirrored at
+`internal/webhook/v1alpha1/upsdevice_webhook.go:166`), but the loop lived inside the `upstreamNUT`
+branch. A plain network device took the other branch and reached neither.
+
+`renderUPSConf` writes the driver from `spec.driver` first (`nutserver_render.go:453`) and then
+writes every `driverOptions` entry beneath it (`:516`). `ups.conf` resolves a repeated key in favor
+of the last occurrence, so the section ended up running whatever `driverOptions["driver"]` named.
+
+The severity is not the duplicate line. It is that `spec.driver` is the field the allowlist checks
+— `isSupportedNetworkUPSDriver`, three lines above the new check — and that allowlist is what holds
+the API to network-reachable devices (`RB-1`, `RB-2`). A device could pass admission declaring
+`snmp-ups` and render `usbhid-ups`, converting a rejection the operator makes deliberately into a
+driver that simply fails to start at runtime, with no statement anywhere about why.
+
+The other reserved keys did not need the same treatment, and were checked rather than assumed:
+`port` is deliberately overridable on the direct path and the render tests for it
+(`nutserver_render.go:483`), with the simulation conflict rejected separately (`validation.go:132`);
+`mode` is documented as user-overridable for `dummy-ups` (`nutserver_render.go:490`). `driver` was
+the only key whose override crossed an admission boundary.
+
+*Closed.* `driver` is now reserved on both paths, keeping the existing
+`UpstreamNUTReservedDriverOption` reason for upstream devices and adding `ReservedDriverOption` for
+direct ones. Because the render path validates every selected device before emitting it, one check
+in `validateUPSDevice` closes admission and rendering together — covered by
+`TestValidateUPSDeviceRejectsDriverOverrideInDriverOptions`,
+`TestRenderUPSConfRefusesDriverOverrideInDriverOptions`, and
+`TestRenderUPSConfRendersExactlyOneDriverLinePerDevice`, which pins the invariant rather than the
+rejection.

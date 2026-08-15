@@ -131,6 +131,22 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 			"ExecutionFailed",
 			err.Error(),
 		)
+	} else if result.Degraded {
+		status.Message = result.DegradedMessage
+		setDegradedCondition(
+			&flow.Status.Conditions,
+			flow.Generation,
+			true,
+			result.DegradedReason,
+			result.DegradedMessage,
+		)
+		setExecutionReadyCondition(
+			&flow.Status.Conditions,
+			flow.Generation,
+			true,
+			"ExecutionRecordedWithDegradation",
+			"shutdown flow execution evidence recorded with advisory hook degradation",
+		)
 	} else {
 		status.Message = "shutdown flow execution evidence recorded"
 		setExecutionReadyCondition(
@@ -219,12 +235,25 @@ func executorWavesFromFlow(compiledWaves []powerv1alpha1.CompiledShutdownWave, c
 
 func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flow *powerv1alpha1.ShutdownFlow) ([]executorpkg.Group, error) {
 	blocked := blockedNodeNames(flow.Status.BlockedNodeReleases)
+	cluster, err := r.getManagementCluster(ctx, flow)
+	if err != nil {
+		return nil, err
+	}
+	dryRun := effectiveShutdownFlowMode(flow.Spec.Mode) != powerv1alpha1.ShutdownFlowModeEnforce
 	if len(flow.Spec.Groups) > 0 {
 		groups := make([]executorpkg.Group, 0, len(flow.Spec.Groups))
 		for _, group := range flow.Spec.Groups {
 			targets, err := r.executorTargetsForAction(ctx, group.Action, group.Target)
 			if err != nil {
 				return nil, err
+			}
+			timeout := durationOrZero(group.Timeout)
+			if timeout == 0 && group.Action == powerv1alpha1.ShutdownStepRunHook {
+				hookTimeout, err := r.shutdownHookTimeout(ctx, group.HookRef, cluster, dryRun)
+				if err != nil {
+					return nil, err
+				}
+				timeout = hookTimeout
 			}
 			releases, err := r.nodeReleasesForTarget(ctx, group.Target)
 			if err != nil {
@@ -235,9 +264,10 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 				Name:            group.Name,
 				Action:          string(group.Action),
 				Params:          copyActionParams(group.Params),
+				HookRef:         executorHookReference(group.HookRef),
 				SelectedTargets: targets,
 				NodeReleases:    releases,
-				Timeout:         durationOrZero(group.Timeout),
+				Timeout:         timeout,
 				// Groups carry no typed duration field, so a Wait group declares it as a
 				// parameter. Steps have their own typed field.
 				WaitDuration: waitDurationFromParams(group.Params),
@@ -254,6 +284,14 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 		if err != nil {
 			return nil, err
 		}
+		timeout := durationOrZero(step.Timeout)
+		if timeout == 0 && step.Type == powerv1alpha1.ShutdownStepRunHook {
+			hookTimeout, err := r.shutdownHookTimeout(ctx, step.HookRef, cluster, dryRun)
+			if err != nil {
+				return nil, err
+			}
+			timeout = hookTimeout
+		}
 		releases, err := r.nodeReleasesForTarget(ctx, step.Target)
 		if err != nil {
 			return nil, err
@@ -263,9 +301,10 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 			Name:            step.ID,
 			Action:          string(step.Type),
 			Params:          copyActionParams(step.Params),
+			HookRef:         executorHookReference(step.HookRef),
 			SelectedTargets: targets,
 			NodeReleases:    releases,
-			Timeout:         durationOrZero(step.Timeout),
+			Timeout:         timeout,
 			WaitDuration:    durationOrZero(step.Duration),
 			Details: map[string]any{
 				"description": step.Description,
@@ -584,10 +623,20 @@ func (r *ShutdownFlowReconciler) executorTargetsForAction(ctx context.Context, a
 		return r.scaleWorkloadTargets(ctx, target)
 	case powerv1alpha1.ShutdownStepCordonNodes, powerv1alpha1.ShutdownStepDrainNodes:
 		return r.nodeTargets(ctx, target)
-	case powerv1alpha1.ShutdownStepRunWorkflow:
-		return r.workflowTargets(ctx, target)
+	case powerv1alpha1.ShutdownStepRunHook:
+		return nil, nil
 	default:
 		return executorTargetsFromTarget(target), nil
+	}
+}
+
+func executorHookReference(ref *powerv1alpha1.NamespacedNameReference) *executorpkg.HookReference {
+	if ref == nil {
+		return nil
+	}
+	return &executorpkg.HookReference{
+		Namespace: ref.Namespace,
+		Name:      ref.Name,
 	}
 }
 

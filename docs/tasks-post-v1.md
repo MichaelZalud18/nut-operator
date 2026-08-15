@@ -15,11 +15,44 @@ are not reasons — those stay in `tasks.md` as open v1 work. The two qualifying
 - **Upstream**, where the capability does not exist yet in software this project consumes. No amount
   of work here closes it.
 
-Last reviewed: 2026-08-09
+Last reviewed: 2026-08-14
+
+---
+
+## Inventory System
+
+### `carries`-based ordering (`PL-21`)
+
+Communication-path edges are compiled and published; nothing orders against them. Wiring the
+ordering needs a network device to be an actuation target.
+
+**Why it is post-v1:** `OD-24` makes switches topological-only, and the revisit condition is PDU
+outlet control — both already on this page. The Planning & Execution Logic entry for `PL-21` is the
+owning line; this is the Inventory-side half of the same gate.
+
+### NetBox topology provider (`SB-8`)
+
+The provider interface exists with the declarative CRD implementation behind it. NetBox is the
+second implementation.
+
+**Why it is post-v1:** `SB-8` states that the default build ships without NetBox, so no shippable
+configuration depends on this, and the work is an integration against an external system this
+project does not own. Nothing in v1 closes if it lands, and nothing in v1 is blocked while it does
+not.
 
 ---
 
 ## Capability Profiles
+
+### Actuation verification lifecycle (`F-27`)
+
+Nothing defines what verification of a profile's declared actuation behaviors consists of, where the
+result is recorded, or how it becomes a profile change
+([quirks-aliasing-firmware.md](audits/quirks-aliasing-firmware.md)).
+
+**Why it is post-v1:** the audit's own recommended order puts `F-27` before instant-command work
+under `OD-20`, and `OD-20` is on this page. `UPSCapabilityProfile.spec.actuation.behaviors` has no
+consumer until it lands, so there is nothing in v1 for a verification lifecycle to gate.
 
 ### Non-NUT power device actuation (`OD-24`)
 
@@ -81,6 +114,18 @@ correctness, and two release paths need a decision about which one wins before e
 ---
 
 ## Node Agent / DaemonSet
+
+### `MONITOR` power value and `MINSUPPLIES` (`F-45`)
+
+Every agent renders `MONITOR ... 1 ... secondary` with `MINSUPPLIES 1`, so a host fed by two UPS
+devices shuts down when either one goes critical rather than when it actually loses its supplies
+([nut-usage-audit.md](audits/nut-usage-audit.md)).
+
+**Why it is post-v1:** `MINSUPPLIES` governs one host's own supplies and reaches nothing but
+`upsmon`'s local `SHUTDOWNCMD` decision. `OD-37` locks that path down for v1 — the operator path
+plans from inventory, which already models a node in more than one power domain (`IN-11`). The
+hardcoded values are inert while the scaffold is disabled, and become real again only if it is ever
+unlocked.
 
 ### USB and serial UPS support (`OD-10`)
 

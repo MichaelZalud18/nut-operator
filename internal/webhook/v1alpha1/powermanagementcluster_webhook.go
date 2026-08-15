@@ -18,6 +18,9 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -139,6 +142,9 @@ func defaultPowerManagementCluster(obj *powerv1alpha1.PowerManagementCluster) {
 	if obj.Spec.Observability.KubernetesEvents == nil {
 		obj.Spec.Observability.KubernetesEvents = ptrBool(true)
 	}
+	if obj.Spec.Hooks.DefaultTimeout == nil {
+		obj.Spec.Hooks.DefaultTimeout = &metav1.Duration{Duration: 10 * time.Second}
+	}
 }
 
 func validatePowerManagementClusterAdmission(obj *powerv1alpha1.PowerManagementCluster) error {
@@ -151,6 +157,7 @@ func validatePowerManagementClusterAdmission(obj *powerv1alpha1.PowerManagementC
 	errs = append(errs, validatePowerStorage(specPath.Child("storage"), obj.Spec.Storage)...)
 	errs = append(errs, validatePowerShutdownTiers(specPath.Child("shutdownTiers"), obj.Spec.ShutdownTiers)...)
 	errs = append(errs, validatePowerSecurity(specPath.Child("security"), obj.Spec.Security)...)
+	errs = append(errs, validatePowerHookPolicy(specPath.Child("hooks"), obj.Spec.Hooks)...)
 	errs = append(errs, validatePowerObservability(specPath.Child("observability"), obj.Spec.Observability)...)
 
 	return newInvalidAdmissionError("PowerManagementCluster", obj, errs)
@@ -292,6 +299,47 @@ func validatePowerSecurity(path *field.Path, security powerv1alpha1.PowerSecurit
 		errs = append(errs, validateDNSLabel(path.Child("allowedActuatorNamespaces").Index(i), namespace)...)
 	}
 	return errs
+}
+
+func validatePowerHookPolicy(path *field.Path, hooks powerv1alpha1.PowerHookPolicySpec) field.ErrorList {
+	var errs field.ErrorList
+	errs = append(errs, validatePositiveDuration(path.Child("defaultTimeout"), hooks.DefaultTimeout)...)
+	seen := map[string]struct{}{}
+	for i, endpoint := range hooks.AllowedEndpoints {
+		endpointPath := path.Child("allowedEndpoints").Index(i)
+		switch endpoint.Scheme {
+		case "http", "https":
+		case "":
+			errs = append(errs, field.Required(endpointPath.Child("scheme"), "required as http or https"))
+		default:
+			errs = append(errs, field.NotSupported(endpointPath.Child("scheme"), endpoint.Scheme, []string{"http", "https"}))
+		}
+		errs = append(errs, validateIdentifierText(endpointPath.Child("host"), endpoint.Host, "required as the allowed endpoint host")...)
+		if endpoint.Port != nil && (*endpoint.Port < 1 || *endpoint.Port > 65535) {
+			errs = append(errs, field.Invalid(endpointPath.Child("port"), *endpoint.Port, "must be between 1 and 65535"))
+		}
+		if endpoint.PathPrefix != "" {
+			if !strings.HasPrefix(endpoint.PathPrefix, "/") {
+				errs = append(errs, field.Invalid(endpointPath.Child("pathPrefix"), endpoint.PathPrefix, "must start with /"))
+			}
+			if containsControlCharacter(endpoint.PathPrefix) {
+				errs = append(errs, field.Invalid(endpointPath.Child("pathPrefix"), endpoint.PathPrefix, "must not contain control characters"))
+			}
+		}
+		key := fmt.Sprintf("%s://%s:%d%s", endpoint.Scheme, endpoint.Host, optionalPort(endpoint.Port), endpoint.PathPrefix)
+		if _, exists := seen[key]; exists {
+			errs = append(errs, field.Duplicate(endpointPath, key))
+		}
+		seen[key] = struct{}{}
+	}
+	return errs
+}
+
+func optionalPort(port *int32) int32 {
+	if port == nil {
+		return 0
+	}
+	return *port
 }
 
 func validatePowerObservability(path *field.Path, observability powerv1alpha1.PowerObservabilitySpec) field.ErrorList {

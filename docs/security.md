@@ -33,18 +33,15 @@ seccomp profile is unconfined for this mode because common runtime-default profi
 ## RBAC Scope
 
 The manager's ClusterRole is generated from each reconciler's `+kubebuilder:rbac` markers
-(`internal/controller/*_controller.go`) via `make manifests`, into `config/rbac/role.yaml`. Two
-grants are broader than they might look in isolation and are called out explicitly here so they
+(`internal/controller/*_controller.go`) via `make manifests`, into `config/rbac/role.yaml`. The
+grants below are broader than they might look in isolation and are called out explicitly here so they
 aren't mistaken for scope creep in a future audit:
 
-- **`argoproj.io/workflows` (`create;get;list;watch`, no `workflowtemplates` access).** This backs
-  `ShutdownGroup.Action: RunWorkflow` in `internal/kubeactions` — a real, used executor action, not
-  scaffolding. It creates an Argo `Workflow` object in a target namespace that references an
-  existing `WorkflowTemplate` by name (`workflowTemplateRef`); the operator never authors or
-  supplies inline workflow spec, and has no RBAC to create, read, or modify `WorkflowTemplate`s
-  themselves. This lets an orchestrated shutdown wave hand off to an Argo-defined
-  recovery/notification/cleanup workflow without the operator needing to know what that workflow
-  does.
+- **`ShutdownHook` read access plus outbound HTTP delivery.** `RunHook` reads a namespaced
+  `ShutdownHook` and delivers its HTTP/CloudEvents invocation only when the URL matches
+  `PowerManagementCluster.spec.hooks.allowedEndpoints`. Secret-backed headers are read from
+  Kubernetes Secrets; sensitive headers such as `Authorization` are rejected when supplied inline.
+  Generated RBAC does not grant `argoproj.io/workflows`: Argo is no longer a built-in route.
 - **`namespaces` (`create;update;patch`).** `NUTServer`/`NodePowerAgent`/`PowerManagementCluster`
   are cluster-scoped CRDs whose `spec`-referenced operand namespace may not exist yet; the operator
   creates and labels it on first reconcile. Kubernetes RBAC can't scope a `create` verb by resource

@@ -19,9 +19,13 @@ limitations under the License.
 package kubeactions
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -51,20 +55,11 @@ const (
 	ActionCordonNodes = "CordonNodes"
 	ActionDrainNodes  = "DrainNodes"
 	ActionScale       = "ScaleWorkload"
-	ActionWorkflow    = "RunWorkflow"
+	ActionRunHook     = "RunHook"
 
+	defaultHookCloudEventType      = "io.zalud.power.shutdown.hook.v1"
 	paramReplicas                  = "replicas"
 	paramScaleReplicas             = "scale.replicas"
-	paramWorkflowAPIVersion        = "workflow.apiVersion"
-	paramWorkflowKind              = "workflow.kind"
-	paramWorkflowNamespace         = "workflow.namespace"
-	paramWorkflowName              = "workflow.name"
-	paramWorkflowGenerateName      = "workflow.generateName"
-	paramWorkflowTemplateRef       = "workflow.templateRef"
-	paramWorkflowTemplateRefKind   = "workflow.templateRef.kind"
-	paramWorkflowEntrypoint        = "workflow.entrypoint"
-	paramWorkflowServiceAccount    = "workflow.serviceAccountName"
-	paramWorkflowParameterPrefix   = "workflow.parameter."
 	labelManagedBy                 = "app.kubernetes.io/managed-by"
 	labelShutdownFlow              = "power.zalud.io/shutdownflow"
 	labelShutdownFlowExecution     = "power.zalud.io/execution"
@@ -87,6 +82,10 @@ type Runner struct {
 	// report Blocked rather than silently succeed: a notification nobody received is
 	// not a notification delivered.
 	Recorder events.EventRecorder
+
+	// HTTPClient delivers HTTP ShutdownHooks. Nil uses http.DefaultClient with
+	// per-request context deadlines supplied by the executor.
+	HTTPClient *http.Client
 }
 
 // RunAction implements executor.ActionRunner. It is a thin instrumented wrapper around runAction: every
@@ -132,8 +131,8 @@ func (r Runner) runAction(ctx context.Context, action executor.Action) (executor
 		return r.cordonNodes(ctx, action)
 	case ActionDrainNodes:
 		return r.drainNodes(ctx, action)
-	case ActionWorkflow:
-		return r.runWorkflow(ctx, action)
+	case ActionRunHook:
+		return r.runHook(ctx, action)
 	case executor.ActionAgentShutdown:
 		return r.agentShutdownHandoff(ctx, action)
 	default:
@@ -469,144 +468,395 @@ func (r Runner) notify(ctx context.Context, action executor.Action) (executor.Ac
 	}, nil
 }
 
-func (r Runner) runWorkflow(ctx context.Context, action executor.Action) (executor.ActionOutcome, error) {
-	namespaces := workflowNamespaces(action.Group.SelectedTargets, action.Group.Params)
-	if len(namespaces) == 0 {
-		err := fmt.Errorf("RunWorkflow requires namespace targets or %s", paramWorkflowNamespace)
+func (r Runner) runHook(ctx context.Context, action executor.Action) (executor.ActionOutcome, error) {
+	if action.Group.HookRef == nil || action.Group.HookRef.Namespace == "" || action.Group.HookRef.Name == "" {
+		err := fmt.Errorf("RunHook requires hookRef namespace and name")
 		return blocked(err), err
 	}
-	if action.Group.Params[paramWorkflowTemplateRef] == "" {
-		err := fmt.Errorf("RunWorkflow requires %s", paramWorkflowTemplateRef)
-		return blocked(err), err
+	var hook powerv1alpha1.ShutdownHook
+	hookKey := types.NamespacedName{Namespace: action.Group.HookRef.Namespace, Name: action.Group.HookRef.Name}
+	if err := r.Client.Get(ctx, hookKey, &hook); err != nil {
+		return blocked(err), fmt.Errorf("get ShutdownHook %s/%s: %w", hookKey.Namespace, hookKey.Name, err)
 	}
 
-	created := 0
-	for _, namespace := range namespaces {
-		workflow := workflowObject(action, namespace, r.now())
-		if err := r.Client.Create(ctx, workflow); err != nil {
-			return blocked(err), fmt.Errorf("create workflow hook in namespace %q: %w", namespace, err)
+	invocation := hook.Spec.Invocation
+	rehearsalDeclared := false
+	if action.DryRun {
+		if hook.Spec.DryRun == nil {
+			return r.simulatedHookOutcome(ctx, action, &hook, invocation)
 		}
-		created++
+		invocation = *hook.Spec.DryRun
+		rehearsalDeclared = true
+	}
+
+	switch hookTransport(invocation.Transport) {
+	case powerv1alpha1.ShutdownHookTransportHTTP:
+		return r.runHTTPHook(ctx, action, &hook, invocation, rehearsalDeclared)
+	case powerv1alpha1.ShutdownHookTransportKubernetesObject:
+		return r.runKubernetesObjectHook(ctx, action, &hook, invocation, rehearsalDeclared)
+	default:
+		err := fmt.Errorf("unsupported ShutdownHook transport %q", invocation.Transport)
+		return blocked(err), err
+	}
+}
+
+func (r Runner) simulatedHookOutcome(ctx context.Context, action executor.Action, hook *powerv1alpha1.ShutdownHook, invocation powerv1alpha1.ShutdownHookInvocationSpec) (executor.ActionOutcome, error) {
+	if hookTransport(invocation.Transport) == powerv1alpha1.ShutdownHookTransportHTTP && invocation.HTTP != nil {
+		parsed, err := url.Parse(invocation.HTTP.URL)
+		if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
+			if err == nil {
+				err = fmt.Errorf("URL must be absolute and include a host")
+			}
+			return blocked(err), fmt.Errorf("invalid ShutdownHook URL %q: %w", invocation.HTTP.URL, err)
+		}
+		cluster, err := r.managementClusterForHook(ctx, action.ShutdownFlow)
+		if err != nil {
+			return blocked(err), err
+		}
+		if !hookURLAllowed(parsed, cluster.Spec.Hooks.AllowedEndpoints) {
+			err := fmt.Errorf("ShutdownHook %s/%s URL %q is not allowed by PowerManagementCluster %q",
+				hook.Namespace, hook.Name, invocation.HTTP.URL, cluster.Name)
+			return blocked(err), err
+		}
+	}
+	request, err := r.hookRequestSummary(action, hook, invocation)
+	if err != nil {
+		return blocked(err), err
 	}
 	return executor.ActionOutcome{
-		Outcome: executor.OutcomeSucceeded,
+		Outcome: executor.OutcomeSimulated,
 		Details: map[string]any{
-			"createdWorkflows": created,
-			"namespaces":       namespaces,
+			"action":              ActionRunHook,
+			"dryRun":              true,
+			"hook":                hook.Namespace + "/" + hook.Name,
+			"rehearsalDeclared":   false,
+			"wouldSendInvocation": request,
 		},
 	}, nil
 }
 
-// SupportedWorkflowAPIVersion and SupportedWorkflowKind are the only GVK RunWorkflow
-// can actually create (F-44).
-//
-// The parameters read as engine-neutral and are not: the body built below is
-// Argo-shaped throughout -- workflowTemplateRef, entrypoint, arguments.parameters --
-// and the operator's RBAC grants only argoproj.io/workflows. Another GVK would be
-// created with fields its CRD does not define, by a manager without permission to
-// create it, and the discovery would happen during an outage.
-//
-// Genuine transport neutrality is docs/design/shutdown-hooks.md. Until that exists,
-// admission refuses any other GVK rather than accepting one that cannot work, which
-// is the same remedy F-25 and F-33 received.
-const (
-	SupportedWorkflowAPIVersion = "argoproj.io/v1alpha1"
-	SupportedWorkflowKind       = "Workflow"
-)
-
-func workflowObject(action executor.Action, namespace string, observedAt time.Time) *unstructured.Unstructured {
-	params := action.Group.Params
-	apiVersion := params[paramWorkflowAPIVersion]
-	if apiVersion == "" {
-		apiVersion = SupportedWorkflowAPIVersion
+func (r Runner) runHTTPHook(ctx context.Context, action executor.Action, hook *powerv1alpha1.ShutdownHook, invocation powerv1alpha1.ShutdownHookInvocationSpec, rehearsalDeclared bool) (executor.ActionOutcome, error) {
+	if invocation.HTTP == nil {
+		err := fmt.Errorf("ShutdownHook %s/%s HTTP transport requires spec.http", hook.Namespace, hook.Name)
+		return blocked(err), err
 	}
-	kind := params[paramWorkflowKind]
-	if kind == "" {
-		kind = SupportedWorkflowKind
-	}
-	workflow := &unstructured.Unstructured{}
-	workflow.SetGroupVersionKind(schema.FromAPIVersionAndKind(apiVersion, kind))
-	workflow.SetNamespace(namespace)
-	if name := params[paramWorkflowName]; name != "" {
-		workflow.SetName(name)
-	} else {
-		generateName := params[paramWorkflowGenerateName]
-		if generateName == "" {
-			generateName = dnsPrefix(action.ShutdownFlow + "-" + action.Group.Name + "-")
+	parsed, err := url.Parse(invocation.HTTP.URL)
+	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
+		if err == nil {
+			err = fmt.Errorf("URL must be absolute and include a host")
 		}
-		workflow.SetGenerateName(generateName)
+		return blocked(err), fmt.Errorf("invalid ShutdownHook URL %q: %w", invocation.HTTP.URL, err)
 	}
-	workflow.SetLabels(map[string]string{
-		labelManagedBy:                 "nut-operator",
-		labelShutdownFlow:              labelValue(action.ShutdownFlow),
-		labelShutdownFlowExecution:     labelValue(action.ExecutionID),
-		labelShutdownFlowExecutorGroup: labelValue(action.Group.Name),
-	})
-	workflow.SetAnnotations(map[string]string{
-		"power.zalud.io/execution-id":   action.ExecutionID,
-		"power.zalud.io/executor-group": action.Group.Name,
-		"power.zalud.io/observed-at":    observedAt.UTC().Format(time.RFC3339Nano),
-		"power.zalud.io/plan-hash":      action.PlanConfigHash,
-		"power.zalud.io/shutdownflow":   action.ShutdownFlow,
-	})
+	cluster, err := r.managementClusterForHook(ctx, action.ShutdownFlow)
+	if err != nil {
+		return blocked(err), err
+	}
+	if !hookURLAllowed(parsed, cluster.Spec.Hooks.AllowedEndpoints) {
+		err := fmt.Errorf("ShutdownHook %s/%s URL %q is not allowed by PowerManagementCluster %q",
+			hook.Namespace, hook.Name, invocation.HTTP.URL, cluster.Name)
+		return blocked(err), err
+	}
 
-	spec := map[string]any{
-		"workflowTemplateRef": map[string]any{
-			"name": params[paramWorkflowTemplateRef],
+	body := r.cloudEventBody(action, hook, invocation.HTTP, rehearsalDeclared)
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return blocked(err), fmt.Errorf("encode ShutdownHook CloudEvent: %w", err)
+	}
+	method := invocation.HTTP.Method
+	if method == "" {
+		method = http.MethodPost
+	}
+	req, err := http.NewRequestWithContext(ctx, method, invocation.HTTP.URL, bytes.NewReader(encoded))
+	if err != nil {
+		return blocked(err), err
+	}
+	req.Header.Set("Content-Type", "application/cloudevents+json")
+	for _, header := range invocation.HTTP.Headers {
+		req.Header.Set(header.Name, header.Value)
+	}
+	if err := r.applySecretHeaders(ctx, req, invocation.HTTP.SecretHeaders); err != nil {
+		return blocked(err), err
+	}
+
+	response, err := r.httpClient().Do(req)
+	if err != nil {
+		return blocked(err), fmt.Errorf("deliver ShutdownHook %s/%s to %s: %w", hook.Namespace, hook.Name, invocation.HTTP.URL, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
+		err := fmt.Errorf("deliver ShutdownHook %s/%s to %s: status %d %s",
+			hook.Namespace, hook.Name, invocation.HTTP.URL, response.StatusCode, strings.TrimSpace(string(body)))
+		return blocked(err), err
+	}
+
+	return executor.ActionOutcome{
+		Outcome: executor.OutcomeSucceeded,
+		Details: map[string]any{
+			"action":            ActionRunHook,
+			"transport":         string(powerv1alpha1.ShutdownHookTransportHTTP),
+			"dryRun":            action.DryRun,
+			"hook":              hook.Namespace + "/" + hook.Name,
+			"rehearsalDeclared": rehearsalDeclared,
+			"statusCode":        response.StatusCode,
+			"url":               redactedURL(invocation.HTTP.URL),
+		},
+	}, nil
+}
+
+func (r Runner) runKubernetesObjectHook(ctx context.Context, action executor.Action, hook *powerv1alpha1.ShutdownHook, invocation powerv1alpha1.ShutdownHookInvocationSpec, rehearsalDeclared bool) (executor.ActionOutcome, error) {
+	if invocation.KubernetesObject == nil || len(invocation.KubernetesObject.Object.Raw) == 0 {
+		err := fmt.Errorf("ShutdownHook %s/%s KubernetesObject transport requires spec.kubernetesObject.object", hook.Namespace, hook.Name)
+		return blocked(err), err
+	}
+	var object map[string]any
+	if err := json.Unmarshal(invocation.KubernetesObject.Object.Raw, &object); err != nil {
+		return blocked(err), fmt.Errorf("decode ShutdownHook Kubernetes object: %w", err)
+	}
+	apiVersion, _ := object["apiVersion"].(string)
+	kind, _ := object["kind"].(string)
+	if apiVersion == "" || kind == "" {
+		err := fmt.Errorf("ShutdownHook %s/%s Kubernetes object requires apiVersion and kind", hook.Namespace, hook.Name)
+		return blocked(err), err
+	}
+	obj := &unstructured.Unstructured{Object: object}
+	obj.SetGroupVersionKind(schema.FromAPIVersionAndKind(apiVersion, kind))
+	annotateHookObject(obj, action, hook, r.now())
+	if err := r.Client.Create(ctx, obj); err != nil {
+		return blocked(err), fmt.Errorf("create ShutdownHook Kubernetes object %s %s/%s: %w",
+			obj.GroupVersionKind().String(), obj.GetNamespace(), obj.GetName(), err)
+	}
+	return executor.ActionOutcome{
+		Outcome: executor.OutcomeSucceeded,
+		Details: map[string]any{
+			"action":            ActionRunHook,
+			"transport":         string(powerv1alpha1.ShutdownHookTransportKubernetesObject),
+			"dryRun":            action.DryRun,
+			"hook":              hook.Namespace + "/" + hook.Name,
+			"rehearsalDeclared": rehearsalDeclared,
+			"created": map[string]string{
+				"apiVersion": obj.GetAPIVersion(),
+				"kind":       obj.GetKind(),
+				"namespace":  obj.GetNamespace(),
+				"name":       obj.GetName(),
+			},
+		},
+	}, nil
+}
+
+func (r Runner) hookRequestSummary(action executor.Action, hook *powerv1alpha1.ShutdownHook, invocation powerv1alpha1.ShutdownHookInvocationSpec) (map[string]any, error) {
+	switch hookTransport(invocation.Transport) {
+	case powerv1alpha1.ShutdownHookTransportHTTP:
+		if invocation.HTTP == nil {
+			return nil, fmt.Errorf("ShutdownHook %s/%s HTTP transport requires spec.http", hook.Namespace, hook.Name)
+		}
+		return map[string]any{
+			"transport": string(powerv1alpha1.ShutdownHookTransportHTTP),
+			"method":    hookHTTPMethod(invocation.HTTP.Method),
+			"url":       redactedURL(invocation.HTTP.URL),
+			"body":      r.cloudEventBody(action, hook, invocation.HTTP, false),
+		}, nil
+	case powerv1alpha1.ShutdownHookTransportKubernetesObject:
+		if invocation.KubernetesObject == nil || len(invocation.KubernetesObject.Object.Raw) == 0 {
+			return nil, fmt.Errorf("ShutdownHook %s/%s KubernetesObject transport requires spec.kubernetesObject.object", hook.Namespace, hook.Name)
+		}
+		var object map[string]any
+		if err := json.Unmarshal(invocation.KubernetesObject.Object.Raw, &object); err != nil {
+			return nil, fmt.Errorf("decode ShutdownHook Kubernetes object: %w", err)
+		}
+		apiVersion, _ := object["apiVersion"].(string)
+		kind, _ := object["kind"].(string)
+		return map[string]any{
+			"transport":  string(powerv1alpha1.ShutdownHookTransportKubernetesObject),
+			"apiVersion": apiVersion,
+			"kind":       kind,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported ShutdownHook transport %q", invocation.Transport)
+	}
+}
+
+func (r Runner) applySecretHeaders(ctx context.Context, req *http.Request, headers []powerv1alpha1.ShutdownHookHTTPSecretHeader) error {
+	for _, header := range headers {
+		var secret corev1.Secret
+		key := types.NamespacedName{Namespace: header.ValueFrom.Namespace, Name: header.ValueFrom.Name}
+		if err := r.Client.Get(ctx, key, &secret); err != nil {
+			return fmt.Errorf("get Secret %s/%s for ShutdownHook header %q: %w", key.Namespace, key.Name, header.Name, err)
+		}
+		value, exists := secret.Data[header.ValueFrom.Key]
+		if !exists {
+			return fmt.Errorf("Secret %s/%s does not contain key %q for ShutdownHook header %q",
+				key.Namespace, key.Name, header.ValueFrom.Key, header.Name)
+		}
+		req.Header.Set(header.Name, string(value))
+	}
+	return nil
+}
+
+func (r Runner) managementClusterForHook(ctx context.Context, flowName string) (*powerv1alpha1.PowerManagementCluster, error) {
+	var flow powerv1alpha1.ShutdownFlow
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: flowName}, &flow); err != nil {
+		return nil, fmt.Errorf("get ShutdownFlow %q for hook policy: %w", flowName, err)
+	}
+	if flow.Spec.ManagementClusterRef == nil || flow.Spec.ManagementClusterRef.Name == "" {
+		return nil, fmt.Errorf("ShutdownFlow %q requires spec.managementClusterRef for RunHook endpoint policy", flowName)
+	}
+	var cluster powerv1alpha1.PowerManagementCluster
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: flow.Spec.ManagementClusterRef.Name}, &cluster); err != nil {
+		return nil, fmt.Errorf("get PowerManagementCluster %q for hook policy: %w", flow.Spec.ManagementClusterRef.Name, err)
+	}
+	return &cluster, nil
+}
+
+func (r Runner) cloudEventBody(action executor.Action, hook *powerv1alpha1.ShutdownHook, httpSpec *powerv1alpha1.ShutdownHookHTTPSpec, rehearsalDeclared bool) map[string]any {
+	observedAt := r.now()
+	eventType := httpSpec.CloudEventType
+	if eventType == "" {
+		eventType = defaultHookCloudEventType
+	}
+	source := httpSpec.CloudEventSource
+	if source == "" {
+		source = "urn:power.zalud.io:shutdownflow:" + action.ShutdownFlow
+	}
+	return map[string]any{
+		"specversion":     "1.0",
+		"id":              fmt.Sprintf("%s-%s-%d", action.ExecutionID, action.Group.Name, observedAt.UnixNano()),
+		"source":          source,
+		"type":            eventType,
+		"time":            observedAt.UTC().Format(time.RFC3339Nano),
+		"datacontenttype": "application/json",
+		"data": map[string]any{
+			"executionID":        action.ExecutionID,
+			"planHash":           action.PlanConfigHash,
+			"shutdownFlow":       action.ShutdownFlow,
+			"group":              action.Group.Name,
+			"waveIndex":          action.WaveIndex,
+			"triggerReason":      action.TriggerReason,
+			"dryRun":             action.DryRun,
+			"rehearsalDeclared":  rehearsalDeclared,
+			"selectedUPSDevices": append([]string(nil), action.SelectedUPSDevices...),
+			"hook": map[string]string{
+				"namespace": hook.Namespace,
+				"name":      hook.Name,
+			},
+			"power": map[string]any{
+				"onBattery":      action.PowerObservation.OnBattery,
+				"lowBattery":     action.PowerObservation.LowBattery,
+				"runtimeSeconds": action.PowerObservation.RuntimeSeconds,
+				"runtimeTrusted": action.PowerObservation.RuntimeTrusted,
+			},
+			"params":     copyStringMap(action.Group.Params),
+			"extensions": copyStringMap(httpSpec.Data),
 		},
 	}
-	if templateKind := params[paramWorkflowTemplateRefKind]; templateKind != "" {
-		spec["workflowTemplateRef"].(map[string]any)["kind"] = templateKind
-	}
-	if entrypoint := params[paramWorkflowEntrypoint]; entrypoint != "" {
-		spec["entrypoint"] = entrypoint
-	}
-	if serviceAccount := params[paramWorkflowServiceAccount]; serviceAccount != "" {
-		spec["serviceAccountName"] = serviceAccount
-	}
-	if parameters := workflowParameters(params); len(parameters) > 0 {
-		spec["arguments"] = map[string]any{"parameters": parameters}
-	}
-	workflow.Object["spec"] = spec
-	return workflow
 }
 
-func workflowNamespaces(targets []executor.Target, params map[string]string) []string {
-	seen := map[string]struct{}{}
-	var namespaces []string
-	if namespace := params[paramWorkflowNamespace]; namespace != "" {
-		seen[namespace] = struct{}{}
-		namespaces = append(namespaces, namespace)
+func hookTransport(transport powerv1alpha1.ShutdownHookTransport) powerv1alpha1.ShutdownHookTransport {
+	if transport == "" {
+		return powerv1alpha1.ShutdownHookTransportHTTP
 	}
-	for _, target := range targets {
-		if target.Kind != "Namespace" || target.Name == "" {
-			continue
-		}
-		if _, exists := seen[target.Name]; exists {
-			continue
-		}
-		seen[target.Name] = struct{}{}
-		namespaces = append(namespaces, target.Name)
-	}
-	return namespaces
+	return transport
 }
 
-func workflowParameters(params map[string]string) []any {
-	var keys []string
-	for key := range params {
-		if strings.HasPrefix(key, paramWorkflowParameterPrefix) {
-			keys = append(keys, key)
+func hookHTTPMethod(method string) string {
+	if method == "" {
+		return http.MethodPost
+	}
+	return method
+}
+
+func (r Runner) httpClient() *http.Client {
+	if r.HTTPClient != nil {
+		return r.HTTPClient
+	}
+	return http.DefaultClient
+}
+
+func hookURLAllowed(parsed *url.URL, allowed []powerv1alpha1.PowerHookEndpointAllowlistEntry) bool {
+	for _, endpoint := range allowed {
+		if parsed.Scheme != endpoint.Scheme {
+			continue
+		}
+		if !strings.EqualFold(parsed.Hostname(), endpoint.Host) {
+			continue
+		}
+		if effectiveURLPort(parsed) != allowedEndpointPort(endpoint) {
+			continue
+		}
+		path := parsed.Path
+		if path == "" {
+			path = "/"
+		}
+		if endpoint.PathPrefix != "" && !strings.HasPrefix(path, endpoint.PathPrefix) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func effectiveURLPort(parsed *url.URL) int32 {
+	if port := parsed.Port(); port != "" {
+		value, err := strconv.Atoi(port)
+		if err == nil {
+			return int32(value)
 		}
 	}
-	sortStrings(keys)
-	parameters := make([]any, 0, len(keys))
-	for _, key := range keys {
-		parameters = append(parameters, map[string]any{
-			"name":  strings.TrimPrefix(key, paramWorkflowParameterPrefix),
-			"value": params[key],
-		})
+	switch parsed.Scheme {
+	case "http":
+		return 80
+	case "https":
+		return 443
+	default:
+		return 0
 	}
-	return parameters
+}
+
+func allowedEndpointPort(endpoint powerv1alpha1.PowerHookEndpointAllowlistEntry) int32 {
+	if endpoint.Port != nil {
+		return *endpoint.Port
+	}
+	switch endpoint.Scheme {
+	case "http":
+		return 80
+	case "https":
+		return 443
+	default:
+		return 0
+	}
+}
+
+func redactedURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.User == nil {
+		return raw
+	}
+	parsed.User = url.UserPassword(parsed.User.Username(), "redacted")
+	return parsed.String()
+}
+
+func annotateHookObject(obj *unstructured.Unstructured, action executor.Action, hook *powerv1alpha1.ShutdownHook, observedAt time.Time) {
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[labelManagedBy] = "nut-operator"
+	labels[labelShutdownFlow] = labelValue(action.ShutdownFlow)
+	labels[labelShutdownFlowExecution] = labelValue(action.ExecutionID)
+	labels[labelShutdownFlowExecutorGroup] = labelValue(action.Group.Name)
+	obj.SetLabels(labels)
+
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations["power.zalud.io/execution-id"] = action.ExecutionID
+	annotations["power.zalud.io/executor-group"] = action.Group.Name
+	annotations["power.zalud.io/hook"] = hook.Namespace + "/" + hook.Name
+	annotations["power.zalud.io/observed-at"] = observedAt.UTC().Format(time.RFC3339Nano)
+	annotations["power.zalud.io/plan-hash"] = action.PlanConfigHash
+	annotations["power.zalud.io/shutdownflow"] = action.ShutdownFlow
+	obj.SetAnnotations(annotations)
 }
 
 func (r Runner) agentShutdownHandoff(ctx context.Context, action executor.Action) (executor.ActionOutcome, error) {
@@ -724,37 +974,22 @@ func blocked(err error) executor.ActionOutcome {
 	}
 }
 
+func copyStringMap(input map[string]string) map[string]string {
+	if input == nil {
+		return nil
+	}
+	out := make(map[string]string, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
 func (r Runner) now() time.Time {
 	if r.Clock != nil {
 		return r.Clock().UTC()
 	}
 	return time.Now().UTC()
-}
-
-func dnsPrefix(value string) string {
-	value = strings.ToLower(value)
-	var b strings.Builder
-	lastHyphen := false
-	for _, r := range value {
-		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
-		if valid {
-			b.WriteRune(r)
-			lastHyphen = false
-			continue
-		}
-		if !lastHyphen {
-			b.WriteByte('-')
-			lastHyphen = true
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		out = "shutdown-workflow"
-	}
-	if len(out) > 48 {
-		out = strings.TrimRight(out[:48], "-")
-	}
-	return out + "-"
 }
 
 func labelValue(value string) string {

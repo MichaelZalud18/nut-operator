@@ -113,6 +113,32 @@ The `upsmon` container is unprivileged, runs a read-only root filesystem, drops 
 carries no Kubernetes API token unless a declared feature explicitly requires one. The `actuator`
 container carries no NUT credentials and no policy authority.
 
+### One authorized path to a halt (OD-37)
+
+A node halts because the operator said so. The signal originates from the executor, arrives through
+a projected Secret the API server gates, and carries the flow identity, plan hash, and timestamp
+that make it attributable and staleness-checkable. That is the only path with authority.
+
+NUT's own `SHUTDOWNCMD` is the conventional way a `upsmon` secondary releases its host, and this
+project declines it as an authorization path. The mechanism stays in the codebase — the writer
+binary, the signal format, the local file — because the shape is worth keeping and a later version
+may want it. It cannot authorize a halt: the actuator does not read the local path, and the tmpfs
+the two containers share is mounted read-only on the actuator's side, so writing to it releases
+nothing. There is no supported configuration that turns it on.
+
+This resolves the choice `OD-37` posed against the last-resort-backstop reading. A backstop is
+attractive precisely when the operator is unreachable, which is also when ordering matters most,
+and `upsmon`'s local view cannot supply it: every agent renders `MONITOR ... 1 ... secondary` with
+`MINSUPPLIES 1`, so one UPS reaching OB+LB would fire on every node it covers at once, unordered,
+with an execution ID indistinguishable from the executor's. A backstop that halts a fleet in
+arbitrary order is not a safety net under it — it is a second, worse shutdown implementation that
+engages exactly when nobody is watching. `SB-2b` already reserves sequencing for the operator; this
+is that boundary applied to the release signal itself.
+
+The cost is stated rather than hidden: if the operator cannot deliver a signal, nodes are not
+released, and the UPS runs down under a cluster that stays up. That is the failure this project
+accepts, because it is observable and bounded, where the alternative is not.
+
 ## SB-4 · Two containers in the node agent
 
 *Components: Node Agent / DaemonSet.*
@@ -397,8 +423,6 @@ for defense in depth.
 | OD-28 | Relationship to OD-12: OD-12 decides what to do with an infeasible plan before it starts; timing adaptation re-decides during | Adaptive execution |
 | OD-29 | Tier ascent trigger: what power condition moves the tier pointer up | Adaptive execution |
 | OD-30 | Cadence intervals: publish interval during idle versus active flow, and whether it is global or per-flow | Adaptive execution |
-| OD-33 | Whether an opt-in bounded wait on a pre-shutdown hook's completion exists, and what happens when the battery budget expires before the hook does. The default is decided — shutdown proceeds — so only the opt-in mechanism is open | Shutdown hooks |
-| OD-34 | Whether a failed hook can engage `abortPolicy` or mark the flow degraded, or stays purely advisory. Distinct from HK-7, which settles that a hook never holds a wave | Shutdown hooks |
 | OD-37 | What the node agent's local `upsmon` signal path is for: an intentional last-resort backstop, in which case it needs a name, a spec field, a distinct `reason`, and a written statement of the ordering guarantee surrendered when it fires — or a bypass, in which case it is bound to prior authorization per `F-57`. Leaving it undeclared is what makes `F-54` a surprise rather than a policy | `F-54` – `F-57`, node agent authorization |
 
 ## Closed Decisions
@@ -415,6 +439,8 @@ for defense in depth.
 | OD-22 | Quirks are structured objects with firmware scope as a field: `firmware.matches` glob patterns and `firmware.below` for a dotted-numeric fix release. Scope is resolved against the matched device, so a quirk fixed in firmware stops following devices past it (`F-26`). Vendor firmware strings are not generally orderable, so `below` accepts only dotted-numeric versions; a device whose firmware cannot be placed keeps the quirk and the diagnostic says why. |
 | OD-23 | Telemetry variable aliasing lives in the profile telemetry section. A natively reported canonical name always outranks an alias; aliasing is one-directional and total; applied and shadowed aliases are both recorded as diagnostics. |
 | OD-31 | A UPS that matches no product capability profile blocks `Enforce` mode, naming the devices, unless `spec.safety.allowUnidentifiedDevices` records acceptance. Dry-run compilation and review are unaffected. The catch-all profile is renamed from "universal floor" to the unidentified-device profile. |
+| OD-33 | No opt-in hook-completion wait exists in v1alpha1. A `ShutdownHook` is a bounded delivery attempt. Hook-level timeout wins, `PowerManagementCluster.spec.hooks.defaultTimeout` fills omitted hook timeouts, and shutdown proceeds after the attempt. |
+| OD-34 | Hook failures are advisory. Failed or timed-out hooks record evidence and mark the owning `ShutdownFlow` degraded, but never engage `abortPolicy` and never hold a shutdown wave. |
 | OD-36 | The `clone`, `clone-outlet`, and `failover` drivers are deliberately declined, joining FSD (`F-20`) and `upssched` (`F-21`) as NUT mechanisms this project does not use. `clone` and `clone-outlet` are staged-shutdown sequencers — a virtual UPS presenting earlier thresholds than the device it shadows, so one physical UPS can drive several shutdown stages — and `SB-2b` reserves sequencing for the operator. Admitting either would put a second sequencer in the system with no view of the cluster, which is the same objection that declined `upssched`, and the closer upstream analog makes it more dangerous rather than less: `clone` looks like it would work. `failover` presents several physical devices as one, which sounds like the multi-supply-per-host topology `F-45` records as inexpressible — but that gap is in the render and the inventory model, not the driver layer, so the driver would not close it. Revisit `failover` only if `F-45` is built. All three ship in the operand image as part of `NUTSW_DRIVERLIST` and are not separately configurable at build time, so this decision governs the admission allowlist and the documentation, not the image. |
 
 ---

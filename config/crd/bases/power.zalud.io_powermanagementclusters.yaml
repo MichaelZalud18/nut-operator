@@ -40,6 +40,50 @@ spec:
           spec:
             description: spec defines the desired state of PowerManagementCluster
             properties:
+              hooks:
+                description: hooks configures global policy for ShutdownHook delivery.
+                properties:
+                  allowedEndpoints:
+                    description: |-
+                      allowedEndpoints is the HTTP endpoint allowlist for ShutdownHook invocation.
+                      HTTP hooks that do not match an entry are refused before delivery.
+                    items:
+                      description: PowerHookEndpointAllowlistEntry allows one HTTP
+                        hook endpoint shape.
+                      properties:
+                        host:
+                          description: host is the exact DNS name or IP literal allowed
+                            for hook delivery.
+                          minLength: 1
+                          type: string
+                        pathPrefix:
+                          description: pathPrefix limits delivery to paths under this
+                            prefix. Empty allows any path.
+                          type: string
+                        port:
+                          description: port is the allowed TCP port. Empty means the
+                            scheme default port.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        scheme:
+                          description: scheme is the allowed URL scheme.
+                          enum:
+                          - http
+                          - https
+                          type: string
+                      required:
+                      - host
+                      - scheme
+                      type: object
+                    type: array
+                  defaultTimeout:
+                    default: 10s
+                    description: defaultTimeout is used when a hook invocation does
+                      not declare its own timeout.
+                    type: string
+                type: object
               images:
                 description: images provides default images for generated operands.
                 properties:

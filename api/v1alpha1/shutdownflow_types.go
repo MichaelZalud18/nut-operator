@@ -509,6 +509,10 @@ type ShutdownGroup struct {
 	// +optional
 	Target ShutdownStepTarget `json:"target,omitempty"`
 
+	// hookRef references the ShutdownHook invoked by RunHook.
+	// +optional
+	HookRef *NamespacedNameReference `json:"hookRef,omitempty"`
+
 	// action selects the operation applied to the selected target.
 	Action ShutdownStepType `json:"action"`
 
@@ -597,7 +601,7 @@ const (
 )
 
 // ShutdownStepType defines supported flow actions.
-// +kubebuilder:validation:Enum=Notify;Wait;CordonNodes;DrainNodes;ScaleWorkload;RunWorkflow;AgentShutdown
+// +kubebuilder:validation:Enum=Notify;Wait;CordonNodes;DrainNodes;ScaleWorkload;RunHook;AgentShutdown
 type ShutdownStepType string
 
 const (
@@ -606,7 +610,7 @@ const (
 	ShutdownStepCordonNodes   ShutdownStepType = "CordonNodes"
 	ShutdownStepDrainNodes    ShutdownStepType = "DrainNodes"
 	ShutdownStepScaleWorkload ShutdownStepType = "ScaleWorkload"
-	ShutdownStepRunWorkflow   ShutdownStepType = "RunWorkflow"
+	ShutdownStepRunHook       ShutdownStepType = "RunHook"
 	ShutdownStepAgentShutdown ShutdownStepType = "AgentShutdown"
 )
 
@@ -626,6 +630,10 @@ type ShutdownStep struct {
 	// target selects nodes, namespaces, or workloads depending on step type.
 	// +optional
 	Target ShutdownStepTarget `json:"target,omitempty"`
+
+	// hookRef references the ShutdownHook invoked by RunHook.
+	// +optional
+	HookRef *NamespacedNameReference `json:"hookRef,omitempty"`
 
 	// duration is used by Wait steps.
 	// +optional

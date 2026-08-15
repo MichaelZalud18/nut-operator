@@ -100,7 +100,14 @@ func CompileFlow(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBund
 // folded into the estimates (EX-32). CompileFlow is this with no history, which is
 // what a cluster that has never run this flow legitimately has.
 func CompileFlowWithHistory(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec, history planner.HistoryInputs) CompiledFlow {
+	return CompileFlowWithHistoryAndHooks(obj, bundle, tierPolicy, history, nil)
+}
+
+// CompileFlowWithHistoryAndHooks compiles with observed durations and resolved
+// hook identity folded into the structural plan hash.
+func CompileFlowWithHistoryAndHooks(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec, history planner.HistoryInputs, hookDigests []planner.HookDigest) CompiledFlow {
 	inputs := resolver.AttachResolvedInputHash(PlannerInputsWithTierPolicy(obj, tierPolicy), bundle)
+	inputs.HookDigests = append([]planner.HookDigest(nil), hookDigests...)
 	inputs.GroupNodes = PlannerGroupNodes(obj, bundle)
 	plan, diagnostics, err := planner.CompileWithHistory(inputs, planner.TelemetryInputs{}, history)
 	if err != nil {
@@ -174,6 +181,7 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 			Name:         group.Name,
 			Description:  group.Description,
 			Action:       string(group.Action),
+			HookRef:      PlannerHookReference(group.HookRef),
 			Target:       PlannerTarget(group.Target),
 			Requires:     append([]string(nil), group.Requires...),
 			Before:       append([]string(nil), group.Before...),
@@ -190,6 +198,7 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 		inputs.Steps = append(inputs.Steps, planner.Step{
 			ID:              step.ID,
 			Action:          string(step.Type),
+			HookRef:         PlannerHookReference(step.HookRef),
 			Target:          PlannerTarget(step.Target),
 			Duration:        PlannerDuration(step.Duration),
 			Timeout:         PlannerDuration(step.Timeout),
@@ -199,6 +208,17 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 	}
 
 	return inputs
+}
+
+// PlannerHookReference converts a Kubernetes hook reference into planner input.
+func PlannerHookReference(ref *powerv1alpha1.NamespacedNameReference) *planner.HookReference {
+	if ref == nil {
+		return nil
+	}
+	return &planner.HookReference{
+		Namespace: ref.Namespace,
+		Name:      ref.Name,
+	}
 }
 
 // PlannerTierPolicy converts API tier policy into the pure planner shape.
