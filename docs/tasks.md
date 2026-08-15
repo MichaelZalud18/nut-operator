@@ -377,8 +377,6 @@ boundaries, the decision index, the references under `docs/`, and the audit reco
 #### Open Work
 
 - Redraw the example pod placement diagram into `docs/diagrams/`. Blocked on deciding node naming.
-- Define how the Orion example's string tier labels (`application`/`data`/`storage`) coexist with
-  `OD-4` numbered tiers. Numbered tiers win, but named tags still occur in practice.
 
 ---
 

@@ -101,7 +101,7 @@ narrative account and now uses the folded numbers.
 | --- | --- | --- |
 | OD-2 | Collapsed — one entity set, two edge relations; logical graph is compiled output | inventory contract |
 | OD-3 | Communication path modeled minimally as `carries` edges | IN-5 |
-| OD-4 | Numbered shutdown tiers: 0 = last-ditch (workload-only), 1 = final stop / lowest for nodes, 2+ earlier; configurable default; compiled to derived edges. Tier-inversion handling deferred to OD-18 | scope-boundaries change log |
+| OD-4 | Numbered shutdown tiers: 0 = last-ditch (workload-only), 1 = final stop / lowest for nodes, 2+ earlier; configurable default; compiled to derived edges. Tier-inversion handling deferred to OD-18. Named tags (`application`/`data`/`storage`) are group membership and never ordering — no new decision, this is OD-4 applied | scope-boundaries change log, orion-cluster README |
 | OD-6 | Closed with explicit shutdown-time audit spool: PostgreSQL remains primary; enabled local JSONL spool preserves replayable records when PostgreSQL writes fail during execution | audit-storage-schema.md, EX-20 |
 | OD-15 | Capability profile probe history is persisted in PostgreSQL as `capability_profile_verifications` | Audit schema |
 | OD-1 | Recovery/startup execution is out of scope; external systems consume published artifacts | scope-boundaries |

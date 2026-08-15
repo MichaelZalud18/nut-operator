@@ -66,7 +66,7 @@ spec:
       target:
         namespaceSelector:
           matchLabels:
-            power.example.com/shutdown-tier: "4"
+            power.example.com/shutdown-group: application
       before:
         - data-workloads
       phase: 10
@@ -80,7 +80,7 @@ spec:
       target:
         workloadSelector:
           matchLabels:
-            power.example.com/shutdown-tier: "3"
+            power.example.com/shutdown-group: data
       before:
         - storage-services
       phase: 20

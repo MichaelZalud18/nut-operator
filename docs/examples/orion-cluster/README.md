@@ -24,10 +24,20 @@ power.example.com/power-domain: orion-core
 Expected namespace or workload labels:
 
 ```yaml
-power.example.com/shutdown-tier: "4" # ordinary applications
-power.example.com/shutdown-tier: "3" # data workloads
-power.example.com/shutdown-tier: "2" # storage and late infrastructure
+power.example.com/shutdown-group: application # ordinary applications
+power.example.com/shutdown-group: data        # data workloads
+power.example.com/shutdown-group: storage     # storage and late infrastructure
 ```
+
+These name *which* things belong together. They do not say when anything stops: ordering is the
+numeric `shutdownTier` on each group (`OD-4`), and nothing derives an order from these names.
+
+The distinction is worth keeping straight because the operator does support deriving a tier from a
+label — a group that omits `shutdownTier` falls back to the numeric value of the cluster's
+configured `shutdownTiers.labelKey` in its own selector. This example does not use that path: every
+group states its tier outright, which is the clearer thing to copy. Labelling namespaces
+`shutdown-tier: "4"` while also writing `shutdownTier: 4` on the group puts the same number in two
+places that nothing keeps in agreement, and the label is the one with no authority.
 
 The conservation flow uses dependency edges as the source of truth:
 
