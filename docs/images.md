@@ -6,9 +6,7 @@ Components: NUT Server / upsd, Node Agent / DaemonSet, Operator Maturity & Harde
 
 The release shape is project-owned OCI images built from this repository and explicit upstream
 inputs. NUT source releases are version-pinned and sha256-verified. Published non-PR images are
-keylessly signed with Sigstore/cosign after vulnerability scanning. Base images are pinned to
-multi-arch index digests, and the NUT source tarball is verified against a committed, fingerprint-
-pinned upstream signing key in addition to its sha256.
+keylessly signed with Sigstore/cosign after vulnerability scanning.
 
 - `nut-server`: `upsd` plus network-capable NUT drivers required by the selected `UPSDevice` resources.
 - `upsmon-agent`: unprivileged NUT client plus the project-owned `power-signal-writer` used by the
@@ -83,12 +81,6 @@ Local testing may use community NUT images as development scaffolding. They are 
 
 Production deployments should pin immutable digests returned by the image workflow and verify the
 image signature before rollout.
-
-Base images are pinned by digest with the tag kept alongside for readability (`alpine:3.22@sha256:...`).
-The digest is the multi-arch index digest rather than a per-platform one, so `--platform` builds still
-resolve correctly. Pinning has a cost worth naming: a pinned digest does not pick up upstream security
-fixes on its own, so the digests need periodic bumping. Until that is automated, the published-image
-Trivy scan is what makes a stale base image fail loudly rather than quietly.
 
 Verify a published digest with cosign:
 

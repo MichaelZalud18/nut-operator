@@ -641,3 +641,41 @@ an explicit 5m budget with a 1m inner wait it can actually retry. The signal-han
 related gap: it applied a fixture whose kinds all have mutating webhooks without waiting for the
 webhook server, and only ever passed because earlier specs happened to give the manager time. Both
 specs now pass when run in isolation, which is the property that was missing.
+
+## Findings — finding triage, 2026-08-15
+
+**Actionable ASH findings were counted but never named.** ASH decides pass/fail and prints a
+per-scanner count table. It does not print which findings failed it, so a red build said
+`grype: 2 critical` and answering "which two" meant downloading the report artifact and reading
+SARIF by hand. That is exactly what happened chasing the `golang.org/x/mod` advisories: the count
+was visible immediately, the identifiers took an artifact download and a parse.
+
+`hack/ash-triage.py` reads the aggregated results and names every actionable finding — severity,
+scanner, rule, location, and the detail line, which for dependency findings carries the package and
+version. It writes the same content as a table to `$GITHUB_STEP_SUMMARY`, so the answer is on the
+run page rather than inside an artifact. `make security-scan` now runs it after the scan and
+preserves the scan's exit status, so the gate is still ASH's verdict and this only makes it legible;
+`make security-triage` runs it standalone.
+
+Two properties decide whether a tool like this is worth having.
+
+It must not disagree with the scan it summarizes. "Actionable" here means unsuppressed and at or
+above the threshold, which is ASH's own definition, so the script reconciles its extraction against
+the per-scanner `actionable_finding_count` ASH reported and exits 2 on a mismatch rather than
+picking a side. A triage tool that quietly reports clean while the scan failed is worse than no
+tool, because it is believed. Verified by marking every SARIF result suppressed while leaving ASH's
+count at two: the script refused to report clean and said why.
+
+It must work on the day it is needed. On a clean repository every branch of the extraction is dead
+code, so a mistake would sit undetected until a real finding appeared and then report nothing.
+`--selftest` exercises extraction, suppression handling, threshold filtering, the drift check, and
+rendering against inline fixtures, and runs in CI before the scan. Confirmed by deleting the
+suppression check and watching the selftest fail. The extraction was also run against the real
+failing scan from the `F-77` gate and named both `x/mod` advisories that had failed it.
+
+The tool found a real problem in itself on its first run against a live scan: bandit `B108`, a
+hardcoded `/tmp/nut-operator-ash-output` default. The path is read and then believed, so a
+predictable location under a world-writable directory is somewhere a local process could plant a
+report saying everything is fine. Fixed rather than suppressed — the default is now `$ASH_OUTPUT_DIR`
+and the flag is required when that is unset, which affects only a bare manual invocation and serves
+that better with an error than a guess.

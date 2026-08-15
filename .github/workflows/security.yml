@@ -59,8 +59,22 @@ jobs:
           path: bin
           key: ${{ runner.os }}-anchore-grype0.116.1-syft1.50.0
 
+      # Before the scan, because on a clean repository every branch of the triage extraction is dead
+      # code -- a mistake in it would sit undetected until the day a real finding needed reporting.
+      - name: Check the triage extraction
+        run: python3 hack/ash-triage.py --selftest
+
       - name: Run ASH security scan
         run: make security-scan
+
+      # Runs even when the scan fails, which is the only time it matters. ASH's own output is a
+      # per-scanner count table, so a red build says "grype: 2 critical" and nothing about which
+      # two -- answering that meant downloading the artifact below and reading SARIF by hand. This
+      # names them in the log and in the job summary instead. --exit-zero because the scan step
+      # above already decided the job's fate; this step reports, it does not gate.
+      - name: Triage actionable findings
+        if: always()
+        run: make security-triage TRIAGE_FLAGS=--exit-zero
 
       - name: Upload ASH report
         if: always()

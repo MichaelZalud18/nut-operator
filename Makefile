@@ -156,7 +156,16 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 
 .PHONY: security-scan
 security-scan: grype syft ## Run AWS Labs ASH security scan locally.
-	PATH="$(LOCALBIN):$$PATH" "$(ASH)" --mode "$(ASH_MODE)" --source-dir "$(CURDIR)" --output-dir "$(ASH_OUTPUT_DIR)" --output-formats "$(ASH_OUTPUT_FORMATS)" $(ASH_EXCLUDE_FLAGS) --no-progress
+	@PATH="$(LOCALBIN):$$PATH" "$(ASH)" --mode "$(ASH_MODE)" --source-dir "$(CURDIR)" --output-dir "$(ASH_OUTPUT_DIR)" --output-formats "$(ASH_OUTPUT_FORMATS)" $(ASH_EXCLUDE_FLAGS) --no-progress; \
+		status=$$?; \
+		$(MAKE) --no-print-directory security-triage TRIAGE_FLAGS=--exit-zero; \
+		exit $$status
+
+# Reports what ASH's own summary leaves out: which findings are actionable. Runs after the scan and
+# preserves the scan's exit status, so the gate is still ASH's verdict and this only makes it legible.
+.PHONY: security-triage
+security-triage: ## Name the actionable findings from the last ASH scan.
+	python3 hack/ash-triage.py --output-dir "$(ASH_OUTPUT_DIR)" $(TRIAGE_FLAGS)
 
 ##@ Build
 
