@@ -54,6 +54,11 @@ const nodePowerAgentFinalizer = "power.zalud.io/nodepoweragent-cleanup"
 // filters on (F-32) -- shared as one constant so the two can never drift apart.
 const nodePowerAgentPodLabelKey = "power.zalud.io/nodepoweragent"
 
+// nodePowerAgentRolloutHoldRequeue is how often a deferred DaemonSet write retries while a flow is
+// live (F-92). Short, because the deferred change is usually one an operator just made and is
+// watching for, and cheap, because a pass that changes nothing writes nothing.
+const nodePowerAgentRolloutHoldRequeue = 30 * time.Second
+
 // NodePowerAgentReconciler reconciles a NodePowerAgent object
 type NodePowerAgentReconciler struct {
 	client.Client
@@ -132,6 +137,18 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			agent.Status.ConfigHash = rendered.ConfigHash
 			agent.Status.ManagedResources = rendered.ManagedResources
 			agent.Status.UncoveredNodes = rendered.UncoveredNodes
+			// A held DaemonSet write is deferred work, not failed work (F-92), so it requeues rather
+			// than erroring. The ShutdownFlow watch already re-enqueues this agent when the flow's
+			// status moves, which is what actually lands the deferred write; this interval is the
+			// backstop for a flow that stops being reconciled without ever going inactive.
+			if rendered.DaemonSetWriteHeldBy != "" {
+				reconcileResult = ctrl.Result{RequeueAfter: nodePowerAgentRolloutHoldRequeue}
+				if r.Recorder != nil {
+					r.Recorder.Eventf(&agent, nil, corev1.EventTypeNormal, "DaemonSetWriteHeld", "Render",
+						"ShutdownFlow %q is mid-episode; deferring the agent DaemonSet spec write until it ends",
+						rendered.DaemonSetWriteHeldBy)
+				}
+			}
 			setAcceptedCondition(&agent.Status.Conditions, agent.Generation, result)
 			ready := rendered.NumberReady >= rendered.DesiredNumberScheduled && rendered.UnavailableNodeCount == 0
 			reason := "AwaitingDaemonSet"

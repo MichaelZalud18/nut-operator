@@ -1404,3 +1404,45 @@ Triaged as v1 open work. The fix shape is settled — skip the spec write while 
 requeue — and the guard is the open half: what counts as active, and where the check lives. A
 flow-active condition read from `ShutdownFlow.status` is the obvious candidate now that the agent
 controller already watches flows for revocation, which was not true when `F-72` was written.
+
+*Closed.* `ensureNodePowerAgentDaemonSet` takes a `heldBy` argument naming the flow that is
+mid-episode, and returns the live DaemonSet untouched rather than writing when one is. Liveness is
+`shutdownFlowIsLive`: phase `Running`, or a `lastExecution` with `triggerActive` still set. That is
+deliberately the same predicate revocation uses in `signalStillAuthorized` (`F-87`), so the two
+cannot disagree about whether an episode is happening — a hold that outlasts revocation, or the
+reverse, would be a bug neither test would catch on its own.
+
+The hold is cluster-wide rather than scoped to flows that could release this agent's nodes. What
+makes a flow live is a power event, and a power event is when churn is least welcome anywhere,
+including on the nodes a given flow will not touch — those agents are the ones that still have to be
+watching when it reaches them. Narrowing the scope buys a faster config rollout during an outage,
+which is not worth having. `DryRun` flows hold on the same reasoning: the rehearsal is running
+because the trigger is eligible, so the power event is real even when the response is not.
+
+A DaemonSet that does not exist yet is created regardless of the hold. No agent at all is worse than
+an agent that restarts at an awkward moment, and deferring creation would strand an agent added
+mid-outage with no pods until the outage ended.
+
+Deferred work is not failed work, so it requeues rather than erroring: 30s, with a
+`DaemonSetWriteHeld` Event naming the flow. The interval is only a backstop — the `ShutdownFlow`
+watch added for `F-87` re-enqueues the agent the moment the flow's status moves, which is what
+actually lands the deferred write. The requeue covers a flow that stops being reconciled without
+ever going inactive.
+
+Stated because it is the honest cost: a trigger that stays eligible indefinitely holds config
+changes indefinitely. During a real prolonged outage that is correct behaviour. If a trigger is
+*stuck* eligible, config changes stop landing, and the Event is the only thing that says why —
+which is why it names the flow rather than reporting that something is held.
+
+`shutdownFlowHoldingRollouts` reports the lowest-named live flow rather than the first the list
+returns, so the Event does not flap between two names on successive passes and read as if the flows
+were fighting.
+
+`TestHeldDaemonSetWriteLeavesTheLiveSpecUntouched`, `TestHeldWriteStillCreatesAMissingDaemonSet`,
+`TestUnheldWriteLandsNormally`, `TestFlowIsLiveWhileItsTriggerEpisodeIs`,
+`TestNothingHoldsRolloutsWhenNoFlowIsLive`, and `TestRolloutHoldNamesTheLowestFlowSoTheMessageIsStable`
+were each confirmed against sabotaged code: disabling the hold fails the untouched-spec test,
+extending the hold to cover creation fails the missing-DaemonSet test, and treating any execution
+record as live fails the settled-flow tests.
+
+This closes `F-72` as well, whose remaining half this was.

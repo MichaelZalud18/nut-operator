@@ -238,22 +238,18 @@ so the failure reaches `status.nodeStatuses` instead of a container log nobody r
 removed — and the actuator's env carries one signal-path variable and a config hash named for what
 it hashes (`F-75`, `F-91`). Signals are withdrawn once the episode that authorized them ends, so
 absence is the record and a node that boots back up inside the old TTL finds nothing to act on
-(`F-87`).
+(`F-87`). DaemonSet spec writes are deferred while any flow is mid-episode and requeued until it
+settles, so a config change cannot roll the fleet's monitoring during an outage (`F-92`).
 
 Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-60`, `F-61`–`F-65`,
-`F-66`, `F-67`–`F-71`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`, `F-91`, `OD-37`. `F-89` declined — the signal Secret
+`F-66`, `F-67`–`F-71`, `F-72`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`–`F-92`, `OD-37`. `F-89` declined — the signal Secret
 mounts whole on every node, but the payload carries no credentials and the node-name check holds it
 to exposure rather than actuation; recorded in
 [node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md).
 
 #### Open Work
 
-##### Rollout hygiene
-
-- **`F-92` (`F-72` remainder) · nothing suppresses a DaemonSet rollout during a live flow.** Spec
-  writes land whenever config changes, including mid-outage. Not the guard `F-87` needed — revocation
-  is — so this is churn avoidance at the worst moment, not a correctness fix. The shape is fixed; the
-  guard is the open half: skip the write while a flow is active and requeue.
+None.
 
 ---
 

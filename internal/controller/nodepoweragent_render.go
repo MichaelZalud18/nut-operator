@@ -97,6 +97,9 @@ type renderedNodePowerAgent struct {
 	PodSecurityConflict string
 	// UncoveredNodes names inventory nodes this agent's selector does not match (F-74).
 	UncoveredNodes []string
+	// DaemonSetWriteHeldBy names the live ShutdownFlow that deferred this pass's DaemonSet spec
+	// write (F-92). Empty when nothing is holding it.
+	DaemonSetWriteHeldBy string
 }
 
 type agentMonitorTarget struct {
@@ -243,7 +246,11 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 	if err != nil {
 		return renderedNodePowerAgent{}, err
 	}
-	daemonSet, err := r.ensureNodePowerAgentDaemonSet(ctx, agent, namespace, nodePowerAgentDaemonSetSpec{
+	heldBy, err := r.shutdownFlowHoldingRollouts(ctx)
+	if err != nil {
+		return renderedNodePowerAgent{}, err
+	}
+	daemonSet, err := r.ensureNodePowerAgentDaemonSet(ctx, agent, namespace, heldBy, nodePowerAgentDaemonSetSpec{
 		ConfigMapName:      configMap.Name,
 		SecretName:         secret.Name,
 		ServiceAccountName: serviceAccount.Name,
@@ -286,6 +293,7 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		TLSDowngradeReason:     tlsPosture.DowngradeReason,
 		PodSecurityConflict:    podSecurityConflict,
 		UncoveredNodes:         uncoveredNodes,
+		DaemonSetWriteHeldBy:   heldBy,
 		ManagedResources: []powerv1alpha1.ManagedResourceStatus{
 			{APIVersion: "v1", Kind: "Namespace", Name: namespace},
 			{APIVersion: "v1", Kind: "ServiceAccount", Namespace: namespace, Name: serviceAccount.Name},
@@ -932,7 +940,72 @@ type nodePowerAgentDaemonSetSpec struct {
 	MountServerCA      bool
 }
 
-func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Context, agent *powerv1alpha1.NodePowerAgent, namespace string, spec nodePowerAgentDaemonSetSpec) (*appsv1.DaemonSet, error) {
+// shutdownFlowHoldingRollouts names a ShutdownFlow whose execution episode is currently live, if any.
+//
+// Deliberately not scoped to flows that could release this agent's nodes (F-92). What makes a flow
+// live is a power event, and a power event is when pod churn is least welcome anywhere in the
+// cluster — including on nodes this flow will not touch, whose agents are the ones that still have
+// to be watching when it does. Narrowing the scope would buy a faster config rollout during an
+// outage, which is not a thing worth buying.
+//
+// DryRun flows hold too, for the same reason: the rehearsal is running because the trigger is
+// eligible, which means the power event is real even when the response is not.
+func (r *NodePowerAgentReconciler) shutdownFlowHoldingRollouts(ctx context.Context) (string, error) {
+	var flows powerv1alpha1.ShutdownFlowList
+	if err := r.List(ctx, &flows); err != nil {
+		return "", fmt.Errorf("list ShutdownFlows for rollout hold: %w", err)
+	}
+	held := ""
+	for i := range flows.Items {
+		if !shutdownFlowIsLive(&flows.Items[i]) {
+			continue
+		}
+		// Lowest name wins so the reported holder is stable across passes rather than dependent on
+		// list order; a message that changes every reconcile reads like two flows are fighting.
+		if held == "" || flows.Items[i].Name < held {
+			held = flows.Items[i].Name
+		}
+	}
+	return held, nil
+}
+
+// shutdownFlowIsLive reports whether a flow is mid-episode.
+//
+// TriggerActive is the flow's own answer to whether the power event that started the episode is
+// still happening, which is the same signal signalStillAuthorized uses to decide whether a halt is
+// still authorized (F-87). Phase is checked as well because a flow can be Running before its first
+// execution record exists.
+func shutdownFlowIsLive(flow *powerv1alpha1.ShutdownFlow) bool {
+	if flow.Status.Phase == powerv1alpha1.ShutdownFlowPhaseRunning {
+		return true
+	}
+	return flow.Status.LastExecution != nil && flow.Status.LastExecution.TriggerActive
+}
+
+// ensureNodePowerAgentDaemonSet renders the agent DaemonSet, deferring the write while a flow is live.
+//
+// heldBy names that flow when one is (F-92). The rendered spec is correct at any moment; the timing
+// is what is wrong. maxSurge: 1 with maxUnavailable: 0 means a rollout replaces monitoring pods
+// node by node, and doing that while a shutdown flow is releasing nodes churns exactly the workload
+// whose absence is the failure it exists to prevent. A config change can wait for the outage to end;
+// the outage cannot wait for the config change.
+//
+// A DaemonSet that does not exist yet is created regardless. A node with no agent at all is worse
+// than a node whose agent restarts at an awkward moment, and deferring creation would mean an agent
+// added mid-outage never arrives.
+func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Context, agent *powerv1alpha1.NodePowerAgent, namespace, heldBy string, spec nodePowerAgentDaemonSetSpec) (*appsv1.DaemonSet, error) {
+	if heldBy != "" {
+		var existing appsv1.DaemonSet
+		key := types.NamespacedName{Namespace: namespace, Name: nodePowerAgentDaemonSetName(agent)}
+		err := r.Get(ctx, key, &existing)
+		if err == nil {
+			return &existing, nil
+		}
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("get DaemonSet %s/%s while a flow holds rollouts: %w", key.Namespace, key.Name, err)
+		}
+	}
+
 	podNodeSelector, err := nodePowerAgentPodNodeSelector(agent)
 	if err != nil {
 		return nil, err
