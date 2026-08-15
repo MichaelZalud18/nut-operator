@@ -89,12 +89,14 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/${{ matrix.image }}
           labels: |
             org.opencontainers.image.description=${{ matrix.description }}
+          # No branch tag and no raw `main` here, deliberately (F-77). This step publishes only
+          # immutable references; the floating `main` tag is applied by the promote job below, and
+          # only to a digest the e2e suite has run against. Publishing `main` here made the tag mean
+          # "built from main" when what anyone pulling it assumes is "tested".
           tags: |
-            type=ref,event=branch
             type=ref,event=tag
             type=ref,event=pr
             type=sha,prefix=sha-,format=short
-            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
 
       # PRs never push, so they get their own single-platform (native runner arch), loadable build
       # scanned *before* anything is published. The old single build step ran push:false across both
@@ -199,6 +201,7 @@ jobs:
         run: |
           echo "${{ matrix.image }} digest: ${{ steps.build.outputs.digest }}"
 
+
   # The operand images are built and scanned individually above, which cannot answer
   # the question F-39 turned on: whether the two of them actually complete a NUT TLS
   # session with the configuration the operator renders. The render tests said yes
@@ -246,3 +249,111 @@ jobs:
 
       - name: Negotiate NUT over TLS
         run: hack/nut-tls-smoke.sh docker nut-server:tls-smoke upsmon-agent:tls-smoke
+
+  # Resolves each published image to a digest the gate and the promotion can both name.
+  #
+  # Matrix legs cannot each contribute a distinct job output -- they all write the same keys and the
+  # last leg wins -- so rather than shuttling four digests through artifacts, this reads them back
+  # out of the registry. The sha- tag the build job just published is the handle: immutable, one per
+  # commit, and already the thing the audit suggested hanging this on. Resolving from the registry
+  # also means the digest promoted is provably the digest that is actually there under that tag,
+  # rather than a value copied between jobs.
+  digests:
+    name: Collect digests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      nut-operator: ${{ steps.collect.outputs.nut-operator }}
+      nut-server: ${{ steps.collect.outputs.nut-server }}
+      upsmon-agent: ${{ steps.collect.outputs.upsmon-agent }}
+      node-actuator: ${{ steps.collect.outputs.node-actuator }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve published digests
+        id: collect
+        env:
+          IMAGE_BASE: ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Reconstructs type=sha,prefix=sha-,format=short from the metadata step above, whose short
+          # form is the conventional 7 characters. If that convention ever changes, the inspect below
+          # fails on a tag that does not exist and nothing is promoted -- the failure is loud and the
+          # `main` tag keeps pointing at the last image that did pass.
+          tag="sha-${COMMIT_SHA:0:7}"
+          for image in nut-operator nut-server upsmon-agent node-actuator; do
+            ref="${IMAGE_BASE}/${image}:${tag}"
+            digest="$(docker buildx imagetools inspect "${ref}" --format '{{println .Manifest.Digest}}' | head -n1)"
+            case "$digest" in
+              sha256:*) ;;
+              *) echo "::error::${ref} did not resolve to a digest: '${digest}'"; exit 1 ;;
+            esac
+            echo "resolved ${ref} -> ${digest}"
+            echo "${image}=${IMAGE_BASE}/${image}@${digest}" >> "$GITHUB_OUTPUT"
+          done
+
+  # The gate F-77 was about: the suite runs against the images just published, by digest, and
+  # nothing floats the `main` tag until it passes.
+  e2e:
+    name: E2E gate
+    needs: digests
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/test-e2e.yml
+    with:
+      manager-image: ${{ needs.digests.outputs.nut-operator }}
+      nut-server-image: ${{ needs.digests.outputs.nut-server }}
+      upsmon-agent-image: ${{ needs.digests.outputs.upsmon-agent }}
+      node-actuator-image: ${{ needs.digests.outputs.node-actuator }}
+
+  # Applies the floating tag to the exact digest the gate ran against.
+  #
+  # imagetools create adds a tag to an existing manifest rather than rebuilding, so `main` and the
+  # `sha-` tag resolve to one digest by construction -- not to two builds that ought to match. No
+  # re-signing: cosign signs by digest, so the signature the build job attached already covers this.
+  promote:
+    name: Promote ${{ matrix.image }} to main
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [digests, e2e, nut-tls]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [nut-operator, nut-server, upsmon-agent, node-actuator]
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag the tested digest as main
+        env:
+          SOURCE: ${{ needs.digests.outputs[matrix.image] }}
+          TARGET: ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/${{ matrix.image }}:main
+        run: |
+          set -euo pipefail
+          echo "promoting ${SOURCE} to ${TARGET}"
+          docker buildx imagetools create --tag "${TARGET}" "${SOURCE}"

@@ -326,18 +326,18 @@ The manager image no longer carries a Docker `HEALTHCHECK` that only ran `--vers
 corresponding `CKV_DOCKER_2` skip rationale. `docs/images.md` and `docs/security.md` now distinguish
 current source-build controls from open release-hardening targets.
 The Images workflow signs non-PR published image digests with keyless Sigstore/cosign after the
-published-image vulnerability scan, and `docs/images.md` documents digest verification.
+published-image vulnerability scan, and `docs/images.md` documents digest verification. The `main`
+tag is applied only to a digest the e2e suite and the NUT TLS smoke test have both run against: the
+build job publishes immutable `sha-` references, `test-e2e` is invoked with those digests through
+`workflow_call`, and a promote job floats the tag afterwards (`F-77`).
 
-Closed: `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`, `F-52`, `F-78`.
+Closed: `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`, `F-52`, `F-77`, `F-78`.
 
 #### Open Work
 
 - Pin base images by digest and add detached NUT source signature verification in addition to the
   existing NUT version and sha256 checks.
 - Automate triage of new unsuppressed medium-or-higher ASH findings.
-- `F-77` gate image publication on the e2e run and have the suite pull the digest it built rather
-  than building its own, so the published image is one that was tested
-  ([operator-maturity-benchmarks.md](audits/operator-maturity-benchmarks.md)).
 
 ---
 

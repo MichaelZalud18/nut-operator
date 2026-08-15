@@ -94,44 +94,91 @@ var _ = BeforeSuite(func() {
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to read the manager kustomization")
 	managerKustomizationBackup = contents
 
-	By("building the manager image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
-
-	// TODO(user): If you want to change the e2e test vendor from Kind,
-	// ensure the image is built and available, then remove the following block.
-	By("loading the manager image on Kind")
-	err = utils.LoadImageToKindClusterWithName(managerImage)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
-
-	By("building the operand images")
-	cmd = exec.Command("make", "docker-build-nut-server",
-		fmt.Sprintf("NUT_SERVER_IMG=%s", nutServerImage), fmt.Sprintf("NUT_SERVER_SHA_IMG=%s", nutServerImage))
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the nut-server operand image")
-	cmd = exec.Command("make", "docker-build-upsmon-agent",
-		fmt.Sprintf("UPSMON_AGENT_IMG=%s", upsmonAgentImage), fmt.Sprintf("UPSMON_AGENT_SHA_IMG=%s", upsmonAgentImage))
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the upsmon-agent operand image")
-	cmd = exec.Command("make", "docker-build-node-actuator",
-		fmt.Sprintf("NODE_ACTUATOR_IMG=%s", nodeActuatorImage), fmt.Sprintf("NODE_ACTUATOR_SHA_IMG=%s", nodeActuatorImage))
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the node-actuator operand image")
-	cmd = exec.Command("make", "docker-build-snmpsim-fixture",
-		fmt.Sprintf("SNMPSIM_FIXTURE_IMG=%s", snmpsimFixtureImage), fmt.Sprintf("SNMPSIM_FIXTURE_SHA_IMG=%s", snmpsimFixtureImage))
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the snmpsim fixture image")
-
-	By("loading the operand images on Kind")
-	for _, image := range []string{nutServerImage, upsmonAgentImage, nodeActuatorImage, snmpsimFixtureImage} {
-		err = utils.LoadImageToKindClusterWithName(image)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to load %s into Kind", image))
+	for _, image := range suiteImages() {
+		resolveSuiteImage(image)
+		By(fmt.Sprintf("loading %s on Kind", image.LocalRef))
+		err = utils.LoadImageToKindClusterWithName(image.LocalRef)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to load %s into Kind", image.LocalRef))
 	}
 
 	configureKubectlKubeRC()
 	setupCertManager()
 })
+
+// suiteImage is one image the suite needs in the Kind cluster before any spec runs.
+type suiteImage struct {
+	// LocalRef is the reference the manifests and the Kind load use. It never varies, so where an
+	// image came from is invisible to every spec.
+	LocalRef string
+	// SourceEnv names the variable that, when set, supplies an already-built image to pull instead
+	// of building one from this checkout (F-77).
+	SourceEnv string
+	// BuildTarget and BuildVars build it from source when SourceEnv is unset.
+	BuildTarget string
+	BuildVars   []string
+}
+
+func suiteImages() []suiteImage {
+	return []suiteImage{
+		{
+			LocalRef:    managerImage,
+			SourceEnv:   "E2E_MANAGER_IMAGE",
+			BuildTarget: "docker-build",
+			BuildVars:   []string{"IMG=" + managerImage},
+		},
+		{
+			LocalRef:    nutServerImage,
+			SourceEnv:   "E2E_NUT_SERVER_IMAGE",
+			BuildTarget: "docker-build-nut-server",
+			BuildVars:   []string{"NUT_SERVER_IMG=" + nutServerImage, "NUT_SERVER_SHA_IMG=" + nutServerImage},
+		},
+		{
+			LocalRef:    upsmonAgentImage,
+			SourceEnv:   "E2E_UPSMON_AGENT_IMAGE",
+			BuildTarget: "docker-build-upsmon-agent",
+			BuildVars:   []string{"UPSMON_AGENT_IMG=" + upsmonAgentImage, "UPSMON_AGENT_SHA_IMG=" + upsmonAgentImage},
+		},
+		{
+			LocalRef:    nodeActuatorImage,
+			SourceEnv:   "E2E_NODE_ACTUATOR_IMAGE",
+			BuildTarget: "docker-build-node-actuator",
+			BuildVars:   []string{"NODE_ACTUATOR_IMG=" + nodeActuatorImage, "NODE_ACTUATOR_SHA_IMG=" + nodeActuatorImage},
+		},
+		{
+			LocalRef:    snmpsimFixtureImage,
+			SourceEnv:   "E2E_SNMPSIM_FIXTURE_IMAGE",
+			BuildTarget: "docker-build-snmpsim-fixture",
+			BuildVars:   []string{"SNMPSIM_FIXTURE_IMG=" + snmpsimFixtureImage, "SNMPSIM_FIXTURE_SHA_IMG=" + snmpsimFixtureImage},
+		},
+	}
+}
+
+// resolveSuiteImage puts image.LocalRef in the local daemon, by pull or by build.
+//
+// The pull path exists so CI can test the artifact it is about to publish rather than a second
+// build of the same source (F-77). "Should be equivalent" is exactly the assumption F-61 was
+// resting on when a `=ep` crash-loop turned up only in the real image, so the suite is given a way
+// to be handed the real one. Locally, with nothing set, it still builds from the checkout — which
+// is the behaviour anyone running `make test-e2e` on a branch wants.
+//
+// The pulled image is re-tagged to LocalRef rather than threaded through the specs, so the
+// manifests, the Kind load, and every image reference in the suite stay identical on both paths.
+// A digest that only some specs honour would test a mixture of two builds and report success.
+func resolveSuiteImage(image suiteImage) {
+	if source := os.Getenv(image.SourceEnv); source != "" {
+		By(fmt.Sprintf("pulling %s as %s", source, image.LocalRef))
+		_, err := utils.Run(exec.Command("docker", "pull", source))
+		ExpectWithOffset(2, err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to pull %s", source))
+		_, err = utils.Run(exec.Command("docker", "tag", source, image.LocalRef))
+		ExpectWithOffset(2, err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to tag %s as %s", source, image.LocalRef))
+		return
+	}
+
+	By(fmt.Sprintf("building %s", image.LocalRef))
+	args := append([]string{image.BuildTarget}, image.BuildVars...)
+	_, err := utils.Run(exec.Command("make", args...))
+	ExpectWithOffset(2, err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to build %s", image.LocalRef))
+}
 
 var _ = AfterSuite(func() {
 	teardownCertManager()

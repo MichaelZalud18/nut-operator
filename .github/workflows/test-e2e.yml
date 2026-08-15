@@ -1,19 +1,45 @@
 name: E2E Tests
 
+# Two entry points, deliberately different in what they test (F-77).
+#
+# pull_request runs the suite against images it builds from the checkout, because a PR publishes
+# nothing there is anything to pull.
+#
+# workflow_call is how Images invokes it on push to main, handing over the digests it just
+# published. That path tests the artifact that is about to carry the :main tag rather than a second
+# build of the same source. There is no push trigger here any more: a run that races the build
+# workflow cannot gate it, and two independent e2e runs on one commit is the cost without the
+# benefit.
 on:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
   pull_request:
     paths-ignore:
       - "**.md"
       - "docs/**"
+  workflow_call:
+    inputs:
+      manager-image:
+        description: Pre-built manager image reference the suite should pull instead of building.
+        required: true
+        type: string
+      nut-server-image:
+        description: Pre-built nut-server image reference.
+        required: true
+        type: string
+      upsmon-agent-image:
+        description: Pre-built upsmon-agent image reference.
+        required: true
+        type: string
+      node-actuator-image:
+        description: Pre-built node-actuator image reference.
+        required: true
+        type: string
 
+# Prefixed so this can never collide with the caller's group. When invoked through workflow_call,
+# github.workflow is the *caller's* name, so a bare ${{ github.workflow }}-${{ github.ref }} would
+# resolve to the Images group and, with cancel-in-progress, this workflow would cancel the run
+# invoking it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions: {}
@@ -22,6 +48,8 @@ jobs:
   test-e2e:
     permissions:
       contents: read
+      # Needed only on the workflow_call path, to pull the images Images just published.
+      packages: read
     name: E2E on Kind
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -56,5 +84,25 @@ jobs:
           go mod tidy
           git diff --exit-code -- go.mod go.sum
 
+      - name: Log in to GHCR
+        if: inputs.manager-image != ''
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The suite builds every image itself when these are empty, which is the pull_request path and
+      # also what a developer running `make test-e2e` gets. When they are set it pulls instead and
+      # re-tags to the same local names, so no spec can tell the difference.
+      #
+      # The snmpsim fixture is deliberately absent: it is a simulated SNMP UPS used only by the
+      # driver-conformance suite, not a project operand, so it is not published and has nothing to
+      # pull. It builds from the checkout on both paths.
       - name: Running Test e2e
+        env:
+          E2E_MANAGER_IMAGE: ${{ inputs.manager-image }}
+          E2E_NUT_SERVER_IMAGE: ${{ inputs.nut-server-image }}
+          E2E_UPSMON_AGENT_IMAGE: ${{ inputs.upsmon-agent-image }}
+          E2E_NODE_ACTUATOR_IMAGE: ${{ inputs.node-actuator-image }}
         run: make test-e2e

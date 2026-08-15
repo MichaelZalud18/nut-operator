@@ -104,10 +104,10 @@ Current release artifacts and checks include:
 - vulnerability scans
 - keyless Sigstore/cosign signatures for published non-PR images
 - private-address leak scanning
+- the `main` tag applied only to a digest e2e and the NUT TLS smoke test have run against
 
-Open hardening targets are tracked in `docs/tasks.md`: base-image digest pinning, detached NUT
-source signature verification, and gating mutable image publication on the exact digest exercised by
-e2e.
+Open hardening targets are tracked in `docs/tasks.md`: base-image digest pinning and detached NUT
+source signature verification.
 
 Local process tests are not sufficient evidence for deployment. Image-level smoke tests and
 in-cluster validation are separate gates.

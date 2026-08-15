@@ -371,8 +371,8 @@ audit trail:
 All items from the original "Recommended order" list in this audit are now closed: `F-2`/`F-4`/`F-5`
 (2026-08-03/04), `F-30`/`F-1` (2026-08-04), `F-31`/`F-32`/`F-7`/`F-3` (2026-08-04). Open work remaining
 anywhere in Operator Maturity & Hardening is tracked in `docs/tasks.md`: base-image digest pinning,
-detached NUT source signature verification, ASH finding triage, and `F-77`'s tested-digest
-publication gate.
+detached NUT source signature verification, and ASH finding triage. `F-77`'s tested-digest
+publication gate closed 2026-08-15.
 
 ## Findings — fifth pass, 2026-08-08
 
@@ -497,6 +497,56 @@ two images that compile NUT from source — which is why its timeout is 30 minut
 The cost is real and should be weighed rather than assumed away: it serializes the e2e run onto the
 path to a published `:main`, on a repository where `main` receives only its own maintainer's
 commits.
+
+*Closed 2026-08-15.* Built as the paragraph above describes: build once, test that build, then
+float the tag.
+
+`images.yml` no longer publishes `main` at build time. The build job emits only immutable references
+— `sha-<short>`, plus version tags on `v*` pushes — and a `promote` job applies `main` afterwards
+with `docker buildx imagetools create`, which adds a tag to an existing manifest rather than
+rebuilding. `main` and `sha-<short>` therefore resolve to one digest by construction, rather than to
+two builds that ought to match.
+
+Between them sits the gate. `test-e2e.yml` gained a `workflow_call` trigger taking four image
+references, and `images.yml` invokes it with digests resolved from the registry. Its `push` trigger
+is gone: a run racing the build workflow cannot gate it, and two independent e2e runs on one commit
+is the cost without the benefit. `pull_request` still builds from the checkout, because a PR
+publishes nothing there is anything to pull.
+
+Digests are read back with `imagetools inspect` against the `sha-` tag rather than shuttled between
+jobs as artifacts. Matrix legs cannot each contribute a distinct job output — they write the same
+keys and the last leg wins — and the registry read has a property the artifact hop does not: what
+gets promoted is provably what is present under that tag, not a value copied between jobs. The cost
+is a reconstructed tag name (`sha-` plus seven characters, matching `docker/metadata-action`'s short
+form). If that convention ever changes, the inspect fails on a tag that does not exist, nothing is
+promoted, and `main` keeps pointing at the last image that passed. Fail-closed was the requirement.
+
+The suite side is `suiteImages()`/`resolveSuiteImage` in `test/e2e/e2e_suite_test.go`. Each image
+carries an environment variable that, when set, supplies a pre-built reference to pull instead of
+building. The pulled image is re-tagged to the same local name the suite has always used, so no spec
+can tell which path it came in on — a digest honoured by only some specs would test a mixture of two
+builds and report success. With nothing set it builds from the checkout, which is what anyone
+running `make test-e2e` on a branch wants.
+
+`nut-tls` was added to the promotion's `needs` while the edge was being drawn. It already proved the
+two operand images complete a real NUT TLS session; there was no reason for `main` to float past a
+failure it had already caught.
+
+Two things this deliberately does not do. Tag pushes (`v*.*.*`) still publish ungated — the finding
+is about `main`, e2e only runs on the main branch, and gating releases is a separate question about
+release process rather than about the tested-artifact gap. And the snmpsim fixture is not published,
+so it builds from the checkout on both paths; it is a simulated SNMP UPS for driver-conformance
+specs, not an operand.
+
+The serialization cost the finding named is now paid: a published `:main` waits on the e2e run.
+Accepted for the reason given there — this repository's `main` receives only its own maintainer's
+commits — and the immutable `sha-` tag is available immediately for anyone who wants the ungated
+artifact.
+
+`TestSuiteImageTableIsWellFormed` guards the five-row image table against the copy-paste slip it
+invites: two rows sharing a source variable would silently test one image twice and never test the
+other, while CI pulled the wrong artifact and reported success. Confirmed by pointing two rows at
+one variable and watching it fail.
 
 *Not adopted, and recorded so it is not re-proposed:* a "dev" image tier carrying shells for
 testing, with promotion to the locked-down images. For the actuator specifically it would invert the
