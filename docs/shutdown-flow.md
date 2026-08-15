@@ -410,6 +410,9 @@ Namespaces are grouping and policy boundaries. A normal shutdown flow does not d
 Services are used for traffic withdrawal and readiness boundaries. Backing workloads remain responsible for graceful shutdown.
 
 Nodes are terminal graph vertices. A node cannot power off until every workload, storage operation, and cluster responsibility assigned to that node has cleared.
+Node-oriented groups may combine `nodeSelector` with `nodeSelectorRequirements`; both are evaluated
+as Kubernetes label requirements, and the requirement form is what enables native numeric `Gt`/`Lt`
+matches for tier ranges. Namespace and workload targeting stay on `metav1.LabelSelector`.
 
 ## Safety Gates
 

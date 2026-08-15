@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
@@ -86,6 +87,49 @@ var _ = Describe("ShutdownFlow Webhook", func() {
 
 			_, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should admit numeric node selector requirements", func() {
+			obj.Spec = validShutdownFlowSpec()
+			obj.Spec.Groups[0].Action = powerv1alpha1.ShutdownStepDrainNodes
+			obj.Spec.Groups[0].Target.NodeSelectorRequirements = []corev1.NodeSelectorRequirement{{
+				Key:      powerv1alpha1.DefaultShutdownTierLabelKey,
+				Operator: corev1.NodeSelectorOpGt,
+				Values:   []string{"2"},
+			}}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should reject numeric node selector requirements without integer values", func() {
+			obj.Spec = validShutdownFlowSpec()
+			obj.Spec.Groups[0].Action = powerv1alpha1.ShutdownStepDrainNodes
+			obj.Spec.Groups[0].Target.NodeSelectorRequirements = []corev1.NodeSelectorRequirement{{
+				Key:      powerv1alpha1.DefaultShutdownTierLabelKey,
+				Operator: corev1.NodeSelectorOpLt,
+				Values:   []string{"database"},
+			}}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("nodeSelectorRequirements"))
+			Expect(err.Error()).To(ContainSubstring("must be an integer"))
+		})
+
+		It("Should reject Exists node selector requirements with values", func() {
+			obj.Spec = validShutdownFlowSpec()
+			obj.Spec.Groups[0].Action = powerv1alpha1.ShutdownStepDrainNodes
+			obj.Spec.Groups[0].Target.NodeSelectorRequirements = []corev1.NodeSelectorRequirement{{
+				Key:      "node-role.kubernetes.io/control-plane",
+				Operator: corev1.NodeSelectorOpExists,
+				Values:   []string{"true"},
+			}}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("nodeSelectorRequirements"))
+			Expect(err.Error()).To(ContainSubstring("values"))
 		})
 
 		It("Should reject an unsupported tier-overrun policy", func() {

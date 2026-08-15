@@ -39,6 +39,7 @@ import (
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
+	"github.com/MichaelZalud18/nut-operator/internal/nodeselector"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
@@ -707,7 +708,7 @@ func executorHookReference(ref *powerv1alpha1.NamespacedNameReference) *executor
 
 func executorTargetsFromTarget(target powerv1alpha1.ShutdownStepTarget) []executorpkg.Target {
 	targets := make([]executorpkg.Target, 0, len(target.WorkloadRefs)+len(target.Namespaces)+len(target.AgentRefs)+3)
-	if target.NodeSelector != nil {
+	if target.NodeSelector != nil || len(target.NodeSelectorRequirements) > 0 {
 		targets = append(targets, executorpkg.Target{Kind: "NodeSelector", Name: "nodeSelector"})
 	}
 	for _, namespace := range target.Namespaces {
@@ -810,10 +811,10 @@ func (r *ShutdownFlowReconciler) listScalableWorkloads(ctx context.Context, name
 }
 
 func (r *ShutdownFlowReconciler) nodeTargets(ctx context.Context, target powerv1alpha1.ShutdownStepTarget) ([]executorpkg.Target, error) {
-	if target.NodeSelector == nil {
+	if target.NodeSelector == nil && len(target.NodeSelectorRequirements) == 0 {
 		return nil, nil
 	}
-	selector, err := labelSelector(target.NodeSelector)
+	selector, err := nodeselector.FromAPI(target.NodeSelector, target.NodeSelectorRequirements)
 	if err != nil {
 		return nil, fmt.Errorf("parse node selector for shutdown execution: %w", err)
 	}

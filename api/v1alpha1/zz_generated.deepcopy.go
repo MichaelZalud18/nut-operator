@@ -2632,6 +2632,13 @@ func (in *ShutdownStepTarget) DeepCopyInto(out *ShutdownStepTarget) {
 		*out = new(metav1.LabelSelector)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.NodeSelectorRequirements != nil {
+		in, out := &in.NodeSelectorRequirements, &out.NodeSelectorRequirements
+		*out = make([]v1.NodeSelectorRequirement, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.NamespaceSelector != nil {
 		in, out := &in.NamespaceSelector, &out.NamespaceSelector
 		*out = new(metav1.LabelSelector)

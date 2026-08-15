@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -251,9 +252,9 @@ func nodeExpansionFlow() *powerv1alpha1.ShutdownFlow {
 func nodeExpansionBundle() resolver.StructuralBundle {
 	return resolver.StructuralBundle{
 		ClusterNodes: []resolver.ClusterNode{
-			{Name: "node-a1", Labels: map[string]string{"rack": "a"}},
-			{Name: "node-a2", Labels: map[string]string{"rack": "a"}},
-			{Name: "node-b1", Labels: map[string]string{"rack": "b"}},
+			{Name: "node-a1", Labels: map[string]string{"rack": "a", powerv1alpha1.DefaultShutdownTierLabelKey: "3"}},
+			{Name: "node-a2", Labels: map[string]string{"rack": "a", powerv1alpha1.DefaultShutdownTierLabelKey: "1"}},
+			{Name: "node-b1", Labels: map[string]string{"rack": "b", powerv1alpha1.DefaultShutdownTierLabelKey: "4"}},
 		},
 		AgentCoverage: []resolver.AgentCoverage{
 			{Name: "rack-a-agent", Nodes: []string{"node-a1", "node-a2"}},
@@ -286,6 +287,25 @@ func TestPlannerGroupNodesExpandsSelectorsAndAgentCoverage(t *testing.T) {
 	}
 	if len(release.Acts) != 0 {
 		t.Fatalf("release membership comes from agent coverage alone, got %#v", release.Acts)
+	}
+}
+
+func TestPlannerGroupNodesExpandsNodeSelectorRequirements(t *testing.T) {
+	flow := nodeExpansionFlow()
+	flow.Spec.Groups[0].Target.NodeSelectorRequirements = []corev1.NodeSelectorRequirement{{
+		Key:      powerv1alpha1.DefaultShutdownTierLabelKey,
+		Operator: corev1.NodeSelectorOpGt,
+		Values:   []string{"2"},
+	}}
+
+	membership := PlannerGroupNodes(flow, nodeExpansionBundle())
+	byGroup := map[string]planner.GroupNodeMembership{}
+	for _, entry := range membership {
+		byGroup[entry.Group] = entry
+	}
+
+	if got, want := byGroup["drain-rack-a"].Acts, []string{"node-a1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected node selector requirements to narrow rack a by numeric tier, got %#v", got)
 	}
 }
 

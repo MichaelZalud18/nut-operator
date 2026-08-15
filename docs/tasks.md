@@ -111,8 +111,10 @@ sequential tier-overrun slice built: `spec.tierOverrunPolicy` defaults to `Wait`
 the tier action context when the next lower tier becomes due, and overruns are recorded in wave/final
 audit details, `status.lastExecution.tierOverruns`, `nutoperator_shutdownflow_tier_overruns_total`,
 and `nutoperator_shutdownflow_tier_overrun_seconds`. Node clearance is re-derived at execution
-against the pods actually on the node, read uncached. The provisional `AE-n` identifiers are folded
-into `EX-25`–`EX-30`, and the runtime-estimate gate that shared `AE-6` is now `CR-4`. `EX-32`
+against the pods actually on the node, read uncached, and node-oriented targets accept Kubernetes
+`nodeSelectorRequirements` so authored flows can express native `Gt`/`Lt` label ranges without
+inventing a custom selector language. The provisional `AE-n` identifiers are folded into
+`EX-25`–`EX-30`, and the runtime-estimate gate that shared `AE-6` is now `CR-4`. `EX-32`
 estimates are informed by what previous outages actually took: observed group durations are read from
 the audit tables scoped by plan config hash, injected as a resolved planner input, and published per
 group with provenance and sample counts. `OD-12` is surfaced as
@@ -145,9 +147,6 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `OD-14` decide partial-domain outage plan scope, then wire domain membership into wave compilation
   (shared with Inventory System and Telemetry & Triggers).
-- Accept node-selector *requirements* for node targeting so a group can express a tier range.
-  `metav1.LabelSelector` has no numeric comparison; `corev1.NodeSelector` supports `Gt`/`Lt`.
-  Namespace and workload targeting cannot gain this.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
 

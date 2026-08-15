@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -29,6 +30,7 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
+	"github.com/MichaelZalud18/nut-operator/internal/nodeselector"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 )
@@ -332,6 +334,7 @@ func validateRemovedWorkflowParams(path *field.Path, action powerv1alpha1.Shutdo
 
 func validateShutdownTarget(path *field.Path, target powerv1alpha1.ShutdownStepTarget) field.ErrorList {
 	var errs field.ErrorList
+	errs = append(errs, validateNodeSelectorRequirements(path.Child("nodeSelectorRequirements"), target.NodeSelectorRequirements)...)
 	for i, namespace := range target.Namespaces {
 		errs = append(errs, validateDNSLabel(path.Child("namespaces").Index(i), namespace)...)
 	}
@@ -348,6 +351,17 @@ func validateShutdownTarget(path *field.Path, target powerv1alpha1.ShutdownStepT
 	}
 	for i, ref := range target.AgentRefs {
 		errs = append(errs, validateObjectNameReference(path.Child("agentRefs").Index(i), ref)...)
+	}
+	return errs
+}
+
+func validateNodeSelectorRequirements(path *field.Path, requirements []corev1.NodeSelectorRequirement) field.ErrorList {
+	var errs field.ErrorList
+	for i, requirement := range requirements {
+		reqPath := path.Index(i)
+		if _, err := nodeselector.Requirement(requirement); err != nil {
+			errs = append(errs, field.Invalid(reqPath, requirement, err.Error()))
+		}
 	}
 	return errs
 }

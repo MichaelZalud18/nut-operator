@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -724,6 +725,12 @@ type ShutdownStepTarget struct {
 	// nodeSelector selects Nodes for node-oriented steps.
 	// +optional
 	NodeSelector *metav1.LabelSelector `json:"nodeSelector,omitempty"`
+
+	// nodeSelectorRequirements further constrain Nodes for node-oriented steps
+	// using Kubernetes node selector operators, including Gt and Lt.
+	// Requirements are ANDed with nodeSelector.
+	// +optional
+	NodeSelectorRequirements []corev1.NodeSelectorRequirement `json:"nodeSelectorRequirements,omitempty"`
 
 	// namespaceSelector selects namespaces for namespace-oriented steps.
 	// +optional

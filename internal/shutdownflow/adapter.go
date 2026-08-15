@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/nodeselector"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
@@ -290,7 +291,7 @@ func PlannerGroupNodes(obj *powerv1alpha1.ShutdownFlow, bundle resolver.Structur
 				entry.Releases = append(entry.Releases, coverage[ref.Name]...)
 			}
 		} else {
-			entry.Acts = matchingNodeNames(group.Target.NodeSelector, bundle.ClusterNodes)
+			entry.Acts = matchingNodeNames(group.Target, bundle.ClusterNodes)
 		}
 		if len(entry.Acts) == 0 && len(entry.Releases) == 0 {
 			continue
@@ -310,11 +311,11 @@ func PlannerGroupNodes(obj *powerv1alpha1.ShutdownFlow, bundle resolver.Structur
 // is not a claim about every node in the cluster — it is a group that does not
 // target nodes at all, and reading it the other way would derive a clearance
 // edge against every node from a group that never mentions one.
-func matchingNodeNames(selector *metav1.LabelSelector, nodes []resolver.ClusterNode) []string {
-	if selector == nil {
+func matchingNodeNames(target powerv1alpha1.ShutdownStepTarget, nodes []resolver.ClusterNode) []string {
+	if target.NodeSelector == nil && len(target.NodeSelectorRequirements) == 0 {
 		return nil
 	}
-	compiled, err := metav1.LabelSelectorAsSelector(selector)
+	compiled, err := nodeselector.FromAPI(target.NodeSelector, target.NodeSelectorRequirements)
 	if err != nil {
 		return nil
 	}
@@ -359,7 +360,7 @@ func PlannerDuration(duration *metav1.Duration) planner.Duration {
 // PlannerTarget converts API target selectors into the planner's compact target summary.
 func PlannerTarget(target powerv1alpha1.ShutdownStepTarget) planner.Target {
 	return planner.Target{
-		NodeSelector:      target.NodeSelector != nil,
+		NodeSelector:      target.NodeSelector != nil || len(target.NodeSelectorRequirements) > 0,
 		NamespaceSelector: target.NamespaceSelector != nil,
 		WorkloadSelector:  target.WorkloadSelector != nil,
 		NamespaceCount:    len(target.Namespaces),
@@ -560,13 +561,13 @@ func shutdownTierFromSelectorRules(target powerv1alpha1.ShutdownStepTarget, poli
 func tierRuleSubjectCanMatchTarget(subject powerv1alpha1.PowerShutdownTierSubjectKind, target powerv1alpha1.ShutdownStepTarget) bool {
 	switch subject {
 	case powerv1alpha1.PowerShutdownTierSubjectNode:
-		return target.NodeSelector != nil || len(target.AgentRefs) > 0
+		return target.NodeSelector != nil || len(target.NodeSelectorRequirements) > 0 || len(target.AgentRefs) > 0
 	case powerv1alpha1.PowerShutdownTierSubjectNamespace:
 		return target.NamespaceSelector != nil || len(target.Namespaces) > 0
 	case powerv1alpha1.PowerShutdownTierSubjectWorkload:
 		return target.WorkloadSelector != nil || len(target.WorkloadRefs) > 0
 	default:
-		return target.NodeSelector != nil || target.NamespaceSelector != nil || target.WorkloadSelector != nil || len(target.AgentRefs) > 0 || len(target.Namespaces) > 0 || len(target.WorkloadRefs) > 0
+		return target.NodeSelector != nil || len(target.NodeSelectorRequirements) > 0 || target.NamespaceSelector != nil || target.WorkloadSelector != nil || len(target.AgentRefs) > 0 || len(target.Namespaces) > 0 || len(target.WorkloadRefs) > 0
 	}
 }
 
