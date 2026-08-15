@@ -1,0 +1,161 @@
+---
+# Topology for the orion-core power domain.
+#
+# This layer is what makes `powerDomains: [orion-core]` on the flow's triggers mean something. The
+# name on UPSDevice.spec.powerDomains declares the domain; membership is *derived* by walking Feeds
+# edges out from the UPS root (IN-7), so a node reaches the domain by being fed, not by being
+# labelled. Without these edges the domain resolves to a UPS and no members, and a domain-scoped
+# trigger has nothing to scope to.
+#
+# The node names here are role names, matching the node groups the agents select. Real clusters
+# substitute their own; nothing in this file needs to know what a machine is called beyond matching
+# the Kubernetes Node object.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: orion-controller-1
+spec:
+  nodeName: orion-controller-1
+  roles:
+    controlPlane: true
+    controlPlaneQuorumMember: true
+    # Tier 1 is the final orchestrated stop. The controller group holds the operator and upsd, so it
+    # is the last thing released -- everything above it needs both to still be running.
+    shutdownTier: 1
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: orion-standard-1
+spec:
+  nodeName: orion-standard-1
+  roles:
+    controlPlane: false
+    controlPlaneQuorumMember: false
+    shutdownTier: 2
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: orion-burst-1
+spec:
+  nodeName: orion-burst-1
+  roles:
+    controlPlane: false
+    controlPlaneQuorumMember: false
+    # Burst capacity is shed first, so it carries the highest tier number in this example.
+    shutdownTier: 5
+---
+# The access switch is modeled but never actuated. OD-24 keeps network devices topological for v1:
+# they explain how a node is reached, and nothing powers them off.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInfrastructure
+metadata:
+  name: orion-access-switch
+spec:
+  displayName: Orion access switch
+  class: Switch
+  description: Carries the control and NUT telemetry path for every node in the orion-core domain.
+---
+# Feeds edges: what the UPS actually powers. These are the edges the resolver walks to derive domain
+# membership, and the reason a partial-domain outage can be scoped at all (OD-14).
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: orion-core-ups-feeds-controller-1
+spec:
+  from:
+    kind: UPSDevice
+    name: orion-core-ups
+  to:
+    kind: Node
+    name: orion-controller-1
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: orion-core-ups-feeds-standard-1
+spec:
+  from:
+    kind: UPSDevice
+    name: orion-core-ups
+  to:
+    kind: Node
+    name: orion-standard-1
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: orion-core-ups-feeds-burst-1
+spec:
+  from:
+    kind: UPSDevice
+    name: orion-core-ups
+  to:
+    kind: Node
+    name: orion-burst-1
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: orion-core-ups-feeds-access-switch
+spec:
+  from:
+    kind: UPSDevice
+    name: orion-core-ups
+  to:
+    kind: PowerInfrastructure
+    name: orion-access-switch
+  relation: Feeds
+  input: psu-a
+---
+# Carries edges: how each node is reached. Modeling these is what keeps
+# CommunicationPathUnmodeled quiet (OD-16) -- a warning, not an error, because an unmodeled
+# communication path costs only communication ordering, which PL-21 defers past v1.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: orion-access-switch-carries-controller-1
+spec:
+  from:
+    kind: PowerInfrastructure
+    name: orion-access-switch
+  to:
+    kind: Node
+    name: orion-controller-1
+  relation: Carries
+  description: Access switch carries the control and telemetry path for the controller node.
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: orion-access-switch-carries-standard-1
+spec:
+  from:
+    kind: PowerInfrastructure
+    name: orion-access-switch
+  to:
+    kind: Node
+    name: orion-standard-1
+  relation: Carries
+  description: Access switch carries the control and telemetry path for the standard worker.
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: orion-access-switch-carries-burst-1
+spec:
+  from:
+    kind: PowerInfrastructure
+    name: orion-access-switch
+  to:
+    kind: Node
+    name: orion-burst-1
+  relation: Carries
+  description: Access switch carries the control and telemetry path for the burst worker.

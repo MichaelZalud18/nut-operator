@@ -201,41 +201,20 @@ None.
 
 Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_render.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
-`internal/nodeagent`. Audits: `docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`,
-`F-33`–`F-36`, `F-54`–`F-92`, `OD-37`). The evidence and the reasoning are in the audit; this
-section is a receipt. `OD-37` is decided and recorded — the operator path is the authoritative
-shutdown path, and the local `upsmon` `SHUTDOWNCMD` path is scaffolded but holds no authority.
+`internal/nodeagent`. Design doc: `docs/design/node-agent-operand.md` (`NA-n`). Audits:
+`docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`, `F-33`–`F-36`, `F-54`–`F-92`, `OD-37`).
+The design doc says what the operand is, the audit holds the evidence, and this section is a
+receipt.
 
 #### Built
 
-`NodePowerAgent` DaemonSet rendering in `MonitorOnly`/`DryRun`/`Actuate`, `power-signal-writer` as
-the `SHUTDOWNCMD` binary, `internal/nodeagent` signal validation with TTL and node-name enforcement,
-and `cmd/node-actuator`'s syscall-backed poweroff. Handoff proven on `kind` within the configured
-TTL. The actuator carries `CAP_SYS_BOOT` as a file capability and raises it only for the syscall,
-which is what makes `mode=Actuate` able to halt a node at all; it refuses to arm without it, runs
-under the pod's `RuntimeDefault` seccomp profile, and keeps `hostPID`, without which `reboot(2)`
-kills the container and reports success. An operand namespace whose Pod Security level would reject
-the actuating pod is reported on the agent's `Degraded` condition rather than relabelled. Both
-containers' readiness probes can fail: the actuator's reflects its watch loop, and `upsmon`'s
-queries every `<ups>@<server>` it monitors instead of anonymously listing the host. One path
-authorizes a halt: the actuator watches only the operator's projected Secret, `power-agent-run` is
-not mounted into it, and its own default signal path is derived from the node name rather than
-falling back to the shared tmpfs. NUT's local `SHUTDOWNCMD` path keeps its writer, format, and file
-and holds no authority (`OD-37`). A pass stops at the first live signal, so one episode delivered
-twice actuates once. The signal Secret always carries a delivery-channel marker and mounts
-non-optionally, so a channel that cannot deliver fails readiness instead of resembling a quiet one.
-The signal carries no `dryRun` field: whether a node may halt is the actuator's own mode, which no
-writer can reach. An agent that declares a `shutdownFlowRef` accepts releases only from that flow.
-A node whose clock rejects every signal the operator sends reports NotReady rather than logging it,
-so the failure reaches `status.nodeStatuses` instead of a container log nobody reads mid-outage.
-`ActuatorPolicy` is `Disabled`/`Simulate`/`PowerOff` — `SystemdPoweroff` named a mechanism `F-36`
-removed — and the actuator's env carries one signal-path variable and a config hash named for what
-it hashes (`F-75`, `F-91`). Signals are withdrawn once the episode that authorized them ends, so
-absence is the record and a node that boots back up inside the old TTL finds nothing to act on
-(`F-87`); where the flow cannot be read at all the signal is kept until its TTL retires it, because a
-failed lookup is not evidence the episode ended. DaemonSet spec writes are deferred while any flow is
-mid-episode and requeued until it settles, so a config change cannot roll the fleet's monitoring
-during an outage (`F-92`).
+The DaemonSet renders in `MonitorOnly`/`DryRun`/`Actuate` with `power-signal-writer` as the
+`SHUTDOWNCMD` binary, `internal/nodeagent` signal validation enforcing TTL and node name, and
+`cmd/node-actuator`'s syscall-backed poweroff, proven on `kind` within the configured TTL. The
+authorization boundary (`OD-37`), the signal lifecycle including revocation (`F-87`) and the
+delivery-channel marker (`F-86`), the permitted-only `CAP_SYS_BOOT` model (`F-61`), the readiness
+contract (`F-59`, `F-64`), and the mid-episode write deferral (`F-92`) are described as built in
+[node-agent-operand.md](design/node-agent-operand.md) (`NA-1`–`NA-8`).
 
 Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-60`, `F-61`–`F-65`,
 `F-66`, `F-67`–`F-71`, `F-72`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`–`F-92`, `OD-37`. `F-89` declined — the signal Secret
@@ -309,9 +288,16 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 
 `observedGeneration`, enum validation, and spec/status separation across all CRDs; project-owned
 multi-arch operand images with SBOM, provenance, and scanning; CI with distinct check names, path
-filters, tidy-drift, ASH, and an RFC1918 scan; `main` protected with every check required and
-`enforce_admins` on; and the no-cert-manager install path (`config/byo-cert`, `hack/webhook-cert.sh`)
-verified on `kind`.
+filters, tidy-drift, ASH, an RFC1918 scan, and CRD-schema validation of every shipped sample and
+example; and the no-cert-manager install path (`config/byo-cert`, `hack/webhook-cert.sh`) verified on
+`kind`.
+
+Sample and example manifests are validated against the generated CRD schemas by
+`make validate-samples`, on every commit and with no path filter, because the CRDs are generated
+from the Go types while the manifests are hand-written and nothing else connects the two. The
+RFC1918 scan moved alongside it into `Repo Hygiene` for the same reason: both guard documentation
+and examples, and both previously sat behind a `docs/**` path filter that skipped exactly the
+commits they exist to check.
 
 Serving-certificate expiry is published as `nutoperator_certificate_not_after_timestamp_seconds`; the
 byo-cert install path is covered end to end on `kind`, including rotation; and the ASH scan runs
@@ -334,7 +320,12 @@ Closed: `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`, `F-52`, `F-77`, `F-78`.
 
 #### Open Work
 
-None.
+- Enable branch protection on `main`. This section previously recorded it as built with every
+  check required and `enforce_admins` on; the GitHub API reports no classic protection and no
+  rulesets on the branch, checked with an admin-scoped token, so the control is not in place
+  whatever its history. Every CI check the claim depended on does exist and passes — what is
+  missing is the enforcement that makes any of them required. Needs a repository-settings
+  change, not a code change.
 
 ---
 

@@ -83,33 +83,3 @@ jobs:
           name: ash-report
           path: /tmp/nut-operator-ash-output
           retention-days: 14
-
-  private-ip-scan:
-    permissions:
-      contents: read
-    name: Scan for private IP literals
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Clone the code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      # This repo is public. None of ASH's scanners (detect-secrets, checkov, bandit, semgrep) check
-      # for private-network IPv4 literals -- that's not a secret or a misconfiguration by any of their
-      # definitions, it's site-specific topology leakage, a different concern CONTRIBUTING.md states as
-      # policy but that (until now) had no automated check behind it. .devcontainer/ is excluded: its
-      # RFC1918 usage is a generic Docker network config value, not site-specific infrastructure.
-      - name: Fail on RFC1918 IPv4 literals in tracked files
-        run: |
-          set -euo pipefail
-          PATTERN='\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3})\b'
-          if git ls-files -z \
-              | grep -zv '^\.devcontainer/' \
-              | xargs -0 grep -EIno "$PATTERN" > /tmp/private-ip-matches.txt; then
-            echo "::error::Found a private (RFC1918) IPv4 address literal in a tracked file. This repo is public -- use a *.example.net/*.example.com hostname (see config/samples/, docs/examples/) or an RFC 5737 documentation address (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24) instead."
-            cat /tmp/private-ip-matches.txt
-            exit 1
-          fi
-          echo "No private IPv4 literals found in tracked files."

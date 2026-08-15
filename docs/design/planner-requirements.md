@@ -417,7 +417,10 @@ provider — a resolver concern, tracked as OD-8r.
 some/all split in PL-19 answers reject-versus-degrade. Remaining degrade mechanics are capability
 schema doc content, not a standalone decision.
 
-## Open Decisions
+## Decisions affecting the planner
+
+Both open and closed, because the closed ones are what keep the open ones from drifting. `OD-8r` is
+the only entry below that is still open.
 
 OD-4 is closed (numbered tiers; see `scope-boundaries.md` change log 2026-08-03).
 
@@ -427,9 +430,12 @@ relations; the logical shutdown graph is compiled output, not a third input.
 OD-1 and OD-5 are closed by the published-artifacts boundary: recovery is external subscriber scope,
 and startup waves are advisory projections rather than operator-executed recovery.
 
-**OD-16 · Missing `carries` coverage.** Whether a node with no modeled communication path is a hard
-validation failure or requires an explicit exemption marker, mirroring PL-44. Silent-assume is
-excluded.
+**OD-16 · Missing `carries` coverage — closed as a warning plus an explicit exemption.** A node with
+no modeled communication path raises the `CommunicationPathUnmodeled` warning and can be opted out
+with `communicationPathExempt`. It is deliberately not the hard failure that a missing `feeds` path
+is (`PowerPlanningOrphan`), because an unmodeled communication path costs only communication
+ordering, which `PL-21` defers past v1. Silent-assume stays excluded. Full reasoning in
+`inventory-provider-contract.md`.
 
 **OD-8r · Provider key validation.** Resolver behavior when the topology provider supplies a
 malformed or missing model string: reject the device, fall back to the unidentified-device profile

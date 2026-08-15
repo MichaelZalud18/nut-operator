@@ -103,7 +103,7 @@ republishes status: a second loop emitting snapshots alongside the reconciler co
 the reconciler had already moved past. The cadence bounds how long the operator may stay quiet and
 never delays how soon it may act — a trigger hold expiring in ten seconds is not deferred
 to the next heartbeat. A flow counts as active while a trigger is eligible, while one has matched and
-is serving its hold, and while an execution is Running or Suspended.
+is serving its hold, and while an execution is `Running`.
 
 ## EX-30 · Abort is halt, not undo
 
@@ -278,27 +278,33 @@ assumption as a reading.
 
 ### Recovery mid-flow
 
-Power returning stops the flow starting further waves. The pointer ascends, nothing is restored, and
-the execution ends in a **`Suspended`** phase.
+**Power returning mid-execution changes nothing about the execution.** It is recorded and nothing
+else: the pointer ascends as bookkeeping (`EX-27`), the current execution runs its remaining waves to
+completion, and whether another execution begins is decided a level up by trigger eligibility.
 
-`Suspended` is deliberately not `Halted`. EX-30 reserves halt for abort — a deliberate stop that
-latches and never resumes. Recovery is the opposite kind of event, and the model requires the flow to
-descend again from wherever the pointer sits if power degrades a second time, re-attempting the tiers
-it already ran as no-ops (EX-26). Three things follow, and all three are load-bearing:
+The executor states this at the branch itself — `internal/executor/adaptive.go` takes the ascent path
+only when `ShouldDescend` is false, and the wave runs either way. There is no phase in which a flow
+is stopped by good news; the execution phases are `Running`, `Completed`, `Aborted`, `Failed`, and
+`Skipped`.
 
-- **The pointer is not latched.** `PointerState.Halted` stays false, so the next descent is free to
-  proceed.
-- **The pointer is left where it stopped**, published on status and persisted in the resume state.
-  That is what the second descent resumes from.
-- **Execution dedupe ignores a suspended run.** A completed episode deduplicates; a suspended one does
-  not, because it has more to do. Without this, dedupe itself would prevent re-descent during a
-  dip-recover-dip outage — precisely the case the tier pointer exists to handle.
+**Why the execution finishes rather than stopping.** Stopping needs a decision, and a decision needs a
+theory about what the power reading means — is this recovery, or the first half of a flicker? `EX-28`
+puts that interpretation on the subscriber, not the operator. Running to completion needs no theory:
+every remaining action is one the plan already authorized under conditions that had already justified
+it, and by `EX-26` each is a no-op if the situation has genuinely improved enough for it not to
+matter.
 
-It is also not `Completed`, which means every wave ran, nor `Aborted`, which means something failed.
-Collapsing suspension into completion would make "the outage ended" indistinguishable from "the
-cluster finished shutting down" — the one distinction a recovery subscriber needs most.
+**Why this costs nothing.** The expensive-sounding case is a flow that keeps shutting things down
+after mains returns. In practice the flow was authorized by a trigger that has already fired, the
+remaining waves are the deepest tiers, and the alternative — halting partway — leaves the cluster in
+a state no one declared: some tiers down, some up, and no record of which decision produced it. A
+completed execution is a state a recovery subscriber can act on. A partially-run one is a puzzle.
 
-## Open decisions
+Trigger eligibility governs the next execution, so a genuine recovery simply means no new execution
+starts, and a flicker means the next one begins from a pointer that was never latched
+(`PointerState.Halted` stays false) and is persisted in the resume state.
+
+## Decisions affecting adaptive execution
 
 **OD-27 · Timing adaptation parameters.** Hysteresis count, improvement margin, and the two bounds on
 compression. Defaults are implemented and validated in `internal/adaptive` — escalate on one
@@ -310,12 +316,18 @@ which the plan is declared not to fit.
 **OD-28 · Relationship to OD-12.** OD-12 decides what to do with an infeasible plan before it
 starts; timing adaptation re-decides during.
 
-**OD-29 · Tier ascent trigger.** What power condition moves the pointer up. Implemented as the strict
-inverse of descent — mains present and no low-battery assertion — which needs no hysteresis because
-ascent performs no actions. What remains open is whether a flow should *suspend* on the first such
-reading, as it does now, or require the condition to hold: ascent is free, but suspending stops the
-remaining waves, so a brief flicker back to mains currently pauses a shutdown that should continue.
+`OD-27` is the only genuinely open decision on this page. Two others were once listed here and are
+now settled — recorded below rather than deleted, because a decided question left phrased as an open
+one is how it gets re-argued:
 
-**OD-30 · Cadence intervals.** Publish interval during idle versus active flow, and whether it is
-global or per-flow. Defaults implemented (60s idle, 10s active). The global-versus-per-flow question
-is untouched, and cadence emission itself is not yet wired — only change emission is.
+**OD-29 · Tier ascent trigger — settled.** Ascent is the strict inverse of descent: mains present and
+no low-battery assertion (`ShouldAscend`). No hysteresis, no hold time, no confirmation window.
+`EX-27` makes ascent bookkeeping that triggers nothing and `EX-26` makes the re-descent that follows
+a sequence of no-ops, so a flicker costs nothing to get wrong. See "Recovery mid-flow" above, and
+`settled-questions.md` §2 — proposing a hold time or confirmation window near power state is the tell
+that this one is being reopened.
+
+**OD-30 · Cadence intervals — settled.** Publish cadence is cluster-wide, on
+`PowerManagementCluster.spec.observability.publishCadence`, defaulting to 60s idle and 10s active. It
+describes the publisher's liveness and there is one publisher; per-flow values would make the
+reconcile rate a workload author's decision and give a subscriber several intervals to reason about.

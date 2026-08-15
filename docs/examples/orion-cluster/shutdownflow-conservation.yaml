@@ -61,6 +61,13 @@ spec:
       description: Scale ordinary applications before data and storage services.
       action: ScaleWorkload
       shutdownTier: 4
+      # Burst nodes are tier 5 and shut down at phase 0, before this group runs at phase 10. Any
+      # application pod on a burst node is therefore scheduled to outlive its host, which is a tier
+      # inversion (OD-18). The default remedy is Block, which withholds the inverted node from
+      # power-off for the whole flow -- correct almost everywhere, and exactly wrong here, since it
+      # would keep the burst node running to protect workloads the cluster elected as sheddable.
+      # Allow states the intent: burst capacity takes its workloads with it.
+      tierInversionPolicy: Allow
       params:
         replicas: "0"
       target:

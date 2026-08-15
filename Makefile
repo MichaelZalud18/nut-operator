@@ -167,6 +167,13 @@ security-scan: grype syft ## Run AWS Labs ASH security scan locally.
 security-triage: ## Name the actionable findings from the last ASH scan.
 	python3 hack/ash-triage.py --output-dir "$(ASH_OUTPUT_DIR)" $(TRIAGE_FLAGS)
 
+# The CRDs are generated from the Go types; the samples are hand-written. Nothing connected the two
+# until this target, so a sample could reference a field shape the API server would reject and only
+# a user applying it would find out.
+.PHONY: validate-samples
+validate-samples: manifests ## Check config/samples and docs/examples against the generated CRD schemas.
+	python3 hack/validate-samples.py
+
 ##@ Build
 
 .PHONY: build

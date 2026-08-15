@@ -16,5 +16,11 @@ spec:
       - battery.runtime
       - input.voltage
       - output.voltage
+  # Quirks are objects, not bare names, so they can expire (OD-22). A bare string cannot say which
+  # firmware actually has the defect, which is how a device on a fixed build inherits its model
+  # family's entire history permanently (F-26).
   quirks:
-    - example-user-authored-profile
+    - name: reports-stale-runtime-on-transfer
+      description: Runtime stays at its pre-transfer value for one poll after switching to battery.
+      firmware:
+        below: "2.4.0"

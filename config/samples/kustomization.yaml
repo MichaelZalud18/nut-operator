@@ -8,6 +8,7 @@ resources:
   - power_v1alpha1_shutdownflow.yaml
   - power_v1alpha1_powerinfrastructure.yaml
   - power_v1alpha1_upscapabilityprofile.yaml
+  - power_v1alpha1_pducapabilityprofile.yaml
   - power_v1alpha1_powerinventoryedge.yaml
   - power_v1alpha1_powerinventorynode.yaml
   - power_v1alpha1_upscapabilityprobe.yaml

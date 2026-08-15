@@ -1,0 +1,38 @@
+---
+# PDU profiles are a parallel kind to UPSCapabilityProfile, not an extension of it (OD-25).
+#
+# Scope for v1 is scaffolding: the kind, its schema, validation, the bundled catalog, and matcher
+# support all exist, and nothing consumes them. There is no PDU device kind, no inventory entity, no
+# render path, and no actuation path. A profile applied today validates, matches, and sits there.
+#
+# It ships anyway because the catalog is the part that benefits from being written down early --
+# outlet counts and switchability are properties of hardware, recorded once, and independent of
+# whichever actuation design eventually lands under OD-24 and OD-20.
+apiVersion: power.zalud.io/v1alpha1
+kind: PDUCapabilityProfile
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: example-switched-pdu-profile
+spec:
+  version: "0.1.0"
+  selector:
+    driverFamily: snmp-ups
+    modelGlob: "Example Switched PDU*"
+  outlets:
+    count: 8
+    # Which outlets can actually be switched, as opposed to only metered. Recording this is the
+    # point of the kind: an outlet that cannot be switched is not an actuation target no matter
+    # what any future control path decides.
+    switchable: ["1", "2", "3", "4", "5", "6", "7", "8"]
+  telemetry:
+    variables:
+      - ups.status
+      - input.voltage
+      - outlet.count
+  quirks:
+    - name: outlet-state-lags-one-poll
+      description: Outlet state reads back the previous value for one poll after a switch command.
+      firmware:
+        below: "1.2.0"

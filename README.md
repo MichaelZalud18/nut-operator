@@ -229,6 +229,8 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [Reconciler watch scoping](docs/audits/reconciler-watch-scoping.md)
 - [Pre-shutdown hook transport](docs/audits/pre-shutdown-hook-transport.md)
 - [Capability profiles](docs/design/capability-profiles.md)
+- [Node agent operand](docs/design/node-agent-operand.md)
+- [NUT server operand](docs/design/nut-server-operand.md)
 - [Upstream NUT relay](docs/design/upstream-nut-relay.md)
 - [Audit storage schema](docs/design/audit-storage-schema.md)
 - [Telemetry and triggers](docs/design/telemetry-and-triggers.md)
