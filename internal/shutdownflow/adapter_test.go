@@ -72,6 +72,30 @@ func TestPlannerInputsResolveShutdownTierFromGroupAndTargetLabel(t *testing.T) {
 	}
 }
 
+func TestPlannerInputsCarryEffectiveTierOverrunPolicy(t *testing.T) {
+	flow := &powerv1alpha1.ShutdownFlow{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-flow"},
+		Spec: powerv1alpha1.ShutdownFlowSpec{
+			Triggers: []powerv1alpha1.ShutdownTrigger{{Type: powerv1alpha1.ShutdownTriggerOnBattery}},
+			Groups: []powerv1alpha1.ShutdownGroup{{
+				Name:   "applications",
+				Action: powerv1alpha1.ShutdownStepScaleWorkload,
+			}},
+		},
+	}
+
+	inputs := PlannerInputs(flow)
+	if inputs.TierOverrunPolicy != string(powerv1alpha1.ShutdownTierOverrunWait) {
+		t.Fatalf("expected default Wait policy in planner inputs, got %q", inputs.TierOverrunPolicy)
+	}
+
+	flow.Spec.TierOverrunPolicy = powerv1alpha1.ShutdownTierOverrunPreempt
+	inputs = PlannerInputs(flow)
+	if inputs.TierOverrunPolicy != string(powerv1alpha1.ShutdownTierOverrunPreempt) {
+		t.Fatalf("expected Preempt policy in planner inputs, got %q", inputs.TierOverrunPolicy)
+	}
+}
+
 func TestCompileArtifactWithTierPolicyPublishesTierStatus(t *testing.T) {
 	appTier := int32(3)
 	nodeTier := int32(1)

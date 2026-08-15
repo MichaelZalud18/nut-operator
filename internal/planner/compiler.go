@@ -440,6 +440,7 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 		ResolvedInputHash: input.ResolvedInputHash,
 		TierPolicy:        normalizeTierPolicy(input.TierPolicy),
 		AbortBehavior:     input.AbortBehavior,
+		TierOverrunPolicy: input.TierOverrunPolicy,
 		Triggers:          append([]Trigger(nil), input.Triggers...),
 		Groups:            append([]Group(nil), input.Groups...),
 		Steps:             append([]Step(nil), input.Steps...),

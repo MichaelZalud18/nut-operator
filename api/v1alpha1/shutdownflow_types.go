@@ -50,6 +50,13 @@ type ShutdownFlowSpec struct {
 	// +optional
 	ConcurrencyPolicy string `json:"concurrencyPolicy,omitempty"`
 
+	// tierOverrunPolicy controls what the executor does when a tier reaches its
+	// compiled duration while a lower tier is waiting behind it.
+	// +kubebuilder:validation:Enum=Wait;Preempt
+	// +kubebuilder:default=Wait
+	// +optional
+	TierOverrunPolicy ShutdownTierOverrunPolicy `json:"tierOverrunPolicy,omitempty"`
+
 	// abortPolicy defines behavior after a failed or unsafe step.
 	// +optional
 	AbortPolicy AbortPolicySpec `json:"abortPolicy,omitempty"`
@@ -161,6 +168,22 @@ type ShutdownFlowMode string
 const (
 	ShutdownFlowModeDryRun  ShutdownFlowMode = "DryRun"
 	ShutdownFlowModeEnforce ShutdownFlowMode = "Enforce"
+)
+
+// ShutdownTierOverrunPolicy controls how a flow handles a tier that runs past
+// the time allocated to it while a lower tier is waiting.
+//
+// Wait is conservative and lets the tier finish. Preempt cancels the tier's
+// action context when its budget expires, so actions that honor context stop and
+// the lower tier may start.
+// +kubebuilder:validation:Enum=Wait;Preempt
+type ShutdownTierOverrunPolicy string
+
+const (
+	// ShutdownTierOverrunWait starts the next tier only after the current tier finishes.
+	ShutdownTierOverrunWait ShutdownTierOverrunPolicy = "Wait"
+	// ShutdownTierOverrunPreempt cancels the current tier when the next tier becomes due.
+	ShutdownTierOverrunPreempt ShutdownTierOverrunPolicy = "Preempt"
 )
 
 // ShutdownTriggerType defines flow trigger semantics.
@@ -395,6 +418,49 @@ type ShutdownExecutionStatus struct {
 	// adaptive is the tier pointer and timing mode this execution ended on.
 	// +optional
 	Adaptive *ShutdownExecutionAdaptiveStatus `json:"adaptive,omitempty"`
+
+	// tierOverruns records tier budget overruns observed during this execution.
+	// The values are facts: which tier overran, the budget it had, how long it
+	// actually took, and what configured policy action was taken.
+	// +optional
+	TierOverruns []ShutdownTierOverrunStatus `json:"tierOverruns,omitempty"`
+}
+
+// ShutdownTierOverrunStatus records one tier transition whose elapsed time
+// exceeded the tier budget derived from the compiled plan.
+type ShutdownTierOverrunStatus struct {
+	// waveIndex is the compiled wave after which the lower tier became due.
+	WaveIndex int32 `json:"waveIndex"`
+
+	// shutdownTier is the tier that overran.
+	// +optional
+	ShutdownTier *int32 `json:"shutdownTier,omitempty"`
+
+	// policy is the configured spec.tierOverrunPolicy used for this overrun.
+	// +optional
+	Policy ShutdownTierOverrunPolicy `json:"policy,omitempty"`
+
+	// action names what the executor did because of that policy.
+	// +optional
+	Action string `json:"action,omitempty"`
+
+	// declaredSeconds is the tier's uncompressed declared duration, rounded up to
+	// a whole second.
+	// +optional
+	DeclaredSeconds int64 `json:"declaredSeconds,omitempty"`
+
+	// effectiveSeconds is the tier budget after adaptive timing compression,
+	// rounded up to a whole second.
+	// +optional
+	EffectiveSeconds int64 `json:"effectiveSeconds,omitempty"`
+
+	// actualSeconds is how long the tier actually ran, rounded up to a whole second.
+	// +optional
+	ActualSeconds int64 `json:"actualSeconds,omitempty"`
+
+	// overrunSeconds is actualSeconds minus effectiveSeconds, rounded up to a whole second.
+	// +optional
+	OverrunSeconds int64 `json:"overrunSeconds,omitempty"`
 }
 
 // ShutdownExecutionAdaptiveStatus publishes where a flow progressed to and how

@@ -102,6 +102,9 @@ func defaultShutdownFlow(obj *powerv1alpha1.ShutdownFlow) {
 	if obj.Spec.ConcurrencyPolicy == "" {
 		obj.Spec.ConcurrencyPolicy = "Forbid"
 	}
+	if obj.Spec.TierOverrunPolicy == "" {
+		obj.Spec.TierOverrunPolicy = powerv1alpha1.ShutdownTierOverrunWait
+	}
 	if obj.Spec.AbortPolicy.Behavior == "" {
 		obj.Spec.AbortPolicy.Behavior = powerv1alpha1.AbortBehaviorHaltAndSurface
 	}
@@ -130,6 +133,7 @@ func validateShutdownFlowAdmission(obj *powerv1alpha1.ShutdownFlow) (admission.W
 	errs = append(errs, validateShutdownSteps(specPath.Child("steps"), obj.Spec.Steps)...)
 	errs = append(errs, validateShutdownHookPolicy(specPath, obj)...)
 	errs = append(errs, validateShutdownConcurrencyPolicy(specPath.Child("concurrencyPolicy"), obj.Spec.ConcurrencyPolicy)...)
+	errs = append(errs, validateShutdownTierOverrunPolicy(specPath.Child("tierOverrunPolicy"), obj.Spec.TierOverrunPolicy)...)
 	errs = append(errs, validateAbortPolicy(specPath.Child("abortPolicy"), obj.Spec.AbortPolicy)...)
 	errs = append(errs, validateFlowSafety(specPath.Child("safety"), obj)...)
 
@@ -371,6 +375,18 @@ func validateShutdownConcurrencyPolicy(path *field.Path, policy string) field.Er
 		return nil
 	default:
 		return field.ErrorList{field.NotSupported(path, policy, []string{"Forbid", "Replace"})}
+	}
+}
+
+func validateShutdownTierOverrunPolicy(path *field.Path, policy powerv1alpha1.ShutdownTierOverrunPolicy) field.ErrorList {
+	switch policy {
+	case "", powerv1alpha1.ShutdownTierOverrunWait, powerv1alpha1.ShutdownTierOverrunPreempt:
+		return nil
+	default:
+		return field.ErrorList{field.NotSupported(path, policy, []string{
+			string(powerv1alpha1.ShutdownTierOverrunWait),
+			string(powerv1alpha1.ShutdownTierOverrunPreempt),
+		})}
 	}
 }
 

@@ -32,6 +32,9 @@ type StructuralInputs struct {
 	Groups            []Group    `json:"groups,omitempty"`
 	Steps             []Step     `json:"steps,omitempty"`
 	AbortBehavior     string     `json:"abortBehavior,omitempty"`
+	// TierOverrunPolicy changes failure-path timing behavior during execution, so it
+	// participates in plan identity even though it does not reorder the compiled waves.
+	TierOverrunPolicy string `json:"tierOverrunPolicy,omitempty"`
 	// DeviceCapabilities carries the resolver's matched capability profiles,
 	// one per UPS device, so trigger definitions can be validated against what
 	// the devices actually report (PL-19). Empty means the caller supplied no

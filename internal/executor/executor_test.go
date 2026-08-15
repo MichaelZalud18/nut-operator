@@ -210,6 +210,130 @@ func TestExecutorRecordsOrderedDryRunEvidence(t *testing.T) {
 	}
 }
 
+func TestExecutorRecordsWaitTierOverrun(t *testing.T) {
+	writer := &fakeAuditWriter{}
+	current := time.Date(2026, 8, 2, 16, 0, 0, 0, time.UTC)
+	tier4 := int32(4)
+	tier3 := int32(3)
+	executor := Executor{
+		Writer: writer,
+		Clock: func() time.Time {
+			return current
+		},
+		NewID: sequenceIDs(),
+		Sleep: func(context.Context, time.Duration) error {
+			current = current.Add(3 * time.Minute)
+			return nil
+		},
+	}
+
+	result, err := executor.Execute(context.Background(), Input{
+		ExecutionID:        "execution-wait-overrun",
+		ObservedAt:         current,
+		ShutdownFlow:       "conserve-power",
+		Mode:               ModeDryRun,
+		PlanConfigHash:     "plan-hash-overrun",
+		TierOverrunPolicy:  TierOverrunPolicyWait,
+		SelectedUPSDevices: []string{"ups-a"},
+		Waves: []Wave{
+			{Index: 0, ShutdownTier: &tier4, Duration: time.Minute, Groups: []string{"tier-4"}},
+			{Index: 1, ShutdownTier: &tier3, Duration: time.Minute, Groups: []string{"tier-3"}},
+		},
+		Groups: []Group{
+			{Name: "tier-4", Action: ActionWait, WaitDuration: 3 * time.Minute},
+			{Name: "tier-3", Action: ActionWait},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Phase != PhaseCompleted {
+		t.Fatalf("expected completed execution, got %#v", result)
+	}
+	if len(result.TierOverruns) != 1 {
+		t.Fatalf("expected one tier overrun, got %#v", result.TierOverruns)
+	}
+	overrun := result.TierOverruns[0]
+	if overrun.Policy != TierOverrunPolicyWait || overrun.Action != TierOverrunActionWaited {
+		t.Fatalf("unexpected overrun policy/action: %#v", overrun)
+	}
+	if overrun.ShutdownTier == nil || *overrun.ShutdownTier != tier4 {
+		t.Fatalf("expected tier 4 overrun, got %#v", overrun.ShutdownTier)
+	}
+	if overrun.DeclaredDuration != time.Minute || overrun.EffectiveDuration != time.Minute || overrun.ActualDuration != 3*time.Minute || overrun.OverrunDuration != 2*time.Minute {
+		t.Fatalf("unexpected overrun durations: %#v", overrun)
+	}
+	if len(writer.waves) < 2 {
+		t.Fatalf("expected wave records, got %#v", writer.waves)
+	}
+	details, ok := writer.waves[1].Details["tierOverrun"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected completed wave to record tierOverrun details: %#v", writer.waves[1].Details)
+	}
+	if details["policy"] != TierOverrunPolicyWait || details["action"] != TierOverrunActionWaited {
+		t.Fatalf("unexpected overrun details: %#v", details)
+	}
+}
+
+func TestExecutorPreemptsTierOverrunAndContinuesLowerTier(t *testing.T) {
+	writer := &fakeAuditWriter{}
+	current := time.Now().UTC().Add(25 * time.Millisecond)
+	tier4 := int32(4)
+	tier3 := int32(3)
+	executor := Executor{
+		Writer: writer,
+		Clock: func() time.Time {
+			return current
+		},
+		NewID: sequenceIDs(),
+		Sleep: func(ctx context.Context, _ time.Duration) error {
+			<-ctx.Done()
+			current = current.Add(3 * time.Second)
+			return ctx.Err()
+		},
+	}
+
+	result, err := executor.Execute(context.Background(), Input{
+		ExecutionID:        "execution-preempt-overrun",
+		ObservedAt:         current,
+		ShutdownFlow:       "conserve-power",
+		Mode:               ModeDryRun,
+		PlanConfigHash:     "plan-hash-preempt",
+		TierOverrunPolicy:  TierOverrunPolicyPreempt,
+		SelectedUPSDevices: []string{"ups-a"},
+		Waves: []Wave{
+			{Index: 0, ShutdownTier: &tier4, Duration: time.Millisecond, Groups: []string{"tier-4"}},
+			{Index: 1, ShutdownTier: &tier3, Duration: time.Millisecond, Groups: []string{"tier-3"}},
+		},
+		Groups: []Group{
+			{Name: "tier-4", Action: ActionWait, WaitDuration: time.Hour},
+			{Name: "tier-3", Action: ActionWait},
+		},
+	})
+	if err != nil {
+		t.Fatalf("preempted tier should not abort the whole flow: %v", err)
+	}
+	if result.Phase != PhaseCompleted || result.Groups != 2 {
+		t.Fatalf("expected completed flow with both tier records, got %#v", result)
+	}
+	if len(result.TierOverruns) != 1 {
+		t.Fatalf("expected one tier overrun, got %#v", result.TierOverruns)
+	}
+	overrun := result.TierOverruns[0]
+	if overrun.Policy != TierOverrunPolicyPreempt || overrun.Action != TierOverrunActionPreempted {
+		t.Fatalf("unexpected preempt overrun: %#v", overrun)
+	}
+	if overrun.OverrunDuration <= 0 {
+		t.Fatalf("expected positive overrun, got %#v", overrun)
+	}
+	if gotPhases := wavePhases(writer.waves); fmt.Sprint(gotPhases) != "[0:Running 0:Aborted 1:Running 1:Completed]" {
+		t.Fatalf("unexpected wave phases: %#v", gotPhases)
+	}
+	if writer.groups[0].Phase != PhaseFailed || writer.actionAttempts[0].Outcome != OutcomeBlocked {
+		t.Fatalf("expected preempted wait group to record failure/block, got group=%#v attempt=%#v", writer.groups[0], writer.actionAttempts[0])
+	}
+}
+
 func TestExecutorRejectsUnknownWaveGroup(t *testing.T) {
 	executor := Executor{Writer: &fakeAuditWriter{}, NewID: sequenceIDs()}
 	_, err := executor.Execute(context.Background(), Input{

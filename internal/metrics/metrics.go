@@ -22,7 +22,8 @@ limitations under the License.
 //
 // Labels are kept low-cardinality by construction: "shutdownflow" is bounded by the number of
 // ShutdownFlow objects in the cluster (a handful, by design -- this operator orchestrates whole-cluster
-// shutdown, not per-workload policies), and "action"/"mode"/"outcome"/"result" are all bounded enums.
+// shutdown, not per-workload policies), and "action"/"mode"/"outcome"/"policy"/"result" are all
+// bounded enums.
 package metrics
 
 import (
@@ -89,6 +90,27 @@ var (
 		Help:      "Time spent recording one ShutdownFlow wave-execution run.",
 		Buckets:   prometheus.DefBuckets,
 	}, []string{"shutdownflow", "mode"})
+
+	// ShutdownFlowTierOverrunsTotal counts tier transitions whose observed elapsed time exceeded the
+	// effective tier budget. Labels say which tier overran, the configured policy, and the action the
+	// executor took.
+	ShutdownFlowTierOverrunsTotal = promauto.With(metrics.Registry).NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "shutdownflow",
+		Name:      "tier_overruns_total",
+		Help:      "Total tier budget overruns observed during ShutdownFlow execution.",
+	}, []string{"shutdownflow", "tier", "policy", "action"})
+
+	// ShutdownFlowTierOverrunSeconds records the amount of time by which a tier exceeded its effective
+	// budget. The labels match ShutdownFlowTierOverrunsTotal so a scrape can answer both "what
+	// happened" and "by how much".
+	ShutdownFlowTierOverrunSeconds = promauto.With(metrics.Registry).NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Subsystem: "shutdownflow",
+		Name:      "tier_overrun_seconds",
+		Help:      "Seconds by which a ShutdownFlow tier exceeded its effective timing budget.",
+		Buckets:   prometheus.DefBuckets,
+	}, []string{"shutdownflow", "tier", "policy", "action"})
 
 	// ActuatorActionAttemptsTotal counts every internal/kubeactions.Runner.RunAction call -- the single
 	// choke point every executor action (real or dry-run) passes through -- by action type, mode, and

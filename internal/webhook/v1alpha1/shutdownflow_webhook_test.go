@@ -51,6 +51,7 @@ var _ = Describe("ShutdownFlow Webhook", func() {
 
 			Expect(obj.Spec.Mode).To(Equal(powerv1alpha1.ShutdownFlowModeDryRun))
 			Expect(obj.Spec.ConcurrencyPolicy).To(Equal("Forbid"))
+			Expect(obj.Spec.TierOverrunPolicy).To(Equal(powerv1alpha1.ShutdownTierOverrunWait))
 			Expect(obj.Spec.AbortPolicy.Behavior).To(Equal(powerv1alpha1.AbortBehaviorHaltAndSurface))
 			Expect(*obj.Spec.AbortPolicy.Notify).To(BeTrue())
 			Expect(*obj.Spec.Safety.RequireManualApproval).To(BeTrue())
@@ -77,6 +78,23 @@ var _ = Describe("ShutdownFlow Webhook", func() {
 
 			_, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should admit preempt tier-overrun policy", func() {
+			obj.Spec = validShutdownFlowSpec()
+			obj.Spec.TierOverrunPolicy = powerv1alpha1.ShutdownTierOverrunPreempt
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should reject an unsupported tier-overrun policy", func() {
+			obj.Spec = validShutdownFlowSpec()
+			obj.Spec.TierOverrunPolicy = powerv1alpha1.ShutdownTierOverrunPolicy("Overlap")
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("tierOverrunPolicy"))
 		})
 
 		It("Should reject a trigger fallback that is not coarser", func() {
@@ -196,6 +214,7 @@ func validShutdownFlowSpec() powerv1alpha1.ShutdownFlowSpec {
 			},
 		},
 		ConcurrencyPolicy: "Forbid",
+		TierOverrunPolicy: powerv1alpha1.ShutdownTierOverrunWait,
 		AbortPolicy: powerv1alpha1.AbortPolicySpec{
 			Behavior: powerv1alpha1.AbortBehaviorHaltAndSurface,
 			Notify:   ptrBool(true),

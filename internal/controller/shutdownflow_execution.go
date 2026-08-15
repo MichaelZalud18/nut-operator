@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -103,6 +104,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		executionMode = "DryRun"
 	}
 	metrics.ShutdownFlowExecutionDurationSeconds.WithLabelValues(flow.Name, executionMode).Observe(time.Since(executeStart).Seconds())
+	recordTierOverrunMetrics(flow.Name, result.TierOverruns)
 	completedAt := metav1.NewTime(r.now())
 	status := &powerv1alpha1.ShutdownExecutionStatus{
 		ExecutionID:        result.ExecutionID,
@@ -121,6 +123,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		NodeReleaseCount:   int32(result.NodeReleases),
 		Reason:             evaluation.Reason,
 		Adaptive:           adaptiveStatusFromResult(result.Adaptive),
+		TierOverruns:       tierOverrunStatusFromResult(result.TierOverruns),
 	}
 	if err != nil {
 		status.Message = err.Error()
@@ -199,6 +202,7 @@ func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flo
 		Approved:           effectiveShutdownFlowMode(flow.Spec.Mode) == powerv1alpha1.ShutdownFlowModeEnforce,
 		DryRun:             effectiveShutdownFlowMode(flow.Spec.Mode) != powerv1alpha1.ShutdownFlowModeEnforce,
 		SelectedUPSDevices: append([]string(nil), evaluation.SelectedUPSDevices...),
+		TierOverrunPolicy:  string(effectiveShutdownTierOverrunPolicy(flow.Spec.TierOverrunPolicy)),
 		Waves:              waves,
 		Groups:             groups,
 		Adaptive:           adaptiveInputForFlow(flow, bundle, observation),
@@ -324,6 +328,14 @@ func durationOrZero(duration *metav1.Duration) time.Duration {
 	return duration.Duration
 }
 
+func copyInt32Ptr(value *int32) *int32 {
+	if value == nil {
+		return nil
+	}
+	out := *value
+	return &out
+}
+
 // waitDurationFromParams reads a group's Wait duration.
 //
 // Groups carry only string parameters, so the value is parsed here and a
@@ -373,6 +385,59 @@ func withholdBlockedNodeReleases(releases []executorpkg.NodeRelease, blocked map
 		kept = append(kept, release)
 	}
 	return kept
+}
+
+func effectiveShutdownTierOverrunPolicy(policy powerv1alpha1.ShutdownTierOverrunPolicy) powerv1alpha1.ShutdownTierOverrunPolicy {
+	if policy == "" {
+		return powerv1alpha1.ShutdownTierOverrunWait
+	}
+	return policy
+}
+
+func tierOverrunStatusFromResult(overruns []executorpkg.TierOverrun) []powerv1alpha1.ShutdownTierOverrunStatus {
+	if len(overruns) == 0 {
+		return nil
+	}
+	statuses := make([]powerv1alpha1.ShutdownTierOverrunStatus, 0, len(overruns))
+	for _, overrun := range overruns {
+		statuses = append(statuses, powerv1alpha1.ShutdownTierOverrunStatus{
+			WaveIndex:        overrun.WaveIndex,
+			ShutdownTier:     copyInt32Ptr(overrun.ShutdownTier),
+			Policy:           powerv1alpha1.ShutdownTierOverrunPolicy(overrun.Policy),
+			Action:           overrun.Action,
+			DeclaredSeconds:  durationStatusSeconds(overrun.DeclaredDuration),
+			EffectiveSeconds: durationStatusSeconds(overrun.EffectiveDuration),
+			ActualSeconds:    durationStatusSeconds(overrun.ActualDuration),
+			OverrunSeconds:   durationStatusSeconds(overrun.OverrunDuration),
+		})
+	}
+	return statuses
+}
+
+func durationStatusSeconds(duration time.Duration) int64 {
+	if duration <= 0 {
+		return 0
+	}
+	seconds := duration / time.Second
+	if duration%time.Second != 0 {
+		seconds++
+	}
+	return int64(seconds)
+}
+
+func recordTierOverrunMetrics(flowName string, overruns []executorpkg.TierOverrun) {
+	for _, overrun := range overruns {
+		tier := tierOverrunTierLabel(overrun.ShutdownTier)
+		metrics.ShutdownFlowTierOverrunsTotal.WithLabelValues(flowName, tier, overrun.Policy, overrun.Action).Inc()
+		metrics.ShutdownFlowTierOverrunSeconds.WithLabelValues(flowName, tier, overrun.Policy, overrun.Action).Observe(overrun.OverrunDuration.Seconds())
+	}
+}
+
+func tierOverrunTierLabel(tier *int32) string {
+	if tier == nil {
+		return "untiered"
+	}
+	return strconv.FormatInt(int64(*tier), 10)
 }
 
 func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, target powerv1alpha1.ShutdownStepTarget) ([]executorpkg.NodeRelease, error) {

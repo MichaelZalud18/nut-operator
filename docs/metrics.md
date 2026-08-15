@@ -32,6 +32,8 @@ policy engine.
 | `degraded` | Gauge | `shutdownflow` | Mirrors the `Degraded` status condition (1/0), so it can be alerted on directly. |
 | `tier_inversions` | Gauge | `shutdownflow` | Nodes currently withheld from power-off because a lower-tier group runs on them (`OD-18`). Published on every compile including zero, so the series exists before the first inversion. Inversion develops as workloads reschedule, so a compile-time diagnostic alone misses it. |
 | `execution_duration_seconds` | Histogram | `shutdownflow`, `mode` (`DryRun`/`Enforce`) | Time spent recording one wave-execution run (`internal/executor.Executor.Execute`). |
+| `tier_overruns_total` | Counter | `shutdownflow`, `tier`, `policy`, `action` | Tier transitions whose observed elapsed time exceeded the effective tier budget (`EX-31`). `policy` is `Wait` or `Preempt`; `action` records what the executor did. |
+| `tier_overrun_seconds` | Histogram | `shutdownflow`, `tier`, `policy`, `action` | Seconds by which an overrun tier exceeded its effective budget (`EX-31`). Same labels as `tier_overruns_total`, so the count and amount describe the same event stream. |
 | `publish_timestamp_seconds` | Gauge | `shutdownflow` | When this flow's state was last republished, as a Unix timestamp — the EX-29 cadence heartbeat. Refreshed every reconcile whether or not anything changed, on a cadence that is faster while a flow is active. |
 
 ## `nutoperator_actuator_*`

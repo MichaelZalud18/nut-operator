@@ -662,6 +662,15 @@ spec:
                   - type
                   type: object
                 type: array
+              tierOverrunPolicy:
+                default: Wait
+                description: |-
+                  tierOverrunPolicy controls what the executor does when a tier reaches its
+                  compiled duration while a lower tier is waiting behind it.
+                enum:
+                - Wait
+                - Preempt
+                type: string
               triggers:
                 description: triggers define when this flow becomes eligible.
                 items:
@@ -1082,6 +1091,62 @@ spec:
                       began.
                     format: date-time
                     type: string
+                  tierOverruns:
+                    description: |-
+                      tierOverruns records tier budget overruns observed during this execution.
+                      The values are facts: which tier overran, the budget it had, how long it
+                      actually took, and what configured policy action was taken.
+                    items:
+                      description: |-
+                        ShutdownTierOverrunStatus records one tier transition whose elapsed time
+                        exceeded the tier budget derived from the compiled plan.
+                      properties:
+                        action:
+                          description: action names what the executor did because
+                            of that policy.
+                          type: string
+                        actualSeconds:
+                          description: actualSeconds is how long the tier actually
+                            ran, rounded up to a whole second.
+                          format: int64
+                          type: integer
+                        declaredSeconds:
+                          description: |-
+                            declaredSeconds is the tier's uncompressed declared duration, rounded up to
+                            a whole second.
+                          format: int64
+                          type: integer
+                        effectiveSeconds:
+                          description: |-
+                            effectiveSeconds is the tier budget after adaptive timing compression,
+                            rounded up to a whole second.
+                          format: int64
+                          type: integer
+                        overrunSeconds:
+                          description: overrunSeconds is actualSeconds minus effectiveSeconds,
+                            rounded up to a whole second.
+                          format: int64
+                          type: integer
+                        policy:
+                          description: policy is the configured spec.tierOverrunPolicy
+                            used for this overrun.
+                          enum:
+                          - Wait
+                          - Preempt
+                          type: string
+                        shutdownTier:
+                          description: shutdownTier is the tier that overran.
+                          format: int32
+                          type: integer
+                        waveIndex:
+                          description: waveIndex is the compiled wave after which
+                            the lower tier became due.
+                          format: int32
+                          type: integer
+                      required:
+                      - waveIndex
+                      type: object
+                    type: array
                   triggerActive:
                     description: triggerActive is true while the trigger episode represented
                       by deduplicationKey remains eligible.

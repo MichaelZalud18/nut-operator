@@ -157,12 +157,13 @@ func PlannerInputs(obj *powerv1alpha1.ShutdownFlow) planner.StructuralInputs {
 func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec) planner.StructuralInputs {
 	plannerTierPolicy := PlannerTierPolicy(tierPolicy)
 	inputs := planner.StructuralInputs{
-		SourceID:      fmt.Sprintf("%s/ShutdownFlow/%s", powerv1alpha1.GroupVersion.String(), obj.Name),
-		TierPolicy:    plannerTierPolicy,
-		AbortBehavior: string(obj.Spec.AbortPolicy.Behavior),
-		Triggers:      make([]planner.Trigger, 0, len(obj.Spec.Triggers)),
-		Groups:        make([]planner.Group, 0, len(obj.Spec.Groups)),
-		Steps:         make([]planner.Step, 0, len(obj.Spec.Steps)),
+		SourceID:          fmt.Sprintf("%s/ShutdownFlow/%s", powerv1alpha1.GroupVersion.String(), obj.Name),
+		TierPolicy:        plannerTierPolicy,
+		AbortBehavior:     string(obj.Spec.AbortPolicy.Behavior),
+		TierOverrunPolicy: string(effectiveTierOverrunPolicy(obj.Spec.TierOverrunPolicy)),
+		Triggers:          make([]planner.Trigger, 0, len(obj.Spec.Triggers)),
+		Groups:            make([]planner.Group, 0, len(obj.Spec.Groups)),
+		Steps:             make([]planner.Step, 0, len(obj.Spec.Steps)),
 	}
 
 	for _, trigger := range obj.Spec.Triggers {
@@ -208,6 +209,13 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 	}
 
 	return inputs
+}
+
+func effectiveTierOverrunPolicy(policy powerv1alpha1.ShutdownTierOverrunPolicy) powerv1alpha1.ShutdownTierOverrunPolicy {
+	if policy == "" {
+		return powerv1alpha1.ShutdownTierOverrunWait
+	}
+	return policy
 }
 
 // PlannerHookReference converts a Kubernetes hook reference into planner input.

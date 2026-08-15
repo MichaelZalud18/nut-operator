@@ -53,6 +53,13 @@ const (
 	// because its duration is exactly the class of value timing adaptation scales.
 	ActionWait = "Wait"
 
+	TierOverrunPolicyWait    = "Wait"
+	TierOverrunPolicyPreempt = "Preempt"
+
+	TierOverrunActionWaited                 = "Waited"
+	TierOverrunActionPreempted              = "Preempted"
+	TierOverrunActionPreemptDeadlineElapsed = "PreemptDeadlineElapsed"
+
 	DefaultSignalPath = "/run/power-agent/shutdown.json"
 	DefaultSignalTTL  = 2 * time.Minute
 )
@@ -88,6 +95,7 @@ type Input struct {
 	DryRun             bool
 	SelectedUPSDevices []string
 	SignalTTL          time.Duration
+	TierOverrunPolicy  string
 	Waves              []Wave
 	Groups             []Group
 
@@ -226,10 +234,30 @@ type Result struct {
 	Degraded        bool
 	DegradedReason  string
 	DegradedMessage string
+	TierOverruns    []TierOverrun
 
 	// Adaptive is the pointer and timing state the run ended on, for the caller to
 	// persist and publish.
 	Adaptive AdaptiveResult
+}
+
+// TierOverrun records one tier transition that exceeded its compiled timing budget.
+type TierOverrun struct {
+	WaveIndex         int32
+	ShutdownTier      *int32
+	Policy            string
+	Action            string
+	DeclaredDuration  time.Duration
+	EffectiveDuration time.Duration
+	ActualDuration    time.Duration
+	OverrunDuration   time.Duration
+}
+
+type tierOverrunWindow struct {
+	ShutdownTier      *int32
+	StartedAt         time.Time
+	DeclaredDuration  time.Duration
+	EffectiveDuration time.Duration
 }
 
 // Execute records the execution in compiled wave order.
@@ -310,6 +338,8 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	}))
 
 	adaptiveInput := input.Adaptive
+	tierPolicy := effectiveTierOverrunPolicy(input.TierOverrunPolicy)
+	var tierWindow tierOverrunWindow
 	for waveIndex, wave := range input.Waves {
 		// Evaluated at wave boundaries only, never inside one: adaptation may change
 		// timings but never wave order or membership, which are hashed into plan
@@ -326,6 +356,21 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		result.Adaptive = adaptiveResultFrom(result.Adaptive, waveState)
 
 		waveStart := e.now()
+		if !sameInt32Ptr(tierWindow.ShutdownTier, wave.ShutdownTier) {
+			tierWindow = tierOverrunWindow{
+				ShutdownTier: copyInt32Ptr(wave.ShutdownTier),
+				StartedAt:    waveStart,
+			}
+		}
+		effectiveWaveDuration := adaptive.ScaleDuration(wave.Duration, waveState.Budget)
+		tierWindow.DeclaredDuration += wave.Duration
+		tierWindow.EffectiveDuration += effectiveWaveDuration
+		lowerTierDue := lowerTierDueAfter(input.Waves, waveIndex)
+		actionCtx := ctx
+		var cancelActionCtx context.CancelFunc
+		if tierPolicy == TierOverrunPolicyPreempt && lowerTierDue && tierWindow.EffectiveDuration > 0 {
+			actionCtx, cancelActionCtx = context.WithDeadline(ctx, tierWindow.StartedAt.Add(tierWindow.EffectiveDuration))
+		}
 		waveRecordID := e.newID()
 		currentWave := wave.Index
 		recordErr = errors.Join(recordErr, writer.UpsertExecutorResumeState(ctx, audit.ExecutorResumeState{
@@ -354,9 +399,10 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			}),
 		}))
 
+		preempted := false
 		for _, groupName := range wave.Groups {
 			group := groups[groupName]
-			groupResult, groupErr := e.executeGroup(ctx, writer, input, executionID, mode, dryRun, wave.Index, group, waveState)
+			groupResult, groupErr := e.executeGroup(ctx, actionCtx, writer, input, executionID, mode, dryRun, wave.Index, group, waveState)
 			result.Groups++
 			result.ActionAttempts += groupResult.ActionAttempts
 			result.NodeReleases += groupResult.NodeReleases
@@ -369,6 +415,13 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			}
 			recordErr = errors.Join(recordErr, groupResult.RecordError)
 			if groupErr != nil {
+				if tierPreempted(ctx, actionCtx, tierPolicy, lowerTierDue) {
+					preempted = true
+					break
+				}
+				if cancelActionCtx != nil {
+					cancelActionCtx()
+				}
 				result.Phase = PhaseAborted
 				completedAt := e.now()
 				recordErr = errors.Join(recordErr, writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
@@ -391,25 +444,58 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 				}))
 				return result, errors.Join(groupErr, recordErr)
 			}
+			if tierPreempted(ctx, actionCtx, tierPolicy, lowerTierDue) {
+				preempted = true
+				break
+			}
+		}
+		if cancelActionCtx != nil {
+			cancelActionCtx()
 		}
 
 		waveCompletedAt := e.now()
+		wavePhase := PhaseCompleted
+		if preempted {
+			wavePhase = PhaseAborted
+		}
+		waveDetails := mergeDetails(adaptiveStateRecord(waveState), map[string]any{
+			"dryRun":                dryRun,
+			"tierOverrunPolicy":     tierPolicy,
+			"declaredTierSeconds":   durationSeconds(tierWindow.DeclaredDuration),
+			"effectiveTierSeconds":  durationSeconds(tierWindow.EffectiveDuration),
+			"tierTransitionPending": lowerTierDue,
+		})
+		if overrun := tierOverrunRecord(wave, tierWindow, tierPolicy, tierOverrunAction(tierPolicy, preempted), lowerTierDue, waveCompletedAt); overrun != nil {
+			result.TierOverruns = append(result.TierOverruns, *overrun)
+			waveDetails["tierOverrun"] = tierOverrunDetails(*overrun)
+		}
 		recordErr = errors.Join(recordErr, writer.RecordShutdownFlowExecutionWave(ctx, audit.ShutdownFlowExecutionWave{
 			WaveRecordID: waveRecordID,
 			ExecutionID:  executionID,
 			ObservedAt:   waveCompletedAt,
 			WaveIndex:    wave.Index,
-			Phase:        PhaseCompleted,
+			Phase:        wavePhase,
 			StartedAt:    &waveStart,
 			CompletedAt:  &waveCompletedAt,
 			GroupNames:   append([]string(nil), wave.Groups...),
-			Details: mergeDetails(adaptiveStateRecord(waveState), map[string]any{
-				"dryRun": dryRun,
-			}),
+			Details:      waveDetails,
 		}))
+		if lowerTierDue {
+			tierWindow = tierOverrunWindow{}
+		}
 	}
 
 	completedAt := e.now()
+	executionDetails := map[string]any{
+		"selectedUPSDevices": append([]string(nil), input.SelectedUPSDevices...),
+		"waveCount":          len(input.Waves),
+		"groupCount":         result.Groups,
+		"actionAttempts":     result.ActionAttempts,
+		"nodeReleases":       result.NodeReleases,
+	}
+	if len(result.TierOverruns) > 0 {
+		executionDetails["tierOverruns"] = tierOverrunListDetails(result.TierOverruns)
+	}
 	recordErr = errors.Join(recordErr, writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
 		ExecutionID:       executionID,
 		ObservedAt:        completedAt,
@@ -426,27 +512,106 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		Approved:          input.Approved,
 		ApprovalEvidence:  map[string]any{"approved": input.Approved, "requestedMode": mode, "effectiveDryRun": dryRun},
 		Revalidation:      map[string]any{"inputHash": input.InputHash},
-		Details: map[string]any{
-			"selectedUPSDevices": append([]string(nil), input.SelectedUPSDevices...),
-			"waveCount":          len(input.Waves),
-			"groupCount":         result.Groups,
-			"actionAttempts":     result.ActionAttempts,
-			"nodeReleases":       result.NodeReleases,
-		},
+		Details:           executionDetails,
 	}))
+	resumeState := map[string]any{
+		"completedWaveCount": len(input.Waves),
+		"groupCount":         result.Groups,
+	}
+	if len(result.TierOverruns) > 0 {
+		resumeState["tierOverruns"] = tierOverrunListDetails(result.TierOverruns)
+	}
 	recordErr = errors.Join(recordErr, writer.UpsertExecutorResumeState(ctx, audit.ExecutorResumeState{
 		ExecutionID:    executionID,
 		ObservedAt:     completedAt,
 		ShutdownFlow:   input.ShutdownFlow,
 		PlanConfigHash: input.PlanConfigHash,
 		Phase:          PhaseCompleted,
-		State: mergeDetails(finalAdaptiveStateRecord(result.Adaptive), map[string]any{
-			"completedWaveCount": len(input.Waves),
-			"groupCount":         result.Groups,
-		}),
+		State:          mergeDetails(finalAdaptiveStateRecord(result.Adaptive), resumeState),
 	}))
 
 	return result, recordErr
+}
+
+func effectiveTierOverrunPolicy(policy string) string {
+	if policy == "" {
+		return TierOverrunPolicyWait
+	}
+	return policy
+}
+
+func lowerTierDueAfter(waves []Wave, index int) bool {
+	if index+1 >= len(waves) {
+		return false
+	}
+	current := waves[index].ShutdownTier
+	next := waves[index+1].ShutdownTier
+	if current == nil || next == nil {
+		return false
+	}
+	return *next < *current
+}
+
+func tierPreempted(parentCtx, actionCtx context.Context, policy string, lowerTierDue bool) bool {
+	return policy == TierOverrunPolicyPreempt &&
+		lowerTierDue &&
+		parentCtx.Err() == nil &&
+		errors.Is(actionCtx.Err(), context.DeadlineExceeded)
+}
+
+func tierOverrunAction(policy string, preempted bool) string {
+	if policy == TierOverrunPolicyPreempt {
+		if preempted {
+			return TierOverrunActionPreempted
+		}
+		return TierOverrunActionPreemptDeadlineElapsed
+	}
+	return TierOverrunActionWaited
+}
+
+func tierOverrunRecord(wave Wave, window tierOverrunWindow, policy, action string, lowerTierDue bool, completedAt time.Time) *TierOverrun {
+	if !lowerTierDue || window.EffectiveDuration <= 0 || window.StartedAt.IsZero() {
+		return nil
+	}
+	actual := completedAt.Sub(window.StartedAt)
+	overrun := actual - window.EffectiveDuration
+	if overrun <= 0 {
+		return nil
+	}
+	return &TierOverrun{
+		WaveIndex:         wave.Index,
+		ShutdownTier:      copyInt32Ptr(window.ShutdownTier),
+		Policy:            policy,
+		Action:            action,
+		DeclaredDuration:  window.DeclaredDuration,
+		EffectiveDuration: window.EffectiveDuration,
+		ActualDuration:    actual,
+		OverrunDuration:   overrun,
+	}
+}
+
+func tierOverrunDetails(overrun TierOverrun) map[string]any {
+	return map[string]any{
+		"waveIndex":        overrun.WaveIndex,
+		"shutdownTier":     int32PtrValue(overrun.ShutdownTier),
+		"policy":           overrun.Policy,
+		"action":           overrun.Action,
+		"declaredSeconds":  durationSeconds(overrun.DeclaredDuration),
+		"effectiveSeconds": durationSeconds(overrun.EffectiveDuration),
+		"actualSeconds":    durationSeconds(overrun.ActualDuration),
+		"overrunSeconds":   durationSeconds(overrun.OverrunDuration),
+	}
+}
+
+func tierOverrunListDetails(overruns []TierOverrun) []map[string]any {
+	if len(overruns) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(overruns))
+	for _, overrun := range overruns {
+		out = append(out, tierOverrunDetails(overrun))
+	}
+	return out
 }
 
 // adaptiveResultFrom accumulates the running adaptive result across waves. Events
@@ -480,7 +645,7 @@ type groupExecutionResult struct {
 	DegradedMessage string
 }
 
-func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input Input, executionID, mode string, dryRun bool, waveIndex int32, group Group, waveState waveAdaptiveState) (groupExecutionResult, error) {
+func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audit.Writer, input Input, executionID, mode string, dryRun bool, waveIndex int32, group Group, waveState waveAdaptiveState) (groupExecutionResult, error) {
 	timingMode := waveState.Mode
 	effectiveTimeout := adaptive.ScaleDuration(group.Timeout, waveState.Budget)
 	effectiveWait := adaptive.ScaleDuration(group.WaitDuration, waveState.Budget)
@@ -510,7 +675,7 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 	// reports a flow duration the real run will not reproduce -- which is the number
 	// an operator is rehearsing to find out.
 	if group.Action == ActionWait && actionErr == nil && effectiveWait > 0 {
-		if waitErr := e.sleep(ctx, effectiveWait); waitErr != nil {
+		if waitErr := e.sleep(actionCtx, effectiveWait); waitErr != nil {
 			actionErr = fmt.Errorf("wait group %q interrupted: %w", group.Name, waitErr)
 			outcome = ActionOutcome{Outcome: OutcomeBlocked, Error: actionErr.Error()}
 		} else {
@@ -529,12 +694,12 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 		} else {
 			// EX-11: the declared timeout is enforced as written, and expiry is a group
 			// failure that engages abort policy rather than an implicit success.
-			actionCtx := ctx
+			groupCtx := actionCtx
 			var cancel context.CancelFunc
 			if effectiveTimeout > 0 {
-				actionCtx, cancel = context.WithTimeout(ctx, effectiveTimeout)
+				groupCtx, cancel = context.WithTimeout(actionCtx, effectiveTimeout)
 			}
-			outcome, actionErr = e.Runner.RunAction(actionCtx, Action{
+			outcome, actionErr = e.Runner.RunAction(groupCtx, Action{
 				ExecutionID:        executionID,
 				ShutdownFlow:       input.ShutdownFlow,
 				TriggerReason:      input.Reason,
@@ -550,7 +715,7 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 					RuntimeTrusted: waveState.Observation.RuntimeTrusted,
 				},
 			})
-			timedOut := effectiveTimeout > 0 && actionCtx.Err() != nil && ctx.Err() == nil
+			timedOut := effectiveTimeout > 0 && groupCtx.Err() != nil && actionCtx.Err() == nil
 			if cancel != nil {
 				cancel()
 			}
@@ -579,7 +744,7 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 	if actionErr != nil {
 		phase = PhaseFailed
 	}
-	recordErr := writer.RecordShutdownFlowExecutionGroup(ctx, audit.ShutdownFlowExecutionGroup{
+	recordErr := writer.RecordShutdownFlowExecutionGroup(recordCtx, audit.ShutdownFlowExecutionGroup{
 		GroupRecordID:   e.newID(),
 		ExecutionID:     executionID,
 		ObservedAt:      completedAt,
@@ -606,7 +771,7 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 			"effectiveWait":    durationSeconds(effectiveWait),
 		}),
 	})
-	recordErr = errors.Join(recordErr, writer.RecordShutdownFlowActionAttempt(ctx, audit.ShutdownFlowActionAttempt{
+	recordErr = errors.Join(recordErr, writer.RecordShutdownFlowActionAttempt(recordCtx, audit.ShutdownFlowActionAttempt{
 		AttemptID:   e.newID(),
 		ExecutionID: executionID,
 		ObservedAt:  completedAt,
@@ -625,7 +790,7 @@ func (e Executor) executeGroup(ctx context.Context, writer audit.Writer, input I
 
 	result := groupExecutionResult{ActionAttempts: 1, RecordError: recordErr}
 	if group.Action == ActionAgentShutdown {
-		releaseCount, releaseErr := e.recordNodeReleases(ctx, writer, input, executionID, dryRun, group, completedAt)
+		releaseCount, releaseErr := e.recordNodeReleases(recordCtx, writer, input, executionID, dryRun, group, completedAt)
 		result.NodeReleases = releaseCount
 		result.RecordError = errors.Join(result.RecordError, releaseErr)
 	}
@@ -901,6 +1066,28 @@ func copyInt64Ptr(value *int64) *int64 {
 	}
 	out := *value
 	return &out
+}
+
+func copyInt32Ptr(value *int32) *int32 {
+	if value == nil {
+		return nil
+	}
+	out := *value
+	return &out
+}
+
+func sameInt32Ptr(left, right *int32) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
+}
+
+func int32PtrValue(value *int32) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func mergeDetails(base map[string]any, extra map[string]any) map[string]any {

@@ -87,6 +87,16 @@ func TestShutdownFlowExecutionDurationSecondsRecordsObservations(t *testing.T) {
 	}
 }
 
+func TestShutdownFlowTierOverrunMetricsRecordOccurrencesAndSeconds(t *testing.T) {
+	before := testutil.ToFloat64(ShutdownFlowTierOverrunsTotal.WithLabelValues("test-metrics-flow-overrun", "4", "Wait", "Waited"))
+	ShutdownFlowTierOverrunsTotal.WithLabelValues("test-metrics-flow-overrun", "4", "Wait", "Waited").Inc()
+	ShutdownFlowTierOverrunSeconds.WithLabelValues("test-metrics-flow-overrun", "4", "Wait", "Waited").Observe(2.5)
+	after := testutil.ToFloat64(ShutdownFlowTierOverrunsTotal.WithLabelValues("test-metrics-flow-overrun", "4", "Wait", "Waited"))
+	if after != before+1 {
+		t.Fatalf("ShutdownFlowTierOverrunsTotal did not increment: before=%v after=%v", before, after)
+	}
+}
+
 func TestActuatorActionAttemptsTotalCountsByLabelSet(t *testing.T) {
 	before := testutil.ToFloat64(ActuatorActionAttemptsTotal.WithLabelValues("ScaleWorkload", "DryRun", "Simulated"))
 	ActuatorActionAttemptsTotal.WithLabelValues("ScaleWorkload", "DryRun", "Simulated").Inc()

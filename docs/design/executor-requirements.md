@@ -288,6 +288,10 @@ The executor does not decide that. `spec.tierOverrunPolicy` on the flow selects:
   budget. The author is stating that tier 3's work matters more than tier 4 finishing cleanly, which
   is a judgement only they can make.
 
+Implementation status: `Wait` and context-driven `Preempt` are built in `v1alpha1`.
+`Overlap` remains open until the executor grows a scheduler that can run a lower tier while a higher
+tier continues, without converting `ShutdownFlow` into a general workflow engine.
+
 `Preempt` is the reason this is a policy rather than a heuristic. Stopping a running group to protect
 a deeper tier's budget trades one workload's clean shutdown for another's, and nothing the operator
 can observe tells it which trade is right. Deciding that from a timer would be exactly the enforcement
