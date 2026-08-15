@@ -24,6 +24,7 @@ namespace="nut-operator-system"
 service="nut-operator-webhook-service"
 secret="webhook-server-cert"
 ca_secret="nut-operator-webhook-ca"
+deployment="nut-operator-controller-manager"
 mutating="nut-operator-mutating-webhook-configuration"
 validating="nut-operator-validating-webhook-configuration"
 ca_days=3650
@@ -133,6 +134,14 @@ if [[ -z "$ca_cert_file" ]]; then
   echo "CA stored in secret ${namespace}/${ca_secret}"
 fi
 
+# Recorded before the apply below, because what happens afterwards depends on which case this is.
+# Rotation is picked up in place by the manager's certwatcher; first provisioning is not, and the
+# difference is invisible once the Secret exists.
+serving_secret_existed=false
+if "$kubectl_bin" -n "$namespace" get secret "$secret" >/dev/null 2>&1; then
+  serving_secret_existed=true
+fi
+
 "$kubectl_bin" -n "$namespace" create secret tls "$secret" \
   --cert="$workdir/tls.crt" --key="$workdir/tls.key" \
   --dry-run=client -o yaml | "$kubectl_bin" apply -f - >/dev/null
@@ -161,6 +170,23 @@ for config_kind in mutatingwebhookconfiguration validatingwebhookconfiguration; 
   echo "Injected caBundle into ${config_kind}/${config_name} (${count} webhooks)"
 done
 
+# Only for first provisioning, and only when the manager is already deployed.
+#
+# The certwatcher reload this script advertises is real, but it presupposes the Secret was mounted.
+# When the manager is applied before the certificate exists -- the order the byo-cert install
+# documents, because the namespace and Service have to exist for the certificate to be issued for
+# them -- kubelet cannot mount the volume at all and the pod never starts. Nothing is watching a file
+# that was never mounted, so the pod stays in ContainerCreating and kubelet's mount retry backs off
+# to minutes. Recreating the pods is what fixes that, and it is not a rotation concern: on a rotation
+# the volume is already mounted and a restart would be pointless churn.
+if [[ "$serving_secret_existed" == "false" ]] &&
+  "$kubectl_bin" -n "$namespace" get deployment "$deployment" >/dev/null 2>&1; then
+  echo
+  echo "Restarting deployment/${deployment}: its pods were created before the serving certificate"
+  echo "existed, so the webhook-certs volume never mounted and no certwatcher is running in them."
+  "$kubectl_bin" -n "$namespace" rollout restart "deployment/${deployment}" >/dev/null
+fi
+
 echo
-echo "Done. The manager reloads the serving certificate without a restart."
-echo "Re-run this script to rotate; the CA is reused so caBundle stays valid."
+echo "Done. Re-run this script to rotate: the CA is reused so caBundle stays valid, and a rotation"
+echo "is picked up in place by the manager's certwatcher with no restart."

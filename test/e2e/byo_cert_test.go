@@ -187,13 +187,17 @@ var _ = Describe("BYO-cert install", Ordered, Serial, func() {
 		// Running is not serving. status.phase=Running is true as soon as the container process
 		// starts, while the webhook listener binds later, so the next spec could dial a port nothing
 		// was on yet and get connection refused.
+		// The inner kubectl wait blocks for its own timeout, so a bare Eventually around it gets
+		// exactly one attempt: Gomega's default budget is already spent by the time the first poll
+		// returns. Given an explicit budget it can actually retry, which matters because the pod
+		// being waited on may be replacing one that failed to mount.
 		By("waiting for the manager pod to report Ready")
 		Eventually(func(g Gomega) {
 			out, err := utils.Run(exec.Command("kubectl", "wait", "pods", "-n", namespace,
 				"-l", "control-plane=controller-manager",
-				"--for=condition=Ready", "--timeout=2m"))
+				"--for=condition=Ready", "--timeout=1m"))
 			g.Expect(err).NotTo(HaveOccurred(), out)
-		}).Should(Succeed())
+		}).WithTimeout(5 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 	})
 
 	// The payoff. A rejection proves the whole chain end to end: the API server dialed the webhook,
