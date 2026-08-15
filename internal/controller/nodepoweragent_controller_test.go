@@ -514,7 +514,7 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
 			resource.Annotations = map[string]string{"power.zalud.io/approved-for-actuation": "true"}
 			resource.Spec.Mode = powerv1alpha1.NodePowerAgentModeActuate
-			resource.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicySystemdPoweroff
+			resource.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicyPowerOff
 			resource.Spec.Shutdown.ApprovalAnnotation = "power.zalud.io/approved-for-actuation"
 			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
 
@@ -548,7 +548,7 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			// nothing for it.
 			Expect(actuator.SecurityContext.SeccompProfile).To(BeNil())
 			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_AGENT_MODE", Value: "Actuate"}))
-			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_ACTUATOR_POLICY", Value: "SystemdPoweroff"}))
+			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_ACTUATOR_POLICY", Value: "PowerOff"}))
 			for _, variable := range actuator.Env {
 				Expect(variable.Name).NotTo(HavePrefix("POWER_POWEROFF_"))
 			}

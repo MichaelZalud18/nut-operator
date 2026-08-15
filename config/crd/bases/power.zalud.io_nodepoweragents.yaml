@@ -67,7 +67,7 @@ spec:
                 properties:
                   actuator:
                     description: |-
-                      actuator is the host-actuation image. Stub mode runs without host access; real host
+                      actuator is the host-actuation image. Simulate mode runs without host access; real host
                       shutdown is rendered only after explicit actuation approval.
                     properties:
                       digest:
@@ -1290,17 +1290,17 @@ spec:
                 description: shutdown configures the handoff signal and actuator behavior.
                 properties:
                   actuatorPolicy:
-                    default: Stub
-                    description: actuatorPolicy chooses disabled, stubbed, or real
-                      systemd host poweroff.
+                    default: Simulate
+                    description: actuatorPolicy chooses no actuator, a simulated one,
+                      or real host power-off.
                     enum:
                     - Disabled
-                    - Stub
-                    - SystemdPoweroff
+                    - Simulate
+                    - PowerOff
                     type: string
                   approvalAnnotation:
                     description: approvalAnnotation must be present on this NodePowerAgent
-                      before SystemdPoweroff is rendered.
+                      before PowerOff is rendered.
                     type: string
                   requireFreshTelemetry:
                     default: true
@@ -1309,8 +1309,11 @@ spec:
                     type: boolean
                   signalPath:
                     default: /run/power-agent/shutdown.json
-                    description: signalPath is the shared in-pod file path written
-                      by upsmon and watched by the actuator.
+                    description: |-
+                      signalPath is the in-pod file path the local upsmon SHUTDOWNCMD writer targets.
+
+                      The actuator does not read it. OD-37 makes the operator's projected Secret the only path with
+                      authority to halt a node, and this one is scaffolding kept for a later authorization model.
                     type: string
                   signalTTL:
                     description: signalTTL rejects stale signal files older than this

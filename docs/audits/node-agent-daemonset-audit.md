@@ -1278,3 +1278,27 @@ or the signal expires before it is projected into the pod. This assumption was a
 never written down: `F-70`'s 90-second minimum TTL came from a measured ~44s delivery, which is a
 propagation bound, not a clock one. Recorded here so the floor is not later "optimized" down by
 someone reasoning only about how long a shutdown takes.
+
+**F-75 and F-91 closed — the v1alpha1 naming revision.** Three renames landed together because each
+one changes a published contract and they are cheaper to absorb at once.
+
+`ActuatorPolicy` becomes `Disabled` / `Simulate` / `PowerOff`. `SystemdPoweroff` was named after a
+mechanism that no longer exists: the actuator calls `reboot(2)` with `LINUX_REBOOT_CMD_POWER_OFF`
+and there is no systemd anywhere in that path — `F-36` removed the `systemctl poweroff` shell-out it
+was named for and the enum kept the name. That is worse than a vague name, because it tells an
+operator which knobs to reach for while a UPS is discharging. `Stub` became `Simulate` in the same
+pass: it named the code rather than the behavior.
+
+`POWER_SIGNAL_PATH` is gone from the actuator container. It and `POWER_SIGNAL_PATHS` both reached
+it and only the plural was read, so the singular was a knob that silently did nothing. It survives
+on the `upsmon` side, where it is the local writer's target and does have an effect.
+
+`POWER_PLAN_CONFIG_HASH` becomes `POWER_AGENT_CONFIG_HASH` (`F-91`), which is what it always
+carried. The signal's `PlanConfigHash` keeps its name and its meaning — the planner's `PL-14` plan
+identity — so the collision is gone rather than papered over. The local writer still stamps the
+agent hash into that field, and that is now visibly a stand-in: the local path has no plan identity
+to carry, which is part of why `OD-37` declined it as an authorization path in the first place.
+
+This breaks every `NodePowerAgent` that sets `actuatorPolicy`, deliberately and while the API is
+alpha. Nothing converts: `Stub` and `SystemdPoweroff` are rejected by the enum, so a stale manifest
+fails at admission with the valid values named rather than being silently reinterpreted.

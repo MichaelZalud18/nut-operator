@@ -46,11 +46,11 @@ func TestRunPoweroffInvokesTheSyscall(t *testing.T) {
 func TestPoweroffTakesNoConfiguration(t *testing.T) {
 	config := actuatorConfig{}
 	// 7 -> 8 for StatePath (F-64), where the watch loop records that it ran. 8 -> 9 for
-	// ShutdownFlow (F-55), the flow an accepted signal must name. Neither carries a poweroff
-	// mechanism: one is read by readiness, the other narrows which signals are accepted, and the
-	// syscall path consults neither. The count is the point of the test, so raising it is a
+	// ShutdownFlow (F-55), the flow an accepted signal must name. 9 -> 8 again when F-75 dropped
+	// SignalPath, the singular half of a duplicate pair the actuator never read. None of them
+	// carries a poweroff mechanism, which is what this count is guarding: changing it is a
 	// deliberate act, not a fix.
-	if reflect.TypeOf(config).NumField() != 9 {
+	if reflect.TypeOf(config).NumField() != 8 {
 		t.Fatalf("actuatorConfig gained or lost a field; confirm no poweroff mechanism became configurable: %+v", config)
 	}
 	for _, field := range []string{"PoweroffMethod", "PoweroffCommand", "PoweroffArgs"} {
@@ -80,7 +80,7 @@ func TestSignalPathsParsesUniquePaths(t *testing.T) {
 // and the executor hard-coded it to false on the only path OD-37 leaves standing. An identical
 // signal now produces opposite outcomes based on the actuator's env alone, which is the property
 // that actually bounds the blast radius.
-func TestSystemdPoweroffActuatorHonorsItsOwnModeNotTheSignal(t *testing.T) {
+func TestPowerOffActuatorHonorsItsOwnModeNotTheSignal(t *testing.T) {
 	signal := nodeagent.SignalStatus{
 		Active: true,
 		Payload: nodeagent.ShutdownSignal{
@@ -95,7 +95,7 @@ func TestSystemdPoweroffActuatorHonorsItsOwnModeNotTheSignal(t *testing.T) {
 		t.Run("mode "+mode+" never powers off", func(t *testing.T) {
 			calls := stubRebootPoweroff(t)
 
-			if err := systemdPoweroffActuator(logger, actuatorConfig{Mode: mode}, signal); err != nil {
+			if err := powerOffActuator(logger, actuatorConfig{Mode: mode}, signal); err != nil {
 				t.Fatalf("expected the signal to be accepted and declined, got %v", err)
 			}
 			if *calls != 0 {
@@ -107,7 +107,7 @@ func TestSystemdPoweroffActuatorHonorsItsOwnModeNotTheSignal(t *testing.T) {
 	t.Run("mode Actuate powers off", func(t *testing.T) {
 		calls := stubRebootPoweroff(t)
 
-		if err := systemdPoweroffActuator(logger, actuatorConfig{Mode: modeActuate}, signal); err != nil {
+		if err := powerOffActuator(logger, actuatorConfig{Mode: modeActuate}, signal); err != nil {
 			t.Fatalf("expected Actuate mode to power off, got %v", err)
 		}
 		if *calls != 1 {
@@ -136,7 +136,7 @@ func TestSignalCannotGrantActuationTheModeForbids(t *testing.T) {
 		t.Fatalf("unmarshal signal: %v", err)
 	}
 
-	if err := systemdPoweroffActuator(logger, actuatorConfig{Mode: "DryRun"}, nodeagent.SignalStatus{Active: true, Payload: payload}); err != nil {
+	if err := powerOffActuator(logger, actuatorConfig{Mode: "DryRun"}, nodeagent.SignalStatus{Active: true, Payload: payload}); err != nil {
 		t.Fatalf("expected the signal to be declined without error, got %v", err)
 	}
 	if *calls != 0 {

@@ -432,7 +432,7 @@ spec:
       tag: %[6]s
       pullPolicy: IfNotPresent
   shutdown:
-    actuatorPolicy: Stub
+    actuatorPolicy: Simulate
     signalTTL: 2m
     requireFreshTelemetry: false
 `, agentNamespace, nutServerRepository, nodeName, upsmonAgentRepository, nodeActuatorRepository, operandImageTag)

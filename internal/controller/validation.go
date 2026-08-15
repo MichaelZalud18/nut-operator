@@ -318,12 +318,12 @@ func validateNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) validationResult 
 		}
 	}
 	if obj.Spec.Mode == powerv1alpha1.NodePowerAgentModeActuate &&
-		obj.Spec.Shutdown.ActuatorPolicy == powerv1alpha1.ActuatorPolicySystemdPoweroff {
+		obj.Spec.Shutdown.ActuatorPolicy == powerv1alpha1.ActuatorPolicyPowerOff {
 		if obj.Spec.Shutdown.ApprovalAnnotation == "" {
-			return rejected("ApprovalAnnotationRequired", "SystemdPoweroff actuation requires spec.shutdown.approvalAnnotation")
+			return rejected("ApprovalAnnotationRequired", "PowerOff actuation requires spec.shutdown.approvalAnnotation")
 		}
 		if obj.Annotations[obj.Spec.Shutdown.ApprovalAnnotation] != "true" {
-			return rejected("ActuationNotApproved", "SystemdPoweroff actuation requires approval annotation %q=true", obj.Spec.Shutdown.ApprovalAnnotation)
+			return rejected("ActuationNotApproved", "PowerOff actuation requires approval annotation %q=true", obj.Spec.Shutdown.ApprovalAnnotation)
 		}
 	}
 

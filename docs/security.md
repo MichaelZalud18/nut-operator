@@ -24,7 +24,7 @@ The NUT server and client containers use network UPS protocols only. They do not
 
 The actuator container owns host interaction only when approved actuation is enabled. It has no NUT credentials, no flow logic, and no broad policy authority. Its job is to validate the signal and execute the approved local action.
 
-Approved `SystemdPoweroff` rendering uses `hostPID` and adds only `CAP_SYS_BOOT` to the actuator
+Approved `PowerOff` rendering uses `hostPID` and adds only `CAP_SYS_BOOT` to the actuator
 container. It remains non-root, drops all other capabilities, keeps privilege escalation disabled,
 uses a read-only root filesystem, and receives no Kubernetes service-account token. The container
 seccomp profile is unconfined for this mode because common runtime-default profiles block the Linux

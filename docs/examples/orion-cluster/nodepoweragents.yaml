@@ -23,7 +23,7 @@ spec:
     hostSync: 15s
     finalDelay: 10s
   shutdown:
-    actuatorPolicy: Stub
+    actuatorPolicy: Simulate
     signalPath: /run/power-agent/shutdown.json
     signalTTL: 2m
     requireFreshTelemetry: true
@@ -52,7 +52,7 @@ spec:
     hostSync: 15s
     finalDelay: 10s
   shutdown:
-    actuatorPolicy: Stub
+    actuatorPolicy: Simulate
     signalPath: /run/power-agent/shutdown.json
     signalTTL: 2m
     requireFreshTelemetry: true
@@ -81,7 +81,7 @@ spec:
     hostSync: 15s
     finalDelay: 10s
   shutdown:
-    actuatorPolicy: Stub
+    actuatorPolicy: Simulate
     signalPath: /run/power-agent/shutdown.json
     signalTTL: 2m
     requireFreshTelemetry: true

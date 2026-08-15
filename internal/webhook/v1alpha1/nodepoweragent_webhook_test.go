@@ -46,7 +46,7 @@ var _ = Describe("NodePowerAgent Webhook", func() {
 			Expect(defaulter.Default(ctx, obj)).To(Succeed())
 
 			Expect(obj.Spec.Mode).To(Equal(powerv1alpha1.NodePowerAgentModeDryRun))
-			Expect(obj.Spec.Shutdown.ActuatorPolicy).To(Equal(powerv1alpha1.ActuatorPolicyStub))
+			Expect(obj.Spec.Shutdown.ActuatorPolicy).To(Equal(powerv1alpha1.ActuatorPolicySimulate))
 			Expect(obj.Spec.Shutdown.SignalPath).To(Equal("/run/power-agent/shutdown.json"))
 			Expect(obj.Spec.Shutdown.RequireFreshTelemetry).NotTo(BeNil())
 			Expect(*obj.Spec.Shutdown.RequireFreshTelemetry).To(BeTrue())
@@ -103,18 +103,18 @@ var _ = Describe("NodePowerAgent Webhook", func() {
 
 		It("Should reject real host poweroff outside Actuate mode", func() {
 			obj.Spec = validNodePowerAgentSpec()
-			obj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicySystemdPoweroff
+			obj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicyPowerOff
 			obj.Spec.Shutdown.ApprovalAnnotation = "power.zalud.io/approved-for-actuation"
 
 			_, err := validator.ValidateUpdate(ctx, oldObj, obj)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("SystemdPoweroff requires spec.mode Actuate"))
+			Expect(err.Error()).To(ContainSubstring("PowerOff requires spec.mode Actuate"))
 		})
 
 		It("Should reject real host poweroff without approval annotation value", func() {
 			obj.Spec = validNodePowerAgentSpec()
 			obj.Spec.Mode = powerv1alpha1.NodePowerAgentModeActuate
-			obj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicySystemdPoweroff
+			obj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicyPowerOff
 			obj.Spec.Shutdown.ApprovalAnnotation = "power.zalud.io/approved-for-actuation"
 
 			_, err := validator.ValidateCreate(ctx, obj)
@@ -126,7 +126,7 @@ var _ = Describe("NodePowerAgent Webhook", func() {
 			obj.Annotations = map[string]string{"power.zalud.io/approved-for-actuation": "true"}
 			obj.Spec = validNodePowerAgentSpec()
 			obj.Spec.Mode = powerv1alpha1.NodePowerAgentModeActuate
-			obj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicySystemdPoweroff
+			obj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicyPowerOff
 			obj.Spec.Shutdown.ApprovalAnnotation = "power.zalud.io/approved-for-actuation"
 
 			_, err := validator.ValidateCreate(ctx, obj)
@@ -150,7 +150,7 @@ func validNodePowerAgentSpec() powerv1alpha1.NodePowerAgentSpec {
 		NUTServerRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-a"}},
 		Mode:          powerv1alpha1.NodePowerAgentModeDryRun,
 		Shutdown: powerv1alpha1.AgentShutdownSpec{
-			ActuatorPolicy:        powerv1alpha1.ActuatorPolicyStub,
+			ActuatorPolicy:        powerv1alpha1.ActuatorPolicySimulate,
 			SignalPath:            "/run/power-agent/shutdown.json",
 			RequireFreshTelemetry: ptrBool(true),
 		},

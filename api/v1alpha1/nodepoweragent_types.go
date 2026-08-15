@@ -182,7 +182,7 @@ type NodePowerAgentImages struct {
 	// +optional
 	Upsmon ImageReference `json:"upsmon,omitempty"`
 
-	// actuator is the host-actuation image. Stub mode runs without host access; real host
+	// actuator is the host-actuation image. Simulate mode runs without host access; real host
 	// shutdown is rendered only after explicit actuation approval.
 	// +optional
 	Actuator ImageReference `json:"actuator,omitempty"`
@@ -233,23 +233,37 @@ type UpsmonConfigSpec struct {
 }
 
 // ActuatorPolicy controls the host-action actuator container.
-// +kubebuilder:validation:Enum=Disabled;Stub;SystemdPoweroff
+//
+// Renamed from Disabled/Stub/SystemdPoweroff in the v1alpha1 revision (F-75). "SystemdPoweroff" was
+// factually wrong: the actuator calls reboot(2) with LINUX_REBOOT_CMD_POWER_OFF and there is no
+// systemd anywhere in that path -- it was named after a mechanism that was removed under F-36. A
+// name that describes the wrong mechanism is worse than a vague one, because it tells an operator
+// which knobs to reach for during an outage. "Stub" became "Simulate" in the same pass to say what
+// the mode does rather than what the code is.
+//
+// +kubebuilder:validation:Enum=Disabled;Simulate;PowerOff
 type ActuatorPolicy string
 
 const (
-	ActuatorPolicyDisabled        ActuatorPolicy = "Disabled"
-	ActuatorPolicyStub            ActuatorPolicy = "Stub"
-	ActuatorPolicySystemdPoweroff ActuatorPolicy = "SystemdPoweroff"
+	// ActuatorPolicyDisabled runs no watch loop at all.
+	ActuatorPolicyDisabled ActuatorPolicy = "Disabled"
+	// ActuatorPolicySimulate accepts and records signals without touching the host.
+	ActuatorPolicySimulate ActuatorPolicy = "Simulate"
+	// ActuatorPolicyPowerOff halts the node with reboot(2) LINUX_REBOOT_CMD_POWER_OFF.
+	ActuatorPolicyPowerOff ActuatorPolicy = "PowerOff"
 )
 
 // AgentShutdownSpec configures the local shutdown handoff.
 type AgentShutdownSpec struct {
-	// actuatorPolicy chooses disabled, stubbed, or real systemd host poweroff.
-	// +kubebuilder:default=Stub
+	// actuatorPolicy chooses no actuator, a simulated one, or real host power-off.
+	// +kubebuilder:default=Simulate
 	// +optional
 	ActuatorPolicy ActuatorPolicy `json:"actuatorPolicy,omitempty"`
 
-	// signalPath is the shared in-pod file path written by upsmon and watched by the actuator.
+	// signalPath is the in-pod file path the local upsmon SHUTDOWNCMD writer targets.
+	//
+	// The actuator does not read it. OD-37 makes the operator's projected Secret the only path with
+	// authority to halt a node, and this one is scaffolding kept for a later authorization model.
 	// +kubebuilder:default=/run/power-agent/shutdown.json
 	// +optional
 	SignalPath string `json:"signalPath,omitempty"`
@@ -263,7 +277,7 @@ type AgentShutdownSpec struct {
 	// +optional
 	RequireFreshTelemetry *bool `json:"requireFreshTelemetry,omitempty"`
 
-	// approvalAnnotation must be present on this NodePowerAgent before SystemdPoweroff is rendered.
+	// approvalAnnotation must be present on this NodePowerAgent before PowerOff is rendered.
 	// +optional
 	ApprovalAnnotation string `json:"approvalAnnotation,omitempty"`
 }

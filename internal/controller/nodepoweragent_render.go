@@ -346,29 +346,29 @@ func nodePowerAgentActuatorPolicy(agent *powerv1alpha1.NodePowerAgent) powerv1al
 	if agent.Spec.Shutdown.ActuatorPolicy != "" {
 		return agent.Spec.Shutdown.ActuatorPolicy
 	}
-	return powerv1alpha1.ActuatorPolicyStub
+	return powerv1alpha1.ActuatorPolicySimulate
 }
 
 func validateNodePowerAgentRenderSafety(agent *powerv1alpha1.NodePowerAgent) error {
-	if nodePowerAgentActuatorPolicy(agent) != powerv1alpha1.ActuatorPolicySystemdPoweroff {
+	if nodePowerAgentActuatorPolicy(agent) != powerv1alpha1.ActuatorPolicyPowerOff {
 		return nil
 	}
 	if nodePowerAgentMode(agent) != powerv1alpha1.NodePowerAgentModeActuate {
-		return fmt.Errorf("SystemdPoweroff actuator rendering requires spec.mode Actuate")
+		return fmt.Errorf("PowerOff actuator rendering requires spec.mode Actuate")
 	}
 	approvalAnnotation := agent.Spec.Shutdown.ApprovalAnnotation
 	if approvalAnnotation == "" {
-		return fmt.Errorf("SystemdPoweroff actuator rendering requires spec.shutdown.approvalAnnotation")
+		return fmt.Errorf("PowerOff actuator rendering requires spec.shutdown.approvalAnnotation")
 	}
 	if agent.Annotations[approvalAnnotation] != "true" {
-		return fmt.Errorf("SystemdPoweroff actuator rendering requires approval annotation %q=true", approvalAnnotation)
+		return fmt.Errorf("PowerOff actuator rendering requires approval annotation %q=true", approvalAnnotation)
 	}
 	return nil
 }
 
 func nodePowerAgentRequiresHostPoweroff(agent *powerv1alpha1.NodePowerAgent) bool {
 	return nodePowerAgentMode(agent) == powerv1alpha1.NodePowerAgentModeActuate &&
-		nodePowerAgentActuatorPolicy(agent) == powerv1alpha1.ActuatorPolicySystemdPoweroff
+		nodePowerAgentActuatorPolicy(agent) == powerv1alpha1.ActuatorPolicyPowerOff
 }
 
 func nodePowerAgentUpsmonImage(agent *powerv1alpha1.NodePowerAgent, cluster *powerv1alpha1.PowerManagementCluster) (string, corev1.PullPolicy, error) {
@@ -1032,7 +1032,7 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 					// gone from both variables rather than reordered: the operator path is the only
 					// path with authority, so a second entry here is not a fallback, it is the
 					// bypass.
-					{Name: "POWER_SIGNAL_PATH", Value: nodePowerAgentProjectedSignalPath},
+
 					{Name: "POWER_SIGNAL_PATHS", Value: nodePowerAgentProjectedSignalPath},
 					{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
 					{Name: "POWER_ACTUATOR_STATE_PATH", Value: nodePowerAgentActuatorStatePath},
@@ -1120,7 +1120,7 @@ func nodePowerAgentPodSecurityConflict(namespace *corev1.Namespace) string {
 		"namespace %q enforces pod-security.kubernetes.io/enforce=%s, which rejects the actuating agent pod "+
 			"on hostPID=true (host namespaces) and CAP_SYS_BOOT (non-default capabilities); "+
 			"actuation needs that namespace exempted or labelled pod-security.kubernetes.io/enforce=privileged. "+
-			"The Stub and DryRun default needs neither and is admitted under restricted",
+			"The Simulate and DryRun default needs neither and is admitted under restricted",
 		namespace.Name, level,
 	)
 }
@@ -1259,7 +1259,7 @@ func nodePowerAgentSignalEnv(agent *powerv1alpha1.NodePowerAgent, configHash str
 		},
 		{Name: "POWER_SIGNAL_PATH", Value: nodePowerAgentSignalPath(agent)},
 		{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
-		{Name: "POWER_PLAN_CONFIG_HASH", Value: configHash},
+		{Name: "POWER_AGENT_CONFIG_HASH", Value: configHash},
 		{Name: "POWER_SELECTED_UPS_DEVICES", Value: strings.Join(selectedUPSDevices, ",")},
 		{Name: "POWER_SHUTDOWN_FLOW", Value: nodePowerAgentShutdownFlowName(agent)},
 		{Name: "POWER_SIGNAL_REASON", Value: nodePowerAgentSignalReason},

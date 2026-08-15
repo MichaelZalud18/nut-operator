@@ -164,7 +164,7 @@ Kured's trigger is host and service health — OS patch reboots. That is not a p
 GP-1 excludes it. The overlap with power-event orchestration does not meaningfully exist.
 
 No dependency, no coordination shim, no feature parity commitment. `ActuatorPolicy` remains
-`Disabled | Stub | SystemdPoweroff` with no reboot verb.
+`Disabled | Simulate | PowerOff` with no reboot verb.
 
 If a reboot verb is ever added to the executor, the motivation is collision-avoidance with a
 separately installed Kured, not feature value.

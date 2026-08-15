@@ -40,7 +40,7 @@ func TestReadinessFailsOnEveryStateTheVersionProbeUsedToPass(t *testing.T) {
 			name: "the watch loop stopped looping",
 			state: &actuatorState{
 				Timestamp:       now.Add(-10 * time.Minute).Format(time.RFC3339),
-				Policy:          policyStub,
+				Policy:          policySimulate,
 				IntervalSeconds: 5,
 			},
 			want: "last completed a pass",
@@ -49,7 +49,7 @@ func TestReadinessFailsOnEveryStateTheVersionProbeUsedToPass(t *testing.T) {
 			name: "the signal directory never appeared",
 			state: &actuatorState{
 				Timestamp:            now.Format(time.RFC3339),
-				Policy:               policyStub,
+				Policy:               policySimulate,
 				IntervalSeconds:      5,
 				UnreadableSignalDirs: []string{"/var/lib/power-agent/signals"},
 			},
@@ -59,7 +59,7 @@ func TestReadinessFailsOnEveryStateTheVersionProbeUsedToPass(t *testing.T) {
 			name: "the record is corrupt",
 			state: &actuatorState{
 				Timestamp:       "not a timestamp",
-				Policy:          policyStub,
+				Policy:          policySimulate,
 				IntervalSeconds: 5,
 			},
 			want: "unparseable timestamp",
@@ -73,7 +73,7 @@ func TestReadinessFailsOnEveryStateTheVersionProbeUsedToPass(t *testing.T) {
 				}
 			}
 
-			err := checkActuatorReady(readyConfig(path, policyStub), now)
+			err := checkActuatorReady(readyConfig(path, policySimulate), now)
 			if err == nil {
 				t.Fatal("readiness must fail here; this is exactly what --version could not detect")
 			}
@@ -89,13 +89,13 @@ func TestReadinessPassesWhileTheLoopIsRunning(t *testing.T) {
 	now := time.Now().UTC()
 	if err := writeActuatorState(path, actuatorState{
 		Timestamp:       now.Add(-2 * time.Second).Format(time.RFC3339),
-		Policy:          policyStub,
+		Policy:          policySimulate,
 		IntervalSeconds: 5,
 	}); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
 
-	if err := checkActuatorReady(readyConfig(path, policyStub), now); err != nil {
+	if err := checkActuatorReady(readyConfig(path, policySimulate), now); err != nil {
 		t.Fatalf("a loop that just completed a pass must be ready: %v", err)
 	}
 }
@@ -169,7 +169,7 @@ func TestReadinessFailsWhenTheSignalDirectoryCarriesNoDeliveryChannelMarker(t *t
 	}
 
 	config := actuatorConfig{
-		Policy:      policyStub,
+		Policy:      policySimulate,
 		SignalPaths: []string{filepath.Join(signalDir, "node-a.json")},
 		StatePath:   filepath.Join(root, "state.json"),
 		Interval:    5 * time.Second,
@@ -206,7 +206,7 @@ func TestReadinessPassesWhenTheChannelIsMountedButQuiet(t *testing.T) {
 	}
 
 	config := actuatorConfig{
-		Policy:      policyStub,
+		Policy:      policySimulate,
 		SignalPaths: []string{filepath.Join(signalDir, "node-a.json")},
 		StatePath:   filepath.Join(root, "state.json"),
 		Interval:    5 * time.Second,
@@ -234,7 +234,7 @@ func TestReadinessPassesWhenTheChannelIsMountedButQuiet(t *testing.T) {
 func TestReadinessFailsWhenSignalsArriveFromTheFuture(t *testing.T) {
 	root := t.TempDir()
 	config := actuatorConfig{
-		Policy:      policyStub,
+		Policy:      policySimulate,
 		SignalPaths: []string{filepath.Join(root, "shutdown.json")},
 		StatePath:   filepath.Join(root, "state.json"),
 		Interval:    5 * time.Second,

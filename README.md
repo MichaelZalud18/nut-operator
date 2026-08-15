@@ -52,7 +52,7 @@ The API group is `power.zalud.io/v1alpha1`.
 
 Real host shutdown is not the default.
 
-`NodePowerAgent` defaults to dry-run behavior through `mode: DryRun` and `shutdown.actuatorPolicy: Stub`. Rendering `SystemdPoweroff` requires both:
+`NodePowerAgent` defaults to dry-run behavior through `mode: DryRun` and `shutdown.actuatorPolicy: Simulate`. Rendering `PowerOff` requires both:
 
 - `spec.mode: Actuate`
 - `metadata.annotations[spec.shutdown.approvalAnnotation] == "true"`

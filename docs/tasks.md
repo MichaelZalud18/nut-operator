@@ -235,23 +235,17 @@ The signal carries no `dryRun` field: whether a node may halt is the actuator's 
 writer can reach. An agent that declares a `shutdownFlowRef` accepts releases only from that flow.
 A node whose clock rejects every signal the operator sends reports NotReady rather than logging it,
 so the failure reaches `status.nodeStatuses` instead of a container log nobody reads mid-outage.
+`ActuatorPolicy` is `Disabled`/`Simulate`/`PowerOff` — `SystemdPoweroff` named a mechanism `F-36`
+removed — and the actuator's env carries one signal-path variable and a config hash named for what
+it hashes (`F-75`, `F-91`).
 
 Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-60`, `F-61`–`F-65`,
-`F-66`, `F-67`–`F-71`, `F-73`, `F-74`, `F-86`, `F-88`, `F-90`, `OD-37`. `F-89` declined — the signal Secret
+`F-66`, `F-67`–`F-71`, `F-73`–`F-75`, `F-86`, `F-88`, `F-90`, `F-91`, `OD-37`. `F-89` declined — the signal Secret
 mounts whole on every node, but the payload carries no credentials and the node-name check holds it
 to exposure rather than actuation; recorded in
 [node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md).
 
 #### Open Work
-
-##### Signal authority and the two-component boundary
-
-- **`F-91` · `POWER_PLAN_CONFIG_HASH` names something it is not.** The agent env carries a hash of
-  that agent's own rendered config; the signal's `PlanConfigHash` carries the planner's `PL-14` plan
-  identity. Rename the env with the `F-75` revision, and decide separately whether plan identity is
-  validated at all — the planner hash changes per compilation, so pinning it in static env would
-  roll the DaemonSet on every plan change
-  ([node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md)).
 
 ##### Signal delivery and dedupe
 
@@ -264,14 +258,6 @@ to exposure rather than actuation; recorded in
 - **`F-72` remainder · nothing suppresses a rollout during a flow.** The shape is fixed; the guard is
   the open half — a paused DaemonSet, an admission check, or a flow-active condition. `F-87` is what
   makes this a defect rather than a preference.
-
-##### Naming and hygiene
-
-- **`F-75` · Rename the `ActuatorPolicy` enum and drop the duplicate signal-path env pair.**
-  `Disabled`/`Stub`/`SystemdPoweroff` becomes `Disabled`/`Simulate`/`PowerOff`. `SystemdPoweroff` is
-  factually wrong — the actuator calls `reboot(2)` with `LINUX_REBOOT_CMD_POWER_OFF` and there is no
-  systemd anywhere in that path. A deliberate alpha API revision that breaks every CR setting the
-  enum, and it lands in v1 rather than shipping a misleading name.
 
 ---
 

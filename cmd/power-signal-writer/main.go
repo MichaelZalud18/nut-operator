@@ -52,7 +52,7 @@ func main() {
 		ExecutionID:        env("POWER_EXECUTION_ID", ""),
 		Mode:               env("POWER_AGENT_MODE", "DryRun"),
 		NodeName:           env("POWER_NODE_NAME", ""),
-		PlanConfigHash:     env("POWER_PLAN_CONFIG_HASH", ""),
+		PlanConfigHash:     env("POWER_AGENT_CONFIG_HASH", ""),
 		Reason:             env("POWER_SIGNAL_REASON", "upsmon-fsd"),
 		SelectedUPSDevices: splitCSV(env("POWER_SELECTED_UPS_DEVICES", "")),
 		ShutdownFlow:       env("POWER_SHUTDOWN_FLOW", "upsmon-local"),
@@ -88,7 +88,7 @@ func writeSignal(config signalWriterConfig, now time.Time) (nodeagent.ShutdownSi
 		return nodeagent.ShutdownSignal{}, false, fmt.Errorf("POWER_NODE_NAME is required")
 	}
 	if config.PlanConfigHash == "" {
-		return nodeagent.ShutdownSignal{}, false, fmt.Errorf("POWER_PLAN_CONFIG_HASH is required")
+		return nodeagent.ShutdownSignal{}, false, fmt.Errorf("POWER_AGENT_CONFIG_HASH is required")
 	}
 	if config.ShutdownFlow == "" {
 		return nodeagent.ShutdownSignal{}, false, fmt.Errorf("POWER_SHUTDOWN_FLOW is required")

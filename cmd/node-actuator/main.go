@@ -24,9 +24,9 @@ var version = "dev"
 // PID/dbus access. Fewer privileges and no configurable command is the better trade for the one
 // operation whose blast radius is the whole machine.
 const (
-	policyDisabled        = "Disabled"
-	policyStub            = "Stub"
-	policySystemdPoweroff = "SystemdPoweroff"
+	policyDisabled = "Disabled"
+	policySimulate = "Simulate"
+	policyPowerOff = "PowerOff"
 
 	// modeActuate is the only agent mode under which a node may be halted. It is read from this
 	// process's environment and never from a signal file (F-56).
@@ -38,7 +38,7 @@ func main() {
 		switch os.Args[1] {
 		case "-h", "--help", "help":
 			_, _ = fmt.Fprintln(os.Stdout, "Usage: node-actuator [--help|--version|--ready]")
-			_, _ = fmt.Fprintln(os.Stdout, "Watches POWER_SIGNAL_PATH, validates structured shutdown signals, and performs the configured actuator policy.")
+			_, _ = fmt.Fprintln(os.Stdout, "Watches POWER_SIGNAL_PATHS, validates structured shutdown signals, and performs the configured actuator policy.")
 			return
 		case "--version", "version":
 			_, _ = fmt.Fprintln(os.Stdout, version)
@@ -72,11 +72,11 @@ func main() {
 	switch policy {
 	case policyDisabled, "":
 		block(logger, "disabled policy")
-	case policyStub:
-		watchSignals(logger, config, stubActuator)
-	case policySystemdPoweroff:
+	case policySimulate:
+		watchSignals(logger, config, simulateActuator)
+	case policyPowerOff:
 		if mode != modeActuate {
-			block(logger, "SystemdPoweroff requires POWER_AGENT_MODE=Actuate")
+			block(logger, "PowerOff requires POWER_AGENT_MODE=Actuate")
 		}
 		// F-61: prove the capability is held now, not during a power event.
 		//
@@ -84,11 +84,11 @@ func main() {
 		// refusing to start over. Every way of losing CAP_SYS_BOOT is silent, and the code that
 		// would have noticed runs once, on a node under load, at the end of a UPS runtime.
 		if err := verifySysBootAvailable(); err != nil {
-			logger.Printf("refusing to arm SystemdPoweroff actuation: %v", err)
+			logger.Printf("refusing to arm PowerOff actuation: %v", err)
 			os.Exit(78)
 		}
 		logger.Printf("CAP_SYS_BOOT held in the permitted set; actuation armed")
-		watchSignals(logger, config, systemdPoweroffActuator)
+		watchSignals(logger, config, powerOffActuator)
 	default:
 		logger.Printf("unknown actuator policy %q", policy)
 		os.Exit(64)
@@ -99,7 +99,6 @@ type actuatorConfig struct {
 	Mode        string
 	Policy      string
 	NodeName    string
-	SignalPath  string
 	SignalPaths []string
 	SignalTTL   time.Duration
 	Interval    time.Duration
@@ -107,7 +106,7 @@ type actuatorConfig struct {
 	// signal's own ShutdownFlow must equal (F-55). Empty means the agent declared none, and any
 	// flow may release it.
 	//
-	// There is deliberately no PlanConfigHash counterpart. The agent's POWER_PLAN_CONFIG_HASH is a
+	// There is deliberately no PlanConfigHash counterpart. The agent's POWER_AGENT_CONFIG_HASH is a
 	// hash of its own rendered config, not the planner's plan hash that the signal carries, so
 	// comparing the two would reject every operator-issued signal -- see F-91.
 	ShutdownFlow string
@@ -122,13 +121,14 @@ type actuatorConfig struct {
 // judging the loop against a different idea of what was configured.
 func loadActuatorConfig() actuatorConfig {
 	nodeName := env("POWER_NODE_NAME", "")
-	signalPath := env("POWER_SIGNAL_PATH", defaultSignalPath(nodeName))
+	// One variable, not two (F-75). POWER_SIGNAL_PATH and POWER_SIGNAL_PATHS both reached the
+	// actuator and only the plural was read, so the singular was a knob that silently did nothing.
+	// It survives on the upsmon side, where it is the local writer's target and does have an effect.
 	return actuatorConfig{
 		Mode:         env("POWER_AGENT_MODE", "DryRun"),
-		Policy:       env("POWER_ACTUATOR_POLICY", policyStub),
+		Policy:       env("POWER_ACTUATOR_POLICY", policySimulate),
 		NodeName:     nodeName,
-		SignalPath:   signalPath,
-		SignalPaths:  signalPaths(env("POWER_SIGNAL_PATHS", ""), signalPath),
+		SignalPaths:  signalPaths(env("POWER_SIGNAL_PATHS", ""), defaultSignalPath(nodeName)),
 		SignalTTL:    parseDuration(env("POWER_SIGNAL_TTL", "2m"), 2*time.Minute),
 		Interval:     parseDuration(env("POWER_ACTUATOR_INTERVAL", "5s"), 5*time.Second),
 		ShutdownFlow: env("POWER_SHUTDOWN_FLOW", ""),
@@ -315,12 +315,12 @@ func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFun
 	}
 }
 
-func stubActuator(logger *log.Logger, config actuatorConfig, status nodeagent.SignalStatus) error {
-	logger.Printf("stub actuator accepted shutdown signal executionID=%s node=%s flow=%s mode=%s", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow, config.Mode)
+func simulateActuator(logger *log.Logger, config actuatorConfig, status nodeagent.SignalStatus) error {
+	logger.Printf("simulate actuator accepted shutdown signal executionID=%s node=%s flow=%s mode=%s", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow, config.Mode)
 	return nil
 }
 
-func systemdPoweroffActuator(logger *log.Logger, config actuatorConfig, status nodeagent.SignalStatus) error {
+func powerOffActuator(logger *log.Logger, config actuatorConfig, status nodeagent.SignalStatus) error {
 	// Read from this process's own env, never from the signal (F-56). main() already refuses to
 	// start this policy outside Actuate, so reaching here in another mode should be impossible --
 	// which is exactly why it is worth checking on the one operation that cannot be undone.
@@ -329,7 +329,7 @@ func systemdPoweroffActuator(logger *log.Logger, config actuatorConfig, status n
 			config.Mode, modeActuate, status.Payload.ExecutionID, status.Payload.NodeName)
 		return nil
 	}
-	logger.Printf("systemd actuator executing poweroff executionID=%s node=%s flow=%s", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow)
+	logger.Printf("poweroff actuator executing poweroff executionID=%s node=%s flow=%s", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow)
 	return runPoweroff()
 }
 

@@ -110,7 +110,7 @@ func defaultNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) {
 		obj.Spec.Mode = powerv1alpha1.NodePowerAgentModeDryRun
 	}
 	if obj.Spec.Shutdown.ActuatorPolicy == "" {
-		obj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicyStub
+		obj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicySimulate
 	}
 	if obj.Spec.Shutdown.SignalPath == "" {
 		obj.Spec.Shutdown.SignalPath = "/run/power-agent/shutdown.json"
@@ -240,21 +240,21 @@ func validateAgentShutdown(pathField *field.Path, obj *powerv1alpha1.NodePowerAg
 	var errs field.ErrorList
 	shutdown := obj.Spec.Shutdown
 	switch shutdown.ActuatorPolicy {
-	case "", powerv1alpha1.ActuatorPolicyDisabled, powerv1alpha1.ActuatorPolicyStub:
-	case powerv1alpha1.ActuatorPolicySystemdPoweroff:
+	case "", powerv1alpha1.ActuatorPolicyDisabled, powerv1alpha1.ActuatorPolicySimulate:
+	case powerv1alpha1.ActuatorPolicyPowerOff:
 		if obj.Spec.Mode != powerv1alpha1.NodePowerAgentModeActuate {
-			errs = append(errs, field.Invalid(pathField.Child("actuatorPolicy"), shutdown.ActuatorPolicy, "SystemdPoweroff requires spec.mode Actuate"))
+			errs = append(errs, field.Invalid(pathField.Child("actuatorPolicy"), shutdown.ActuatorPolicy, "PowerOff requires spec.mode Actuate"))
 		}
 		if shutdown.ApprovalAnnotation == "" {
-			errs = append(errs, field.Required(pathField.Child("approvalAnnotation"), "required for SystemdPoweroff actuation"))
+			errs = append(errs, field.Required(pathField.Child("approvalAnnotation"), "required for PowerOff actuation"))
 		} else if obj.Annotations[shutdown.ApprovalAnnotation] != "true" {
-			errs = append(errs, field.Invalid(field.NewPath("metadata").Child("annotations").Key(shutdown.ApprovalAnnotation), obj.Annotations[shutdown.ApprovalAnnotation], "must be set to \"true\" for SystemdPoweroff actuation"))
+			errs = append(errs, field.Invalid(field.NewPath("metadata").Child("annotations").Key(shutdown.ApprovalAnnotation), obj.Annotations[shutdown.ApprovalAnnotation], "must be set to \"true\" for PowerOff actuation"))
 		}
 	default:
 		errs = append(errs, field.NotSupported(pathField.Child("actuatorPolicy"), shutdown.ActuatorPolicy, []string{
 			string(powerv1alpha1.ActuatorPolicyDisabled),
-			string(powerv1alpha1.ActuatorPolicyStub),
-			string(powerv1alpha1.ActuatorPolicySystemdPoweroff),
+			string(powerv1alpha1.ActuatorPolicySimulate),
+			string(powerv1alpha1.ActuatorPolicyPowerOff),
 		}))
 	}
 	if shutdown.SignalPath != "" {
