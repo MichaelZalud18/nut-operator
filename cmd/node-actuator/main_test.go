@@ -45,10 +45,12 @@ func TestRunPoweroffInvokesTheSyscall(t *testing.T) {
 // reintroduce a configurable poweroff mechanism without revisiting that decision.
 func TestPoweroffTakesNoConfiguration(t *testing.T) {
 	config := actuatorConfig{}
-	// Bumped from 7 to 8 for StatePath (F-64), which is where the watch loop records that it ran.
-	// It carries no poweroff mechanism: readiness reads it and the syscall path never consults it.
-	// The count is the point of the test, so raising it is a deliberate act, not a fix.
-	if reflect.TypeOf(config).NumField() != 8 {
+	// 7 -> 8 for StatePath (F-64), where the watch loop records that it ran. 8 -> 9 for
+	// ShutdownFlow (F-55), the flow an accepted signal must name. Neither carries a poweroff
+	// mechanism: one is read by readiness, the other narrows which signals are accepted, and the
+	// syscall path consults neither. The count is the point of the test, so raising it is a
+	// deliberate act, not a fix.
+	if reflect.TypeOf(config).NumField() != 9 {
 		t.Fatalf("actuatorConfig gained or lost a field; confirm no poweroff mechanism became configurable: %+v", config)
 	}
 	for _, field := range []string{"PoweroffMethod", "PoweroffCommand", "PoweroffArgs"} {
@@ -240,5 +242,83 @@ func TestScanDoesNotReactuateASignalAlreadySeen(t *testing.T) {
 
 	if actuations != 1 {
 		t.Fatalf("a signal already actuated must not fire again on the next pass, got %d", actuations)
+	}
+}
+
+// writeTestSignal drops a well-formed, in-TTL signal for node-a under the given flow.
+func writeTestSignal(t *testing.T, flow string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "shutdown.json")
+	if err := nodeagent.WriteSignalAtomic(path, nodeagent.ShutdownSignal{
+		Timestamp:      time.Now().UTC().Format(time.RFC3339),
+		NodeName:       "node-a",
+		ExecutionID:    "exec-1",
+		PlanConfigHash: "plan-hash-1",
+		ShutdownFlow:   flow,
+		Reason:         "ReleaseApproved",
+	}); err != nil {
+		t.Fatalf("write signal: %v", err)
+	}
+	return path
+}
+
+// F-55: fields were checked for presence and never for value, so any well-formed signal for this
+// node was accepted regardless of which flow issued it.
+func TestScanRejectsASignalFromAFlowTheAgentDidNotDeclare(t *testing.T) {
+	config := actuatorConfig{
+		NodeName:     "node-a",
+		SignalTTL:    2 * time.Minute,
+		ShutdownFlow: "flow-a",
+		SignalPaths:  []string{writeTestSignal(t, "flow-b")},
+	}
+
+	actuations := 0
+	scanSignalPaths(log.New(io.Discard, "", 0), config, func(*log.Logger, actuatorConfig, nodeagent.SignalStatus) error {
+		actuations++
+		return nil
+	}, map[string]struct{}{})
+
+	if actuations != 0 {
+		t.Fatalf("a signal from an undeclared flow must not actuate, got %d", actuations)
+	}
+}
+
+func TestScanAcceptsASignalFromTheDeclaredFlow(t *testing.T) {
+	config := actuatorConfig{
+		NodeName:     "node-a",
+		SignalTTL:    2 * time.Minute,
+		ShutdownFlow: "flow-a",
+		SignalPaths:  []string{writeTestSignal(t, "flow-a")},
+	}
+
+	actuations := 0
+	scanSignalPaths(log.New(io.Discard, "", 0), config, func(*log.Logger, actuatorConfig, nodeagent.SignalStatus) error {
+		actuations++
+		return nil
+	}, map[string]struct{}{})
+
+	if actuations != 1 {
+		t.Fatalf("a signal from the declared flow must actuate once, got %d", actuations)
+	}
+}
+
+// An agent that declares no flow keeps the operator's existing model: a ShutdownFlow names its
+// agents through AgentRefs, and the agent's reference back is optional, so an unset ref is
+// permission rather than an omission. Asserted so the check cannot quietly become mandatory.
+func TestScanAcceptsAnyFlowWhenTheAgentDeclaresNone(t *testing.T) {
+	config := actuatorConfig{
+		NodeName:    "node-a",
+		SignalTTL:   2 * time.Minute,
+		SignalPaths: []string{writeTestSignal(t, "flow-whatever")},
+	}
+
+	actuations := 0
+	scanSignalPaths(log.New(io.Discard, "", 0), config, func(*log.Logger, actuatorConfig, nodeagent.SignalStatus) error {
+		actuations++
+		return nil
+	}, map[string]struct{}{})
+
+	if actuations != 1 {
+		t.Fatalf("an agent declaring no flow must accept any flow's signal, got %d", actuations)
 	}
 }

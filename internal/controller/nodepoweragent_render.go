@@ -1036,6 +1036,12 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 					{Name: "POWER_SIGNAL_PATHS", Value: nodePowerAgentProjectedSignalPath},
 					{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
 					{Name: "POWER_ACTUATOR_STATE_PATH", Value: nodePowerAgentActuatorStatePath},
+					// Only when the agent declares a flow (F-55). nodePowerAgentShutdownFlowName
+					// falls back to "upsmon-local" for the upsmon container, which is a name for
+					// the locked-down local path rather than a flow anything issues signals under
+					// -- rendering it here would make the actuator compare against a value the
+					// executor can never send and reject every release.
+					{Name: "POWER_SHUTDOWN_FLOW", Value: nodePowerAgentDeclaredShutdownFlow(agent)},
 				},
 				SecurityContext: actuatorContainerSecurityContext(hostPoweroff),
 				ReadinessProbe:  actuatorReadinessProbe(),
@@ -1292,6 +1298,20 @@ func nodePowerAgentPriorityClassName(agent *powerv1alpha1.NodePowerAgent) string
 		return agent.Spec.Placement.PriorityClassName
 	}
 	return nodePowerAgentDefaultPriorityClassName
+}
+
+// nodePowerAgentDeclaredShutdownFlow is the flow the agent actually declares, or empty.
+//
+// Distinct from nodePowerAgentShutdownFlowName, which substitutes "upsmon-local" when no reference
+// is set. That substitution is right for the local writer -- it needs some name to stamp -- and
+// wrong for the actuator, which compares what it is given against what arrives. An agent that
+// declares no flow accepts a release from any flow, which is the model the operator already has:
+// a ShutdownFlow names its agents through AgentRefs, and the agent's reference back is optional.
+func nodePowerAgentDeclaredShutdownFlow(agent *powerv1alpha1.NodePowerAgent) string {
+	if agent.Spec.ShutdownFlowRef != nil {
+		return agent.Spec.ShutdownFlowRef.Name
+	}
+	return ""
 }
 
 func nodePowerAgentShutdownFlowName(agent *powerv1alpha1.NodePowerAgent) string {

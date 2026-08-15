@@ -377,6 +377,14 @@ var _ = Describe("NodePowerAgent Controller", func() {
 				MountPath: "/var/lib/power-agent/signals",
 				ReadOnly:  true,
 			}))
+			// F-55: this agent declares no spec.shutdownFlowRef, so the actuator must be told to
+			// accept any flow rather than handed "upsmon-local" -- the name the upsmon container
+			// stamps for the locked-down local path, which no executor ever sends. Rendering it
+			// here would reject every operator-issued release.
+			Expect(daemonSet.Spec.Template.Spec.Containers[1].Env).To(ContainElement(corev1.EnvVar{
+				Name:  "POWER_SHUTDOWN_FLOW",
+				Value: "",
+			}))
 			// F-86: kubelet substitutes an empty directory for an absent optional Secret, so the
 			// agent came up healthy against a channel that could never deliver.
 			for _, volume := range daemonSet.Spec.Template.Spec.Volumes {

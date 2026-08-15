@@ -227,8 +227,10 @@ falling back to the shared tmpfs. NUT's local `SHUTDOWNCMD` path keeps its write
 and holds no authority (`OD-37`). A pass stops at the first live signal, so one episode delivered
 twice actuates once. The signal Secret always carries a delivery-channel marker and mounts
 non-optionally, so a channel that cannot deliver fails readiness instead of resembling a quiet one.
+The signal carries no `dryRun` field: whether a node may halt is the actuator's own mode, which no
+writer can reach. An agent that declares a `shutdownFlowRef` accepts releases only from that flow.
 
-Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`, `F-57`, `F-58`, `F-60`, `F-61`–`F-65`,
+Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-58`, `F-60`, `F-61`–`F-65`,
 `F-66`, `F-67`–`F-71`, `F-73`, `F-74`, `F-86`, `F-88`, `OD-37`. `F-89` declined — the signal Secret
 mounts whole on every node, but the payload carries no credentials and the node-name check holds it
 to exposure rather than actuation; recorded in
@@ -238,14 +240,12 @@ to exposure rather than actuation; recorded in
 
 ##### Signal authority and the two-component boundary
 
-- **`F-56` · Stop carrying `DryRun` in the signal file.** The writer sets it from `POWER_AGENT_MODE`
-  and the actuator gates on it, so the actuator reads its own configuration back out of a file.
-  Authorization derives from the projected Secret's provenance and the actuator's own env instead.
-
-- **`F-55` · Validate signal fields by value, not presence.** Inject `POWER_PLAN_CONFIG_HASH` and
-  `POWER_SHUTDOWN_FLOW` into the actuator container — they reach `upsmon` only today — and compare
-  against them. `PlanConfigHash`, `ExecutionID`, and `ShutdownFlow` are checked non-empty and no
-  further.
+- **`F-91` · `POWER_PLAN_CONFIG_HASH` names something it is not.** The agent env carries a hash of
+  that agent's own rendered config; the signal's `PlanConfigHash` carries the planner's `PL-14` plan
+  identity. Rename the env with the `F-75` revision, and decide separately whether plan identity is
+  validated at all — the planner hash changes per compilation, so pinning it in static env would
+  roll the DaemonSet on every plan change
+  ([node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md)).
 
 ##### Signal delivery and dedupe
 

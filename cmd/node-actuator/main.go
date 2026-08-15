@@ -103,6 +103,14 @@ type actuatorConfig struct {
 	SignalPaths []string
 	SignalTTL   time.Duration
 	Interval    time.Duration
+	// ShutdownFlow is the flow this agent declares it belongs to, and the value an accepted
+	// signal's own ShutdownFlow must equal (F-55). Empty means the agent declared none, and any
+	// flow may release it.
+	//
+	// There is deliberately no PlanConfigHash counterpart. The agent's POWER_PLAN_CONFIG_HASH is a
+	// hash of its own rendered config, not the planner's plan hash that the signal carries, so
+	// comparing the two would reject every operator-issued signal -- see F-91.
+	ShutdownFlow string
 	// StatePath is where the watch loop records each completed pass, and the only thing the
 	// readiness probe can observe about it (F-64).
 	StatePath string
@@ -116,14 +124,15 @@ func loadActuatorConfig() actuatorConfig {
 	nodeName := env("POWER_NODE_NAME", "")
 	signalPath := env("POWER_SIGNAL_PATH", defaultSignalPath(nodeName))
 	return actuatorConfig{
-		Mode:        env("POWER_AGENT_MODE", "DryRun"),
-		Policy:      env("POWER_ACTUATOR_POLICY", policyStub),
-		NodeName:    nodeName,
-		SignalPath:  signalPath,
-		SignalPaths: signalPaths(env("POWER_SIGNAL_PATHS", ""), signalPath),
-		SignalTTL:   parseDuration(env("POWER_SIGNAL_TTL", "2m"), 2*time.Minute),
-		Interval:    parseDuration(env("POWER_ACTUATOR_INTERVAL", "5s"), 5*time.Second),
-		StatePath:   env("POWER_ACTUATOR_STATE_PATH", "/run/actuator/state.json"),
+		Mode:         env("POWER_AGENT_MODE", "DryRun"),
+		Policy:       env("POWER_ACTUATOR_POLICY", policyStub),
+		NodeName:     nodeName,
+		SignalPath:   signalPath,
+		SignalPaths:  signalPaths(env("POWER_SIGNAL_PATHS", ""), signalPath),
+		SignalTTL:    parseDuration(env("POWER_SIGNAL_TTL", "2m"), 2*time.Minute),
+		Interval:     parseDuration(env("POWER_ACTUATOR_INTERVAL", "5s"), 5*time.Second),
+		ShutdownFlow: env("POWER_SHUTDOWN_FLOW", ""),
+		StatePath:    env("POWER_ACTUATOR_STATE_PATH", "/run/actuator/state.json"),
 	}
 }
 
@@ -213,6 +222,18 @@ func scanSignalPaths(logger *log.Logger, config actuatorConfig, actuate actuator
 			if status.Reason != "SignalMissing" {
 				logger.Printf("ignoring shutdown signal path=%s reason=%s", status.Path, status.Reason)
 			}
+			continue
+		}
+		// Checked by value, not merely for presence (F-55). InspectSignal already binds the signal
+		// to this node; this binds it to the flow the agent declares it belongs to, so a second
+		// flow's release cannot halt a node that was never enrolled in it.
+		//
+		// Empty means the agent set no spec.shutdownFlowRef and any flow may release it. That is
+		// the operator's existing model -- a flow names its agents through AgentRefs, and the
+		// agent's own reference back is optional -- so an unset ref is permission, not an omission.
+		if config.ShutdownFlow != "" && status.Payload.ShutdownFlow != config.ShutdownFlow {
+			logger.Printf("ignoring shutdown signal path=%s reason=SignalWrongFlow executionID=%s flow=%s expectedFlow=%s",
+				status.Path, status.Payload.ExecutionID, status.Payload.ShutdownFlow, config.ShutdownFlow)
 			continue
 		}
 		if _, alreadySeen := seen[status.Key]; !alreadySeen {

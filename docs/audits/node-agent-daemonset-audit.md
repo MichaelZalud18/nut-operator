@@ -1222,3 +1222,34 @@ The actuator's own compiled-in default moved with it. It was `/run/power-agent/s
 failure to inject `POWER_SIGNAL_PATH` did not disarm the actuator — it repointed it at exactly the
 path `OD-37` declines to trust. The default is now derived from `POWER_NODE_NAME`, and with no node
 name there is no path at all: the actuator watches nothing rather than guessing.
+
+**F-55 closed for the flow, refused for the hash.** The flow half is implemented: the actuator is
+given `POWER_SHUTDOWN_FLOW` and rejects any signal naming a different one, so a second flow's
+release cannot halt a node that was never enrolled in it. It is rendered only when the agent
+actually sets `spec.shutdownFlowRef` — `nodePowerAgentShutdownFlowName` substitutes `upsmon-local`
+for the upsmon container, which is a name for the locked-down local path rather than a flow anything
+issues under, and comparing against it would reject every release. An agent that declares no flow
+accepts any flow's signal, which is the operator's existing model: a `ShutdownFlow` names its agents
+through `AgentRefs`, and the agent's reference back is optional.
+
+The hash half is not implemented, and the reason is `F-91` below rather than effort.
+
+**F-91 · `POWER_PLAN_CONFIG_HASH` is not the plan config hash.** The agent's env carries
+`hashStringMap(configData) + "-" + hashByteMap(secretData)` (`nodepoweragent_render.go:222`) — a
+hash of that agent's own rendered `nut.conf` and Secret. The signal's `PlanConfigHash` carries the
+`ShutdownFlow`'s planner hash (`shutdownflow_execution.go:114`), which is `PL-14` plan identity over
+structural planner inputs. Two unrelated values under one name.
+
+Nothing compared them, which is why it went unnoticed: `F-55` is precisely the change that would
+have, and comparing them by value would have rejected every operator-issued signal fleet-wide. The
+local writer stamps the agent hash into its own signal and the executor stamps the planner hash into
+the projected one, so the collision is invisible until a reader treats the two as the same field.
+
+Two things need deciding, and neither is a defect fix:
+
+- Whether the agent env is renamed to what it is (`POWER_AGENT_CONFIG_HASH`), which belongs with the
+  `F-75` alpha API revision since it changes the container contract.
+- Whether the actuator should validate plan identity at all. It cannot hold the planner's hash in
+  static env: that value changes with every compilation, so pinning it would roll the DaemonSet on
+  every plan change — which is `F-72`'s problem, made routine. Presence-only is the honest state
+  until there is a delivery path for a value that moves.
