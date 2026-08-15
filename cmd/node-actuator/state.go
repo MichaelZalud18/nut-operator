@@ -39,6 +39,12 @@ type actuatorState struct {
 	// just is not the operator's Secret, which is the case an empty mount and a working-but-quiet
 	// channel used to share.
 	UnprojectedSignalDirs []string `json:"unprojectedSignalDirs,omitempty"`
+	// ClockSkewedSignals lists signal paths rejected because their timestamp was more than a whole
+	// TTL ahead of this node's clock (F-59). The executor stamps the signal when it writes it, so
+	// that can only mean the two clocks disagree by more than the delivery window -- and once they
+	// do, every operator-issued signal to this node is rejected, silently, until someone reads a
+	// container log.
+	ClockSkewedSignals []string `json:"clockSkewedSignals,omitempty"`
 	// ActuatedKeys are the signal keys this actuator has already acted on (F-58). Kept here rather
 	// than only in memory because the map and the signal file have different lifetimes: `seen` dies
 	// with the container, the emptyDir holding the signal lives as long as the pod, so a restart
@@ -174,6 +180,14 @@ func checkActuatorReady(config actuatorConfig, now time.Time) error {
 	if len(state.UnprojectedSignalDirs) > 0 {
 		return fmt.Errorf("signal directories carry no %q marker, so the operator's delivery channel is not mounted there: %v",
 			nodeagent.DeliveryChannelMarker, state.UnprojectedSignalDirs)
+	}
+	// F-59. Reported through readiness because that is the channel this node already has: the
+	// actuator holds no credentials and publishes nothing upward (F-60), while pod readiness
+	// already reaches the operator through status.nodeStatuses. A node whose clock rejects every
+	// signal the operator sends is not covered, and saying so is the whole point.
+	if len(state.ClockSkewedSignals) > 0 {
+		return fmt.Errorf("signals were timestamped more than one TTL ahead of this node's clock, so every operator-issued signal is being rejected; check time sync on this node: %v",
+			state.ClockSkewedSignals)
 	}
 
 	recorded, err := time.Parse(time.RFC3339, state.Timestamp)

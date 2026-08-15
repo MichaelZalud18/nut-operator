@@ -322,3 +322,43 @@ func TestScanAcceptsAnyFlowWhenTheAgentDeclaresNone(t *testing.T) {
 		t.Fatalf("an agent declaring no flow must accept any flow's signal, got %d", actuations)
 	}
 }
+
+// F-59: only a future-dated signal counts as clock disagreement.
+//
+// The executor stamps the signal when it writes it, so a timestamp a whole TTL ahead of this node
+// can only mean the clocks disagree by more than the delivery window. A merely stale signal cannot
+// carry that meaning -- it ages out whenever nobody collects it or a flow is called off -- so
+// counting it would report skew on every cancelled shutdown.
+func TestScanReportsClockSkewOnlyForFutureDatedSignals(t *testing.T) {
+	write := func(t *testing.T, stamp time.Time) actuatorConfig {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "shutdown.json")
+		if err := nodeagent.WriteSignalAtomic(path, nodeagent.ShutdownSignal{
+			Timestamp:      stamp.Format(time.RFC3339Nano),
+			NodeName:       "node-a",
+			ExecutionID:    "exec-1",
+			PlanConfigHash: "hash-1",
+			ShutdownFlow:   "flow-1",
+			Reason:         "test",
+		}); err != nil {
+			t.Fatalf("write signal: %v", err)
+		}
+		return actuatorConfig{NodeName: "node-a", SignalTTL: time.Minute, SignalPaths: []string{path}}
+	}
+	noop := func(*log.Logger, actuatorConfig, nodeagent.SignalStatus) error { return nil }
+	logger := log.New(io.Discard, "", 0)
+
+	t.Run("a signal from the future is clock skew", func(t *testing.T) {
+		skewed := scanSignalPaths(logger, write(t, time.Now().UTC().Add(10*time.Minute)), noop, map[string]struct{}{})
+		if len(skewed) != 1 {
+			t.Fatalf("expected the future-dated signal to be reported as skew, got %v", skewed)
+		}
+	})
+
+	t.Run("an ordinary stale signal is not", func(t *testing.T) {
+		skewed := scanSignalPaths(logger, write(t, time.Now().UTC().Add(-10*time.Minute)), noop, map[string]struct{}{})
+		if len(skewed) != 0 {
+			t.Fatalf("a stale signal must not be reported as clock skew, got %v", skewed)
+		}
+	})
+}

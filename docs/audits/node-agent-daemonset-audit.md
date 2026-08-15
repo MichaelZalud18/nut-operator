@@ -1253,3 +1253,28 @@ Two things need deciding, and neither is a defect fix:
   static env: that value changes with every compilation, so pinning it would roll the DaemonSet on
   every plan change — which is `F-72`'s problem, made routine. Presence-only is the honest state
   until there is a delivery path for a value that moves.
+
+**F-59 and F-90 closed together — two assumptions on one window.** The TTL bounds how long a signal
+stays actionable, and two independent things have to hold for it to be the right bound.
+
+*Clock (`F-59`).* The executor stamps `Timestamp` from its own clock; the actuator compares against
+the node's. The stated assumption is NTP: nodes and the operator agree to well within the signal
+TTL. The failure was silent by construction — past the window every operator-issued signal is
+rejected fleet-wide, evidenced only by a container log line nobody reads during an outage.
+
+`SignalFromFuture` is now recorded in the actuator state and fails readiness. It is the one
+rejection that cannot mean anything else: the executor stamps the signal as it writes it, so a
+timestamp more than a whole TTL ahead of this node means the clocks disagree by more than the
+delivery window. `SignalStale` deliberately does not count — a signal ages out whenever nobody
+collects it or a flow is called off, so counting it would report skew on every cancelled shutdown.
+
+Readiness is the channel because it is the one this node already has. The actuator holds no
+credentials and publishes nothing upward (`F-60`, closed as designed), while pod readiness already
+reaches the operator through `status.nodeStatuses`. A node whose clock rejects everything the
+operator sends is not covered, and reporting NotReady says exactly that.
+
+*Propagation (`F-90`).* The TTL also has to exceed kubelet's Secret sync period plus its cache TTL,
+or the signal expires before it is projected into the pod. This assumption was already encoded and
+never written down: `F-70`'s 90-second minimum TTL came from a measured ~44s delivery, which is a
+propagation bound, not a clock one. Recorded here so the floor is not later "optimized" down by
+someone reasoning only about how long a shutdown takes.

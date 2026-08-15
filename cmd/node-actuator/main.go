@@ -214,10 +214,24 @@ func block(logger *log.Logger, reason string) {
 //
 // `seen` is updated in place, which is what carries the actuated keys into the state file the caller
 // writes at the end of each pass (F-58).
-func scanSignalPaths(logger *log.Logger, config actuatorConfig, actuate actuatorFunc, seen map[string]struct{}) {
+// It returns the paths whose rejection was a clock disagreement rather than an ordinary one, which
+// is what readiness reports on (F-59).
+func scanSignalPaths(logger *log.Logger, config actuatorConfig, actuate actuatorFunc, seen map[string]struct{}) []string {
+	var clockSkewed []string
 	for _, path := range config.SignalPaths {
 		status := nodeagent.InspectSignal(path, config.SignalTTL, time.Now().UTC(), config.NodeName)
 		if !status.Active {
+			// SignalFromFuture is the one rejection that cannot be explained by anything but the
+			// two clocks disagreeing (F-59). The executor stamps the signal at write time, so a
+			// timestamp more than a whole TTL ahead of this node means this node's clock is behind
+			// the operator's by more than the delivery window -- a standing fault, not an event.
+			//
+			// SignalStale deliberately does not count. A signal ages out for ordinary reasons too:
+			// nobody collected it, or the flow ended. Treating that as a clock fault would report
+			// skew every time a shutdown was called off.
+			if status.Reason == "SignalFromFuture" {
+				clockSkewed = append(clockSkewed, path)
+			}
 			// SignalMissing is the normal case on every tick and is deliberately not logged.
 			if status.Reason != "SignalMissing" {
 				logger.Printf("ignoring shutdown signal path=%s reason=%s", status.Path, status.Reason)
@@ -246,8 +260,9 @@ func scanSignalPaths(logger *log.Logger, config actuatorConfig, actuate actuator
 		// describing one episode produce two keys and `seen` does not connect them -- continuing
 		// past an active signal is how one shutdown became two actuations. OD-37 removes the second
 		// source, and this removes the shape that let it matter.
-		return
+		return clockSkewed
 	}
+	return clockSkewed
 }
 
 func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFunc) {
@@ -271,7 +286,7 @@ func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFun
 	stateWriteFailed := false
 
 	for {
-		scanSignalPaths(logger, config, actuate, seen)
+		clockSkewed := scanSignalPaths(logger, config, actuate, seen)
 
 		// Record the completed pass (F-64). This is the only evidence readiness has that the loop
 		// is running at all, so a failure to write it must be visible rather than swallowed -- a
@@ -283,6 +298,7 @@ func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFun
 			IntervalSeconds:       config.Interval.Seconds(),
 			UnreadableSignalDirs:  unreadableSignalDirs(config.SignalPaths),
 			UnprojectedSignalDirs: unprojectedSignalDirs(config.SignalPaths),
+			ClockSkewedSignals:    clockSkewed,
 			ActuatedKeys:          actuatedKeys(seen),
 		}
 		if err := writeActuatorState(config.StatePath, state); err != nil {

@@ -228,3 +228,32 @@ func TestReadinessPassesWhenTheChannelIsMountedButQuiet(t *testing.T) {
 		t.Fatalf("a mounted channel with no pending signal must stay ready: %v", err)
 	}
 }
+
+// F-59: clock skew rejected every operator-issued signal fleet-wide and the only evidence was a
+// container log line. Readiness is the channel this node already has, so it carries it.
+func TestReadinessFailsWhenSignalsArriveFromTheFuture(t *testing.T) {
+	root := t.TempDir()
+	config := actuatorConfig{
+		Policy:      policyStub,
+		SignalPaths: []string{filepath.Join(root, "shutdown.json")},
+		StatePath:   filepath.Join(root, "state.json"),
+		Interval:    5 * time.Second,
+	}
+	now := time.Now().UTC()
+	if err := writeActuatorState(config.StatePath, actuatorState{
+		Timestamp:          now.Format(time.RFC3339),
+		Policy:             config.Policy,
+		IntervalSeconds:    5,
+		ClockSkewedSignals: []string{config.SignalPaths[0]},
+	}); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	err := checkActuatorReady(config, now)
+	if err == nil {
+		t.Fatal("a node rejecting every signal for clock skew must not report Ready (F-59)")
+	}
+	if !strings.Contains(err.Error(), "time sync") {
+		t.Fatalf("the failure must name the actual cause, got: %v", err)
+	}
+}

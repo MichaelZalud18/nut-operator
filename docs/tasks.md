@@ -106,12 +106,16 @@ runs to completion, the pointer ascends as bookkeeping, and whether a new execut
 by trigger eligibility a level up. `Gate` is
 removed from the action enum; `Notify` emits a Kubernetes Event. Tier inversion is published as
 `nutoperator_shutdownflow_tier_inversions`, and the EX-29 cadence heartbeat as
-`nutoperator_shutdownflow_publish_timestamp_seconds` plus `status.lastPublishTime`. Node clearance is
-re-derived at execution against the pods actually on the node, read uncached. The provisional `AE-n`
-identifiers are folded into `EX-25`–`EX-30`, and the runtime-estimate gate that shared `AE-6` is now
-`CR-4`. `EX-32` estimates are informed by what previous outages actually took: observed group
-durations are read from the audit tables scoped by plan config hash, injected as a resolved planner
-input, and published per group with provenance and sample counts. `OD-12` is surfaced as
+`nutoperator_shutdownflow_publish_timestamp_seconds` plus `status.lastPublishTime`. `EX-31` has the
+sequential tier-overrun slice built: `spec.tierOverrunPolicy` defaults to `Wait`, `Preempt` cancels
+the tier action context when the next lower tier becomes due, and overruns are recorded in wave/final
+audit details, `status.lastExecution.tierOverruns`, `nutoperator_shutdownflow_tier_overruns_total`,
+and `nutoperator_shutdownflow_tier_overrun_seconds`. Node clearance is re-derived at execution
+against the pods actually on the node, read uncached. The provisional `AE-n` identifiers are folded
+into `EX-25`–`EX-30`, and the runtime-estimate gate that shared `AE-6` is now `CR-4`. `EX-32`
+estimates are informed by what previous outages actually took: observed group durations are read from
+the audit tables scoped by plan config hash, injected as a resolved planner input, and published per
+group with provenance and sample counts. `OD-12` is surfaced as
 `status.planFeasibility` — plan estimate against reported runtime, warning and never blocking.
 `EX-14` restart resume is covered by envtest: a second reconciler instance holding no
 in-process state resumes the persisted tier and timing mode instead of re-reporting descended tiers as
@@ -129,9 +133,9 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 - `OD-27` confirm the adaptive defaults against a real outage. The compression amount is measured, so
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).
-- Build `EX-31` tier-overrun policy: `spec.tierOverrunPolicy` of `Wait` (default, current behavior),
-  `Overlap`, or `Preempt`, plus metrics recording which tier overran, by how much, and what the
-  policy did.
+- Finish `EX-31` `Overlap`: `Wait` and context-driven `Preempt` are built and published through
+  status, audit, and metrics. `Overlap` still needs an executor scheduler that can run the next tier
+  while the previous tier continues, without turning `ShutdownFlow` into a general workflow engine.
 - Build `EX-33` rehearsal runs so history exists before the first real outage: an on-demand or
   scheduled enforce-mode execution, labelled as a rehearsal in the audit trail and includable or
   excludable from estimates. Dry-run cannot serve this — it skips effects and so produces no honest
@@ -229,9 +233,11 @@ twice actuates once. The signal Secret always carries a delivery-channel marker 
 non-optionally, so a channel that cannot deliver fails readiness instead of resembling a quiet one.
 The signal carries no `dryRun` field: whether a node may halt is the actuator's own mode, which no
 writer can reach. An agent that declares a `shutdownFlowRef` accepts releases only from that flow.
+A node whose clock rejects every signal the operator sends reports NotReady rather than logging it,
+so the failure reaches `status.nodeStatuses` instead of a container log nobody reads mid-outage.
 
-Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-58`, `F-60`, `F-61`–`F-65`,
-`F-66`, `F-67`–`F-71`, `F-73`, `F-74`, `F-86`, `F-88`, `OD-37`. `F-89` declined — the signal Secret
+Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-60`, `F-61`–`F-65`,
+`F-66`, `F-67`–`F-71`, `F-73`, `F-74`, `F-86`, `F-88`, `F-90`, `OD-37`. `F-89` declined — the signal Secret
 mounts whole on every node, but the payload carries no credentials and the node-name check holds it
 to exposure rather than actuation; recorded in
 [node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md).
@@ -258,14 +264,6 @@ to exposure rather than actuation; recorded in
 - **`F-72` remainder · nothing suppresses a rollout during a flow.** The shape is fixed; the guard is
   the open half — a paused DaemonSet, an admission check, or a flow-active condition. `F-87` is what
   makes this a defect rather than a preference.
-
-##### Clock and propagation assumptions
-
-- **`F-59` · The TTL window rests on two unstated assumptions.** The executor stamps `Timestamp` and
-  the actuator compares against the node clock, so skew past the window rejects every
-  operator-issued signal fleet-wide, evidenced only by a container log line. `F-90` is the second
-  assumption on the same window: signal TTL versus kubelet Secret propagation delay. State both —
-  NTP and propagation — and add the condition or metric for "this node rejects what I send it".
 
 ##### Naming and hygiene
 
