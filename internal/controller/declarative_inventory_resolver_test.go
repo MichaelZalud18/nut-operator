@@ -119,6 +119,20 @@ func TestResolveDeclarativeStructuralBundleMapsLastDitchRoleToTierOne(t *testing
 	}
 }
 
+func TestDeclarativeStructuralInputsLeaveSnapshotObservedAtEmpty(t *testing.T) {
+	reader := fake.NewClientBuilder().
+		WithScheme(clusterContextScheme(t)).
+		Build()
+
+	inputs, diagnostics, err := declarativeStructuralInputs(context.Background(), reader)
+	if err != nil {
+		t.Fatalf("expected declarative inputs to resolve, got %v with diagnostics %#v", err, diagnostics)
+	}
+	if inputs.Inventory.ObservedAt != "" {
+		t.Fatalf("declarative inventory must not restamp observedAt on each resolve, got %q", inputs.Inventory.ObservedAt)
+	}
+}
+
 func objectMeta(name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{Name: name}
 }

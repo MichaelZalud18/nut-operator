@@ -108,6 +108,35 @@ func TestCompileIsDeterministicAndDoesNotMutateInput(t *testing.T) {
 	}
 }
 
+func TestCompileIncludesObservedAtInTopologyHash(t *testing.T) {
+	snapshot := Snapshot{
+		ObservedAt: "2026-08-01T00:00:00Z",
+		Entities: []Entity{
+			{ID: "ups-a", Kind: EntityKindUPSDevice, PowerDomains: []string{"rack-a"}},
+			{ID: "node-a", Kind: EntityKindNode, CommunicationPathExempt: true},
+		},
+		Edges: []Edge{
+			{From: "ups-a", To: "node-a", Relation: EdgeRelationFeeds, Input: "psu"},
+		},
+	}
+
+	first, diagnostics, err := Compile(snapshot)
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	restamped := snapshot
+	restamped.ObservedAt = "2026-08-01T00:00:01Z"
+	second, diagnostics, err := Compile(restamped)
+	if err != nil {
+		t.Fatalf("expected restamped compile to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	if first.Hash == second.Hash {
+		t.Fatal("expected restamping observedAt to change topology hash")
+	}
+}
+
 func TestCompileRejectsPowerPlanningOrphan(t *testing.T) {
 	snapshot := Snapshot{
 		Entities: []Entity{
@@ -122,6 +151,27 @@ func TestCompileRejectsPowerPlanningOrphan(t *testing.T) {
 	}
 	if !hasDiagnosticReason(diagnostics, "PowerPlanningOrphan") {
 		t.Fatalf("expected PowerPlanningOrphan diagnostic, got %#v", diagnostics)
+	}
+}
+
+func TestCompileRejectsFeedsCycle(t *testing.T) {
+	snapshot := Snapshot{
+		Entities: []Entity{
+			{ID: "ups-a", Kind: EntityKindUPSDevice, PowerDomains: []string{"rack-a"}},
+			{ID: "pdu-a", Kind: EntityKindPowerInfrastructure},
+		},
+		Edges: []Edge{
+			{From: "ups-a", To: "pdu-a", Relation: EdgeRelationFeeds, Input: "line"},
+			{From: "pdu-a", To: "ups-a", Relation: EdgeRelationFeeds, Input: "line"},
+		},
+	}
+
+	_, diagnostics, err := Compile(snapshot)
+	if !errors.Is(err, ErrRejected) {
+		t.Fatalf("expected ErrRejected, got %v", err)
+	}
+	if !hasDiagnosticReason(diagnostics, "FeedsCycle") {
+		t.Fatalf("expected FeedsCycle diagnostic, got %#v", diagnostics)
 	}
 }
 

@@ -36,22 +36,18 @@ numbered shutdown tiers, and compilation wired into `ShutdownFlow` with the topo
 identity. The resolver carries full derived power-domain closure — UPS roots, members, nodes, and
 infrastructure — into planner inputs, and runtime trigger evaluation consumes that same closure, so
 domain-scoped triggers select devices from topology membership rather than raw `UPSDevice` labels.
+The declarative provider leaves snapshot `ObservedAt` unstamped to avoid per-reconcile topology hash
+churn, and cyclic `feeds` graphs are rejected with a `FeedsCycle` diagnostic before closure
+derivation.
 
-Closed: `IN-1`, `IN-3`, `IN-5`, `IN-7`, `IN-9`–`IN-14`, `IN-16`, `OD-4`, `OD-16`.
+Closed: `IN-1`, `IN-3`, `IN-5`, `IN-7`, `IN-9`–`IN-14`, `IN-16`, `OD-4`, `OD-16`, `F-81`,
+`F-82`.
 
 #### Open Work
 
 - Wire domain membership into wave compilation once it arrives, so a plan can be scoped to a domain
   (`OD-14`). Wanted in v1: this is a planner capability, not a policy question, and it is sequenced
   after the plumbing now in place rather than blocked on missing domain data.
-- `F-81` correct `snapshotage.go:33` — it claims the declarative provider restamps `ObservedAt` every
-  resolve, and nothing sets that field at all. Pin the hazard with a test in the same change:
-  `Compile` hashes the normalized snapshot including `ObservedAt` (`compiler.go:45`, `compiler.go:336`),
-  so stamping it churns the topology hash and plan identity on every reconcile. Not yet written up in
-  an audit.
-- `F-82` emit a cycle diagnostic from `feedsClosure` (`compiler.go:312`). The visited set prevents a
-  hang, so a cyclic `feeds` graph compiles silently — this is missing diagnosis, not a crash. Not yet
-  written up in an audit.
 
 ---
 

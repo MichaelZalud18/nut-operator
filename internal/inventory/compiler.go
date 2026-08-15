@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 const (
@@ -123,6 +124,7 @@ func validateSnapshot(snapshot Snapshot) []Diagnostic {
 	}
 
 	seenEdges := map[string]struct{}{}
+	var feedEdges []Edge
 	for _, edge := range snapshot.Edges {
 		if edge.From == "" || edge.To == "" {
 			diagnostics = append(diagnostics, Diagnostic{
@@ -192,7 +194,20 @@ func validateSnapshot(snapshot Snapshot) []Diagnostic {
 			})
 		}
 		seenEdges[key] = struct{}{}
+
+		if edge.Relation == EdgeRelationFeeds &&
+			edge.Input != "" &&
+			edge.From != edge.To &&
+			edge.From != "" &&
+			edge.To != "" {
+			if _, sourceExists := entities[edge.From]; sourceExists {
+				if _, targetExists := entities[edge.To]; targetExists {
+					feedEdges = append(feedEdges, edge)
+				}
+			}
+		}
 	}
+	diagnostics = append(diagnostics, feedCycleDiagnostics(feedEdges)...)
 
 	return diagnostics
 }
@@ -327,6 +342,61 @@ func feedsClosure(root string, feeds map[string][]Edge) []string {
 	walk(root)
 	sort.Strings(members)
 	return members
+}
+
+func feedCycleDiagnostics(edges []Edge) []Diagnostic {
+	feeds := edgesByFrom(edges, EdgeRelationFeeds)
+	roots := make([]string, 0, len(feeds))
+	for root := range feeds {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+
+	var diagnostics []Diagnostic
+	visited := map[string]bool{}
+	visiting := map[string]bool{}
+	var stack []string
+
+	var walk func(string)
+	walk = func(id string) {
+		if visiting[id] {
+			cycle := cyclePath(stack, id)
+			diagnostics = append(diagnostics, Diagnostic{
+				Severity: DiagnosticError,
+				Reason:   "FeedsCycle",
+				Subject:  id,
+				Message:  fmt.Sprintf("feeds graph contains a cycle: %s", strings.Join(cycle, " -> ")),
+			})
+			return
+		}
+		if visited[id] {
+			return
+		}
+		visiting[id] = true
+		stack = append(stack, id)
+		for _, edge := range feeds[id] {
+			walk(edge.To)
+		}
+		stack = stack[:len(stack)-1]
+		visiting[id] = false
+		visited[id] = true
+	}
+
+	for _, root := range roots {
+		walk(root)
+	}
+	return diagnostics
+}
+
+func cyclePath(stack []string, repeated string) []string {
+	for i, id := range stack {
+		if id == repeated {
+			cycle := append([]string(nil), stack[i:]...)
+			cycle = append(cycle, repeated)
+			return cycle
+		}
+	}
+	return []string{repeated, repeated}
 }
 
 func normalizeSnapshot(snapshot Snapshot) Snapshot {

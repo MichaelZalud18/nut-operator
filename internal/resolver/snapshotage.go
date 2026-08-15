@@ -30,10 +30,11 @@ type SnapshotAgeLevel struct {
 
 // DefaultSnapshotAgeLevels are applied when an install configures none.
 //
-// The declarative CRD provider restamps its snapshot every resolve, so these
-// never fire for it. They exist for providers that can go away mid-outage, where
-// planning deliberately continues against the last snapshot obtained (IN-15) and
-// the only remaining protection is saying how old that snapshot has become.
+// The declarative CRD provider rebuilds from live resources and leaves its
+// snapshot unstamped, so these never fire for it. They exist for providers that
+// can go away mid-outage, where planning deliberately continues against the last
+// snapshot obtained (IN-15) and the only remaining protection is saying how old
+// that snapshot has become.
 func DefaultSnapshotAgeLevels() []SnapshotAgeLevel {
 	return []SnapshotAgeLevel{
 		{Severity: DiagnosticInfo, After: time.Hour},
