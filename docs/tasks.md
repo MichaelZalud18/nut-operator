@@ -326,14 +326,14 @@ The Images workflow signs non-PR published image digests with keyless Sigstore/c
 published-image vulnerability scan, and `docs/images.md` documents digest verification. The `main`
 tag is applied only to a digest the e2e suite and the NUT TLS smoke test have both run against: the
 build job publishes immutable `sha-` references, `test-e2e` is invoked with those digests through
-`workflow_call`, and a promote job floats the tag afterwards (`F-77`).
+`workflow_call`, and a promote job floats the tag afterwards (`F-77`). Base images are pinned to
+multi-arch index digests, and the NUT source tarball is checked against a committed,
+fingerprint-pinned upstream signing key as well as its sha256.
 
 Closed: `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`, `F-52`, `F-77`, `F-78`.
 
 #### Open Work
 
-- Pin base images by digest and add detached NUT source signature verification in addition to the
-  existing NUT version and sha256 checks.
 - Automate triage of new unsuppressed medium-or-higher ASH findings.
 
 ---

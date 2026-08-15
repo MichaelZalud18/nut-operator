@@ -10,7 +10,7 @@ ARG LICENSES=Apache-2.0
 # checkov:skip=CKV_DOCKER_2:Manager health is served by Kubernetes /healthz and /readyz probes; distroless has no honest in-image probe.
 
 # Build the manager binary on the native builder platform and cross-compile the target binary.
-FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:26326682769ca980f8f1d3b1f52be2dd1c1d25270e3de3fe0c97d6bb65df3556 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -35,7 +35,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
+FROM gcr.io/distroless/static:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6
 ARG VERSION
 ARG REVISION
 ARG CREATED

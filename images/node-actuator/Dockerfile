@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:26326682769ca980f8f1d3b1f52be2dd1c1d25270e3de3fe0c97d6bb65df3556 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -67,14 +67,14 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
 # break it: a multi-stage COPY into distroless, a push to a registry, and a pull unpacked by
 # containerd on the node all preserve it. Checked with getcap against the binary as unpacked on the
 # node, not as built.
-FROM alpine:3.22 AS capabilities
+FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce AS capabilities
 
 COPY --from=builder /workspace/node-actuator /out/node-actuator
 RUN apk add --no-cache libcap \
     && setcap cap_sys_boot=p /out/node-actuator \
     && getcap /out/node-actuator | grep -q cap_sys_boot
 
-FROM gcr.io/distroless/static:nonroot
+FROM gcr.io/distroless/static:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6
 
 ARG VERSION=dev
 ARG REVISION=unknown

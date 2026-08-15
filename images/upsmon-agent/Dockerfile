@@ -1,7 +1,11 @@
 ARG ALPINE_VERSION=3.22
+ARG ALPINE_DIGEST=sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+# Base images are pinned to the multi-arch index digest, not a per-platform one, so
+# --platform builds still resolve correctly. The tag is kept beside it for readability:
+# the digest is what Docker honours, the tag is what tells a reader which release it is.
 ARG NUT_VERSION=2.8.5
 
-FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:26326682769ca980f8f1d3b1f52be2dd1c1d25270e3de3fe0c97d6bb65df3556 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -28,18 +32,49 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
 # OpenSSL path takes a PEM file through CERTFILE while the NSS path needs a
 # certificate database; building on OpenSSL now is what keeps that work to a
 # rendering change later rather than a rebuild of the image.
-FROM alpine:${ALPINE_VERSION} AS nut-builder
+FROM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST} AS nut-builder
 
 ARG NUT_VERSION
 ARG NUT_SHA256=18bf32e59eb764b13da3c4fa70384926d7fa584cb31d2fe7f137a570633eeec1
+# Fingerprint of the NUT release signing key (Jim Klimov, the upstream maintainer).
+#
+# Named FINGERPRINT rather than KEY_FPR on purpose: BuildKit's SecretsUsedInArgOrEnv check
+# matches ARG names containing KEY and warns. A public key fingerprint is the opposite of a
+# secret -- publishing it is the entire point -- so the name avoids a warning that would be
+# wrong rather than suppressing one that is right.
+#
+# The sha256 above answers "did the bytes arrive intact"; it cannot answer "did upstream
+# publish these bytes", because it is a value this repository chose by looking at the same
+# download. The detached signature answers the second question, and only if the key is
+# pinned: fetching the key alongside the tarball would let whoever served a bad tarball
+# serve a matching key. So the key is committed at images/nut-signing-key.asc, the
+# fingerprint is asserted here, and the build has no keyserver dependency at all.
+#
+# Both checks stay. They fail on different things -- a truncated download versus a
+# substituted release -- and neither subsumes the other.
+ARG NUT_SIGNING_FINGERPRINT=B83459F776B90224988F36C0DE0184DA7043DCF7
 
-RUN apk add --no-cache build-base curl libtool openssl-dev libltdl
+RUN apk add --no-cache build-base curl gnupg libtool openssl-dev libltdl
+
+COPY images/nut-signing-key.asc /tmp/nut-signing-key.asc
 
 WORKDIR /build
+# The signature check asserts on gpg's status output rather than its exit code. A bare
+# `gpg --verify` succeeds for any key in the keyring, which would make the pin decorative.
+# VALIDSIG's last field is the *primary* key fingerprint, and that is deliberately what is
+# matched: releases are signed by a subkey, so pinning the signing subkey instead would
+# prove less and break on every routine rotation.
 RUN curl -fsSL -o nut.tar.gz "https://networkupstools.org/source/2.8/nut-${NUT_VERSION}.tar.gz" \
+    && curl -fsSL -o nut.tar.gz.sig "https://networkupstools.org/source/2.8/nut-${NUT_VERSION}.tar.gz.sig" \
     && echo "${NUT_SHA256}  nut.tar.gz" | sha256sum -c - \
+    && export GNUPGHOME="$(mktemp -d)" \
+    && gpg --batch --quiet --import /tmp/nut-signing-key.asc \
+    && gpg --batch --list-keys "${NUT_SIGNING_FINGERPRINT}" > /dev/null \
+    && gpg --batch --status-fd 1 --verify nut.tar.gz.sig nut.tar.gz \
+       | grep -qE "^\[GNUPG:\] VALIDSIG .* ${NUT_SIGNING_FINGERPRINT}$" \
+    && rm -rf "${GNUPGHOME}" /tmp/nut-signing-key.asc \
     && tar -xzf nut.tar.gz \
-    && rm nut.tar.gz
+    && rm nut.tar.gz nut.tar.gz.sig
 
 WORKDIR /build/nut-${NUT_VERSION}
 
@@ -74,7 +109,7 @@ RUN ./configure \
     && make DESTDIR=/out install \
     && rm -rf /out/usr/share/man /out/usr/share/doc
 
-FROM alpine:${ALPINE_VERSION}
+FROM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST}
 
 ARG VERSION=dev
 ARG REVISION=unknown

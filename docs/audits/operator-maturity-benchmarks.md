@@ -576,3 +576,68 @@ Non-F-number release-hardening target closed 2026-08-14: `.github/workflows/imag
 cosign from a pinned `sigstore/cosign-installer` action and signs non-PR published image digests
 after the vulnerability scan using GitHub OIDC keyless signing. `docs/images.md` records the
 verification command.
+
+## Findings — supply chain, 2026-08-15
+
+**Base images pinned by digest.** All five Dockerfiles pinned their bases by tag only, so `alpine:3.22`
+or `golang:1.26` could change underneath a rebuild. Now pinned to the multi-arch **index** digest, not
+a per-platform one — a per-platform digest would break `--platform` builds, which is the mistake this
+pin invites. The tag stays beside the digest (`alpine:3.22@sha256:…`) because the digest is what
+Docker honours and the tag is what tells a reader which release it is.
+
+The cost is stated rather than assumed away: a pinned digest does not pick up upstream security fixes
+on its own. Nothing in this repository bumps them yet, so the published-image Trivy scan is what makes
+a stale base fail loudly. Renovate or Dependabot is the obvious follow-up and is deliberately not
+added here — it would start opening PRs on the repository, which is the owner's call to make.
+
+**Detached NUT source signature verification.** The build downloaded `nut-2.8.5.tar.gz` and checked a
+sha256 pinned in the Dockerfile. That answers "did the bytes arrive intact" and cannot answer "did
+upstream publish these bytes", because the sha256 is a value this repository chose by looking at the
+same download. Upstream publishes `nut-<version>.tar.gz.sig`, a detached signature; it is now
+verified, and both checks stay because they fail on different things.
+
+The signature is only worth anything if the key is pinned — fetching the key alongside the tarball
+would let whoever served a bad tarball serve a matching key. So the key is committed at
+`images/nut-signing-key.asc`, its primary fingerprint (`B83459F776B90224988F36C0DE0184DA7043DCF7`,
+Jim Klimov, the upstream maintainer) is asserted in both Dockerfiles, and the build makes no keyserver
+call at all.
+
+Two details that decide whether this is real or decorative:
+
+The check asserts on gpg's **status output**, not its exit code. A bare `gpg --verify` succeeds for
+any key in the keyring, so with the key file itself substituted it would pass. This was verified
+rather than assumed: signing the genuine tarball with a throwaway key and swapping in that key,
+`sha256sum -c` passed, bare `gpg --verify` reported "Good signature from Impostor", and the pinned
+`VALIDSIG` assertion rejected it and failed the build. A wrong pinned fingerprint also fails.
+
+The assertion matches `VALIDSIG`'s **last** field, which is the primary key fingerprint. Releases are
+signed by a subkey, so pinning the signing subkey would prove less and break on every routine
+rotation.
+
+The ARG is named `NUT_SIGNING_FINGERPRINT` rather than `..._KEY_FPR` because BuildKit's
+`SecretsUsedInArgOrEnv` check warns on ARG names containing `KEY`. A public key fingerprint is the
+opposite of a secret, so the name avoids a warning that would be wrong rather than suppressing one
+that is right.
+
+Verified by building all five images and running `docker-smoke-nut-server`, `docker-smoke-upsmon-agent`,
+`docker-smoke-node-actuator`, and the `nut-tls` handshake smoke test against the pinned builds.
+
+**The byo-cert install left the manager unable to start.** Found by the `F-77` gate failing, not by
+reading code. `hack/webhook-cert.sh` ended with "The manager reloads the serving certificate without a
+restart", which is true for rotation and false for first provisioning. The documented order applies the
+manager before issuing the certificate — the namespace and Service have to exist for the certificate to
+be issued for them — so kubelet cannot mount `webhook-certs` at all and the pod never starts. A
+certwatcher cannot watch a file that was never mounted, and kubelet's mount retry backs off to minutes,
+which is what the e2e spec was timing out against.
+
+The script now restarts the manager Deployment when it created the serving Secret rather than rotated
+it, and only when the Deployment already exists. Rotation is untouched, so no pointless churn: verified
+by running the script twice against a live cluster and confirming the restart fires on the first run and
+not the second. The closing message was corrected to say which case it describes.
+
+`byo_cert_test.go`'s readiness wait was a bare `Eventually` around `kubectl wait --timeout=2m`, which
+gets exactly one attempt — Gomega's default budget is spent by the time the first poll returns. Given
+an explicit 5m budget with a 1m inner wait it can actually retry. The signal-handoff spec had a
+related gap: it applied a fixture whose kinds all have mutating webhooks without waiting for the
+webhook server, and only ever passed because earlier specs happened to give the manager time. Both
+specs now pass when run in isolation, which is the property that was missing.

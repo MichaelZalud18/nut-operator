@@ -105,9 +105,16 @@ Current release artifacts and checks include:
 - keyless Sigstore/cosign signatures for published non-PR images
 - private-address leak scanning
 - the `main` tag applied only to a digest e2e and the NUT TLS smoke test have run against
+- base images pinned to multi-arch index digests
+- NUT source verified against a committed, fingerprint-pinned upstream signing key as well as sha256
 
-Open hardening targets are tracked in `docs/tasks.md`: base-image digest pinning and detached NUT
-source signature verification.
+The NUT source check is worth stating precisely, because the two halves answer different questions.
+The sha256 answers "did the bytes arrive intact" and cannot answer "did upstream publish these
+bytes", since it is a value this repository chose by looking at the same download. The detached
+signature answers the second, but only because the key is pinned: fetching the key alongside the
+tarball would let whoever served a bad tarball serve a matching key. The key is committed at
+`images/nut-signing-key.asc`, its primary fingerprint is asserted in the Dockerfiles, and the build
+makes no keyserver call.
 
 Local process tests are not sufficient evidence for deployment. Image-level smoke tests and
 in-cluster validation are separate gates.
