@@ -626,8 +626,14 @@ func TestRunnerWritesAgentShutdownSignalSecret(t *testing.T) {
 	if err := json.Unmarshal(secret.Data["node-a.json"], &payload); err != nil {
 		t.Fatalf("unmarshal signal payload: %v", err)
 	}
-	if payload["executionID"] != "execution-a" || payload["nodeName"] != "node-a" || payload["dryRun"] != false {
+	if payload["executionID"] != "execution-a" || payload["nodeName"] != "node-a" {
 		t.Fatalf("unexpected signal payload: %#v", payload)
+	}
+	// F-56: no dryRun field. It was written as a hard-coded false here and read by the actuator as
+	// though it were authorization, so the actuator was gating on a constant this side supplied.
+	// Whether a node may halt is the actuator's own env, which nothing on this side can reach.
+	if _, present := payload["dryRun"]; present {
+		t.Fatalf("the signal must not carry a dryRun field: %#v", payload)
 	}
 	if payload["timestamp"] != fixed.Format(time.RFC3339Nano) {
 		t.Fatalf("unexpected timestamp: %#v", payload["timestamp"])

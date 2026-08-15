@@ -24,7 +24,7 @@ import (
 	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
-func TestWriteSignalPublishesDryRunPayload(t *testing.T) {
+func TestWriteSignalPublishesStructuredPayload(t *testing.T) {
 	now := time.Date(2026, 8, 3, 11, 0, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "shutdown.json")
 
@@ -43,9 +43,6 @@ func TestWriteSignalPublishesDryRunPayload(t *testing.T) {
 	}
 	if reused {
 		t.Fatal("expected new signal")
-	}
-	if !payload.DryRun {
-		t.Fatal("expected dry-run payload")
 	}
 	if payload.ExecutionID == "" || payload.Timestamp != now.Format(time.RFC3339Nano) {
 		t.Fatalf("unexpected payload identity: %#v", payload)
@@ -94,7 +91,6 @@ func TestWriteSignalRejectsWrongNodeSignal(t *testing.T) {
 	now := time.Date(2026, 8, 3, 11, 0, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "shutdown.json")
 	if err := nodeagent.WriteSignalAtomic(path, nodeagent.ShutdownSignal{
-		DryRun:         false,
 		ExecutionID:    "exec-a",
 		NodeName:       "node-b",
 		PlanConfigHash: "hash-a",

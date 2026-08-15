@@ -39,8 +39,13 @@ import (
 const DeliveryChannelMarker = "delivery-channel"
 
 // ShutdownSignal is the structured handoff consumed by node actuators.
+//
+// There is deliberately no `dryRun` field (F-56). It looked like authorization and carried no
+// information: the local writer set it from its own POWER_AGENT_MODE and the actuator then gated on
+// it, so the actuator was reading its own configuration back out of a file, and the executor wrote a
+// hard-coded false on the only path that survives OD-37. Whether this node may actually halt is the
+// actuator's own env and policy, which no writer can reach.
 type ShutdownSignal struct {
-	DryRun             bool     `json:"dryRun"`
 	ExecutionID        string   `json:"executionID"`
 	NodeName           string   `json:"nodeName"`
 	PlanConfigHash     string   `json:"planConfigHash"`

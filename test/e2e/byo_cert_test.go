@@ -183,6 +183,17 @@ var _ = Describe("BYO-cert install", Ordered, Serial, func() {
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(strings.Fields(out)).To(HaveLen(1), "expected a settled single-pod rollout")
 		}).Should(Succeed())
+
+		// Running is not serving. status.phase=Running is true as soon as the container process
+		// starts, while the webhook listener binds later, so the next spec could dial a port nothing
+		// was on yet and get connection refused.
+		By("waiting for the manager pod to report Ready")
+		Eventually(func(g Gomega) {
+			out, err := utils.Run(exec.Command("kubectl", "wait", "pods", "-n", namespace,
+				"-l", "control-plane=controller-manager",
+				"--for=condition=Ready", "--timeout=2m"))
+			g.Expect(err).NotTo(HaveOccurred(), out)
+		}).Should(Succeed())
 	})
 
 	// The payoff. A rejection proves the whole chain end to end: the API server dialed the webhook,
@@ -198,15 +209,26 @@ metadata:
 spec:
   namespace: kube-system
 `
-		cmd := exec.Command("kubectl", "apply", "-f", "-")
-		cmd.Stdin = strings.NewReader(manifest)
-		out, err := utils.Run(cmd)
+		// Retried, because readiness and reachability are not the same instant: the API server
+		// caches endpoints, and the first dial after a rollout can land on a connection refused
+		// even once the pod reports Ready. This observably flaked twice on `main`, always as
+		// `failed calling webhook ... connection refused` rather than as a wrong answer.
+		//
+		// The assertions inside are unchanged and deliberately so. Retrying widens the window in
+		// which the webhook may answer; it does not accept a different answer. A certificate the
+		// API server will not trust fails here exactly as before, because an x509 error never
+		// becomes the validation message no matter how long it is retried.
+		Eventually(func(g Gomega) {
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(manifest)
+			out, err := utils.Run(cmd)
 
-		Expect(err).To(HaveOccurred(), "the webhook should have rejected a reserved operand namespace")
-		Expect(out).To(ContainSubstring("spec.namespace"),
-			"expected the webhook's own validation message, not a TLS or connectivity error")
-		Expect(out).To(ContainSubstring("reserved"),
-			"expected the webhook's own validation message, not a TLS or connectivity error")
+			g.Expect(err).To(HaveOccurred(), "the webhook should have rejected a reserved operand namespace")
+			g.Expect(out).To(ContainSubstring("spec.namespace"),
+				"expected the webhook's own validation message, not a TLS or connectivity error")
+			g.Expect(out).To(ContainSubstring("reserved"),
+				"expected the webhook's own validation message, not a TLS or connectivity error")
+		}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 	})
 
 	// Rotation is the documented procedure for this install path, and its whole design claim is that

@@ -27,6 +27,10 @@ const (
 	policyDisabled        = "Disabled"
 	policyStub            = "Stub"
 	policySystemdPoweroff = "SystemdPoweroff"
+
+	// modeActuate is the only agent mode under which a node may be halted. It is read from this
+	// process's environment and never from a signal file (F-56).
+	modeActuate = "Actuate"
 )
 
 func main() {
@@ -71,7 +75,7 @@ func main() {
 	case policyStub:
 		watchSignals(logger, config, stubActuator)
 	case policySystemdPoweroff:
-		if mode != "Actuate" {
+		if mode != modeActuate {
 			block(logger, "SystemdPoweroff requires POWER_AGENT_MODE=Actuate")
 		}
 		// F-61: prove the capability is held now, not during a power event.
@@ -274,14 +278,18 @@ func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFun
 	}
 }
 
-func stubActuator(logger *log.Logger, _ actuatorConfig, status nodeagent.SignalStatus) error {
-	logger.Printf("stub actuator accepted shutdown signal executionID=%s node=%s flow=%s dryRun=%t", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow, status.Payload.DryRun)
+func stubActuator(logger *log.Logger, config actuatorConfig, status nodeagent.SignalStatus) error {
+	logger.Printf("stub actuator accepted shutdown signal executionID=%s node=%s flow=%s mode=%s", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow, config.Mode)
 	return nil
 }
 
 func systemdPoweroffActuator(logger *log.Logger, config actuatorConfig, status nodeagent.SignalStatus) error {
-	if status.Payload.DryRun {
-		logger.Printf("systemd actuator observed dry-run signal executionID=%s node=%s", status.Payload.ExecutionID, status.Payload.NodeName)
+	// Read from this process's own env, never from the signal (F-56). main() already refuses to
+	// start this policy outside Actuate, so reaching here in another mode should be impossible --
+	// which is exactly why it is worth checking on the one operation that cannot be undone.
+	if config.Mode != modeActuate {
+		logger.Printf("refusing to power off in mode=%s: only %s may halt a node, executionID=%s node=%s",
+			config.Mode, modeActuate, status.Payload.ExecutionID, status.Payload.NodeName)
 		return nil
 	}
 	logger.Printf("systemd actuator executing poweroff executionID=%s node=%s flow=%s", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow)

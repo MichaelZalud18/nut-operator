@@ -68,7 +68,7 @@ func main() {
 		logger.Printf("reused active signal executionID=%s node=%s signalPath=%s", payload.ExecutionID, payload.NodeName, config.SignalPath)
 		return
 	}
-	logger.Printf("wrote signal executionID=%s node=%s signalPath=%s dryRun=%t", payload.ExecutionID, payload.NodeName, config.SignalPath, payload.DryRun)
+	logger.Printf("wrote signal executionID=%s node=%s signalPath=%s mode=%s", payload.ExecutionID, payload.NodeName, config.SignalPath, config.Mode)
 }
 
 type signalWriterConfig struct {
@@ -111,7 +111,6 @@ func writeSignal(config signalWriterConfig, now time.Time) (nodeagent.ShutdownSi
 		executionID = fmt.Sprintf("upsmon-%s-%d", config.NodeName, now.UnixNano())
 	}
 	payload := nodeagent.ShutdownSignal{
-		DryRun:             config.Mode != "Actuate",
 		ExecutionID:        executionID,
 		NodeName:           config.NodeName,
 		PlanConfigHash:     config.PlanConfigHash,
@@ -127,8 +126,7 @@ func writeSignal(config signalWriterConfig, now time.Time) (nodeagent.ShutdownSi
 }
 
 func reusableSignal(payload nodeagent.ShutdownSignal, config signalWriterConfig) bool {
-	return payload.DryRun == (config.Mode != "Actuate") &&
-		payload.NodeName == config.NodeName &&
+	return payload.NodeName == config.NodeName &&
 		payload.PlanConfigHash == config.PlanConfigHash &&
 		payload.Reason == config.Reason &&
 		payload.ShutdownFlow == config.ShutdownFlow &&

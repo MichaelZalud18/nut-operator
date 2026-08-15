@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"log"
 	"os"
@@ -67,45 +68,78 @@ func TestSignalPathsParsesUniquePaths(t *testing.T) {
 	}
 }
 
-// Dry-run is the safety property this whole binary hangs on, so it is asserted against the syscall
-// itself: a dry-run signal must not reach it, and an identical non-dry-run signal must. Testing
-// both directions is what proves the DryRun flag is the thing making the difference, rather than
-// some unrelated guard happening to stop execution.
-func TestSystemdPoweroffActuatorHonorsDryRun(t *testing.T) {
-	signal := func(dryRun bool) nodeagent.SignalStatus {
-		return nodeagent.SignalStatus{
-			Active: true,
-			Payload: nodeagent.ShutdownSignal{
-				DryRun:       dryRun,
-				ExecutionID:  "exec-1",
-				NodeName:     "node-a",
-				ShutdownFlow: "flow-a",
-			},
-		}
+// Whether this node may halt is the safety property the whole binary hangs on, so it is asserted
+// against the syscall itself and in both directions: the mode that forbids actuation must not reach
+// it, and the mode that permits it must.
+//
+// The gate moved from the signal payload to this process's own env (F-56). The old test proved the
+// payload's DryRun flag made the difference, which was true and worth nothing — the writer set that
+// flag from POWER_AGENT_MODE, so the actuator was reading its own configuration back out of a file,
+// and the executor hard-coded it to false on the only path OD-37 leaves standing. An identical
+// signal now produces opposite outcomes based on the actuator's env alone, which is the property
+// that actually bounds the blast radius.
+func TestSystemdPoweroffActuatorHonorsItsOwnModeNotTheSignal(t *testing.T) {
+	signal := nodeagent.SignalStatus{
+		Active: true,
+		Payload: nodeagent.ShutdownSignal{
+			ExecutionID:  "exec-1",
+			NodeName:     "node-a",
+			ShutdownFlow: "flow-a",
+		},
 	}
 	logger := log.New(os.Stdout, "", 0)
 
-	t.Run("dry-run signal never powers off", func(t *testing.T) {
+	for _, mode := range []string{"DryRun", "MonitorOnly", ""} {
+		t.Run("mode "+mode+" never powers off", func(t *testing.T) {
+			calls := stubRebootPoweroff(t)
+
+			if err := systemdPoweroffActuator(logger, actuatorConfig{Mode: mode}, signal); err != nil {
+				t.Fatalf("expected the signal to be accepted and declined, got %v", err)
+			}
+			if *calls != 0 {
+				t.Fatalf("mode %q powered the node off (%d syscalls)", mode, *calls)
+			}
+		})
+	}
+
+	t.Run("mode Actuate powers off", func(t *testing.T) {
 		calls := stubRebootPoweroff(t)
 
-		if err := systemdPoweroffActuator(logger, actuatorConfig{}, signal(true)); err != nil {
-			t.Fatalf("expected dry-run signal to be accepted, got %v", err)
-		}
-		if *calls != 0 {
-			t.Fatalf("dry-run signal powered the node off (%d syscalls)", *calls)
-		}
-	})
-
-	t.Run("live signal powers off", func(t *testing.T) {
-		calls := stubRebootPoweroff(t)
-
-		if err := systemdPoweroffActuator(logger, actuatorConfig{}, signal(false)); err != nil {
-			t.Fatalf("expected live signal to power off, got %v", err)
+		if err := systemdPoweroffActuator(logger, actuatorConfig{Mode: modeActuate}, signal); err != nil {
+			t.Fatalf("expected Actuate mode to power off, got %v", err)
 		}
 		if *calls != 1 {
 			t.Fatalf("expected exactly one poweroff syscall, got %d", *calls)
 		}
 	})
+}
+
+// The signal cannot re-enable actuation that the actuator's own configuration forbids. This is the
+// shape F-56 removed: a field in a file that looked like it granted permission.
+func TestSignalCannotGrantActuationTheModeForbids(t *testing.T) {
+	calls := stubRebootPoweroff(t)
+	logger := log.New(os.Stdout, "", 0)
+
+	raw, err := json.Marshal(map[string]any{
+		"dryRun":       false,
+		"executionID":  "exec-1",
+		"nodeName":     "node-a",
+		"shutdownFlow": "flow-a",
+	})
+	if err != nil {
+		t.Fatalf("marshal signal: %v", err)
+	}
+	var payload nodeagent.ShutdownSignal
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal signal: %v", err)
+	}
+
+	if err := systemdPoweroffActuator(logger, actuatorConfig{Mode: "DryRun"}, nodeagent.SignalStatus{Active: true, Payload: payload}); err != nil {
+		t.Fatalf("expected the signal to be declined without error, got %v", err)
+	}
+	if *calls != 0 {
+		t.Fatalf("a dryRun:false field in the signal powered off a DryRun-mode actuator (%d syscalls)", *calls)
+	}
 }
 
 // F-57/OD-37. The old default was the local tmpfs path the upsmon container writes, so a failure to

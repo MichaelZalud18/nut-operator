@@ -80,7 +80,6 @@ func TestInspectSignalRejectsStaleWrongNodeAndInvalidJSON(t *testing.T) {
 func TestWriteSignalAtomicPublishesStructuredJSON(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "shutdown.json")
 	payload := ShutdownSignal{
-		DryRun:             true,
 		ExecutionID:        "exec-1",
 		NodeName:           "node-a",
 		PlanConfigHash:     "hash-1",

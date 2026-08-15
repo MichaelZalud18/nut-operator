@@ -878,7 +878,6 @@ func (r Runner) agentShutdownHandoff(ctx context.Context, action executor.Action
 			return blocked(err), err
 		}
 		payload := nodeagent.ShutdownSignal{
-			DryRun:             false,
 			ExecutionID:        action.ExecutionID,
 			NodeName:           release.NodeName,
 			PlanConfigHash:     action.PlanConfigHash,
