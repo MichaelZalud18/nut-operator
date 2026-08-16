@@ -330,12 +330,27 @@ func powerOffActuator(logger *log.Logger, config actuatorConfig, status nodeagen
 		return nil
 	}
 	logger.Printf("poweroff actuator executing poweroff executionID=%s node=%s flow=%s", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow)
-	return runPoweroff()
+	return runPoweroff(logger, status.Payload)
 }
 
-// runPoweroff powers the machine off. Despite the syscall's name, reboot(2) with
-// LINUX_REBOOT_CMD_POWER_OFF halts and cuts power; it does not restart.
-func runPoweroff() error {
+// runPoweroff flushes dirty page cache, then powers the machine off. Despite the syscall's name,
+// reboot(2) with LINUX_REBOOT_CMD_POWER_OFF halts and cuts power; it does not restart.
+//
+// The sync is timed on every call and the duration logged, because that number is the only direct
+// measurement of the handoff tail anyone has. OD-27 currently reserves 20% of runtime for it as a
+// guess, and this is the cheapest real evidence available for settling that.
+func runPoweroff(logger *log.Logger, payload nodeagent.ShutdownSignal) error {
+	if payload.SkipSync {
+		// Loud, never silent. A node that skipped the flush comes back with more to recover, and
+		// the operator reading the log afterwards needs to know that was chosen rather than failed.
+		logger.Printf("poweroff actuator SKIPPING sync before halt: the executor reported the plan overrunning, so dirty page cache is being dropped to save time; expect more filesystem recovery on this node executionID=%s node=%s",
+			payload.ExecutionID, payload.NodeName)
+	} else {
+		started := time.Now()
+		syncFilesystems()
+		logger.Printf("poweroff actuator sync completed in %s executionID=%s node=%s",
+			time.Since(started).Round(time.Millisecond), payload.ExecutionID, payload.NodeName)
+	}
 	if err := rebootPoweroff(); err != nil {
 		return fmt.Errorf("run reboot poweroff syscall: %w", err)
 	}

@@ -174,6 +174,12 @@ security-triage: ## Name the actionable findings from the last ASH scan.
 validate-samples: manifests ## Check config/samples and docs/examples against the generated CRD schemas.
 	python3 hack/validate-samples.py
 
+# No default for NODE, deliberately. This is the one target where a forgotten variable would pick a
+# machine on its own.
+.PHONY: verify-actuation
+verify-actuation: ## DANGER: POWERS OFF NODE=<node> AND LEAVES IT OFF. Proves the actuate path works on a real kubelet. Needs APPROVE=yes.
+	NODE="$(NODE)" AGENT="$(AGENT)" NAMESPACE="$(or $(NAMESPACE),power-system)" APPROVE="$(APPROVE)" ./hack/verify-actuation.sh
+
 ##@ Build
 
 .PHONY: build

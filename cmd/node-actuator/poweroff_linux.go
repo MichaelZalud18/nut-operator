@@ -91,6 +91,19 @@ func raiseSysBoot() error {
 	return nil
 }
 
+// syncFilesystems flushes dirty page cache to disk.
+//
+// reboot(2) does not do this. Confirmed against the kernel rather than inferred: the
+// LINUX_REBOOT_CMD_POWER_OFF branch of SYSCALL_DEFINE4(reboot) calls kernel_power_off(), which runs
+// kernel_shutdown_prepare(), do_kernel_power_off_prepare(), migrate_to_reboot_cpu(),
+// syscore_shutdown() and machine_power_off() -- none of which touch the filesystem. reboot(2)'s own
+// man page states it for this exact command: "If not preceded by a sync(2), data will be lost."
+//
+// What it buys is bounded and worth stating plainly: dirty pages reach disk. It is not a clean
+// unmount and not a read-only remount, so filesystems still come back dirty and journals still
+// replay. The difference is how much there is to recover, not whether recovery happens.
+var syncFilesystems = func() { unix.Sync() }
+
 var rebootPoweroff = func() error {
 	if err := raiseSysBoot(); err != nil {
 		return err

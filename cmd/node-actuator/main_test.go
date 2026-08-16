@@ -32,7 +32,7 @@ func stubRebootPoweroff(t *testing.T) *int {
 func TestRunPoweroffInvokesTheSyscall(t *testing.T) {
 	calls := stubRebootPoweroff(t)
 
-	if err := runPoweroff(); err != nil {
+	if err := runPoweroff(log.New(io.Discard, "", 0), nodeagent.ShutdownSignal{}); err != nil {
 		t.Fatalf("runPoweroff returned error: %v", err)
 	}
 	if *calls != 1 {

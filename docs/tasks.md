@@ -141,6 +141,8 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
 - `OD-27` confirm the adaptive defaults against a real outage. The compression amount is measured, so
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).
+  Measured `sync(2)` duration on the halt path is now direct evidence for that tail — one input, not
+  a closure: confirming the reserve still needs a real outage.
 - Feed node metrics into the estimates alongside execution history — draw and capacity readings
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
@@ -225,6 +227,11 @@ delivery-channel marker (`F-86`), the permitted-only `CAP_SYS_BOOT` model (`F-61
 contract (`F-59`, `F-64`), and the mid-episode write deferral (`F-92`) are described as built in
 [node-agent-operand.md](design/node-agent-operand.md) (`NA-1`–`NA-8`).
 
+`sync(2)` runs before `reboot(2)` on the `PowerOff` path, timed and logged on every call, because
+`reboot(2)` does not flush the page cache — confirmed against `kernel/reboot.c` and stated in
+`reboot(2)`'s own man page. `spec.skipSync` on the signal lets the executor drop the flush when the
+plan is already overrunning; it is recorded loudly and is never silent.
+
 Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-60`, `F-61`–`F-65`,
 `F-66`, `F-67`–`F-71`, `F-72`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`–`F-92`, `OD-37`. `F-89` declined — the signal Secret
 mounts whole on every node, but the payload carries no credentials and the node-name check holds it
@@ -233,7 +240,16 @@ to exposure rather than actuation; recorded in
 
 #### Open Work
 
-None.
+- Wire `skipSync` from the executor's `EX-31` tier-overrun state. The actuator honours the flag and
+  records it; nothing sets it yet. It must be decided with the overrun policy rather than exposed as
+  a second knob — the skip inverts its own outcome, since the nodes rushed to save time are the ones
+  that come back with the most to recover.
+- Record the sync skip in the node's audit record, not only in the container log. The log goes down
+  with the node.
+- Verbose per-gate diagnostics for the verification path: signal written, projection observed,
+  signal read, validation passed, capability check passed, permitted→effective raised, sync started,
+  sync completed with duration, syscall issued. Scoped to this path, not a global log level — the
+  value of the run is knowing which link broke, and there is one attempt per run.
 
 ---
 
@@ -260,6 +276,11 @@ Closed: `PL-45`–`PL-48`, `OD-1`, `OD-5`, `F-3`, `F-6`.
 
 - Publish communication-ordering artifacts once the planner consumes `carries` ordering (see Planning
   & Execution Logic).
+- Verification metrics: an attempt counter by outcome, and a per-node last-verified-actuation
+  timestamp. Closer to required than optional — a node that powered off cannot report that it
+  powered off, so without operator-side recording the procedure leaves no durable evidence and
+  success is inferred from a machine being dark. The per-node timestamp is the load-bearing one: it
+  answers "has this cluster ever proven it can halt this node" months later.
 
 ---
 
@@ -367,6 +388,12 @@ None.
 Owns: scaffold, docs upkeep, examples, and decision-registry maintenance — glue work not owned by one
 component.
 
+#### Open Work
+
+- `docs/install.md` post-install verification section for `make verify-actuation`, and a
+  `docs/security.md` cross-reference from the privilege boundary — proving the boundary holds is
+  part of that document's subject.
+
 #### Built
 
 Component-scoped design docs with stable identifier namespaces, governing principles and scope
@@ -401,5 +428,9 @@ None.
   embedded dashboard is required for v1.
 - A dry-run runs against real UPS hardware in a real cluster, not against `kind` and `dummy-ups`.
   Not reachable yet, and not expected to be until the sections above close.
+- One node halted through `make verify-actuation`. Distinct from the dry-run gate above, not a
+  replacement for it: a dry-run never renders the actuate configuration, so that gate can pass
+  without `hostPID`, the file capability, or the host PID namespace ever having been exercised on a
+  real kubelet.
 - **Open:** whether a live plug-pull is also a v1 gate, or whether the dry-run above is the bar.
   Undecided in either direction — do not assume one while planning against it.

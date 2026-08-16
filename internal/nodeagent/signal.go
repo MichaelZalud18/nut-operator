@@ -53,6 +53,19 @@ type ShutdownSignal struct {
 	SelectedUPSDevices []string `json:"selectedUPSDevices"`
 	ShutdownFlow       string   `json:"shutdownFlow"`
 	Timestamp          string   `json:"timestamp"`
+
+	// SkipSync asks the actuator to halt without flushing dirty page cache first.
+	//
+	// The executor sets this only when the plan is already overrunning, because sync(2) blocks and
+	// it blocks at the moment the runtime budget is tightest. It is the executor's call and not the
+	// actuator's: the actuator can see one node, and whether the plan as a whole is out of time is
+	// a fact only the thing running the plan holds.
+	//
+	// It is deliberately not a NodePowerAgent setting. The skip inverts its own outcome -- the nodes
+	// rushed to save time are exactly the ones that come back with the most to recover -- so it is
+	// bound to EX-31's tier-overrun policy rather than exposed as a second, independently tunable
+	// knob. Never set, it stays absent from the JSON and the actuator syncs.
+	SkipSync bool `json:"skipSync,omitempty"`
 }
 
 // SignalStatus summarizes a signal-file inspection.
