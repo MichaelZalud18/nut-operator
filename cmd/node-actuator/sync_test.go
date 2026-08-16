@@ -21,6 +21,7 @@ import (
 	"log"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
@@ -108,6 +109,51 @@ func TestSkipSyncDefaultsToSyncing(t *testing.T) {
 	}
 	if *calls != 1 {
 		t.Fatalf("a signal that never mentions skipSync must still sync; got %d call(s)", *calls)
+	}
+}
+
+// A hung mount must not cost the node its halt.
+//
+// unix.Sync() blocks indefinitely on stalled NFS or a dead iSCSI target, and SkipSync cannot help:
+// the executor sets that before the sync starts. Unbounded, the node stays up and the UPS runs down
+// with it -- the one outcome worse than halting dirty.
+func TestSyncTimeoutStillHalts(t *testing.T) {
+	var order []string
+	previousSync := syncFilesystems
+	previousReboot := rebootPoweroff
+	previousTimeout := syncTimeout
+	release := make(chan struct{})
+	syncFilesystems = func() {
+		order = append(order, "sync-started")
+		<-release // never returns during this test, exactly like a wedged mount
+	}
+	rebootPoweroff = func() error {
+		order = append(order, "reboot")
+		return nil
+	}
+	syncTimeout = 20 * time.Millisecond
+	t.Cleanup(func() {
+		syncFilesystems = previousSync
+		rebootPoweroff = previousReboot
+		syncTimeout = previousTimeout
+		close(release)
+	})
+
+	logs := bytes.NewBuffer(nil)
+	payload := nodeagent.ShutdownSignal{ExecutionID: "exec-3", NodeName: "node-c"}
+	if err := runPoweroff(log.New(logs, "", 0), payload); err != nil {
+		t.Fatalf("runPoweroff returned error: %v", err)
+	}
+
+	if len(order) == 0 || order[len(order)-1] != "reboot" {
+		t.Fatalf("the node did not halt after the sync wedged; got %v", order)
+	}
+	recorded := logs.String()
+	if !strings.Contains(recorded, "did NOT finish") {
+		t.Errorf("a cut-short flush was not surfaced. It is the evidence of a sick mount and it dies with the node otherwise. Log was: %q", recorded)
+	}
+	if !strings.Contains(recorded, "hung mount") {
+		t.Errorf("the log does not name the likely cause, which is the actionable half. Log was: %q", recorded)
 	}
 }
 

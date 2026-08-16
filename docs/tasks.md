@@ -142,7 +142,9 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).
   Measured `sync(2)` duration on the halt path is now direct evidence for that tail — one input, not
-  a closure: confirming the reserve still needs a real outage.
+  a closure: confirming the reserve still needs a real outage. The actuator's own measurement is
+  precise but dies with the node; the durable version is the operator-side reconstruction tracked
+  under Outputs & Publishing.
 - Feed node metrics into the estimates alongside execution history — draw and capacity readings
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
@@ -230,7 +232,11 @@ contract (`F-59`, `F-64`), and the mid-episode write deferral (`F-92`) are descr
 `sync(2)` runs before `reboot(2)` on the `PowerOff` path, timed and logged on every call, because
 `reboot(2)` does not flush the page cache — confirmed against `kernel/reboot.c` and stated in
 `reboot(2)`'s own man page. `spec.skipSync` on the signal lets the executor drop the flush when the
-plan is already overrunning; it is recorded loudly and is never silent.
+plan is already overrunning; it is recorded loudly and is never silent. The flush is bounded by a
+timeout and the halt proceeds on expiry, because `unix.Sync()` blocks indefinitely on a hung mount
+and `skipSync` cannot reach that case — the executor decides it before the sync starts. A node that
+halts dirty beats a node that never halts, and the cut-short flush is logged as the mount evidence
+it is.
 
 Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-60`, `F-61`–`F-65`,
 `F-66`, `F-67`–`F-71`, `F-72`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`–`F-92`, `OD-37`. `F-89` declined — the signal Secret
@@ -276,11 +282,22 @@ Closed: `PL-45`–`PL-48`, `OD-1`, `OD-5`, `F-3`, `F-6`.
 
 - Publish communication-ordering artifacts once the planner consumes `carries` ordering (see Planning
   & Execution Logic).
-- Verification metrics: an attempt counter by outcome, and a per-node last-verified-actuation
-  timestamp. Closer to required than optional — a node that powered off cannot report that it
-  powered off, so without operator-side recording the procedure leaves no durable evidence and
-  success is inferred from a machine being dark. The per-node timestamp is the load-bearing one: it
-  answers "has this cluster ever proven it can halt this node" months later.
+- Verification and halt-path metrics, operator-side. Closer to required than optional — a node that
+  powered off cannot report that it powered off, so without operator-side recording the procedure
+  leaves no durable evidence and success is inferred from a machine being dark. Three parts, one
+  item deliberately: they share the same cause and shipping the first two alone would close the
+  box on the third.
+  - An attempt counter by outcome.
+  - A per-node last-verified-actuation timestamp. The load-bearing one: it answers "has this
+    cluster ever proven it can halt this node" months later.
+  - A per-node halt-duration observation reconstructed from signal-write to node-NotReady. The
+    actuator already times its own `sync(2)` and logs it, but that log lives on a machine that
+    powers off immediately after, so whether a collector ships it first is a race — and one that
+    loses precisely in the slow-sync case the measurement exists to capture. The actuator cannot fix
+    this and must not try: it holds no API token by design (`OD-37`, `NA-2`) and that stays.
+    Operator-side reconstruction is coarser, since it includes projection and poll latency alongside
+    the flush, but it survives the node. This is the durable half of the `OD-27` handoff-tail
+    evidence; the container log is the precise half that may not arrive.
 
 ---
 

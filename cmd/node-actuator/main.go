@@ -333,6 +333,18 @@ func powerOffActuator(logger *log.Logger, config actuatorConfig, status nodeagen
 	return runPoweroff(logger, status.Payload)
 }
 
+// syncTimeout bounds the flush.
+//
+// unix.Sync() has no timeout of its own, and a hung mount -- stalled NFS, a dead iSCSI target, a
+// failing disk -- blocks it indefinitely. SkipSync cannot rescue that case: the executor decides
+// the skip before the sync starts, so a node that meets a sick mount mid-flush has no way to change
+// its mind. Unbounded, the node simply never halts and the UPS runs down with it still up.
+//
+// A node that halts dirty beats a node that never halts, so the bound is generous rather than tight
+// -- long enough that a healthy flush on a busy node is never cut short, short enough that a wedged
+// one does not consume the runtime the whole plan is spending.
+var syncTimeout = 30 * time.Second
+
 // runPoweroff flushes dirty page cache, then powers the machine off. Despite the syscall's name,
 // reboot(2) with LINUX_REBOOT_CMD_POWER_OFF halts and cuts power; it does not restart.
 //
@@ -347,9 +359,23 @@ func runPoweroff(logger *log.Logger, payload nodeagent.ShutdownSignal) error {
 			payload.ExecutionID, payload.NodeName)
 	} else {
 		started := time.Now()
-		syncFilesystems()
-		logger.Printf("poweroff actuator sync completed in %s executionID=%s node=%s",
-			time.Since(started).Round(time.Millisecond), payload.ExecutionID, payload.NodeName)
+		done := make(chan struct{})
+		// Not waited on beyond the select. If Sync() is wedged on a mount this goroutine never
+		// returns, and that is fine: reboot(2) is a few lines below and takes the process with it.
+		go func() {
+			syncFilesystems()
+			close(done)
+		}()
+		select {
+		case <-done:
+			logger.Printf("poweroff actuator sync completed in %s executionID=%s node=%s",
+				time.Since(started).Round(time.Millisecond), payload.ExecutionID, payload.NodeName)
+		case <-time.After(syncTimeout):
+			// Surfaced, not swallowed. A flush that outlasts this is evidence of a sick mount, and
+			// it is evidence that would otherwise be lost with the machine.
+			logger.Printf("poweroff actuator sync did NOT finish within %s and was cut short; halting with dirty pages still in cache. This usually means a hung mount (stalled NFS, dead iSCSI target, failing disk) -- check this node's mounts before returning it to service. executionID=%s node=%s",
+				syncTimeout, payload.ExecutionID, payload.NodeName)
+		}
 	}
 	if err := rebootPoweroff(); err != nil {
 		return fmt.Errorf("run reboot poweroff syscall: %w", err)
