@@ -146,7 +146,27 @@ drive opposite planner behavior and are never conflated (IN-3).
 or agents with an action, relationships, and a timeout.
 
 **Wave** — a compiled set of groups eligible to execute concurrently. Waves are ordered; execution
-is wave-by-wave (PL-12, EX-10).
+is wave-by-wave (PL-12, EX-10). A wave is *output*: the planner derives it from tiers and edges.
+Nobody writes a wave.
+
+**Phase** — overloaded, and the source of more confusion than any other word here. It means three
+unrelated things, none of which is an ordering concept the project designed:
+
+1. `UPSDevice.status.phase` — the device's power state: `Online`, `OnBattery`, `LowBattery`.
+2. `ShutdownFlow.status.phase` and `status.lastExecution.phase` — lifecycle state: `Pending`,
+   `Compiled`, `Running`, `Completed`, `Aborted`, and so on.
+3. `spec.groups[].phase` — an integer that arrived with the initial scaffold and was never designed.
+   It is not a tiebreaker despite its description: groups only share a wave if their phase numbers
+   match, so two independent groups with different phases are serialized silently. Slated for
+   removal; ordering is tiers plus `before`/`after`, and nothing else.
+
+Never use "phase" to mean ordering. Ordering across tiers is a **tier**; a set of concurrent work is
+a **wave**.
+
+**Stage** — reserved for the detect / decide / act split (resolver / planner / executor). It is a
+pipeline position, never a point in a shutdown sequence. "Stages of power distribution" — a UPS
+feeding a PDU feeding a rack — is a topology property, unrelated to both meanings; the simulation
+scenario named for it says so in its own README.
 
 **Structural vs telemetry input** — the load-bearing partition of planner input. Structural:
 slow-changing, hashed, plan-identity-bearing. Telemetry: continuous, never hashed, feeds

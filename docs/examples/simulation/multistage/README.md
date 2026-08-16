@@ -5,9 +5,13 @@ Components: Inventory System, Planning & Execution Logic.
 Cascaded power: **one UPS feeding two PDUs, each PDU feeding a rack**, with a three-member control
 plane split across both racks. Synthetic names throughout.
 
-"Multistage" here means stages of *power distribution*, not stages of shutdown. If you meant
-something else — staged rollout across sites, or a cluster shut down in independent phases — say so
-and this becomes a different scenario.
+**"Multistage" here means stages of *power distribution*** — a UPS feeding a PDU feeding a rack. It
+is a property of the topology and nothing else.
+
+It does not mean stages of shutdown: that ordering is **tiers**, and a set of concurrently executing
+groups is a **wave**. It also does not mean the project's own "stage", which is reserved for the
+detect / decide / act pipeline split. See the glossary in
+[decision-index.md](../../../design/decision-index.md#glossary).
 
 ## Why the extra hop matters
 
