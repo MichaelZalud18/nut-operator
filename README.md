@@ -47,6 +47,8 @@ The API group is `power.zalud.io/v1alpha1`.
 - `NUTServer` renders and operates one logical `upsd` server instance for selected UPS devices.
 - `NodePowerAgent` manages the per-node monitoring and actuation DaemonSet. It separates `MonitorOnly`, `DryRun`, and `Actuate` modes.
 - `ShutdownFlow` defines dependency-graph shutdown policy compiled into ordered waves. Enforced flows require an explicit approval annotation.
+- `ShutdownHook` describes one bounded pre-shutdown call to a system outside the cluster, delivered as HTTP CloudEvents or as a generic Kubernetes object. This is the operator's only outbound network path; endpoints are allowlisted on `PowerManagementCluster`, and a failed hook marks the flow degraded without holding a wave.
+- `PDUCapabilityProfile` declares PDU product records, including outlet count and which outlets are switchable. **Scaffolding for v1** (`OD-25`): the kind, schema, validation, bundled catalog, and matcher exist, and no device kind, inventory entity, render path, or actuation path consumes them. PDU actuation does not work.
 
 ## Safety Model
 
@@ -62,7 +64,9 @@ Real host shutdown is not the default.
 The node-agent pod split is:
 
 - `upsmon` container: unprivileged NUT client, no Kubernetes API credentials required for ordinary monitoring.
-- `actuator` container: omitted or stubbed by default; approved real host shutdown watches local and projected signal files, then uses the isolated host-action boundary with `hostPID`, `SYS_BOOT`, no Kubernetes token, and no NUT credentials.
+- `actuator` container: omitted in `MonitorOnly`, and `Simulate` by default elsewhere — `mode` defaults to `DryRun` and `shutdown.actuatorPolicy` to `Simulate`, two independent gates. Approved real host shutdown watches only the executor-projected signal Secret, then uses the isolated host-action boundary with `hostPID`, `SYS_BOOT`, no Kubernetes token, and no NUT credentials.
+
+One path authorizes a halt (`OD-37`). NUT's local `SHUTDOWNCMD` path keeps its writer, its signal format, and its file, and holds no authority: the shared tmpfs is not mounted into the actuator, so no supported configuration lets that file stop a node. A local backstop was declined deliberately — it would engage exactly when the operator is unreachable, which is when ordering matters most, and `MINSUPPLIES 1` on every agent would release a UPS's whole coverage at once. The accepted cost, per `SB-3`: an undeliverable signal leaves nodes running until the UPS dies.
 
 ## Storage
 
@@ -100,7 +104,7 @@ flowchart TD
   Operator -->|compiled waves and decisions| Flow[ShutdownFlow]
   Operator -->|published plan artifacts| Artifacts[Plans / graphs / waves / explanations]
   Flow -->|approved handoff| Agents[NodePowerAgent DaemonSets]
-  Agents -->|local signal| Actuator[Host actuator boundary]
+  Agents -->|authorized projected signal| Actuator[Host actuator boundary]
   Artifacts -.-> Subscribers[Dashboards / monitoring / docs / recovery consumers]
 ```
 

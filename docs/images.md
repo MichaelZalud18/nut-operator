@@ -11,7 +11,7 @@ keylessly signed with Sigstore/cosign after vulnerability scanning.
 - `nut-server`: `upsd` plus network-capable NUT drivers required by the selected `UPSDevice` resources.
 - `upsmon-agent`: unprivileged NUT client plus the project-owned `power-signal-writer` used by the
   `NodePowerAgent` DaemonSet.
-- `node-actuator`: small host-action process. Stub mode runs without host privileges; approved
+- `node-actuator`: small host-action process. `Simulate` runs without host privileges; approved
   real host shutdown uses the direct Linux poweroff syscall.
 - `operator`: controller-manager image built from this repository.
 

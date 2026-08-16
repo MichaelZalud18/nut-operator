@@ -24,11 +24,18 @@ The NUT server and client containers use network UPS protocols only. They do not
 
 The actuator container owns host interaction only when approved actuation is enabled. It has no NUT credentials, no flow logic, and no broad policy authority. Its job is to validate the signal and execute the approved local action.
 
+One signal path is authorized, and it is the executor-projected Secret, mounted read-only (`OD-37`). The shared `power-agent-run` tmpfs that `upsmon` writes its `SHUTDOWNCMD` handoff into is **not mounted into the actuator at all**. That is deliberately stronger than mounting it read-only: the halt comes from the actuator *reading* a path, so restricting writes would have closed a threat nobody posed while leaving the read open. A volume the container does not mount is a volume it cannot be tricked through. The actuator's default signal path is derived from `POWER_NODE_NAME` rather than fixed, so a failed environment injection leaves it watching nothing; the previous default was the local tmpfs path, which meant the same failure silently repointed it at the one path this decision declines to trust. The Secret always carries a `delivery-channel` marker key, because an empty Secret projects identically to a missing one and without a key that is always present there is no way to tell "no flow is running" from "this channel does not exist".
+
+The cost is accepted rather than engineered away, and is recorded as `SB-3`: an undeliverable signal leaves nodes running until the UPS dies. A local backstop would engage exactly when the operator is unreachable, which is when ordering matters most, and `MINSUPPLIES 1` on every agent would release a UPS's entire coverage at once. Full treatment in [node-agent-operand.md](design/node-agent-operand.md).
+
 Approved `PowerOff` rendering uses `hostPID` and adds only `CAP_SYS_BOOT` to the actuator
 container. It remains non-root, drops all other capabilities, keeps privilege escalation disabled,
-uses a read-only root filesystem, and receives no Kubernetes service-account token. The container
-seccomp profile is unconfined for this mode because common runtime-default profiles block the Linux
-`reboot(2)` syscall used for host poweroff.
+uses a read-only root filesystem, and receives no Kubernetes service-account token. It runs under the
+pod's `RuntimeDefault` seccomp profile with no override (`F-62`). An earlier revision set
+`Unconfined` on the assumption that the runtime default blocks `reboot(2)`; measurement showed it
+does not — with the capability held the syscall reaches the kernel's handler, and without it the
+refusal is on the capability. `CAP_SYS_BOOT` is the gate, so `Unconfined` bought nothing while
+removing every other syscall filter from the one container that can halt the machine.
 
 ## RBAC Scope
 

@@ -16,10 +16,13 @@ UPS, database, or network path is safe to ignore.
 - Node agents are passive by default. They do not invent local shutdown policy when the API server,
   NUT server, or operator is unreachable.
 - Node shutdown signals are structured, node-bound, plan-hash-bound, execution-bound, and TTL-bound.
-  The actuator watches both the local `upsmon` handoff file and the executor-projected Secret path,
-  then rejects stale signals and signals intended for another node.
-- Loss of the API path after a valid node-local signal is accepted does not grant new authority. The
-  actuator may only complete the already-approved local action represented by that fresh signal.
+  The actuator watches only the executor-projected Secret path, then rejects stale signals and
+  signals intended for another node. NUT's local `upsmon` handoff file still exists and carries no
+  authority (`OD-37`); the shared tmpfs is not mounted into the actuator, so a partition cannot
+  promote that file into a release path.
+- Loss of the API path after a valid projected signal is accepted does not grant new authority. The
+  actuator may only complete the already-approved action represented by that fresh signal, which is
+  already inside its pod boundary.
 - PostgreSQL outages degrade audit durability but do not silently change the power plan. The
   shutdown-time audit spool records fallback JSONL evidence for writes that fail after the audit
   store was opened.
@@ -35,7 +38,7 @@ UPS, database, or network path is safe to ignore.
 | Operator to NUT server or UPS endpoint | Telemetry becomes stale after `UPSDevice.spec.telemetry.staleAfter`. Trigger and planner outputs carry stale/unknown reasons instead of assuming the UPS is healthy. |
 | Operator to node | The executor does not infer local completion. Cordon, drain, release, and handoff evidence remain separately recorded so subscribers can see exactly where certainty ended. |
 | Node agent to NUT server | `upsmon` handles NUT monitor behavior locally, while the actuator remains bounded by its configured mode and signal contract. |
-| Node agent to operator/API | The node agent does not fetch new policy. It acts only on a fresh local signal already delivered into its pod boundary. |
+| Node agent to operator/API | The node agent does not fetch new policy. It acts only on a fresh projected signal already delivered into its pod boundary by kubelet. |
 
 ## Implementation Hooks
 

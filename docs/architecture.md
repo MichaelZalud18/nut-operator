@@ -84,6 +84,16 @@ For built-in NUT appliances, `NUTServer` renders `dummy-ups` repeater mode rathe
 
 `ShutdownFlow` is the ordered policy layer. Its primary model is a dependency graph of shutdown groups compiled into deterministic execution waves. Linear steps remain available for small test installs, but production flows use graph relationships so independent groups can run concurrently while dependent groups stay protected.
 
+`ShutdownHook` describes one bounded pre-shutdown call to a system outside the cluster, referenced by a `RunHook` group. HTTP CloudEvents is the primary transport and a generic Kubernetes object is the secondary one. This is the operator's only outbound network path, so endpoints are allowlisted on `PowerManagementCluster`; hook failures are advisory and mark the flow degraded without holding a wave or engaging `abortPolicy`.
+
+`PowerInfrastructure` represents a non-node, non-UPS entity in the power or communication path — a PDU, switch, router, panel, or transfer device. It exists so topology can explain how a node is fed and reached without implying anything actuates it.
+
+`PowerInventoryNode` and `PowerInventoryEdge` carry the topology itself. The node object attaches planner-relevant metadata to a Kubernetes node name without displacing the `Node` as canonical identity; the edge object declares provider-neutral `Feeds` and `Carries` relations. Power-domain membership is derived from the transitive closure of `Feeds` edges rather than declared.
+
+`UPSCapabilityProbe` reads what a device actually reports and drafts a `UPSCapabilityProfile` from it, for hardware the bundled catalog does not cover. It is advisory: it never changes how a device resolves and never runs on the failure path.
+
+`PDUCapabilityProfile` is a parallel kind to `UPSCapabilityProfile` carrying PDU records, including outlet count and switchability. It is scaffolding for v1 per `OD-25` — schema, validation, bundled catalog, and matcher support exist, and nothing consumes them. There is no PDU device kind, inventory entity, render path, or actuation path.
+
 See [shutdown-flow.md](shutdown-flow.md) for the underlying flow design.
 
 ## Operand Model
@@ -107,14 +117,24 @@ rendered only when monitoring is not explicitly disabled.
 
 - `upsmon`: unprivileged NUT client, read-only root filesystem, no capabilities, no Kubernetes API
   token, and a packaged `power-signal-writer` used by NUT `SHUTDOWNCMD`.
-- `actuator`: omitted in `MonitorOnly` or stubbed by default. In approved host-actuation mode, it
-  watches local and projected signal files and performs the host shutdown path without NUT
-  credentials or policy authority.
+- `actuator`: omitted in `MonitorOnly`, and `Simulate` by default elsewhere. In approved
+  host-actuation mode it watches the executor-projected Secret path and performs the host shutdown
+  path without NUT credentials or policy authority.
 
 The handoff file contains structured content including execution ID, node name, timestamp, reason,
 UPS identity, flow identity, and plan hash. The actuator rejects stale, malformed, or wrong-node
-signals. The executor writes projected per-node Secret keys for orchestrated releases; `upsmon`
-writes the same JSON shape locally for NUT FSD events.
+signals.
+
+One path authorizes a halt (`OD-37`). The executor writes projected per-node Secret keys, and that
+is the only path the actuator reads. `upsmon` still writes the same JSON shape locally for NUT
+`SHUTDOWNCMD` events — the writer, the format, and the file all remain — but the shared tmpfs is not
+mounted into the actuator, so no supported configuration lets that file halt a node. The shared
+shape is a format, not a second release path.
+
+This was decided against the tempting reading. A local backstop engages precisely when the operator
+is unreachable, which is when ordering matters most, and `MONITOR ... 1 ... secondary` with
+`MINSUPPLIES 1` on every agent would release a UPS's entire coverage simultaneously. The accepted
+cost is stated in `SB-3`: an undeliverable signal leaves nodes running until the UPS dies.
 
 ## Storage Model
 
@@ -170,7 +190,7 @@ sequenceDiagram
   Op->>Pub: Publish plan, graph, waves, explanations
   Op->>DB: Record planner and decision evidence
   Flow->>Agent: Approved dry-run or enforce handoff
-  Agent->>Agent: Validate local signal and mode gates
+  Agent->>Agent: Validate projected signal and mode gates
 ```
 
 The operator treats PostgreSQL as the durable record path, not as the critical decision path. A
