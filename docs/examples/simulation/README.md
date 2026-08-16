@@ -1,44 +1,56 @@
-# Scripted UPS Simulation Example
+# Simulation scenarios
 
-Components: NUT Server & Discovery, Node Agent / DaemonSet.
+Components: NUT Server / upsd, Node Agent / DaemonSet, Planning & Execution Logic.
 
-Demonstrates `UPSDevice.spec.simulation`: a `dummy-ups` device driven by a scripted
-state-transition fixture instead of NUT's static `.dev` file, so `OnBattery`/`LowBattery`
-transitions can be exercised end-to-end (through telemetry polling, `ShutdownFlow` trigger
-eligibility, and `NodePowerAgent` release gating) without real hardware.
+Runnable power topologies backed by `dummy-ups` and a scripted `.seq` fixture, so triggers,
+compilation, wave generation, and release gating can be exercised end to end with no hardware. The
+telemetry is real — the `UPSDeviceReconciler` polls a real `upsd` reading a real driver — and only
+the device behind it is scripted.
 
-`ups-and-server.yaml` applies:
+| Scenario | Shape | What it exercises |
+| --- | --- | --- |
+| [single-domain](single-domain/) | One UPS, one domain, no topology | The fixture mechanism itself: `OnBattery`/`LowBattery` transitions on a 20s loop |
+| [homelab](homelab/) | 1 control plane, 3 workers, 1 burst, router + switch | Wave generation from tiers alone, with derived multi-group waves |
+| [multistage](multistage/) | UPS → 2 PDUs → 2 racks, 3 control-plane members | Multi-hop `feeds` closure, and racks as concurrent peers |
 
-- A `ConfigMap` holding a `.seq` fixture (NUT's dummy-loop format: `variable: value` blocks
-  separated by blank lines, each optionally preceded by a `TIMER <seconds>` line). This fixture
-  cycles Online (100% charge) -> OnBattery (40%) -> LowBattery (8%), 20 seconds per state, looping
-  back to Online once the sequence ends.
-- A `UPSDevice` with `driver: dummy-ups` and `spec.simulation.sequenceConfigMapRef` pointing at
-  that ConfigMap, instead of `spec.endpoint` or a static definition.
-- A `NUTServer` that selects it by label, matching the `orion-cluster` example's shape.
+## Tight versus loose scenarios
 
-Apply order: the ConfigMap and UPSDevice first (or together), then the NUTServer, into a
-namespace already provisioned by a `PowerManagementCluster` (see `../orion-cluster`).
+[orion-cluster](../orion-cluster/) is deliberately tight: every group carries an explicit `before`
+edge, so the compiled plan is exactly the chain that was written. That makes it a good reference for
+*what the fields mean*, and a poor test of the planner — it recites a wave structure rather than
+deriving one. Its six waves are identical with or without any ordering hints, because the chain
+already determines them.
 
-What to observe:
+The scenarios here are deliberately loose. Groups carry a tier and nothing else, so ordering across
+tiers is derived from tier edges and grouping within a tier is derived from the absence of edges.
+Change a tier number and the wave structure changes with it.
 
-- `kubectl get upsdevice orion-core-ups-simulated -o jsonpath='{.status.phase}'` cycles through
-  `Online`, `OnBattery`, `LowBattery` roughly every 20 seconds, sourced from the real
-  `UPSDeviceReconciler` telemetry poller reading the rendered NUT server's `upsc` output --
-  not a mock.
-- A `ShutdownFlow` with an `OnBattery` or `LowBattery` trigger targeting this device's
-  `powerDomains` becomes eligible on the same cadence, letting the full trigger -> compile -> wave
-  pipeline be driven by a scripted fixture in a repeatable test rather than by hand-patching
-  status.
+That is the point: a loose scenario tells you what the planner *decides*, and it is also where the
+planner's decisions can surprise you — see the tier-2 note in [homelab](homelab/).
 
-Authoring a custom fixture: write any number of `variable: value` blocks (separated by a blank
-line) into the ConfigMap's `sequence.seq` key (or a custom key referenced by
-`spec.simulation.sequenceKey`), each preceded by an optional `TIMER <seconds>` line. Values follow
-the same NUT variable names as the static fixture (`ups.status`, `battery.charge`,
-`battery.runtime`, `ups.load`, ...). `ups.status` accepts NUT's space-separated status flags (for
-example `OB LB` for on-battery-and-low, not just a single token).
+## Cost of adding one
 
-Scope note: this exercises the `dummy-ups` driver's own scripted playback and this project's
-telemetry/trigger pipeline. It says nothing about whether a real vendor's `snmp-ups` OIDs are
-being read correctly -- that is a separate conformance question, covered by the `snmpsim` fixture
-under `../snmpsim`.
+Low, and it is worth knowing why. A scenario is:
+
+- **One ConfigMap** holding a `.seq` fixture — a handful of `variable: value` blocks separated by
+  `TIMER <seconds>` lines. This is the only part that models the UPS, and it is about 40 lines.
+- **One `UPSDevice`** with `driver: dummy-ups` and `spec.simulation.sequenceConfigMapRef` instead of
+  an endpoint. No credentials, no network device.
+- **One `NUTServer`** selecting it by label.
+- **Inventory** — one `PowerInventoryNode` per node, one `PowerInfrastructure` per switch/PDU/router,
+  one `PowerInventoryEdge` per relationship. This is the bulk of the YAML and the least interesting
+  part to write; it is mechanical.
+- **Agents and a flow.**
+
+Nothing needs hardware, a real network, or credentials, and several scenarios coexist in one cluster
+as long as their power-domain names differ. The expensive part is not the simulation — it is
+deciding what the topology should be, which is design work either way.
+
+The one rule worth remembering: **`Feeds` edges require an `input` qualifier** (`IN-4`). Omitting it
+is a hard `FeedInputRequired` error, not a warning, because an unqualified feed cannot say whether
+two edges are redundant supplies or two separate ones.
+
+## Adding a scenario
+
+Every manifest here is validated against the generated CRD schemas by `make validate-samples`, which
+runs in CI with no path filter. A new scenario is covered automatically by being in this directory.

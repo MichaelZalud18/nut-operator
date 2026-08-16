@@ -1,0 +1,211 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sim-homelab-ups-transitions
+  namespace: power-system
+data:
+  # A slower, more realistic outage than the single-domain fixture: a long healthy window, a
+  # sustained battery run, then decline. The healthy block is long enough that a flow with a 2m
+  # OnBattery hold does not fire the moment the fixture loops.
+  sequence.seq: |
+    device.mfr: nut-operator
+    device.model: homelab-fixture
+    ups.mfr: nut-operator
+    ups.model: homelab-fixture
+    ups.status: OL
+    battery.charge: 100
+    battery.runtime: 2700
+    ups.load: 35
+
+    TIMER 120
+
+    device.mfr: nut-operator
+    device.model: homelab-fixture
+    ups.mfr: nut-operator
+    ups.model: homelab-fixture
+    ups.status: OB
+    battery.charge: 72
+    battery.runtime: 1500
+    ups.load: 35
+
+    TIMER 60
+
+    device.mfr: nut-operator
+    device.model: homelab-fixture
+    ups.mfr: nut-operator
+    ups.model: homelab-fixture
+    ups.status: OB
+    battery.charge: 41
+    battery.runtime: 780
+    ups.load: 35
+
+    TIMER 60
+
+    device.mfr: nut-operator
+    device.model: homelab-fixture
+    ups.mfr: nut-operator
+    ups.model: homelab-fixture
+    ups.status: OB LB
+    battery.charge: 9
+    battery.runtime: 120
+    ups.load: 35
+
+    TIMER 60
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  name: sim-homelab-ups
+  labels:
+    power.zalud.io/domain: sim-homelab
+spec:
+  displayName: Homelab UPS (simulated)
+  driver: dummy-ups
+  simulation:
+    sequenceConfigMapRef:
+      namespace: power-system
+      name: sim-homelab-ups-transitions
+  powerDomains:
+    - sim-homelab
+  thresholds:
+    minRuntimeSeconds: 600
+    minChargePercent: 20
+    onBatteryHoldoff: 30s
+    staleAfter: 45s
+  telemetry:
+    pollInterval: 10s
+    alertPollInterval: 5s
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  name: sim-homelab
+spec:
+  namespace: power-system
+  deviceSelector:
+    matchLabels:
+      power.zalud.io/domain: sim-homelab
+  image:
+    repository: ghcr.io/michaelzalud18/nut-server
+    tag: main
+    pullPolicy: IfNotPresent
+  auth:
+    mode: OperatorManaged
+  tls:
+    mode: Disabled
+  service:
+    type: ClusterIP
+    port: 3493
+---
+# The whole point of this scenario. Every group states a tier and nothing else -- no before, no
+# after, no phase. Ordering across tiers is derived; grouping within a tier is derived. Change a
+# tier number and the wave structure changes with it, which is what makes this a test of wave
+# generation rather than a recital of a wave structure someone typed out.
+apiVersion: power.zalud.io/v1alpha1
+kind: ShutdownFlow
+metadata:
+  name: sim-homelab-conservation
+spec:
+  mode: DryRun
+  triggers:
+    - type: OnBattery
+      powerDomains:
+        - sim-homelab
+      for: 2m
+    - type: RuntimeBelow
+      powerDomains:
+        - sim-homelab
+      runtimeBelowSeconds: 900
+  groups:
+    - name: shed-burst-node
+      description: Burst capacity goes first and takes its workloads with it.
+      action: AgentShutdown
+      shutdownTier: 5
+      target:
+        agentRefs:
+          - name: sim-burst
+      timeout: 2m
+    # Three independent tier-4 groups. Nothing orders them against each other, so the planner is
+    # free to put all three in one wave -- and does.
+    - name: scale-web
+      action: ScaleWorkload
+      shutdownTier: 4
+      tierInversionPolicy: Allow
+      params:
+        replicas: "0"
+      target:
+        namespaceSelector:
+          matchLabels:
+            power.example.com/shutdown-group: web
+      timeout: 2m
+    - name: scale-api
+      action: ScaleWorkload
+      shutdownTier: 4
+      tierInversionPolicy: Allow
+      params:
+        replicas: "0"
+      target:
+        namespaceSelector:
+          matchLabels:
+            power.example.com/shutdown-group: api
+      timeout: 2m
+    - name: scale-batch
+      action: ScaleWorkload
+      shutdownTier: 4
+      tierInversionPolicy: Allow
+      params:
+        replicas: "0"
+      target:
+        namespaceSelector:
+          matchLabels:
+            power.example.com/shutdown-group: batch
+      timeout: 2m
+    - name: quiesce-databases
+      description: Stateful backends stop after their clients are gone.
+      action: ScaleWorkload
+      shutdownTier: 3
+      params:
+        replicas: "0"
+      target:
+        namespaceSelector:
+          matchLabels:
+            power.example.com/shutdown-group: data
+      timeout: 5m
+    # Tier 2 is where derived grouping stops being enough. Draining a node and powering it off are
+    # both tier-2 work with no tier relationship between them, so the planner co-waves them -- and
+    # a drain racing its own node's shutdown is not what anyone means. This is the one edge the
+    # scenario authors by hand, and the README explains why it is here and nowhere else.
+    - name: drain-workers
+      action: DrainNodes
+      shutdownTier: 2
+      before:
+        - stop-workers
+      target:
+        nodeSelector:
+          matchLabels:
+            power.example.com/node-group: worker
+      timeout: 5m
+    - name: stop-workers
+      action: AgentShutdown
+      shutdownTier: 2
+      target:
+        agentRefs:
+          - name: sim-workers
+      timeout: 3m
+    - name: stop-control-plane
+      description: Control plane last; everything above needed it to still be running.
+      action: AgentShutdown
+      shutdownTier: 1
+      target:
+        agentRefs:
+          - name: sim-control
+      timeout: 3m
+  concurrencyPolicy: Forbid
+  abortPolicy:
+    behavior: HaltAndSurface
+    notify: true
+  safety:
+    requireManualApproval: true
+    approvalAnnotation: power.zalud.io/approved-for-enforce
+    maxEstimatedDuration: 30m

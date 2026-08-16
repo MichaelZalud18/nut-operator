@@ -1,0 +1,277 @@
+---
+# Cascaded power: UPS -> PDU -> rack nodes, two racks behind two PDUs behind one UPS.
+#
+# Every other example feeds nodes directly from the UPS, so domain membership is one hop and the
+# closure derivation is never really exercised. Here it is three hops, and a node's membership is
+# only discoverable by walking UPS -> PDU -> node. Nothing in the flow names a PDU; membership is
+# derived and the flow works in terms of tiers.
+#
+# The second stage is also where partial-failure questions get interesting: the two racks share a
+# UPS, so they share a power domain and fall together. Splitting them into separate domains is what
+# the two-UPS variant would do -- see the README.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInfrastructure
+metadata:
+  name: sim-stage-pdu-a
+spec:
+  displayName: Rack A PDU (simulated)
+  class: PDU
+  description: First-stage distribution for rack A. Fed by the UPS, feeds rack A nodes.
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInfrastructure
+metadata:
+  name: sim-stage-pdu-b
+spec:
+  displayName: Rack B PDU (simulated)
+  class: PDU
+  description: First-stage distribution for rack B. Fed by the UPS, feeds rack B nodes.
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInfrastructure
+metadata:
+  name: sim-stage-switch
+spec:
+  displayName: Simulated core switch
+  class: Switch
+  description: Carries the control path for both racks.
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-stage-control-1
+spec:
+  nodeName: sim-stage-control-1
+  roles:
+    controlPlane: true
+    controlPlaneQuorumMember: true
+    shutdownTier: 1
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-stage-control-2
+spec:
+  nodeName: sim-stage-control-2
+  roles:
+    controlPlane: true
+    controlPlaneQuorumMember: true
+    shutdownTier: 1
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-stage-control-3
+spec:
+  nodeName: sim-stage-control-3
+  roles:
+    controlPlane: true
+    controlPlaneQuorumMember: true
+    shutdownTier: 1
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-stage-rack-a-1
+spec:
+  nodeName: sim-stage-rack-a-1
+  roles:
+    controlPlane: false
+    shutdownTier: 2
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-stage-rack-a-2
+spec:
+  nodeName: sim-stage-rack-a-2
+  roles:
+    controlPlane: false
+    shutdownTier: 2
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-stage-rack-b-1
+spec:
+  nodeName: sim-stage-rack-b-1
+  roles:
+    controlPlane: false
+    shutdownTier: 2
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-stage-rack-b-2
+spec:
+  nodeName: sim-stage-rack-b-2
+  roles:
+    controlPlane: false
+    shutdownTier: 2
+---
+# Stage 1: UPS feeds the PDUs and the switch.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-ups-feeds-pdu-a
+spec:
+  from: {kind: UPSDevice, name: sim-stage-ups}
+  to: {kind: PowerInfrastructure, name: sim-stage-pdu-a}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-ups-feeds-pdu-b
+spec:
+  from: {kind: UPSDevice, name: sim-stage-ups}
+  to: {kind: PowerInfrastructure, name: sim-stage-pdu-b}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-ups-feeds-switch
+spec:
+  from: {kind: UPSDevice, name: sim-stage-ups}
+  to: {kind: PowerInfrastructure, name: sim-stage-switch}
+  relation: Feeds
+  input: psu-a
+---
+# Stage 2: PDUs feed their racks. These are the hops that make membership non-obvious.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-pdu-a-feeds-control-1
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-pdu-a}
+  to: {kind: Node, name: sim-stage-control-1}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-pdu-a-feeds-control-2
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-pdu-a}
+  to: {kind: Node, name: sim-stage-control-2}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-pdu-a-feeds-rack-a-1
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-pdu-a}
+  to: {kind: Node, name: sim-stage-rack-a-1}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-pdu-a-feeds-rack-a-2
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-pdu-a}
+  to: {kind: Node, name: sim-stage-rack-a-2}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-pdu-b-feeds-control-3
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-pdu-b}
+  to: {kind: Node, name: sim-stage-control-3}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-pdu-b-feeds-rack-b-1
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-pdu-b}
+  to: {kind: Node, name: sim-stage-rack-b-1}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-pdu-b-feeds-rack-b-2
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-pdu-b}
+  to: {kind: Node, name: sim-stage-rack-b-2}
+  relation: Feeds
+  input: psu-a
+---
+# Communication path is flat even though power is cascaded. The two structures are independent,
+# which is the reason `feeds` and `carries` are separate relations rather than one graph.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-switch-carries-control-1
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-switch}
+  to: {kind: Node, name: sim-stage-control-1}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-switch-carries-control-2
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-switch}
+  to: {kind: Node, name: sim-stage-control-2}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-switch-carries-control-3
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-switch}
+  to: {kind: Node, name: sim-stage-control-3}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-switch-carries-rack-a-1
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-switch}
+  to: {kind: Node, name: sim-stage-rack-a-1}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-switch-carries-rack-a-2
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-switch}
+  to: {kind: Node, name: sim-stage-rack-a-2}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-switch-carries-rack-b-1
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-switch}
+  to: {kind: Node, name: sim-stage-rack-b-1}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-stage-switch-carries-rack-b-2
+spec:
+  from: {kind: PowerInfrastructure, name: sim-stage-switch}
+  to: {kind: Node, name: sim-stage-rack-b-2}
+  relation: Carries

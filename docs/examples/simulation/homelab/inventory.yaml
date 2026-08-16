@@ -1,0 +1,211 @@
+---
+# Topology for a small cluster: one control plane, three steady workers, one burst worker.
+#
+# Deliberately looser than the orion-cluster example. The nodes carry tiers and the edges carry
+# structure, and that is all -- there is no hand-authored ordering anywhere in this scenario. Waves
+# come out of tier-derived edges over this topology, which is the thing worth testing: if you write
+# the wave structure into the flow by hand, the planner is only reciting it back.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-control-1
+spec:
+  nodeName: sim-control-1
+  roles:
+    controlPlane: true
+    controlPlaneQuorumMember: true
+    shutdownTier: 1
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-worker-1
+spec:
+  nodeName: sim-worker-1
+  roles:
+    controlPlane: false
+    controlPlaneQuorumMember: false
+    shutdownTier: 2
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-worker-2
+spec:
+  nodeName: sim-worker-2
+  roles:
+    controlPlane: false
+    controlPlaneQuorumMember: false
+    shutdownTier: 2
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-worker-3
+spec:
+  nodeName: sim-worker-3
+  roles:
+    controlPlane: false
+    controlPlaneQuorumMember: false
+    shutdownTier: 2
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: sim-burst-1
+spec:
+  nodeName: sim-burst-1
+  roles:
+    controlPlane: false
+    controlPlaneQuorumMember: false
+    shutdownTier: 5
+---
+# The router is the edge of the modeled world. It carries every node's path and is fed by the UPS,
+# so it belongs to the domain -- but nothing powers it off (OD-24 keeps network devices
+# topological for v1). Modeling it is what lets the graph explain how a node is reached rather than
+# merely that it is powered.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInfrastructure
+metadata:
+  name: sim-router
+spec:
+  displayName: Simulated edge router
+  class: Router
+  description: Upstream router. Carries the path for the switch and everything behind it.
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInfrastructure
+metadata:
+  name: sim-switch
+spec:
+  displayName: Simulated access switch
+  class: Switch
+  description: Top-of-rack switch. Carries the control and NUT telemetry path for every node.
+---
+# Feeds: the UPS powers the network gear and every node.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-ups-feeds-router
+spec:
+  from: {kind: UPSDevice, name: sim-homelab-ups}
+  to: {kind: PowerInfrastructure, name: sim-router}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-ups-feeds-switch
+spec:
+  from: {kind: UPSDevice, name: sim-homelab-ups}
+  to: {kind: PowerInfrastructure, name: sim-switch}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-ups-feeds-control-1
+spec:
+  from: {kind: UPSDevice, name: sim-homelab-ups}
+  to: {kind: Node, name: sim-control-1}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-ups-feeds-worker-1
+spec:
+  from: {kind: UPSDevice, name: sim-homelab-ups}
+  to: {kind: Node, name: sim-worker-1}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-ups-feeds-worker-2
+spec:
+  from: {kind: UPSDevice, name: sim-homelab-ups}
+  to: {kind: Node, name: sim-worker-2}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-ups-feeds-worker-3
+spec:
+  from: {kind: UPSDevice, name: sim-homelab-ups}
+  to: {kind: Node, name: sim-worker-3}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-ups-feeds-burst-1
+spec:
+  from: {kind: UPSDevice, name: sim-homelab-ups}
+  to: {kind: Node, name: sim-burst-1}
+  relation: Feeds
+  input: psu-a
+---
+# Carries: router -> switch -> nodes. A two-hop communication path, so the graph knows that losing
+# the router takes the switch's nodes with it even though the UPS feeds all three directly.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-router-carries-switch
+spec:
+  from: {kind: PowerInfrastructure, name: sim-router}
+  to: {kind: PowerInfrastructure, name: sim-switch}
+  relation: Carries
+  description: Router carries the uplink for the access switch.
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-switch-carries-control-1
+spec:
+  from: {kind: PowerInfrastructure, name: sim-switch}
+  to: {kind: Node, name: sim-control-1}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-switch-carries-worker-1
+spec:
+  from: {kind: PowerInfrastructure, name: sim-switch}
+  to: {kind: Node, name: sim-worker-1}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-switch-carries-worker-2
+spec:
+  from: {kind: PowerInfrastructure, name: sim-switch}
+  to: {kind: Node, name: sim-worker-2}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-switch-carries-worker-3
+spec:
+  from: {kind: PowerInfrastructure, name: sim-switch}
+  to: {kind: Node, name: sim-worker-3}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata:
+  name: sim-switch-carries-burst-1
+spec:
+  from: {kind: PowerInfrastructure, name: sim-switch}
+  to: {kind: Node, name: sim-burst-1}
+  relation: Carries

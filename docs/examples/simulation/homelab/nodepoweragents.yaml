@@ -1,0 +1,79 @@
+---
+# One agent per role. All three are Simulate, so the actuator records releases and touches nothing.
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  name: sim-control
+spec:
+  namespace: power-system
+  nutServerRefs:
+    - name: sim-homelab
+  nodeSelector:
+    matchLabels:
+      power.example.com/node-group: control
+  mode: DryRun
+  shutdownFlowRef:
+    name: sim-homelab-conservation
+  upsmon:
+    pollFrequency: 10s
+    alertPollFrequency: 5s
+    deadTime: 30s
+    hostSync: 15s
+    finalDelay: 10s
+  shutdown:
+    actuatorPolicy: Simulate
+    signalPath: /run/power-agent/shutdown.json
+    signalTTL: 2m
+    requireFreshTelemetry: true
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  name: sim-workers
+spec:
+  namespace: power-system
+  nutServerRefs:
+    - name: sim-homelab
+  nodeSelector:
+    matchLabels:
+      power.example.com/node-group: worker
+  mode: DryRun
+  shutdownFlowRef:
+    name: sim-homelab-conservation
+  upsmon:
+    pollFrequency: 10s
+    alertPollFrequency: 5s
+    deadTime: 30s
+    hostSync: 15s
+    finalDelay: 10s
+  shutdown:
+    actuatorPolicy: Simulate
+    signalPath: /run/power-agent/shutdown.json
+    signalTTL: 2m
+    requireFreshTelemetry: true
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  name: sim-burst
+spec:
+  namespace: power-system
+  nutServerRefs:
+    - name: sim-homelab
+  nodeSelector:
+    matchLabels:
+      power.example.com/node-group: burst
+  mode: DryRun
+  shutdownFlowRef:
+    name: sim-homelab-conservation
+  upsmon:
+    pollFrequency: 10s
+    alertPollFrequency: 5s
+    deadTime: 30s
+    hostSync: 15s
+    finalDelay: 10s
+  shutdown:
+    actuatorPolicy: Simulate
+    signalPath: /run/power-agent/shutdown.json
+    signalTTL: 2m
+    requireFreshTelemetry: true

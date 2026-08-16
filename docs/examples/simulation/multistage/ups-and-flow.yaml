@@ -1,0 +1,268 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sim-stage-ups-transitions
+  namespace: power-system
+data:
+  # A deep-discharge run: healthy, then a long battery window that decays in three steps. Longer
+  # than the other fixtures because this cluster's plan is longer -- a plan that cannot finish
+  # inside the runtime is the interesting case here, and status.planFeasibility is what reports it.
+  sequence.seq: |
+    device.mfr: nut-operator
+    device.model: multistage-fixture
+    ups.mfr: nut-operator
+    ups.model: multistage-fixture
+    ups.status: OL
+    battery.charge: 100
+    battery.runtime: 1800
+    ups.load: 62
+
+    TIMER 120
+
+    device.mfr: nut-operator
+    device.model: multistage-fixture
+    ups.mfr: nut-operator
+    ups.model: multistage-fixture
+    ups.status: OB
+    battery.charge: 65
+    battery.runtime: 900
+    ups.load: 62
+
+    TIMER 90
+
+    device.mfr: nut-operator
+    device.model: multistage-fixture
+    ups.mfr: nut-operator
+    ups.model: multistage-fixture
+    ups.status: OB
+    battery.charge: 30
+    battery.runtime: 420
+    ups.load: 62
+
+    TIMER 90
+
+    device.mfr: nut-operator
+    device.model: multistage-fixture
+    ups.mfr: nut-operator
+    ups.model: multistage-fixture
+    ups.status: OB LB
+    battery.charge: 7
+    battery.runtime: 90
+    ups.load: 62
+
+    TIMER 60
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  name: sim-stage-ups
+  labels:
+    power.zalud.io/domain: sim-multistage
+spec:
+  displayName: Multistage UPS (simulated)
+  driver: dummy-ups
+  simulation:
+    sequenceConfigMapRef:
+      namespace: power-system
+      name: sim-stage-ups-transitions
+  powerDomains:
+    - sim-multistage
+  thresholds:
+    minRuntimeSeconds: 600
+    minChargePercent: 25
+    onBatteryHoldoff: 30s
+    staleAfter: 45s
+  telemetry:
+    pollInterval: 10s
+    alertPollInterval: 5s
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  name: sim-multistage
+spec:
+  namespace: power-system
+  deviceSelector:
+    matchLabels:
+      power.zalud.io/domain: sim-multistage
+  image:
+    repository: ghcr.io/michaelzalud18/nut-server
+    tag: main
+    pullPolicy: IfNotPresent
+  auth:
+    mode: OperatorManaged
+  tls:
+    mode: Disabled
+  service:
+    type: ClusterIP
+    port: 3493
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  name: sim-stage-control
+spec:
+  namespace: power-system
+  nutServerRefs:
+    - name: sim-multistage
+  nodeSelector:
+    matchLabels:
+      power.example.com/node-group: control
+  mode: DryRun
+  shutdownFlowRef:
+    name: sim-multistage-conservation
+  upsmon:
+    pollFrequency: 10s
+    alertPollFrequency: 5s
+    deadTime: 30s
+    hostSync: 15s
+    finalDelay: 10s
+  shutdown:
+    actuatorPolicy: Simulate
+    signalPath: /run/power-agent/shutdown.json
+    signalTTL: 2m
+    requireFreshTelemetry: true
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  name: sim-stage-rack-a
+spec:
+  namespace: power-system
+  nutServerRefs:
+    - name: sim-multistage
+  nodeSelector:
+    matchLabels:
+      power.example.com/rack: a
+  mode: DryRun
+  shutdownFlowRef:
+    name: sim-multistage-conservation
+  upsmon:
+    pollFrequency: 10s
+    alertPollFrequency: 5s
+    deadTime: 30s
+    hostSync: 15s
+    finalDelay: 10s
+  shutdown:
+    actuatorPolicy: Simulate
+    signalPath: /run/power-agent/shutdown.json
+    signalTTL: 2m
+    requireFreshTelemetry: true
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  name: sim-stage-rack-b
+spec:
+  namespace: power-system
+  nutServerRefs:
+    - name: sim-multistage
+  nodeSelector:
+    matchLabels:
+      power.example.com/rack: b
+  mode: DryRun
+  shutdownFlowRef:
+    name: sim-multistage-conservation
+  upsmon:
+    pollFrequency: 10s
+    alertPollFrequency: 5s
+    deadTime: 30s
+    hostSync: 15s
+    finalDelay: 10s
+  shutdown:
+    actuatorPolicy: Simulate
+    signalPath: /run/power-agent/shutdown.json
+    signalTTL: 2m
+    requireFreshTelemetry: true
+---
+# Tier-driven, like the homelab scenario, but with the racks as peers. Nothing says rack A goes
+# before rack B, so they share a wave -- which is the correct answer for a cluster where the racks
+# are independent, and the wrong one if they are not. Adding an edge between them is how you say
+# so, and the diff in the compiled plan is immediate and visible.
+apiVersion: power.zalud.io/v1alpha1
+kind: ShutdownFlow
+metadata:
+  name: sim-multistage-conservation
+spec:
+  mode: DryRun
+  triggers:
+    - type: OnBattery
+      powerDomains:
+        - sim-multistage
+      for: 2m
+    - type: RuntimeBelow
+      powerDomains:
+        - sim-multistage
+      runtimeBelowSeconds: 600
+  groups:
+    - name: scale-applications
+      action: ScaleWorkload
+      shutdownTier: 4
+      params:
+        replicas: "0"
+      target:
+        namespaceSelector:
+          matchLabels:
+            power.example.com/shutdown-group: application
+      timeout: 3m
+    - name: quiesce-databases
+      action: ScaleWorkload
+      shutdownTier: 3
+      params:
+        replicas: "0"
+      target:
+        namespaceSelector:
+          matchLabels:
+            power.example.com/shutdown-group: data
+      timeout: 6m
+    - name: drain-rack-a
+      action: DrainNodes
+      shutdownTier: 2
+      before:
+        - stop-rack-a
+      target:
+        nodeSelector:
+          matchLabels:
+            power.example.com/rack: a
+      timeout: 5m
+    - name: drain-rack-b
+      action: DrainNodes
+      shutdownTier: 2
+      before:
+        - stop-rack-b
+      target:
+        nodeSelector:
+          matchLabels:
+            power.example.com/rack: b
+      timeout: 5m
+    - name: stop-rack-a
+      action: AgentShutdown
+      shutdownTier: 2
+      target:
+        agentRefs:
+          - name: sim-stage-rack-a
+      timeout: 3m
+    - name: stop-rack-b
+      action: AgentShutdown
+      shutdownTier: 2
+      target:
+        agentRefs:
+          - name: sim-stage-rack-b
+      timeout: 3m
+    - name: stop-control-plane
+      description: All three control-plane members stop together, last.
+      action: AgentShutdown
+      shutdownTier: 1
+      target:
+        agentRefs:
+          - name: sim-stage-control
+      timeout: 3m
+  concurrencyPolicy: Forbid
+  abortPolicy:
+    behavior: HaltAndSurface
+    notify: true
+  safety:
+    requireManualApproval: true
+    approvalAnnotation: power.zalud.io/approved-for-enforce
+    maxEstimatedDuration: 30m

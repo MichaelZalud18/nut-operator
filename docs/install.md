@@ -324,8 +324,10 @@ incomplete graph blocks `ShutdownFlow` acceptance, by design.
 and publishes the full plan, including the wave ordering and the reasoning, without touching a node.
 
 A complete worked topology is in [docs/examples/orion-cluster/](examples/orion-cluster/README.md).
-For testing without real hardware, [docs/examples/simulation/](examples/simulation/) drives scripted
-`Online`/`OnBattery`/`LowBattery` transitions through a real NUT driver.
+For testing without real hardware, [docs/examples/simulation/](examples/simulation/README.md) drives
+scripted `Online`/`OnBattery`/`LowBattery` transitions through a real NUT driver. Three scenarios:
+one UPS with no topology, a small cluster with a router and switch, and a cascaded UPS → PDU → rack
+layout. The latter two derive their wave structure from tiers rather than authored ordering.
 
 ## Verify the configuration
 
