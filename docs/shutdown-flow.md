@@ -5,8 +5,7 @@ Components: Planning & Execution Logic, Outputs & Publishing.
 `ShutdownFlow` is the policy layer that turns UPS events into a safe, reviewable shutdown plan. Its foundation is a declarative dependency graph compiled into ordered shutdown waves.
 
 The graph model is the primary design. Numbered shutdown tiers add coarse ordering that compiles
-into ordinary graph edges. Numeric phases remain only a convenience for simple tie-breaking and for
-keeping generated plans readable.
+into ordinary graph edges. `phase` is a scaffold leftover slated for removal — see below.
 
 ## Design Goals
 
@@ -154,8 +153,17 @@ release tier; tier 0 is last-ditch workload-only and is rejected when directly t
 Tier N+1 to tier N compiles into derived graph edges, so tier ordering and authored dependencies use
 one dependency engine underneath.
 
-`phase` is a fallback ordering hint. Lower phases are selected first when multiple groups are ready
-at the same time. Explicit dependency and tier-derived edges take precedence over phases.
+`phase` is **not** a tie-breaking hint, despite its field description, and is slated for removal.
+
+A wave admits only groups whose phase values are equal: the compiler takes the lowest phase among
+ready groups and holds the rest back. So two groups with no dependency edge and the same tier are
+serialized into separate waves purely because their phase numbers differ, with no diagnostic. That
+is the opposite of a hint — it silently overrides the concurrency the graph model exists to provide.
+
+Ordering is tiers plus `before`/`after`. Leave `phase` unset; a flow that sets it on every group
+gets one group per wave, which is usually not what the author meant. See the glossary entry in
+[decision-index.md](design/decision-index.md#glossary), which also disambiguates the three unrelated
+things this project calls a phase.
 
 ## Compilation
 

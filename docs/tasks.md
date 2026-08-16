@@ -145,6 +145,15 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
+- `PL-25` co-wave contention detection is specified and not implemented. Two groups sharing a wave
+  while targeting workloads on the same node can violate a PodDisruptionBudget or overwhelm the
+  node, and nothing currently warns. Surfaced by the loose simulation scenarios, where a missing
+  edge between a drain and its own nodes' shutdown is silent — see
+  `docs/examples/simulation/homelab/`.
+- Remove `spec.groups[].phase`, pending a decision. It arrived with the initial scaffold, was never
+  designed, and does not behave as its description claims: a wave admits only groups whose phase
+  values match, so independent same-tier groups are silently serialized. Ordering is tiers plus
+  `before`/`after`. Cheap to remove in `v1alpha1`, breaking after release.
 
 ---
 
@@ -361,9 +370,15 @@ component.
 #### Built
 
 Component-scoped design docs with stable identifier namespaces, governing principles and scope
-boundaries, the decision index, the references under `docs/`, the audit records under
+boundaries, the decision index and glossary, the references under `docs/`, the audit records under
 `docs/audits/`, and the diagrams under `docs/diagrams/`. Example node naming is role-based per
 CONTRIBUTING.md — no new decision, that is the example policy applied.
+
+Worked examples are one tight and three loose. `docs/examples/orion-cluster/` authors an explicit
+edge on every group, so it demonstrates field meanings rather than planner behavior — its wave
+structure is identical with or without ordering hints. The scenarios under
+`docs/examples/simulation/` carry tiers and nothing else, so wave structure is derived and changes
+when a tier changes. Every manifest in both is schema-validated in CI by `make validate-samples`.
 
 #### Open Work
 

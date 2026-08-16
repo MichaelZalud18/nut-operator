@@ -1,5 +1,7 @@
 # Installation
 
+Components: Cross-cutting.
+
 How to install and run the operator in a cluster. For building from source, see the Development
 section of the [README](../README.md).
 

@@ -1,6 +1,6 @@
 # Scripted UPS Simulation Example
 
-Components: NUT Server & Discovery, Node Agent / DaemonSet.
+Components: NUT Server / upsd, Node Agent / DaemonSet.
 
 Demonstrates `UPSDevice.spec.simulation`: a `dummy-ups` device driven by a scripted
 state-transition fixture instead of NUT's static `.dev` file, so `OnBattery`/`LowBattery`

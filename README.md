@@ -245,6 +245,7 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 - [Inventory provider contract](docs/design/inventory-provider-contract.md)
 - [FAQ](docs/design/faq.md)
 - [Orion cluster example](docs/examples/orion-cluster/README.md)
+- [Simulation scenarios](docs/examples/simulation/README.md)
 
 ## Community and Project Info
 
