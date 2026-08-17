@@ -640,6 +640,68 @@ func TestRunnerWritesAgentShutdownSignalSecret(t *testing.T) {
 	}
 }
 
+// skipSync travels on the signal and is set from the executor's live tier-overrun state, never
+// from a NodePowerAgent setting. Only the thing running the plan knows the plan is late, and the
+// skip inverts its own outcome -- the nodes rushed to save time come back with the most to recover.
+func TestRunnerCarriesTierOverrunIntoSkipSync(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+
+	run := func(t *testing.T, overrunning bool) map[string]any {
+		t.Helper()
+		runner := Runner{
+			Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+			Clock:  func() time.Time { return time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC) },
+		}
+		if _, err := runner.RunAction(context.Background(), executor.Action{
+			ExecutionID:     "execution-b",
+			ShutdownFlow:    "flow-b",
+			PlanConfigHash:  "hash-b",
+			TierOverrunning: overrunning,
+			Group: executor.Group{
+				Name:   "node-b",
+				Action: executor.ActionAgentShutdown,
+				NodeReleases: []executor.NodeRelease{{
+					NodeName:              "node-b",
+					NodePowerAgent:        "agent-b",
+					SignalSecretNamespace: "power-system",
+					SignalSecretName:      "agent-b-node-signals",
+					SignalSecretKey:       "node-b.json",
+				}},
+			},
+		}); err != nil {
+			t.Fatalf("RunAction returned error: %v", err)
+		}
+		var secret corev1.Secret
+		if err := runner.Client.Get(context.Background(), client.ObjectKey{Namespace: "power-system", Name: "agent-b-node-signals"}, &secret); err != nil {
+			t.Fatalf("get signal Secret returned error: %v", err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(secret.Data["node-b.json"], &payload); err != nil {
+			t.Fatalf("unmarshal signal payload: %v", err)
+		}
+		return payload
+	}
+
+	t.Run("overrunning tier asks the actuator to skip the flush", func(t *testing.T) {
+		payload := run(t, true)
+		if payload["skipSync"] != true {
+			t.Fatalf("expected skipSync true on an overrunning tier, got %#v", payload["skipSync"])
+		}
+	})
+
+	t.Run("on-time tier leaves the field absent", func(t *testing.T) {
+		payload := run(t, false)
+		// omitempty, so absent rather than false. The actuator reads absence as "sync", which is
+		// what keeps a writer that never heard of this field from being read as permission to skip.
+		if _, present := payload["skipSync"]; present {
+			t.Fatalf("an on-time tier must not emit skipSync at all, got %#v", payload["skipSync"])
+		}
+	})
+}
+
 func TestLabelValueIsKubernetesSafe(t *testing.T) {
 	value := labelValue("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/weird")
 	if len(value) > 63 {

@@ -232,7 +232,9 @@ contract (`F-59`, `F-64`), and the mid-episode write deferral (`F-92`) are descr
 `sync(2)` runs before `reboot(2)` on the `PowerOff` path, timed and logged on every call, because
 `reboot(2)` does not flush the page cache — confirmed against `kernel/reboot.c` and stated in
 `reboot(2)`'s own man page. `spec.skipSync` on the signal lets the executor drop the flush when the
-plan is already overrunning; it is recorded loudly and is never silent. The flush is bounded by a
+plan is already overrunning; it is recorded loudly and is never silent. `skipSync` is set by the executor from the live tier-overrun window at
+dispatch, never from a `NodePowerAgent` setting — `EX-31` owns the lever, and only the thing running
+the plan knows the plan is late. The flush is bounded by a
 timeout and the halt proceeds on expiry, because `unix.Sync()` blocks indefinitely on a hung mount
 and `skipSync` cannot reach that case — the executor decides it before the sync starts. A node that
 halts dirty beats a node that never halts, and the cut-short flush is logged as the mount evidence
@@ -246,12 +248,9 @@ to exposure rather than actuation; recorded in
 
 #### Open Work
 
-- Wire `skipSync` from the executor's `EX-31` tier-overrun state. The actuator honours the flag and
-  records it; nothing sets it yet. It must be decided with the overrun policy rather than exposed as
-  a second knob — the skip inverts its own outcome, since the nodes rushed to save time are the ones
-  that come back with the most to recover.
-- Record the sync skip in the node's audit record, not only in the container log. The log goes down
-  with the node.
+- Record the sync skip in the node's audit record, not only in the container log. The executor now
+  decides the skip, so it already holds the fact at write time; the log that currently carries it
+  goes down with the node.
 - Verbose per-gate diagnostics for the verification path: signal written, projection observed,
   signal read, validation passed, capability check passed, permitted→effective raised, sync started,
   sync completed with duration, syscall issued. Scoped to this path, not a global log level — the

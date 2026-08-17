@@ -205,6 +205,16 @@ type Action struct {
 	Group              Group
 	DryRun             bool
 	PowerObservation   ActionPowerObservation
+
+	// TierOverrunning reports that this tier has already outlived its effective budget at the
+	// moment the action is dispatched.
+	//
+	// Live, not retrospective. TierOverrun records are written after a tier finishes, which is too
+	// late to change what the action does; this asks the same question of the window that is still
+	// open. An action runner uses it to decide whether the plan can still afford optional work --
+	// AgentShutdown drops the actuator's pre-halt sync(2) on it (EX-31), which is the one place a
+	// runner is allowed to trade durability for time.
+	TierOverrunning bool
 }
 
 // ActionPowerObservation is the wave-boundary power state passed to action runners.
@@ -397,7 +407,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		preempted := false
 		for _, groupName := range wave.Groups {
 			group := groups[groupName]
-			groupResult, groupErr := e.executeGroup(ctx, actionCtx, writer, input, executionID, mode, dryRun, wave.Index, group, waveState)
+			groupResult, groupErr := e.executeGroup(ctx, actionCtx, writer, input, executionID, mode, dryRun, wave.Index, group, waveState, tierWindowOverrunning(window, e.now()))
 			run.Groups++
 			run.ActionAttempts += groupResult.ActionAttempts
 			run.NodeReleases += groupResult.NodeReleases
@@ -632,6 +642,19 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// tierWindowOverrunning reports whether the still-open tier window has already outlived its
+// effective budget.
+//
+// tierOverrunRecord answers the same question after the fact, for the audit trail. This answers it
+// while there is still a decision to make. A window with no effective duration or no start is not
+// overrunning -- it is untimed, and an untimed tier must not be treated as late.
+func tierWindowOverrunning(window tierOverrunWindow, now time.Time) bool {
+	if window.EffectiveDuration <= 0 || window.StartedAt.IsZero() {
+		return false
+	}
+	return now.Sub(window.StartedAt) > window.EffectiveDuration
+}
+
 func tierOverrunRecord(wave Wave, window tierOverrunWindow, policy, action string, lowerTierDue bool, completedAt time.Time) *TierOverrun {
 	if !lowerTierDue || window.EffectiveDuration <= 0 || window.StartedAt.IsZero() {
 		return nil
@@ -708,7 +731,7 @@ type groupExecutionResult struct {
 	DegradedMessage string
 }
 
-func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audit.Writer, input Input, executionID, mode string, dryRun bool, waveIndex int32, group Group, waveState waveAdaptiveState) (groupExecutionResult, error) {
+func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audit.Writer, input Input, executionID, mode string, dryRun bool, waveIndex int32, group Group, waveState waveAdaptiveState, tierOverrunning bool) (groupExecutionResult, error) {
 	timingMode := waveState.Mode
 	effectiveTimeout := adaptive.ScaleDuration(group.Timeout, waveState.Budget)
 	effectiveWait := adaptive.ScaleDuration(group.WaitDuration, waveState.Budget)
@@ -771,6 +794,7 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 				WaveIndex:          waveIndex,
 				Group:              group,
 				DryRun:             dryRun,
+				TierOverrunning:    tierOverrunning,
 				PowerObservation: ActionPowerObservation{
 					OnBattery:      waveState.Observation.OnBattery,
 					LowBattery:     waveState.Observation.LowBattery,

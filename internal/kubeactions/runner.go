@@ -885,6 +885,11 @@ func (r Runner) agentShutdownHandoff(ctx context.Context, action executor.Action
 			SelectedUPSDevices: append([]string(nil), action.SelectedUPSDevices...),
 			ShutdownFlow:       action.ShutdownFlow,
 			Timestamp:          observedAt.UTC().Format(time.RFC3339Nano),
+			// EX-31: the tier is already past its budget, so the actuator halts without waiting on
+			// sync(2). Bound to the overrun state rather than exposed as an agent setting, because
+			// the skip inverts its own outcome -- the nodes rushed to save time come back with the
+			// most to recover -- and only the thing running the plan knows the plan is late.
+			SkipSync: action.TierOverrunning,
 		}
 		encoded, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
