@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -335,16 +336,18 @@ func (r Runner) drainNodes(ctx context.Context, action executor.Action) (executo
 	}
 	evicted := 0
 	var excludedNamespaces []string
+	var budgetOverrides []string
 	for _, target := range action.Group.SelectedTargets {
 		if target.Kind != "Node" || target.Name == "" {
 			continue
 		}
-		count, skipped, err := r.evictPodsOnNode(ctx, target.Name, protected)
+		count, skipped, overridden, err := r.evictPodsOnNode(ctx, target.Name, protected)
 		if err != nil {
 			return blocked(err), err
 		}
 		evicted += count
 		excludedNamespaces = append(excludedNamespaces, skipped...)
+		budgetOverrides = append(budgetOverrides, overridden...)
 	}
 	details := map[string]any{
 		"cordoned":      cordoned,
@@ -354,6 +357,14 @@ func (r Runner) drainNodes(ctx context.Context, action executor.Action) (executo
 	if len(excludedNamespaces) > 0 {
 		sortStrings(excludedNamespaces)
 		details["selfExcludedNamespaces"] = dedupeStrings(excludedNamespaces)
+	}
+	// Named, not counted (OD-38). Overriding a disruption budget is a decision the flow made on the
+	// author's behalf, and the audit record is the only place it is ever stated -- so it lists which
+	// workloads were affected rather than how many, because "three budgets overridden" is not
+	// something anyone can act on afterwards.
+	if len(budgetOverrides) > 0 {
+		sortStrings(budgetOverrides)
+		details["disruptionBudgetsOverridden"] = dedupeStrings(budgetOverrides)
 	}
 	return executor.ActionOutcome{
 		Outcome: executor.OutcomeSucceeded,
@@ -383,13 +394,14 @@ func (r Runner) cordonSelectedNodes(ctx context.Context, targets []executor.Targ
 	return visited, changed, nil
 }
 
-func (r Runner) evictPodsOnNode(ctx context.Context, nodeName string, protected map[string]struct{}) (int, []string, error) {
+func (r Runner) evictPodsOnNode(ctx context.Context, nodeName string, protected map[string]struct{}) (int, []string, []string, error) {
 	var pods corev1.PodList
 	if err := r.Client.List(ctx, &pods); err != nil {
-		return 0, nil, fmt.Errorf("list Pods for drain on Node %q: %w", nodeName, err)
+		return 0, nil, nil, fmt.Errorf("list Pods for drain on Node %q: %w", nodeName, err)
 	}
 	evicted := 0
 	var skippedNamespaces []string
+	var budgetOverrides []string
 	for _, pod := range pods.Items {
 		if pod.Spec.NodeName != nodeName || !evictablePod(pod) {
 			continue
@@ -404,15 +416,70 @@ func (r Runner) evictPodsOnNode(ctx context.Context, nodeName string, protected 
 				Name:      pod.Name,
 			},
 		}
-		if err := r.Client.SubResource("eviction").Create(ctx, &pod, eviction); err != nil {
-			if apierrors.IsNotFound(err) {
+		err := r.Client.SubResource("eviction").Create(ctx, &pod, eviction)
+		if err == nil {
+			evicted++
+			continue
+		}
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if !disruptionBudgetDenied(err) {
+			return evicted, skippedNamespaces, budgetOverrides, fmt.Errorf("evict Pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+		// OD-38: once a flow is enforcing, a PodDisruptionBudget is advisory.
+		//
+		// A UPS outage is precisely the disruption a budget exists to defer, and it cannot be
+		// deferred past the battery. Mid-shutdown the refusal is usually permanent rather than
+		// transient -- the replica that would restore the budget cannot schedule onto nodes that
+		// are already cordoned -- so waiting it out means the flow aborts and the cluster stays up
+		// while the runtime drains. That was the behaviour before this: any non-NotFound error from
+		// the eviction was fatal, so one ordinary budget could stop a whole shutdown.
+		//
+		// The fall-back is Delete, not "skip the pod". Delete still honors terminationGracePeriod,
+		// so the workload gets the shutdown it would have had; skipping would leave the pod running
+		// until the node halts under it, which is the ungraceful kill the drain exists to avoid.
+		// Overriding the budget costs availability that was already ending. Skipping costs the
+		// workload its cleanup.
+		if delErr := r.Client.Delete(ctx, &pod); delErr != nil {
+			if apierrors.IsNotFound(delErr) {
 				continue
 			}
-			return evicted, skippedNamespaces, fmt.Errorf("evict Pod %s/%s: %w", pod.Namespace, pod.Name, err)
+			return evicted, skippedNamespaces, budgetOverrides, fmt.Errorf("delete Pod %s/%s after its PodDisruptionBudget refused eviction: %w", pod.Namespace, pod.Name, delErr)
 		}
+		budgetOverrides = append(budgetOverrides, pod.Namespace+"/"+pod.Name)
 		evicted++
 	}
-	return evicted, skippedNamespaces, nil
+	return evicted, skippedNamespaces, budgetOverrides, nil
+}
+
+// disruptionBudgetDenied reports whether the API server refused an eviction because a
+// PodDisruptionBudget would be breached.
+//
+// Narrower than apierrors.IsTooManyRequests on purpose. A 429 also comes from API Priority and
+// Fairness throttling, and that is a request this operator should not have made rather than a policy
+// it has decided to override -- force-deleting a pod because the apiserver was busy would turn a
+// backpressure signal into a workload disruption. The eviction subresource attaches a
+// `DisruptionBudget` status cause to the budget case specifically, so the two are distinguishable
+// and only the budget case is overridden.
+func disruptionBudgetDenied(err error) bool {
+	if !apierrors.IsTooManyRequests(err) {
+		return false
+	}
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return false
+	}
+	details := status.Status().Details
+	if details == nil {
+		return false
+	}
+	for _, cause := range details.Causes {
+		if cause.Type == policyv1.DisruptionBudgetCause {
+			return true
+		}
+	}
+	return false
 }
 
 func evictablePod(pod corev1.Pod) bool {

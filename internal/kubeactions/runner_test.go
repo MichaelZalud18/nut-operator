@@ -30,6 +30,8 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -37,6 +39,7 @@ import (
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/executor"
@@ -979,4 +982,126 @@ func TestRunnerStartsTheHaltClockAfterTheSignalLands(t *testing.T) {
 			t.Fatalf("RunAction returned error: %v", err)
 		}
 	})
+}
+
+// pdbDeniedEviction is the error the API server returns when a PodDisruptionBudget would be
+// breached: 429 with a DisruptionBudget status cause.
+func pdbDeniedEviction() error {
+	err := apierrors.NewTooManyRequests("Cannot evict pod as it would violate the pod's disruption budget.", 5)
+	err.ErrStatus.Details = &metav1.StatusDetails{
+		Causes: []metav1.StatusCause{{
+			Type:    policyv1.DisruptionBudgetCause,
+			Message: "The disruption budget web-pdb needs 2 healthy pods and has 2 currently",
+		}},
+	}
+	return err
+}
+
+func drainScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add corev1: %v", err)
+	}
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add powerv1alpha1: %v", err)
+	}
+	return scheme
+}
+
+func drainOneNode(t *testing.T, evictionErr error) (executor.ActionOutcome, client.Client, error) {
+	t.Helper()
+	scheme := drainScheme(t)
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-pdb"}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-0", Namespace: "apps"},
+		Spec:       corev1.PodSpec{NodeName: "node-pdb"},
+	}
+	build := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node, pod)
+	if evictionErr != nil {
+		build = build.WithInterceptorFuncs(interceptor.Funcs{
+			SubResourceCreate: func(ctx context.Context, c client.Client, name string, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {
+				if name == "eviction" {
+					return evictionErr
+				}
+				return nil
+			},
+		})
+	}
+	kube := build.Build()
+	runner := Runner{Client: kube}
+	outcome, err := runner.RunAction(context.Background(), executor.Action{
+		ExecutionID: "e1", ShutdownFlow: "f1", PlanConfigHash: "h1",
+		Group: executor.Group{
+			Name:            "drain-workers",
+			Action:          ActionDrainNodes,
+			SelectedTargets: []executor.Target{{Kind: "Node", Name: "node-pdb"}},
+		},
+	})
+	return outcome, kube, err
+}
+
+// OD-38. Before this, any non-NotFound eviction error was fatal, so one ordinary PodDisruptionBudget
+// aborted the flow and left the cluster running while the UPS drained. Mid-shutdown the refusal does
+// not clear on its own: the replica that would restore the budget cannot schedule onto nodes that
+// are already cordoned.
+func TestDrainTreatsADisruptionBudgetAsAdvisory(t *testing.T) {
+	outcome, kube, err := drainOneNode(t, pdbDeniedEviction())
+	if err != nil {
+		t.Fatalf("a refused budget must not fail the drain: %v", err)
+	}
+	if outcome.Outcome != executor.OutcomeSucceeded {
+		t.Fatalf("outcome = %#v, want Succeeded", outcome)
+	}
+
+	// Delete, not skip. Skipping would leave the pod running until the node halted under it, which
+	// is the ungraceful kill the drain exists to avoid; Delete still honors terminationGracePeriod.
+	var pod corev1.Pod
+	getErr := kube.Get(context.Background(), client.ObjectKey{Namespace: "apps", Name: "web-0"}, &pod)
+	if !apierrors.IsNotFound(getErr) {
+		t.Fatalf("expected the pod to be removed after the budget was overridden, got %v", getErr)
+	}
+	if outcome.Details["evictedPods"] != 1 {
+		t.Fatalf("expected the overridden pod to count as evicted, got %#v", outcome.Details["evictedPods"])
+	}
+
+	// Named, not counted. Overriding a budget is a decision made on the author's behalf and the
+	// audit record is the only place it is ever stated.
+	overridden, ok := outcome.Details["disruptionBudgetsOverridden"].([]string)
+	if !ok || len(overridden) != 1 || overridden[0] != "apps/web-0" {
+		t.Fatalf("expected the overridden workload named in the audit details, got %#v", outcome.Details["disruptionBudgetsOverridden"])
+	}
+}
+
+// A 429 also comes from API Priority and Fairness throttling. That is a request this operator should
+// not have made, not a policy it decided to override -- force-deleting a pod because the apiserver
+// was busy would turn backpressure into a workload disruption. Only the budget case is overridden.
+func TestDrainDoesNotOverrideAThrottling429(t *testing.T) {
+	throttled := apierrors.NewTooManyRequests("please try again later", 1)
+	outcome, kube, err := drainOneNode(t, throttled)
+	if err == nil {
+		t.Fatal("expected apiserver throttling to stay fatal rather than be overridden")
+	}
+	if outcome.Outcome != executor.OutcomeBlocked {
+		t.Fatalf("outcome = %#v, want Blocked", outcome)
+	}
+	var pod corev1.Pod
+	if getErr := kube.Get(context.Background(), client.ObjectKey{Namespace: "apps", Name: "web-0"}, &pod); getErr != nil {
+		t.Fatalf("a throttled eviction must not delete the pod: %v", getErr)
+	}
+}
+
+// The ordinary path must stay ordinary: an accepted eviction records no override, so the audit key
+// means "a budget was overridden here" rather than "a drain happened here".
+func TestDrainRecordsNoOverrideWhenEvictionSucceeds(t *testing.T) {
+	outcome, _, err := drainOneNode(t, nil)
+	if err != nil {
+		t.Fatalf("RunAction returned error: %v", err)
+	}
+	if _, present := outcome.Details["disruptionBudgetsOverridden"]; present {
+		t.Fatalf("expected no override key on a clean drain, got %#v", outcome.Details)
+	}
+	if outcome.Details["evictedPods"] != 1 {
+		t.Fatalf("expected one evicted pod, got %#v", outcome.Details["evictedPods"])
+	}
 }

@@ -439,7 +439,6 @@ for defense in depth.
 | OD-28 | Relationship to OD-12: OD-12 decides what to do with an infeasible plan before it starts; timing adaptation re-decides during | Adaptive execution |
 | OD-29 | Tier ascent trigger: what power condition moves the tier pointer up | Adaptive execution |
 | OD-30 | Cadence intervals: publish interval during idle versus active flow, and whether it is global or per-flow | Adaptive execution |
-| OD-38 | What a shutdown does when a PodDisruptionBudget refuses an eviction. `DrainNodes` evicts through the Eviction API, so the apiserver returns `429 TooManyRequests` rather than letting the budget be breached — and during a cluster shutdown that refusal is usually permanent, because the evicted replica cannot reschedule onto nodes that are already cordoned. Today one attempt is made per pod and the 429 is fatal: the drain reports `Blocked`, the executor aborts, and the cluster stays up while the UPS drains. Three candidate resolutions: retry with a deadline then proceed; treat the budget as advisory once the flow is enforcing, on the grounds that a UPS outage is precisely the disruption a PDB defers and it cannot be deferred past the battery; or keep failing, on the grounds that a flow that cannot drain safely should not claim it did. `OD-12`, `OD-34`, and `SB-11` all lean the same way — do not stop the shutdown for a secondary concern — but none of them decides this, because a PDB guards live workload availability rather than evidence or notification | Executor design |
 
 ## Closed Decisions
 
@@ -462,6 +461,7 @@ for defense in depth.
 | OD-33 | No opt-in hook-completion wait exists in v1alpha1. A `ShutdownHook` is a bounded delivery attempt. Hook-level timeout wins, `PowerManagementCluster.spec.hooks.defaultTimeout` fills omitted hook timeouts, and shutdown proceeds after the attempt. |
 | OD-34 | Hook failures are advisory. Failed or timed-out hooks record evidence and mark the owning `ShutdownFlow` degraded, but never engage `abortPolicy` and never hold a shutdown wave. |
 | OD-37 | The operator path is the only path with authority to halt a node: an executor-issued signal delivered through an API-gated projected Secret, carrying flow identity, plan hash, and timestamp. NUT's local `SHUTDOWNCMD` path is declined as an authorization path and locked down — the writer, the signal format, and the local file stay in the codebase, but the actuator watches only the projected Secret and the shared tmpfs is not mounted into it, so no supported configuration turns it on. Decided against the last-resort-backstop reading: a backstop engages when the operator is unreachable, which is when ordering matters most, and `upsmon`'s local view cannot order anything — `MONITOR ... 1 ... secondary` with `MINSUPPLIES 1` fires on every node one UPS covers, at once, with an execution ID indistinguishable from the executor's. `SB-2b` reserves sequencing for the operator, and this applies that to the release signal. The accepted cost is stated in SB-3: an undeliverable signal means nodes are not released and the UPS runs down under a live cluster — observable and bounded, where an unordered fleet halt is neither. |
+| OD-38 | A `PodDisruptionBudget` is advisory once a flow is enforcing. `DrainNodes` evicts through the Eviction API, so a budget refusal arrives as `429` with a `DisruptionBudget` status cause; the drain then deletes the pod directly and records the override by name in the audit details. A UPS outage is precisely the disruption a budget exists to defer, and it cannot be deferred past the battery — mid-shutdown the refusal is usually permanent rather than transient, because the replica that would restore the budget cannot schedule onto nodes that are already cordoned. Retry-with-deadline was rejected: it buys delay at the moment delay is most expensive and then does this anyway. Keep-failing was rejected because it was the existing behaviour and it left clusters running on a draining UPS. The fall-back is `Delete` rather than skipping the pod, because `Delete` still honors `terminationGracePeriodSeconds` — overriding the budget costs availability that was already ending, while skipping would cost the workload its cleanup and then kill it anyway when the node halts. Narrower than any `429`: API Priority and Fairness throttling stays fatal, since that is a request the operator should not have made rather than a policy it decided to override |
 | OD-36 | The `clone`, `clone-outlet`, and `failover` drivers are deliberately declined, joining FSD (`F-20`) and `upssched` (`F-21`) as NUT mechanisms this project does not use. `clone` and `clone-outlet` are staged-shutdown sequencers — a virtual UPS presenting earlier thresholds than the device it shadows, so one physical UPS can drive several shutdown stages — and `SB-2b` reserves sequencing for the operator. Admitting either would put a second sequencer in the system with no view of the cluster, which is the same objection that declined `upssched`, and the closer upstream analog makes it more dangerous rather than less: `clone` looks like it would work. `failover` presents several physical devices as one, which sounds like the multi-supply-per-host topology `F-45` records as inexpressible — but that gap is in the render and the inventory model, not the driver layer, so the driver would not close it. Revisit `failover` only if `F-45` is built. All three ship in the operand image as part of `NUTSW_DRIVERLIST` and are not separately configurable at build time, so this decision governs the admission allowlist and the documentation, not the image. |
 
 ---
@@ -582,3 +582,32 @@ retries evictions.
 `OD-38` carries the open question of what should happen instead. It is genuinely open: `OD-12`,
 `OD-34`, and `SB-11` all decline to stop a shutdown for a secondary concern, but a PDB guards live
 workload availability rather than evidence or notification, so none of them settles it by analogy.
+
+**2026-08-17 — OD-38 closed: a disruption budget is advisory once a flow is enforcing.** A
+budget-refused eviction now falls back to deleting the pod, and the override is recorded by name in
+the drain's audit details.
+
+The previous behaviour was not a decision, it was an unhandled error: `evictPodsOnNode` treated
+anything other than `NotFound` as fatal, so a `429` aborted the flow. One ordinary PodDisruptionBudget
+was enough to leave a cluster running while its UPS drained, and mid-shutdown that refusal does not
+clear on its own — the replica that would restore the budget cannot schedule onto nodes that are
+already cordoned.
+
+Rejected: retry with a deadline, which buys delay at the moment delay is most expensive and then
+does this anyway. Rejected: continue to fail, which is what was already happening.
+
+`Delete` rather than skipping the pod, because `Delete` still honors `terminationGracePeriodSeconds`.
+Overriding the budget costs availability that was already ending; skipping would cost the workload
+its cleanup and then kill it anyway when the node halted under it.
+
+Deliberately narrower than any `429`. API Priority and Fairness throttling produces the same status
+code and is not a policy this operator has decided to override — force-deleting a pod because the
+apiserver was busy would turn backpressure into a workload disruption. The eviction subresource
+attaches a `DisruptionBudget` status cause to the budget case specifically, and only that case is
+overridden.
+
+Known cost, recorded rather than engineered away: under a partial-domain flow (`OD-14`) the affected
+pods could in principle have rescheduled onto unaffected nodes, so the override can disrupt slightly
+more than strictly necessary. The replacement pod schedules immediately onto an unaffected node, so
+the window is short — and sizing a retry for that case would reintroduce the delay the decision
+rejects.

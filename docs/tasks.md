@@ -134,10 +134,15 @@ groups proved wholly outside affected domains, with ambiguous and mixed-domain g
 `spec.groups[].phase` is removed. Ordering is tiers plus `requires`/`before`/`after` and nothing
 else, and a wave now holds every group whose dependencies are satisfied — the property the field
 silently broke, pinned by a compiler test that also asserts concurrent groups cost the longest
-timeout rather than the sum.
+timeout rather than the sum. `OD-38` makes a `PodDisruptionBudget` advisory once a flow is enforcing:
+a budget-refused eviction falls back to `Delete`, which still honors `terminationGracePeriodSeconds`,
+and the override is named in the drain's audit details. Only the `DisruptionBudget` status cause is
+overridden — API Priority and Fairness throttling stays fatal. This replaced an unhandled error, not
+a decision: any non-`NotFound` eviction failure used to abort the flow, so one ordinary budget could
+leave a cluster up while its UPS drained.
 
 Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-33`, `OD-4`,
-`OD-11`, `OD-12`, `OD-14`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `OD-33`, `OD-34`, `SB-15`,
+`OD-11`, `OD-12`, `OD-14`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `OD-33`, `OD-34`, `OD-38`, `SB-15`,
 `HK-1`–`HK-10`, `F-31`, `F-42`, `F-44`.
 
 #### Open Work
@@ -153,15 +158,6 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
-- `OD-38` **needs a decision, and the current behaviour is a live defect.** A `PodDisruptionBudget`
-  that refuses an eviction returns `429 TooManyRequests`; `evictPodsOnNode` treats anything but
-  `NotFound` as fatal, so `DrainNodes` reports `Blocked` and the executor aborts the whole flow.
-  Mid-shutdown that refusal is usually permanent rather than transient, because the replica that
-  would restore the budget cannot schedule onto nodes that are already cordoned — so one ordinary PDB
-  leaves a cluster up while its UPS drains. `kubectl drain` retries instead. Three candidate
-  resolutions are in the `OD-38` registry entry; implementation is small once the policy is chosen.
-  `PL-25` was retired in the same change: it described the inverse failure, which the Eviction API
-  makes impossible.
 
 ---
 

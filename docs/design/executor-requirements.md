@@ -148,8 +148,7 @@ up first would be inert exactly when it is relied on. With no event recorder con
 reports `Blocked` rather than succeeding, since a notification nobody received was not delivered.
 
 **EX-13 · Actions use the stock-Kubernetes mechanisms of SB-10.** Scale, suspend, quiesce; evict
-with PDB respect; withdraw traffic via Services; cordon before drain. Direct pod deletion only where
-the plan explicitly compiled an exceptional override.
+through the eviction API; withdraw traffic via Services; cordon before drain.
 
 The Kubernetes action runner is the effectful boundary for these stock mechanisms. It scales
 `Deployment`, `StatefulSet`, and `ReplicaSet` targets, cordons `Node` targets, drains through the
@@ -157,6 +156,17 @@ The Kubernetes action runner is the effectful boundary for these stock mechanism
 and records every action attempt. The executor supplies concrete targets that were enumerated at
 execution time; hooks are targetless executor actions because the referenced hook owns the delivery
 target.
+
+A `PodDisruptionBudget` is respected up to the point where respecting it would stop the shutdown, and
+then it is overridden (`OD-38`). The eviction API is where budgets are enforced, so a refusal arrives
+as `429` carrying a `DisruptionBudget` status cause; the drain falls back to `Delete`, which still
+honors `terminationGracePeriodSeconds`, and names the overridden workloads in the action's audit
+details. This is the exceptional direct-deletion case, and it is decided at execution rather than
+compiled into the plan, because whether a budget can be satisfied depends on cluster state at the
+moment the drain runs. Mid-shutdown it usually cannot be: the replica that would restore the budget
+has no uncordoned node to land on. Waiting therefore aborts the flow and leaves the cluster up while
+the runtime drains, which is the outcome `PL-31` and `OD-12` both refuse elsewhere. Throttling `429`s
+from API Priority and Fairness are not overridden — that is backpressure, not policy.
 
 **EX-14 · Idempotent, resumable execution.** The executor may restart mid-flow (it is itself a
 workload in a cluster that is shutting down). Execution state sufficient to resume — current wave,
