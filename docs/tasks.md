@@ -233,7 +233,7 @@ contract (`F-59`, `F-64`), and the mid-episode write deferral (`F-92`) are descr
 `reboot(2)` does not flush the page cache — confirmed against `kernel/reboot.c` and stated in
 `reboot(2)`'s own man page. `spec.skipSync` on the signal lets the executor drop the flush when the
 plan is already overrunning; it is recorded loudly and is never silent. `skipSync` is set by the executor from the live tier-overrun window at
-dispatch, never from a `NodePowerAgent` setting — `EX-31` owns the lever, and only the thing running
+dispatch and recorded in the handoff's audit details, never from a `NodePowerAgent` setting — `EX-31` owns the lever, and only the thing running
 the plan knows the plan is late. The flush is bounded by a
 timeout and the halt proceeds on expiry, because `unix.Sync()` blocks indefinitely on a hung mount
 and `skipSync` cannot reach that case — the executor decides it before the sync starts. A node that
@@ -248,9 +248,6 @@ to exposure rather than actuation; recorded in
 
 #### Open Work
 
-- Record the sync skip in the node's audit record, not only in the container log. The executor now
-  decides the skip, so it already holds the fact at write time; the log that currently carries it
-  goes down with the node.
 - Verbose per-gate diagnostics for the verification path: signal written, projection observed,
   signal read, validation passed, capability check passed, permitted→effective raised, sync started,
   sync completed with duration, syscall issued. Scoped to this path, not a global log level — the
@@ -406,9 +403,7 @@ component.
 
 #### Open Work
 
-- `docs/install.md` post-install verification section for `make verify-actuation`, and a
-  `docs/security.md` cross-reference from the privilege boundary — proving the boundary holds is
-  part of that document's subject.
+None.
 
 #### Built
 

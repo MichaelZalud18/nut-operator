@@ -28,6 +28,8 @@ One signal path is authorized, and it is the executor-projected Secret, mounted 
 
 The cost is accepted rather than engineered away, and is recorded as `SB-3`: an undeliverable signal leaves nodes running until the UPS dies. A local backstop would engage exactly when the operator is unreachable, which is when ordering matters most, and `MINSUPPLIES 1` on every agent would release a UPS's entire coverage at once. Full treatment in [node-agent-operand.md](design/node-agent-operand.md).
 
+This boundary is testable, and proving it holds is part of reviewing it. `make verify-actuation NODE=<node> AGENT=<agent> APPROVE=yes` renders the real actuate configuration on one named node and delivers a real signal through the projected Secret. It establishes what inspection cannot: that kubelet admits the pod under this cluster's Pod Security Admission, that the binary's `cap_sys_boot` file capability survived the image build and registry round-trip, that it can be raised from permitted into effective, and — the one with no other check available — that the container is genuinely in the host PID namespace, since from a non-initial namespace `reboot(2)` returns success and does nothing. It powers the node off and leaves it off; see [install.md](install.md).
+
 Approved `PowerOff` rendering uses `hostPID` and adds only `CAP_SYS_BOOT` to the actuator
 container. It remains non-root, drops all other capabilities, keeps privilege escalation disabled,
 uses a read-only root filesystem, and receives no Kubernetes service-account token. It runs under the

@@ -349,6 +349,33 @@ Two refusals are intentional and worth recognizing:
 - **`TriggerUnsupportedByAllDevices`** — a trigger references telemetry (such as battery runtime)
   that none of the targeted devices report, so the plan could never fire.
 
+## Prove the cluster can actually halt a node
+
+Everything above verifies that the operator *plans* correctly. It does not verify that this cluster
+can carry the plan out, and those are different questions: the configuration able to halt a node —
+`mode: Actuate` with `actuatorPolicy: PowerOff` — renders `hostPID`, a `CAP_SYS_BOOT` file
+capability, and a Pod Security posture that a dry-run never exercises.
+
+Five things only a real run can establish, and the fourth cannot be checked any other way: **from a
+non-initial PID namespace, `reboot(2)` returns success and does nothing.** A node that actually goes
+dark is the only available proof.
+
+```sh
+make verify-actuation NODE=<node> AGENT=<agent> APPROVE=yes
+```
+
+**This powers off a real machine and leaves it off.** It needs physical or IPMI/BMC access to
+return, and it comes back cordoned. The target must be cordoned and drained first; the procedure
+refuses otherwise. `NODE` has no default.
+
+Restart was considered and rejected rather than overlooked: a restarted node returns with a fresh
+actuator holding an empty dedupe set, and a signal still inside its TTL halts it again. A node that
+is off stays off, so a leftover signal is inert.
+
+The signal is hand-delivered into the projected Secret — the same path `OD-37` authorizes, not a
+second channel — which isolates kubelet admission, file-capability survival, and the host PID
+namespace from planner correctness. See [security.md](security.md) for the boundary this proves.
+
 ## Upgrade
 
 Re-apply the bundled manifest, or re-apply your Kustomize overlay with a new digest. CRD changes so

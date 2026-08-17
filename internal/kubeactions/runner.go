@@ -907,6 +907,10 @@ func (r Runner) agentShutdownHandoff(ctx context.Context, action executor.Action
 			"handoff":       "ProjectedSecretSignal",
 			"nodeReleases":  len(action.Group.NodeReleases),
 			"signalSecrets": len(updatedSecrets),
+			// Recorded on the operator side because the node's own record of it does not survive:
+			// the actuator logs the skip and then halts, taking the log with it. This is the
+			// durable half, and it is written before the nodes it describes are asked to stop.
+			"syncSkipped": action.TierOverrunning,
 		},
 	}, nil
 }

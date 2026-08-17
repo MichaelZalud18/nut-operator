@@ -692,6 +692,42 @@ func TestRunnerCarriesTierOverrunIntoSkipSync(t *testing.T) {
 		}
 	})
 
+	t.Run("the skip is recorded in the audit details, not only on the node", func(t *testing.T) {
+		scheme := runtime.NewScheme()
+		if err := corev1.AddToScheme(scheme); err != nil {
+			t.Fatalf("AddToScheme returned error: %v", err)
+		}
+		runner := Runner{
+			Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+			Clock:  func() time.Time { return time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC) },
+		}
+		outcome, err := runner.RunAction(context.Background(), executor.Action{
+			ExecutionID:     "execution-c",
+			ShutdownFlow:    "flow-c",
+			PlanConfigHash:  "hash-c",
+			TierOverrunning: true,
+			Group: executor.Group{
+				Name:   "node-c",
+				Action: executor.ActionAgentShutdown,
+				NodeReleases: []executor.NodeRelease{{
+					NodeName:              "node-c",
+					NodePowerAgent:        "agent-c",
+					SignalSecretNamespace: "power-system",
+					SignalSecretName:      "agent-c-node-signals",
+					SignalSecretKey:       "node-c.json",
+				}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("RunAction returned error: %v", err)
+		}
+		// The actuator logs the skip and then halts, so that log goes down with the machine. If
+		// this detail is missing there is no surviving record that durability was traded for time.
+		if outcome.Details["syncSkipped"] != true {
+			t.Fatalf("the skip is not in the audit details: %#v", outcome.Details)
+		}
+	})
+
 	t.Run("on-time tier leaves the field absent", func(t *testing.T) {
 		payload := run(t, false)
 		// omitempty, so absent rather than false. The actuator reads absence as "sync", which is
