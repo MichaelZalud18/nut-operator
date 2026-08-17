@@ -123,12 +123,6 @@ spec:
                         type: string
                       description: params holds action-specific scalar parameters.
                       type: object
-                    phase:
-                      description: |-
-                        phase is a numeric fallback ordering hint. Lower phases are compiled earlier.
-                        Explicit dependencies still take precedence.
-                      format: int32
-                      type: integer
                     requires:
                       description: |-
                         requires names groups that must remain available while this group shuts down.
@@ -954,11 +948,6 @@ spec:
                       description: index is the zero-based wave order.
                       format: int32
                       type: integer
-                    phase:
-                      description: phase is the phase hint shared by this wave, when
-                        one was present.
-                      format: int32
-                      type: integer
                     shutdownTier:
                       description: shutdownTier is the numbered tier shared by this
                         wave, when tier policy assigned one.
@@ -1445,11 +1434,6 @@ spec:
                             label:
                               description: label is the human-readable vertex label.
                               type: string
-                            phase:
-                              description: phase is the shutdown phase hint, when
-                                present.
-                              format: int32
-                              type: integer
                             shutdownTier:
                               description: shutdownTier is the effective numbered
                                 shutdown tier, when present.
@@ -1526,11 +1510,6 @@ spec:
                           type: array
                         index:
                           description: index is the zero-based wave order.
-                          format: int32
-                          type: integer
-                        phase:
-                          description: phase is the phase hint shared by this wave,
-                            when one was present.
                           format: int32
                           type: integer
                         shutdownTier:

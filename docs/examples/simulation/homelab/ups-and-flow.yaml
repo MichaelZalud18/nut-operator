@@ -98,8 +98,8 @@ spec:
     type: ClusterIP
     port: 3493
 ---
-# The whole point of this scenario. Every group states a tier and nothing else -- no before, no
-# after, no phase. Ordering across tiers is derived; grouping within a tier is derived. Change a
+# The whole point of this scenario. Every group states a tier and nothing else -- no before and no
+# after. Ordering across tiers is derived; grouping within a tier is derived. Change a
 # tier number and the wave structure changes with it, which is what makes this a test of wave
 # generation rather than a recital of a wave structure someone typed out.
 apiVersion: power.zalud.io/v1alpha1

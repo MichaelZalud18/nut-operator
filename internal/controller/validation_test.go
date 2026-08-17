@@ -377,17 +377,14 @@ func TestValidateShutdownFlowRejectsDependencyCycle(t *testing.T) {
 }
 
 func TestCompileShutdownGroupsAllowsIndependentConcurrentWave(t *testing.T) {
-	appPhase := int32(10)
 	flow := shutdownFlowWithGroups([]powerv1alpha1.ShutdownGroup{
 		{
 			Name:   "frontend-apps",
 			Action: powerv1alpha1.ShutdownStepScaleWorkload,
-			Phase:  &appPhase,
 		},
 		{
 			Name:   "batch-apps",
 			Action: powerv1alpha1.ShutdownStepScaleWorkload,
-			Phase:  &appPhase,
 		},
 		{
 			Name:   "databases",

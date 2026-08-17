@@ -168,7 +168,6 @@ type Group struct {
 	Requires     []string          `json:"requires,omitempty"`
 	Before       []string          `json:"before,omitempty"`
 	After        []string          `json:"after,omitempty"`
-	Phase        *int32            `json:"phase,omitempty"`
 	ShutdownTier *int32            `json:"shutdownTier,omitempty"`
 	Timeout      Duration          `json:"timeout,omitempty"`
 	Params       map[string]string `json:"params,omitempty"`
@@ -284,7 +283,6 @@ type CompiledStep struct {
 // Wave groups concurrently executable shutdown groups.
 type Wave struct {
 	Index              int32    `json:"index"`
-	Phase              *int32   `json:"phase,omitempty"`
 	ShutdownTier       *int32   `json:"shutdownTier,omitempty"`
 	Groups             []string `json:"groups"`
 	Duration           Duration `json:"duration,omitempty"`
@@ -304,7 +302,6 @@ type GraphVertex struct {
 	Kind          string `json:"kind"`
 	Label         string `json:"label,omitempty"`
 	Action        string `json:"action,omitempty"`
-	Phase         *int32 `json:"phase,omitempty"`
 	ShutdownTier  *int32 `json:"shutdownTier,omitempty"`
 	TargetSummary string `json:"targetSummary,omitempty"`
 }

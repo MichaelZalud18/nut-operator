@@ -69,8 +69,6 @@ var _ = Describe("ShutdownFlow Controller", func() {
 	Context("When reconciling a resource", func() {
 		ctx := context.Background()
 		typeNamespacedName := types.NamespacedName{Name: shutdownFlowTestResourceName}
-		appPhase := int32(10)
-		dbPhase := int32(20)
 
 		BeforeEach(func() {
 			cleanupShutdownFlowResolverFixture(ctx)
@@ -96,12 +94,10 @@ var _ = Describe("ShutdownFlow Controller", func() {
 							Name:   "applications",
 							Action: powerv1alpha1.ShutdownStepScaleWorkload,
 							Before: []string{"databases"},
-							Phase:  &appPhase,
 						},
 						{
 							Name:   "databases",
 							Action: powerv1alpha1.ShutdownStepScaleWorkload,
-							Phase:  &dbPhase,
 						},
 					},
 				},

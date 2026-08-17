@@ -5,8 +5,8 @@ Components: Planning & Execution Logic, Node Agent / DaemonSet.
 A small cluster on one UPS: **one control plane, three steady workers, one burst worker**, behind a
 switch behind a router. Synthetic names throughout.
 
-The flow authors **no ordering except tiers** — no `after`, no phases, and exactly one `before` edge
-whose reason is explained below. Everything else about the wave structure is derived.
+The flow authors **no ordering except tiers** — no `after`, and exactly one `before` edge whose
+reason is explained below. Everything else about the wave structure is derived.
 
 ## What it compiles to
 

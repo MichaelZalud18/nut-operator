@@ -5,7 +5,7 @@ Components: Planning & Execution Logic, Outputs & Publishing.
 `ShutdownFlow` is the policy layer that turns UPS events into a safe, reviewable shutdown plan. Its foundation is a declarative dependency graph compiled into ordered shutdown waves.
 
 The graph model is the primary design. Numbered shutdown tiers add coarse ordering that compiles
-into ordinary graph edges. `phase` is a scaffold leftover slated for removal — see below.
+into ordinary graph edges. Those two are the whole ordering vocabulary.
 
 ## Design Goals
 
@@ -55,7 +55,6 @@ spec:
           matchLabels:
             power.example.com/shutdown-tier: "4"
       before: [databases]
-      phase: 10
       timeout: 5m
 
     - name: databases
@@ -68,7 +67,6 @@ spec:
           matchLabels:
             power.example.com/shutdown-tier: "3"
       before: [storage]
-      phase: 20
       timeout: 10m
 
     - name: storage
@@ -78,7 +76,6 @@ spec:
         namespace: power-system
         name: flush-storage
       before: [standard-nodes]
-      phase: 30
       timeout: 15s
 
     - name: standard-nodes
@@ -88,7 +85,6 @@ spec:
         agentRefs:
           - name: orion-standard
       before: [controller-node]
-      phase: 40
       timeout: 5m
 
     - name: controller-node
@@ -97,7 +93,6 @@ spec:
       target:
         agentRefs:
           - name: orion-controller
-      phase: 90
       timeout: 5m
 ```
 
@@ -153,17 +148,17 @@ release tier; tier 0 is last-ditch workload-only and is rejected when directly t
 Tier N+1 to tier N compiles into derived graph edges, so tier ordering and authored dependencies use
 one dependency engine underneath.
 
-`phase` is **not** a tie-breaking hint, despite its field description, and is slated for removal.
+Tiers and `requires` / `before` / `after` are the only ordering inputs. There is no third knob, and
+adding one is the thing to resist: a wave is defined as the set of groups with nothing left to wait
+for, so any additional key that partitions waves is asserting a dependency the author did not write.
 
-A wave admits only groups whose phase values are equal: the compiler takes the lowest phase among
-ready groups and holds the rest back. So two groups with no dependency edge and the same tier are
-serialized into separate waves purely because their phase numbers differ, with no diagnostic. That
-is the opposite of a hint — it silently overrides the concurrency the graph model exists to provide.
-
-Ordering is tiers plus `before`/`after`. Leave `phase` unset; a flow that sets it on every group
-gets one group per wave, which is usually not what the author meant. See the glossary entry in
-[decision-index.md](design/decision-index.md#glossary), which also disambiguates the three unrelated
-things this project calls a phase.
+`spec.groups[].phase` used to be exactly that. It arrived with the initial scaffold, described itself
+as a tie-breaking hint, and behaved as a hard wave partition — a wave admitted only groups whose
+phase numbers matched, so independent same-tier groups were serialized with no diagnostic and the
+plan was charged the sum of their timeouts instead of the longest. It was removed in `v1alpha1`
+rather than redefined, because nothing needed it: whatever it was reaching for, tiers already
+express. See the glossary entry in [decision-index.md](design/decision-index.md#glossary), which
+disambiguates the two unrelated things this project still calls a phase.
 
 ## Compilation
 
@@ -401,7 +396,7 @@ Execution uses the compiled waves, not raw YAML order.
 - A failed group aborts the flow by default.
 - `abortPolicy.behavior: ContinueSafeSteps` can allow explicitly safe follow-up actions, such as notification.
 - Node poweroff groups are terminal vertices and stay last for their power domain.
-- Control-plane or controller nodes carry explicit late dependencies, not just a high phase number.
+- Control-plane or controller nodes carry explicit late dependencies, not just a low tier number.
 
 Execution records, action attempts, telemetry snapshots, and approval evidence belong in PostgreSQL. CR status remains a current summary and review surface.
 

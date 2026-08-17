@@ -25,8 +25,6 @@ import (
 )
 
 func TestCompileProducesDeterministicGraphPlan(t *testing.T) {
-	appPhase := int32(10)
-	dbPhase := int32(20)
 	input := StructuralInputs{
 		SourceID: "shutdownflows.power.zalud.io/test",
 		Triggers: []Trigger{
@@ -39,7 +37,6 @@ func TestCompileProducesDeterministicGraphPlan(t *testing.T) {
 			{
 				Name:    "databases",
 				Action:  "ScaleWorkload",
-				Phase:   &dbPhase,
 				Timeout: Duration{Duration: 10 * time.Minute},
 				Target:  Target{WorkloadSelector: true},
 			},
@@ -47,7 +44,6 @@ func TestCompileProducesDeterministicGraphPlan(t *testing.T) {
 				Name:    "applications",
 				Action:  "ScaleWorkload",
 				Before:  []string{"databases"},
-				Phase:   &appPhase,
 				Timeout: Duration{Duration: 5 * time.Minute},
 				Target:  Target{NamespaceSelector: true},
 			},
@@ -81,8 +77,6 @@ func TestCompileProducesDeterministicGraphPlan(t *testing.T) {
 }
 
 func TestCompileDoesNotMutateStructuralInput(t *testing.T) {
-	appPhase := int32(10)
-	dbPhase := int32(20)
 	input := StructuralInputs{
 		Triggers: []Trigger{
 			{
@@ -107,7 +101,6 @@ func TestCompileDoesNotMutateStructuralInput(t *testing.T) {
 				Before: []string{
 					"network",
 				},
-				Phase: &dbPhase,
 				Params: map[string]string{
 					"shutdownMode": "ordered",
 				},
@@ -119,7 +112,6 @@ func TestCompileDoesNotMutateStructuralInput(t *testing.T) {
 					"network",
 					"databases",
 				},
-				Phase: &appPhase,
 			},
 			{
 				Name:   "network",
@@ -235,9 +227,6 @@ func TestCompileIncludesResolvedInputHashInPlanIdentity(t *testing.T) {
 }
 
 func TestCompilePublishesGraphArtifactAndDiagramExports(t *testing.T) {
-	appPhase := int32(10)
-	dbPhase := int32(20)
-	storagePhase := int32(30)
 	input := StructuralInputs{
 		SourceID: "shutdownflows.power.zalud.io/test",
 		Triggers: []Trigger{
@@ -248,7 +237,6 @@ func TestCompilePublishesGraphArtifactAndDiagramExports(t *testing.T) {
 				Name:     "storage",
 				Action:   "AgentShutdown",
 				After:    []string{"databases"},
-				Phase:    &storagePhase,
 				Timeout:  Duration{Duration: 3 * time.Minute},
 				Target:   Target{AgentRefCount: 1},
 				Requires: []string{"network"},
@@ -257,21 +245,18 @@ func TestCompilePublishesGraphArtifactAndDiagramExports(t *testing.T) {
 				Name:    "applications",
 				Action:  "ScaleWorkload",
 				Before:  []string{"databases"},
-				Phase:   &appPhase,
 				Timeout: Duration{Duration: time.Minute},
 				Target:  Target{NamespaceSelector: true},
 			},
 			{
 				Name:    "databases",
 				Action:  "ScaleWorkload",
-				Phase:   &dbPhase,
 				Timeout: Duration{Duration: 2 * time.Minute},
 				Target:  Target{WorkloadSelector: true},
 			},
 			{
 				Name:    "network",
 				Action:  "AgentShutdown",
-				Phase:   &storagePhase,
 				Timeout: Duration{Duration: 4 * time.Minute},
 				Target:  Target{AgentRefCount: 1},
 			},
@@ -573,6 +558,57 @@ func hasDiagnosticReason(diagnostics []Diagnostic, reason string) bool {
 		}
 	}
 	return false
+}
+
+// A wave is the set of work with nothing left to wait for. Groups that declare no dependency on each
+// other belong in it together, and anything that splits them is asserting an ordering constraint the
+// author never wrote.
+//
+// This is the invariant the removed `phase` field broke. A wave admitted only groups whose phase
+// numbers matched, so three independent groups carrying three different numbers compiled to three
+// serialized waves -- with no diagnostic, and against a field description that called itself a
+// tie-breaking hint. The regression it guards against is cheap to reintroduce: any future
+// wave-partitioning key does the same damage the same silent way.
+func TestCompilePutsIndependentGroupsInOneWave(t *testing.T) {
+	input := StructuralInputs{
+		SourceID: "shutdownflows.power.zalud.io/test",
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{
+				Name:    "applications",
+				Action:  "ScaleWorkload",
+				Timeout: Duration{Duration: time.Minute},
+				Target:  Target{NamespaceSelector: true},
+			},
+			{
+				Name:    "batch",
+				Action:  "ScaleWorkload",
+				Timeout: Duration{Duration: 2 * time.Minute},
+				Target:  Target{WorkloadSelector: true},
+			},
+			{
+				Name:    "cache",
+				Action:  "ScaleWorkload",
+				Timeout: Duration{Duration: 3 * time.Minute},
+				Target:  Target{WorkloadSelector: true},
+			},
+		},
+	}
+
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("expected compile to succeed, got %v with diagnostics %#v", err, diagnostics)
+	}
+
+	if got, want := waveGroups(plan.Waves), [][]string{{"applications", "batch", "cache"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected one wave holding every independent group, got %#v", got)
+	}
+	// Serializing them would have charged the plan the sum rather than the longest. That is the
+	// visible cost of a silent split: a plan that looks 6m long when it is 3m long, spent out of a
+	// UPS runtime budget.
+	if got, want := plan.EstimatedDuration.Duration, 3*time.Minute; got != want {
+		t.Fatalf("expected concurrent groups to cost the longest timeout %s, got %s", want, got)
+	}
 }
 
 func waveGroups(waves []Wave) [][]string {

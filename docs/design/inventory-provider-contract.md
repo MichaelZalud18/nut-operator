@@ -242,7 +242,7 @@ Not cluster-wide, because an outage in one power domain should not drain another
 pruning either: a group the planner cannot confidently place is a group it must not drop, since the
 cost of shutting something down unnecessarily is recoverable and the cost of skipping it is not.
 
-Carried unchanged: OD-4 (last-ditch phase taxonomy), OD-8r (provider key validation), OD-10 (USB
+Carried unchanged: OD-4 (last-ditch tier taxonomy), OD-8r (provider key validation), OD-10 (USB
 support).
 
 Closed elsewhere: OD-1 (recovery execution is external subscriber scope), OD-5 (startup waves are

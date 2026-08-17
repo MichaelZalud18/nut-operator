@@ -100,7 +100,9 @@ someone reading the labels.
 
 ## The dependency graph is the source of truth
 
-`phase` numbers are a readability aid. What actually orders the flow is `before`:
+Ordering comes from two places and no others: the numbered tier a group declares, and the `before` /
+`after` edges it writes. Everything else about the compiled shape — which groups share a wave, how
+long each wave costs — is derived. Here the chain is:
 
 ```text
 burst-capacity -> application-workloads -> data-workloads -> storage-services -> standard-nodes -> controller-node
@@ -108,9 +110,8 @@ burst-capacity -> application-workloads -> data-workloads -> storage-services ->
 
 ## Tier inversion, on purpose
 
-Burst nodes are tier 5 and shut down at phase 0. `application-workloads` runs at tier 4, phase 10.
-An application pod on a burst node is therefore scheduled to outlive its host — a tier inversion
-(`OD-18`).
+Burst nodes are tier 5, so they shut down before `application-workloads` at tier 4. An application
+pod on a burst node is therefore scheduled to outlive its host — a tier inversion (`OD-18`).
 
 The default remedy is `Block`, which withholds the inverted node from power-off for the entire flow.
 That is right almost everywhere and wrong here: it would keep a burst node running specifically to

@@ -50,7 +50,6 @@ func buildGroupGraph(groups []Group, policy TierPolicy, membership []GroupNodeMe
 			Kind:          GraphVertexKindGroup,
 			Label:         group.Name,
 			Action:        group.Action,
-			Phase:         copyPhase(group.Phase),
 			ShutdownTier:  shutdownTierPtr(group.Name, tiers),
 			TargetSummary: summarizeTarget(group.Target),
 		})
@@ -159,7 +158,6 @@ func advisoryStartupWaves(shutdownWaves []Wave) []Wave {
 		sort.Strings(groups)
 		wave := Wave{
 			Index:              int32(len(startup)),
-			Phase:              copyPhase(source.Phase),
 			ShutdownTier:       copyInt32Ptr(source.ShutdownTier),
 			Groups:             groups,
 			Duration:           source.Duration,
@@ -280,14 +278,6 @@ func safeGraphID(value string) string {
 		return "node"
 	}
 	return builder.String()
-}
-
-func copyPhase(phase *int32) *int32 {
-	if phase == nil {
-		return nil
-	}
-	copied := *phase
-	return &copied
 }
 
 func renderMermaid(graph Graph) string {

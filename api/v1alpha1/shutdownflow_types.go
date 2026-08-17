@@ -621,11 +621,6 @@ type ShutdownGroup struct {
 	// +optional
 	After []string `json:"after,omitempty"`
 
-	// phase is a numeric fallback ordering hint. Lower phases are compiled earlier.
-	// Explicit dependencies still take precedence.
-	// +optional
-	Phase *int32 `json:"phase,omitempty"`
-
 	// shutdownTier assigns this group to a numbered shutdown tier. Higher tiers stop earlier; tier 0 cannot be targeted.
 	// +kubebuilder:validation:Minimum=0
 	// +optional
@@ -877,10 +872,6 @@ type CompiledShutdownWave struct {
 	// index is the zero-based wave order.
 	Index int32 `json:"index"`
 
-	// phase is the phase hint shared by this wave, when one was present.
-	// +optional
-	Phase *int32 `json:"phase,omitempty"`
-
 	// shutdownTier is the numbered tier shared by this wave, when tier policy assigned one.
 	// +optional
 	ShutdownTier *int32 `json:"shutdownTier,omitempty"`
@@ -969,10 +960,6 @@ type PlannerGraphVertexStatus struct {
 	// action is the compiled shutdown action associated with the vertex.
 	// +optional
 	Action string `json:"action,omitempty"`
-
-	// phase is the shutdown phase hint, when present.
-	// +optional
-	Phase *int32 `json:"phase,omitempty"`
 
 	// shutdownTier is the effective numbered shutdown tier, when present.
 	// +optional

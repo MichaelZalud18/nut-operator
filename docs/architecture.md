@@ -166,7 +166,8 @@ Subscribers can include recovery orchestration, dashboards, documentation genera
 
 - `requires` means a referenced group must stay available while the current group shuts down.
 - `before` and `after` are direct ordering edges.
-- `phase` is a fallback ordering hint for groups that are otherwise ready at the same time.
+- `shutdownTier` is coarse ordering, compiled into the same derived edges.
+- Groups that are ready at the same time share a wave; there is no additional ordering key.
 - Cycles and unknown group references are rejected before a plan can be accepted.
 - Each compiled wave may execute groups concurrently; later waves wait for earlier waves to complete.
 

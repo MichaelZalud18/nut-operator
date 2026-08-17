@@ -149,16 +149,19 @@ or agents with an action, relationships, and a timeout.
 is wave-by-wave (PL-12, EX-10). A wave is *output*: the planner derives it from tiers and edges.
 Nobody writes a wave.
 
-**Phase** — overloaded, and the source of more confusion than any other word here. It means three
-unrelated things, none of which is an ordering concept the project designed:
+**Phase** — overloaded, and the source of more confusion than any other word here. It means two
+unrelated things, neither of which is an ordering concept:
 
 1. `UPSDevice.status.phase` — the device's power state: `Online`, `OnBattery`, `LowBattery`.
 2. `ShutdownFlow.status.phase` and `status.lastExecution.phase` — lifecycle state: `Pending`,
    `Compiled`, `Running`, `Completed`, `Aborted`, and so on.
-3. `spec.groups[].phase` — an integer that arrived with the initial scaffold and was never designed.
-   It is not a tiebreaker despite its description: groups only share a wave if their phase numbers
-   match, so two independent groups with different phases are serialized silently. Slated for
-   removal; ordering is tiers plus `before`/`after`, and nothing else.
+
+There was a third. `spec.groups[].phase` was an integer that arrived with the initial scaffold and
+was never designed, and it was removed in `v1alpha1` on 2026-08-17. It described itself as a
+tie-breaking hint and behaved as a hard wave partition: groups shared a wave only if their phase
+numbers matched, so two independent same-tier groups were serialized silently and the plan was
+charged the sum of their timeouts rather than the longest. Nothing replaced it, because tiers plus
+`before` / `after` already covered every ordering it could express.
 
 Never use "phase" to mean ordering. Ordering across tiers is a **tier**; a set of concurrent work is
 a **wave**.

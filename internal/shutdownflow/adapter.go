@@ -188,7 +188,6 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 			Requires:     append([]string(nil), group.Requires...),
 			Before:       append([]string(nil), group.Before...),
 			After:        append([]string(nil), group.After...),
-			Phase:        group.Phase,
 			ShutdownTier: PlannerShutdownTier(group, tierPolicy),
 			Timeout:      PlannerDuration(group.Timeout),
 			Params:       copyParams(group.Params),
@@ -391,7 +390,6 @@ func APICompiledWaves(waves []planner.Wave) []powerv1alpha1.CompiledShutdownWave
 	for _, wave := range waves {
 		compiled = append(compiled, powerv1alpha1.CompiledShutdownWave{
 			Index:              wave.Index,
-			Phase:              wave.Phase,
 			ShutdownTier:       wave.ShutdownTier,
 			Groups:             append([]string(nil), wave.Groups...),
 			Duration:           APIDuration(wave.Duration),
@@ -446,7 +444,6 @@ func APIPlannerGraph(graph planner.Graph) powerv1alpha1.PlannerGraphStatus {
 			Kind:          vertex.Kind,
 			Label:         vertex.Label,
 			Action:        vertex.Action,
-			Phase:         vertex.Phase,
 			ShutdownTier:  vertex.ShutdownTier,
 			TargetSummary: vertex.TargetSummary,
 		})

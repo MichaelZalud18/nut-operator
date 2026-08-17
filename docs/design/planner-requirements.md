@@ -46,7 +46,7 @@ Inputs are partitioned into two bundles. The partition is load-bearing — see P
 
 Slow-changing. Hashed, determinism-tested, staleness-checked.
 
-**PL-5** · Flow spec: groups, `requires` / `before` / `after` edges, phase hints, timeouts,
+**PL-5** · Flow spec: groups, `requires` / `before` / `after` edges, shutdown tiers, timeouts,
 trigger declarations, abort policy.
 
 **PL-6** · Topology bundle: the `feeds` and `carries` edge sets over the inventory entity set, with
@@ -194,8 +194,8 @@ Planner diagnostics reach the `ShutdownFlow`: warnings degrade the flow with the
 reason, and every diagnostic including informational ones is recorded in the compilation audit row
 under source `Planner`.
 
-**PL-22** · Resolve last-ditch roles into terminal ordering constraints. "Must stay until phase X"
-is a role in input and a set of edges in output. The phase taxonomy is the numbered-tier scheme
+**PL-22** · Resolve last-ditch roles into terminal ordering constraints. "Must stay until the very
+end" is a role in input and a set of edges in output. The taxonomy is the numbered-tier scheme
 (OD-4, closed): tier N+1 → tier N compiles to derived edges labeled per PL-15; explicit `requires`
 still orders within a tier; tier 0 members are excluded from flow targeting entirely and any flow
 that targets one is rejected.
@@ -205,7 +205,7 @@ while later waves still require orchestration. Hard constraint. This is the mech
 "minimum viable control plane."
 
 **PL-24** · Enforce explicit control-plane ordering. Control-plane nodes carry explicit late
-dependencies rather than relying on a high phase number. Reject or warn when they do not.
+dependencies rather than relying on a low tier number alone. Reject or warn when they do not.
 
 **PL-25** · Detect co-wave contention, and act on it. Two groups with no dependency edge between them
 share a wave and execute concurrently; if both target workloads on the same node, concurrent draining

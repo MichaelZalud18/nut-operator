@@ -229,27 +229,20 @@ func compileGroups(groups []Group, graph Graph) ([]CompiledStep, []Wave, time.Du
 	var waveIndex int32
 
 	for len(indegree) > 0 {
-		ready := make([]Group, 0)
+		// Every group whose dependencies are satisfied enters the same wave. A wave is the set of
+		// work with nothing left to wait for, so anything that narrows it below that is claiming an
+		// ordering constraint the author did not write. Ordering comes from tiers and from
+		// before/after; the sort is presentation only, and byName keeps the compiled plan stable
+		// across runs rather than following Go's map iteration order.
+		waveGroups := make([]Group, 0, len(indegree))
 		for name, count := range indegree {
 			if count == 0 {
-				ready = append(ready, byName[name])
+				waveGroups = append(waveGroups, byName[name])
 			}
 		}
-		sort.Slice(ready, func(i, j int) bool {
-			phaseI, phaseJ := groupPhase(ready[i]), groupPhase(ready[j])
-			if phaseI != phaseJ {
-				return phaseI < phaseJ
-			}
-			return ready[i].Name < ready[j].Name
+		sort.Slice(waveGroups, func(i, j int) bool {
+			return waveGroups[i].Name < waveGroups[j].Name
 		})
-
-		phase := groupPhase(ready[0])
-		waveGroups := make([]Group, 0, len(ready))
-		for _, group := range ready {
-			if groupPhase(group) == phase {
-				waveGroups = append(waveGroups, group)
-			}
-		}
 
 		var waveDuration time.Duration
 		for _, group := range waveGroups {
@@ -278,10 +271,6 @@ func compileGroups(groups []Group, graph Graph) ([]CompiledStep, []Wave, time.Du
 			Groups:             groupNames,
 			Duration:           Duration{Duration: waveDuration},
 			CumulativeDuration: Duration{Duration: cumulative},
-		}
-		if phase != 0 {
-			phaseCopy := phase
-			wave.Phase = &phaseCopy
 		}
 		wave.ShutdownTier = sharedShutdownTier(groupNames, tiers)
 		waves = append(waves, wave)
@@ -370,13 +359,6 @@ func hasGroupCycle(groups []Group, policy TierPolicy, membership []GroupNodeMemb
 		}
 	}
 	return false
-}
-
-func groupPhase(group Group) int32 {
-	if group.Phase == nil {
-		return 0
-	}
-	return *group.Phase
 }
 
 func summarizeTarget(target Target) string {
@@ -501,7 +483,6 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 		normalized.Groups[i].Requires = append([]string(nil), normalized.Groups[i].Requires...)
 		normalized.Groups[i].Before = append([]string(nil), normalized.Groups[i].Before...)
 		normalized.Groups[i].After = append([]string(nil), normalized.Groups[i].After...)
-		normalized.Groups[i].Phase = copyInt32Ptr(normalized.Groups[i].Phase)
 		normalized.Groups[i].ShutdownTier = copyInt32Ptr(normalized.Groups[i].ShutdownTier)
 		normalized.Groups[i].HookRef = copyHookReference(normalized.Groups[i].HookRef)
 		normalized.Groups[i].Params = copyStringMap(normalized.Groups[i].Params)
