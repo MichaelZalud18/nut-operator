@@ -207,18 +207,21 @@ while later waves still require orchestration. Hard constraint. This is the mech
 **PL-24** · Enforce explicit control-plane ordering. Control-plane nodes carry explicit late
 dependencies rather than relying on a low tier number alone. Reject or warn when they do not.
 
-**PL-25** · Detect co-wave contention, and act on it. Two groups with no dependency edge between them
-share a wave and execute concurrently; if both target workloads on the same node, concurrent draining
-can violate a PodDisruptionBudget or overwhelm the node. Absence of an authored edge is not proof of
-independence.
+**PL-25** · *Retired 2026-08-17, never implemented — the failure it described cannot happen.* It
+required detecting "co-wave contention": two groups sharing a wave, both targeting workloads on the
+same node, where concurrent draining was said to risk violating a PodDisruptionBudget or overwhelming
+the node. It specified a three-setting policy field (`Warn`/`Serialize`/`Reject`) to govern it.
 
-Detection alone is insufficient. Behavior is governed by a policy field with three settings:
+Both halves of the premise were wrong. `DrainNodes` evicts through the Eviction API
+(`internal/kubeactions/runner.go`), and that API is where PDBs are enforced — the apiserver refuses
+an eviction that would breach a budget. Concurrency cannot produce a violation through it. And a PDB
+selects one workload's pods, which one group selects; two groups reaching the same budget requires an
+unusual authoring shape, and even then produces contention rather than breach. "Overwhelm the node"
+inverts the effect: draining removes load, and during a cluster shutdown the evicted pods have
+nowhere to reschedule to because every candidate is already cordoned.
 
-| Setting | Behavior |
-| --- | --- |
-| `Warn` (default) | Emit a diagnostic; leave the wave as compiled |
-| `Serialize` | Insert a derived ordering edge, labeled per PL-15, and recompile |
-| `Reject` | Fail the compile |
+The real relationship runs the other way, and is `OD-38`: a PDB does not endanger the shutdown by
+being violated, it endangers the shutdown by holding. Number burned rather than reused.
 
 **PL-26** · Compilation is atomic. It fully succeeds or fully fails. No partial plan is ever emitted.
 

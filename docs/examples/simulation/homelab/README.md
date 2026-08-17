@@ -45,9 +45,15 @@ This is worth internalising before writing a loose flow of your own: **tiers ord
 in different tiers.** Two pieces of work in the same tier are concurrent unless you say otherwise,
 and "obviously the drain goes first" is not something the tier number conveys.
 
-Note also that the planner does not currently warn about this. `PL-25` specifies co-wave contention
-detection — two groups sharing a wave while targeting workloads on the same node can violate a
-PodDisruptionBudget — and it is not implemented, so a missing edge here is silent.
+Note also that the planner does not warn about this, and drop it and it fails quietly in the worst
+direction: `drain-workers` and `stop-workers` would run together, so the nodes would be powering off
+while the eviction that was meant to move their workloads was still in flight. The drain would
+report success because it issued the evictions, and the pods it was protecting would go down with
+the hosts anyway.
+
+There was a requirement for detecting this — `PL-25` — but it described the hazard wrongly and was
+retired; see [planner-requirements.md](../../../design/planner-requirements.md). Nothing replaced it,
+so for now the edge is the author's to write.
 
 ## Topology
 

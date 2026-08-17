@@ -64,13 +64,13 @@ Dated audit and findings records live in `docs/audits/` and share the `F-n` find
 | GP | Governing principle | scope-boundaries | GP-1 – GP-7 |
 | SB | Scope boundary | scope-boundaries | SB-1 – SB-15 |
 | RB | Repository-derived boundary | scope-boundaries | RB-1 – RB-7 |
-| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-37, OD-8r |
+| OD | Open/closed decision | scope-boundaries (registry) | OD-1 – OD-38, OD-8r |
 | PL | Planner requirement | planner-requirements | PL-1 – PL-49 |
 | CR | Capability resolution rule | planner-requirements | CR-1 – CR-4 |
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
 | EX | Executor requirement | executor-requirements | EX-1 – EX-33 |
 | NS | NUT server operand requirement | nut-server-operand | NS-1 – NS-9 |
-| NA | Node agent operand requirement | node-agent-operand | NA-1 – NA-8 |
+| NA | Node agent operand requirement | node-agent-operand | NA-1 – NA-9 |
 | HK | Shutdown hook requirement | shutdown-hooks | HK-1 – HK-10 |
 | IN | Inventory contract rule | inventory-provider-contract | IN-1 – IN-16 |
 | F | Audit finding | audit records (`docs/audits/`) | F-1 – F-92 |
@@ -96,6 +96,7 @@ narrative account and now uses the folded numbers.
 | OD-27 | Timing adaptation parameters: hysteresis count, improvement margin, and scope | — | Adaptive execution |
 | OD-28 | Relationship to OD-12: infeasible-plan policy before start vs timing re-decisions during | — | Adaptive execution |
 | OD-35 | *Retired, never a decision.* Raised as "do redundant `feeds` edges change observation aggregation" while recording `F-45`. The premise was invented: `MINSUPPLIES` governs one host's own supplies and never reaches the planner's aggregation. Number burned rather than reused | — | `F-45` |
+| OD-38 | What a shutdown does when a PodDisruptionBudget refuses an eviction. Today the 429 is fatal and the flow aborts, so one ordinary PDB can leave a cluster running on a draining UPS. Retry-then-proceed, treat as advisory under Enforce, or keep failing | Executor drain path; replaces the retired `PL-25` | Executor |
 
 ### Closed
 

@@ -153,11 +153,15 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
-- `PL-25` co-wave contention detection is specified and not implemented. Two groups sharing a wave
-  while targeting workloads on the same node can violate a PodDisruptionBudget or overwhelm the
-  node, and nothing currently warns. Surfaced by the loose simulation scenarios, where a missing
-  edge between a drain and its own nodes' shutdown is silent — see
-  `docs/examples/simulation/homelab/`.
+- `OD-38` **needs a decision, and the current behaviour is a live defect.** A `PodDisruptionBudget`
+  that refuses an eviction returns `429 TooManyRequests`; `evictPodsOnNode` treats anything but
+  `NotFound` as fatal, so `DrainNodes` reports `Blocked` and the executor aborts the whole flow.
+  Mid-shutdown that refusal is usually permanent rather than transient, because the replica that
+  would restore the budget cannot schedule onto nodes that are already cordoned — so one ordinary PDB
+  leaves a cluster up while its UPS drains. `kubectl drain` retries instead. Three candidate
+  resolutions are in the `OD-38` registry entry; implementation is small once the policy is chosen.
+  `PL-25` was retired in the same change: it described the inverse failure, which the Eviction API
+  makes impossible.
 
 ---
 

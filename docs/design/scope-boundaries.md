@@ -439,6 +439,7 @@ for defense in depth.
 | OD-28 | Relationship to OD-12: OD-12 decides what to do with an infeasible plan before it starts; timing adaptation re-decides during | Adaptive execution |
 | OD-29 | Tier ascent trigger: what power condition moves the tier pointer up | Adaptive execution |
 | OD-30 | Cadence intervals: publish interval during idle versus active flow, and whether it is global or per-flow | Adaptive execution |
+| OD-38 | What a shutdown does when a PodDisruptionBudget refuses an eviction. `DrainNodes` evicts through the Eviction API, so the apiserver returns `429 TooManyRequests` rather than letting the budget be breached — and during a cluster shutdown that refusal is usually permanent, because the evicted replica cannot reschedule onto nodes that are already cordoned. Today one attempt is made per pod and the 429 is fatal: the drain reports `Blocked`, the executor aborts, and the cluster stays up while the UPS drains. Three candidate resolutions: retry with a deadline then proceed; treat the budget as advisory once the flow is enforcing, on the grounds that a UPS outage is precisely the disruption a PDB defers and it cannot be deferred past the battery; or keep failing, on the grounds that a flow that cannot drain safely should not claim it did. `OD-12`, `OD-34`, and `SB-11` all lean the same way — do not stop the shutdown for a secondary concern — but none of them decides this, because a PDB guards live workload availability rather than evidence or notification | Executor design |
 
 ## Closed Decisions
 
@@ -558,3 +559,26 @@ until it settles, so a config change cannot roll the fleet's monitoring during a
 cluster-wide and includes `DryRun` flows, because what makes a flow live is a power event and that is
 when churn is least welcome anywhere. A DaemonSet that does not exist yet is created regardless — no
 agent at all is worse than one that restarts at an awkward moment.
+
+**2026-08-17 — PL-25 retired; OD-38 opened in its place.** The retired requirement asked the planner
+to detect "co-wave contention" — two groups sharing a wave, both touching workloads on one node —
+because concurrent draining could allegedly violate a PodDisruptionBudget or overwhelm the node. It
+specified a `Warn`/`Serialize`/`Reject` policy field and was never implemented.
+
+The premise did not survive being checked against the code. `DrainNodes` evicts through the Eviction
+API, which is where the apiserver enforces PDBs, so no amount of concurrency can breach one through
+that path. A budget also selects one workload's pods, and one group selects those pods, so the two
+groups the requirement needed rarely both exist. "Overwhelm the node" runs backwards: a drain removes
+load, and mid-shutdown the evicted pods have nowhere to land because every candidate node is already
+cordoned.
+
+What is real is the inverse, and it is worse. A PDB that refuses an eviction returns `429
+TooManyRequests`, `evictPodsOnNode` treats anything other than `NotFound` as fatal, and the executor
+aborts the flow. During a cluster shutdown that refusal is typically permanent rather than transient
+— the replica that would restore the budget cannot be scheduled anywhere — so one ordinary PDB is
+enough to leave a cluster running while its UPS drains. `kubectl drain` does not behave this way; it
+retries evictions.
+
+`OD-38` carries the open question of what should happen instead. It is genuinely open: `OD-12`,
+`OD-34`, and `SB-11` all decline to stop a shutdown for a secondary concern, but a PDB guards live
+workload availability rather than evidence or notification, so none of them settles it by analogy.
