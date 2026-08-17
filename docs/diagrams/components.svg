@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 650" width="900" height="650" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="nut-operator components and signal paths">
+  <title>nut-operator — components and signal paths</title>
+  <desc>The UPS is polled over SNMP by the upsd operand. Telemetry reaches the operator, which writes a per-node signal Secret. Kubelet projects that Secret read-only into the actuator container, which powers the host off with reboot(2). The upsmon container has no path to the actuator.</desc>
+
+  <defs>
+    <marker id="arrowAuth" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowTel" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7d8794"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="900" height="650" fill="#f6f7f9"/>
+
+  <text x="36" y="38" font-size="17" font-weight="600" fill="#1c2128">nut-operator — components and signal paths</text>
+  <text x="36" y="59" font-size="11" fill="#57606a">One UPS, one power domain. Authorization flows one way: only the operator can release a node.</text>
+
+  <!-- UPS -->
+  <rect x="36" y="124" width="150" height="62" rx="6" fill="#ffffff" stroke="#7d8794" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="111" y="149" font-size="12.5" font-weight="600" fill="#1c2128" text-anchor="middle">UPS</text>
+  <text x="111" y="166" font-size="9.5" fill="#57606a" text-anchor="middle">network-attached</text>
+  <text x="111" y="178" font-size="9.5" fill="#57606a" text-anchor="middle">outside the cluster</text>
+
+  <!-- Cluster -->
+  <rect x="206" y="86" width="658" height="520" rx="10" fill="#ffffff" stroke="#c3cbd4" stroke-width="1.4"/>
+  <text x="224" y="107" font-size="9.5" font-weight="600" fill="#8a94a0" letter-spacing="1.4">KUBERNETES CLUSTER</text>
+
+  <!-- upsd -->
+  <rect x="254" y="124" width="236" height="62" rx="6" fill="#ffffff" stroke="#5a6674" stroke-width="1.3"/>
+  <text x="372" y="149" font-size="12.5" font-weight="600" fill="#1c2128" text-anchor="middle">upsd — NUT server operand</text>
+  <text x="372" y="168" font-size="9.5" fill="#57606a" text-anchor="middle">single replica · polls the UPS · serves NUT clients</text>
+
+  <!-- operator -->
+  <rect x="254" y="232" width="236" height="62" rx="6" fill="#ffffff" stroke="#5a6674" stroke-width="1.3"/>
+  <text x="372" y="257" font-size="12.5" font-weight="600" fill="#1c2128" text-anchor="middle">operator</text>
+  <text x="372" y="276" font-size="9.5" fill="#57606a" text-anchor="middle">plans, sequences, and authorizes shutdown</text>
+
+  <!-- signal secret -->
+  <rect x="572" y="232" width="262" height="62" rx="6" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="703" y="257" font-size="12.5" font-weight="600" fill="#1c2128" text-anchor="middle">signal Secret</text>
+  <text x="703" y="276" font-size="9.5" fill="#57606a" text-anchor="middle">one key per node · TTL-bounded · revoked when spent</text>
+
+  <!-- node agent group -->
+  <rect x="246" y="340" width="596" height="182" rx="8" fill="#fbfcfd" stroke="#aeb7c2" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="266" y="363" font-size="11.5" font-weight="600" fill="#1c2128">node agent — DaemonSet, one pod on every node</text>
+  <text x="266" y="378" font-size="9.5" fill="#57606a">two containers, split so the one holding credentials is not the one holding privileges</text>
+
+  <!-- upsmon container -->
+  <rect x="266" y="390" width="232" height="114" rx="6" fill="#ffffff" stroke="#5a6674" stroke-width="1.3"/>
+  <text x="382" y="413" font-size="11.5" font-weight="600" fill="#1c2128" text-anchor="middle">upsmon container</text>
+  <text x="382" y="434" font-size="9.5" fill="#57606a" text-anchor="middle">NUT secondary</text>
+  <text x="382" y="449" font-size="9.5" fill="#57606a" text-anchor="middle">connects to upsd · TCP 3493</text>
+  <text x="382" y="464" font-size="9.5" fill="#57606a" text-anchor="middle">holds NUT credentials</text>
+  <text x="382" y="484" font-size="9.5" font-weight="600" fill="#1c2128" text-anchor="middle">no host privileges</text>
+
+  <!-- actuator container -->
+  <rect x="590" y="390" width="232" height="114" rx="6" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="706" y="413" font-size="11.5" font-weight="600" fill="#1c2128" text-anchor="middle">actuator container</text>
+  <text x="706" y="434" font-size="9.5" fill="#57606a" text-anchor="middle">watches the projected Secret only</text>
+  <text x="706" y="449" font-size="9.5" fill="#57606a" text-anchor="middle">no NUT credentials · no cluster token</text>
+  <text x="706" y="464" font-size="9.5" fill="#57606a" text-anchor="middle">CAP_SYS_BOOT · host PID namespace</text>
+  <text x="706" y="484" font-size="9.5" font-weight="600" fill="#1c2128" text-anchor="middle">no network listener</text>
+
+  <!-- host -->
+  <rect x="590" y="546" width="232" height="46" rx="6" fill="#ffffff" stroke="#7d8794" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="706" y="566" font-size="11.5" font-weight="600" fill="#1c2128" text-anchor="middle">node host</text>
+  <text x="706" y="582" font-size="9.5" fill="#57606a" text-anchor="middle">flushes, then loses power</text>
+
+  <!-- A: UPS -> upsd (telemetry) -->
+  <line x1="186" y1="155" x2="248" y2="155" stroke="#7d8794" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#arrowTel)"/>
+  <text x="217" y="147" font-size="9" fill="#57606a" text-anchor="middle">SNMP</text>
+
+  <!-- B: upsd -> operator (telemetry) -->
+  <line x1="372" y1="186" x2="372" y2="226" stroke="#7d8794" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#arrowTel)"/>
+  <text x="380" y="211" font-size="9" fill="#57606a">telemetry</text>
+
+  <!-- C: upsd -> upsmon (telemetry, left lane) -->
+  <polyline points="254,170 228,170 228,447 260,447" fill="none" stroke="#7d8794" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#arrowTel)"/>
+  <text x="222" y="310" font-size="9" fill="#57606a" text-anchor="middle" transform="rotate(-90 222 310)">NUT · TCP 3493</text>
+
+  <!-- D: operator -> secret (authority) -->
+  <line x1="490" y1="263" x2="566" y2="263" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arrowAuth)"/>
+  <text x="528" y="255" font-size="9" font-weight="600" fill="#2563eb" text-anchor="middle">writes</text>
+
+  <!-- E: secret -> actuator (authority) -->
+  <line x1="703" y1="294" x2="703" y2="384" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arrowAuth)"/>
+  <text x="713" y="331" font-size="9" font-weight="600" fill="#2563eb">kubelet projects,</text>
+  <text x="713" y="343" font-size="9" font-weight="600" fill="#2563eb">read-only</text>
+
+  <!-- F: actuator -> host (authority) -->
+  <line x1="706" y1="504" x2="706" y2="540" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arrowAuth)"/>
+  <text x="716" y="519" font-size="9" font-weight="600" fill="#2563eb">sync(2), reboot(2)</text>
+
+  <!-- G: upsmon -X- actuator -->
+  <line x1="498" y1="440" x2="584" y2="440" stroke="#b42318" stroke-width="1.4" stroke-dasharray="4 3"/>
+  <line x1="534" y1="431" x2="550" y2="449" stroke="#b42318" stroke-width="2"/>
+  <line x1="550" y1="431" x2="534" y2="449" stroke="#b42318" stroke-width="2"/>
+  <text x="542" y="469" font-size="9" font-weight="600" fill="#b42318" text-anchor="middle">no authority</text>
+  <text x="542" y="481" font-size="9" fill="#b42318" text-anchor="middle">by design</text>
+
+  <!-- legend -->
+  <line x1="36" y1="622" x2="66" y2="622" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arrowAuth)"/>
+  <text x="74" y="626" font-size="9.5" fill="#57606a">authorization — the only path that can halt a node</text>
+
+  <line x1="360" y1="622" x2="390" y2="622" stroke="#7d8794" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#arrowTel)"/>
+  <text x="398" y="626" font-size="9.5" fill="#57606a">telemetry and observation</text>
+
+  <line x1="590" y1="622" x2="620" y2="622" stroke="#b42318" stroke-width="1.4" stroke-dasharray="4 3"/>
+  <line x1="599" y1="616" x2="611" y2="628" stroke="#b42318" stroke-width="1.8"/>
+  <line x1="611" y1="616" x2="599" y2="628" stroke="#b42318" stroke-width="1.8"/>
+  <text x="628" y="626" font-size="9.5" fill="#57606a">deliberately not a path</text>
+</svg>

@@ -16,7 +16,92 @@ Kubernetes-native power management built around Network UPS Tools (NUT), control
 
 > Disclosure: this project is mostly AI-assisted/vibe-coded. Treat the implementation as requiring normal independent review, security validation, and production qualification before relying on it for real power events.
 
-`nut-operator` models UPS devices, power topology, and node/workload shutdown ordering as Kubernetes CRDs, so it installs against any cluster's own hardware and inventory rather than assuming a specific site's wiring. It models UPS devices, NUT server instances, node power agents, and shutdown flows as Kubernetes resources. Durable audit and execution state belongs in PostgreSQL, with CloudNativePG as the preferred Kubernetes-native backing store.
+## What it does
+
+When the power fails, something has to decide what stops first.
+
+A UPS gives a cluster a few minutes of battery. Spending those minutes well means shutting down in a
+deliberate order — shed the disposable workloads, quiesce the databases, drain the workers, and stop
+the control plane last — rather than losing every machine at once when the battery runs out.
+`nut-operator` is the thing that decides that order and carries it out.
+
+It reads UPS state through [Network UPS Tools](https://networkupstools.org/) (NUT), compiles a
+shutdown plan from what you declared about your own hardware, and executes that plan wave by wave
+while re-checking how much runtime is actually left. Everything is a Kubernetes resource, so the plan
+is reviewable in Git and visible in `kubectl` long before a real outage exercises it.
+
+Two things it deliberately does **not** do. It does not bring anything back up — recovery is a
+separate control path and belongs to whatever already owns your bring-up. And it does not act on
+anything except power state; a node that needs draining for a kernel patch is somebody else's job.
+
+## Components
+
+![nut-operator components and the paths between them](docs/diagrams/components.svg)
+
+The moving parts, and why each one is separate from the others:
+
+- **`upsd` — the NUT server operand.** Talks to the UPS and serves NUT clients. One replica per
+  logical server. This is the only thing that speaks to power hardware.
+- **The operator (controller manager).** Reads telemetry, resolves your declared topology into power
+  domains, compiles `ShutdownFlow` policy into ordered waves, and decides when to release each node.
+  It is the only component with the authority to halt anything.
+- **The node agent — a DaemonSet, one pod on every node.** Split into two containers on purpose, so
+  the container holding credentials is not the container holding privileges:
+  - **`upsmon`** is a NUT client. It holds NUT credentials, reaches `upsd` over TCP 3493, and has no
+    host privileges and no way to stop a machine.
+  - **The actuator** holds no NUT credentials and no Kubernetes token, and runs no network listener.
+    It watches one read-only projected Secret and, if a valid signal appears there, flushes the
+    filesystems and powers the host off.
+- **PostgreSQL (CloudNativePG or external).** Holds the durable record: execution history, audit
+  rows, and observed durations that sharpen future estimates.
+
+The red crossed line in the diagram is the point of the whole arrangement. `upsmon` sees the power
+event first and still cannot act on it — the only path that halts a node runs through the operator,
+because only the operator knows what else is still running. That is `OD-37`, and the
+[security model](docs/security.md) covers what it costs and why it was chosen anyway.
+
+## Vocabulary
+
+Four words carry most of the design, and two of them are easy to confuse:
+
+- **Tier** — a number *you write* on a workload, namespace, or node saying how late it may stop.
+  Higher tiers stop earlier. Tier 1 is the last orchestrated node stop; tier 0 is "last-ditch",
+  workload-only, and a flow may not target it.
+- **Wave** — a set of work the planner *derived*, eligible to run concurrently. You never write a
+  wave. The planner produces them from tiers and dependencies, and execution proceeds wave by wave.
+- **Group** — the unit you actually author in a `ShutdownFlow`: a selector, an action, a timeout,
+  and its relationships to other groups.
+- **Power domain** — everything downstream of one UPS, derived by following `feeds` edges. Derived,
+  never declared. A node can sit in more than one.
+
+Tiers are input; waves are output. If a document seems to use them interchangeably, the document is
+wrong. Ordering comes from tiers plus `requires`/`before`/`after` and nothing else — there is no
+third knob. Full glossary in [decision-index.md](docs/design/decision-index.md#glossary).
+
+## What it runs against
+
+**UPS hardware** must be reachable over the network. Local USB and serial UPS connections are
+deliberately unsupported: they would require host device mounts and privileged operand pods for a
+topology this project does not target.
+
+Two ways to connect:
+
+- **Direct NUT drivers**, from a reviewed allowlist — `snmp-ups` for SNMP-capable network cards,
+  `netxml-ups` for Network Management Card XML, `apcupsd-ups`, and `dummy-ups` for simulation and
+  relays. Unknown drivers are rejected at admission rather than passed through.
+- **Upstream NUT relay**, for appliances that already run their own `upsd` — a NAS, or a UPS with an
+  embedded NUT server. The operand relays from it instead of driving the device directly.
+
+**Clusters.** Any conformant Kubernetes cluster. Nothing assumes a distribution, a cloud, or a CNI.
+Node actuation needs a Linux host, since powering off is the `reboot(2)` syscall.
+
+**Networking.** Agents reach `upsd` on TCP 3493; the operator reaches the Kubernetes API and
+PostgreSQL. `NUTServer` is not exposed outside the cluster by default, operands are compatible with
+default-deny namespaces, and the operator's only outbound path is an allowlisted `ShutdownHook`
+endpoint. NUT protocol TLS defaults to `Required`.
+
+**What is not supported yet:** PDU outlet control (`PDUCapabilityProfile` is schema-only scaffolding),
+switches and routers as actuation targets, and USB or serial UPS attachment.
 
 ## Goals
 
