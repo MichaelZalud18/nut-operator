@@ -46,6 +46,44 @@ Not labeled by `shutdownflow`: every action from every flow passes through the s
 | `action_attempts_total` | Counter | `action`, `mode` (`DryRun`/`Enforce`), `outcome` | Every `RunAction` call, by the executor action type (`ScaleWorkload`, `CordonNodes`, `DrainNodes`, `RunHook`, `AgentShutdown`, `Notify`, `Wait`), mode, and outcome (`Succeeded`, `Simulated`, `Blocked`, `TimedOut`, or `Error`). |
 | `action_duration_seconds` | Histogram | `action` | Time spent on one `RunAction` call. |
 
+## `nutoperator_halt_*`
+
+Whether nodes asked to power off actually stopped. This is the one part of the system whose evidence
+cannot come from the thing being measured: the actuator logs its own syscall and then halts, taking
+the log with it, so success would otherwise be inferred from a machine being dark. These are
+reconstructed operator-side from two facts the operator can see on its own — it wrote the signal, and
+it watched the `Node` stop reporting `Ready`.
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `attempts_total` | Counter | `shutdownflow`, `outcome` (`Halted`/`TimedOut`) | One per node per signal. `Halted` means the node stopped reporting after being signalled; `TimedOut` means it was still `Ready` at the deadline, so the signal was delivered and the machine kept running. A wave that releases six nodes and halts four reads as four and two. |
+| `last_verified_timestamp_seconds` | Gauge | `node` | When this operator last watched this node actually stop, as a Unix timestamp. Only a `Halted` outcome writes it — a failed attempt must not turn "proven to halt" into "asked to halt". |
+| `duration_seconds` | Gauge | `node` | Reconstructed seconds from signal write to the node going away. |
+
+The load-bearing query is the one nobody can otherwise answer without powering a machine off to find
+out:
+
+```promql
+time() - nutoperator_halt_last_verified_timestamp_seconds > 86400 * 180
+```
+
+Absence of a series is itself the finding: that node has never been proven to halt. `make
+verify-actuation` is how a node gets its first one — see [install.md](install.md).
+
+`duration_seconds` is coarser than the actuator's own `sync(2)` timing, deliberately. It spans
+projection, poll, flush, syscall, and detection latency, and it takes the *earlier* of the `Ready`
+condition's `lastHeartbeatTime` and `lastTransitionTime` as the moment the node went away — the
+transition alone is written only after the control plane's node-monitor grace period, which would
+inflate every measurement by that lag. What remains is a bias low, bounded by kubelet's status-post
+interval. This is the durable half of the `OD-27` handoff-tail evidence; the container log is the
+precise half, and it may not survive the machine long enough to be collected.
+
+A gauge per node rather than a histogram: the value is observed a handful of times per node per year,
+the interesting query is per-node anyway (some machines have far more to flush than others), and a
+histogram carrying the same label would multiply series by bucket count to summarize what scrapes
+already retain. Series are dropped when a `Node` object is deleted — a halted node keeps its object
+at `NotReady`, so an actual deletion means the machine left the cluster.
+
 ## `nutoperator_audit_*`
 
 The shutdown-time audit spool (`spec.storage.auditSpool`). Any non-zero rate here means PostgreSQL
@@ -156,7 +194,12 @@ that matter when the shape is rejected.
   and a global Prometheus counter is a side effect; keeping it out of those packages keeps their unit
   tests independent of global registry state.
 - Every label set is a bounded enum or a `ShutdownFlow`/`UPSDevice` object name (small by the
-  operator's own design). No workload, node, or namespace name is ever used as a label value.
+  operator's own design). No workload or namespace name is ever used as a label value.
+- `nutoperator_halt_*` is the one exception, and it carries a node name. It is bounded by cluster
+  size rather than by an enum, which is a weaker guarantee — accepted because the question those
+  metrics answer is per-node and has no aggregate form: "can this cluster halt this machine" is not
+  a fact about the fleet. The series are deleted when a `Node` object is deleted, so the bound holds
+  across rebuilds rather than growing with them.
 
 ## Open work
 

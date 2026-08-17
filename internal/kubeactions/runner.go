@@ -86,6 +86,16 @@ type Runner struct {
 	// HTTPClient delivers HTTP ShutdownHooks. Nil uses http.DefaultClient with
 	// per-request context deadlines supplied by the executor.
 	HTTPClient *http.Client
+
+	// SignalWritten, when set, is called once per node after its shutdown signal reaches the API
+	// server. It is how the operator starts the clock on a halt it will only ever see the far end
+	// of, since the node powers off and takes its own record with it.
+	//
+	// A plain function rather than an interface, and fired after the write rather than before it: a
+	// Secret write the API server rejected asked no node to stop, and counting it would file
+	// failures against machines that were never signalled. Nil is a build that records nothing,
+	// which is what the unit tests use.
+	SignalWritten func(node, shutdownFlow, executionID string, at time.Time)
 }
 
 // RunAction implements executor.ActionRunner. It is a thin instrumented wrapper around runAction: every
@@ -898,6 +908,9 @@ func (r Runner) agentShutdownHandoff(ctx context.Context, action executor.Action
 		encoded = append(encoded, '\n')
 		if err := r.upsertSignalSecret(ctx, action, release, encoded); err != nil {
 			return blocked(err), err
+		}
+		if r.SignalWritten != nil {
+			r.SignalWritten(release.NodeName, action.ShutdownFlow, action.ExecutionID, observedAt)
 		}
 		updatedSecrets[release.SignalSecretNamespace+"/"+release.SignalSecretName] = struct{}{}
 	}

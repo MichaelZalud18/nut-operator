@@ -861,3 +861,122 @@ func TestRunnerRejectsTheRemovedGateAction(t *testing.T) {
 		t.Fatalf("outcome = %#v, want Blocked", outcome)
 	}
 }
+
+// The halt reconstruction has two endpoints and the operator has to observe both of them itself,
+// because the node stops existing between them. This is the near endpoint. Without it the Node watch
+// has nothing to resolve against and every halt is filed as an unrelated node going NotReady.
+func TestRunnerStartsTheHaltClockAfterTheSignalLands(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	written := time.Date(2026, 8, 17, 5, 0, 0, 0, time.UTC)
+
+	type record struct {
+		node, flow, executionID string
+		at                      time.Time
+	}
+	release := func(name string) executor.NodeRelease {
+		return executor.NodeRelease{
+			NodeName:              name,
+			NodePowerAgent:        "agent-c",
+			SignalSecretNamespace: "power-system",
+			SignalSecretName:      "agent-c-node-signals",
+			SignalSecretKey:       name + ".json",
+		}
+	}
+
+	t.Run("every released node starts its own clock", func(t *testing.T) {
+		var recorded []record
+		runner := Runner{
+			Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+			Clock:  func() time.Time { return written },
+			SignalWritten: func(node, flow, executionID string, at time.Time) {
+				recorded = append(recorded, record{node: node, flow: flow, executionID: executionID, at: at})
+			},
+		}
+		if _, err := runner.RunAction(context.Background(), executor.Action{
+			ExecutionID:    "execution-c",
+			ShutdownFlow:   "flow-c",
+			PlanConfigHash: "hash-c",
+			Group: executor.Group{
+				Name:         "workers",
+				Action:       executor.ActionAgentShutdown,
+				NodeReleases: []executor.NodeRelease{release("node-c1"), release("node-c2")},
+			},
+		}); err != nil {
+			t.Fatalf("RunAction returned error: %v", err)
+		}
+
+		if len(recorded) != 2 {
+			t.Fatalf("expected one record per released node, got %d: %#v", len(recorded), recorded)
+		}
+		for index, want := range []string{"node-c1", "node-c2"} {
+			if recorded[index].node != want {
+				t.Fatalf("record %d is for %q, want %q", index, recorded[index].node, want)
+			}
+			if recorded[index].flow != "flow-c" || recorded[index].executionID != "execution-c" {
+				t.Fatalf("record %d lost its provenance: %#v", index, recorded[index])
+			}
+			// The signal's own timestamp, not wall time at the callback. It is the value written
+			// into the payload, so the reconstruction measures the same interval the node saw.
+			if !recorded[index].at.Equal(written) {
+				t.Fatalf("record %d stamped %s, want the signal write time %s", index, recorded[index].at, written)
+			}
+		}
+	})
+
+	// A write the API server refused asked no node to stop. Counting it would file a failure
+	// against a machine that never received anything.
+	t.Run("a refused write starts no clock", func(t *testing.T) {
+		var recorded []record
+		runner := Runner{
+			// An empty scheme cannot encode a Secret, so the upsert fails.
+			Client: fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build(),
+			Clock:  func() time.Time { return written },
+			SignalWritten: func(node, flow, executionID string, at time.Time) {
+				recorded = append(recorded, record{node: node, flow: flow, executionID: executionID, at: at})
+			},
+		}
+		outcome, err := runner.RunAction(context.Background(), executor.Action{
+			ExecutionID:    "execution-d",
+			ShutdownFlow:   "flow-d",
+			PlanConfigHash: "hash-d",
+			Group: executor.Group{
+				Name:         "workers",
+				Action:       executor.ActionAgentShutdown,
+				NodeReleases: []executor.NodeRelease{release("node-d1")},
+			},
+		})
+		if err == nil {
+			t.Fatal("expected the signal write to fail")
+		}
+		if outcome.Outcome != executor.OutcomeBlocked {
+			t.Fatalf("outcome = %#v, want Blocked", outcome)
+		}
+		if len(recorded) != 0 {
+			t.Fatalf("expected no clock to start on a refused write, got %#v", recorded)
+		}
+	})
+
+	// Nil is the default and every unit test in this package uses it. It must be a build that
+	// records nothing, not a nil dereference on the shutdown path.
+	t.Run("an unset hook is not a crash", func(t *testing.T) {
+		runner := Runner{
+			Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+			Clock:  func() time.Time { return written },
+		}
+		if _, err := runner.RunAction(context.Background(), executor.Action{
+			ExecutionID:    "execution-e",
+			ShutdownFlow:   "flow-e",
+			PlanConfigHash: "hash-e",
+			Group: executor.Group{
+				Name:         "workers",
+				Action:       executor.ActionAgentShutdown,
+				NodeReleases: []executor.NodeRelease{release("node-e1")},
+			},
+		}); err != nil {
+			t.Fatalf("RunAction returned error: %v", err)
+		}
+	})
+}

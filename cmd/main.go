@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -39,6 +40,7 @@ import (
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/certexpiry"
 	"github.com/MichaelZalud18/nut-operator/internal/controller"
+	"github.com/MichaelZalud18/nut-operator/internal/haltwatch"
 	"github.com/MichaelZalud18/nut-operator/internal/kubeactions"
 	webhookv1alpha1 "github.com/MichaelZalud18/nut-operator/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
@@ -224,6 +226,18 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "nodepoweragent")
 		os.Exit(1)
 	}
+	// Halt evidence is kept on this side of the exchange because the other side does not survive
+	// the event it would be reporting: the node logs its own syscall and then powers off. The
+	// observer is written to by the executor when a signal lands and read by the Node watch when a
+	// node stops answering, so both ends of the measurement come from things the operator can see.
+	haltObserver := haltwatch.NewObserver()
+	if err := (&controller.NodeHaltReconciler{
+		Client:   mgr.GetClient(),
+		Observer: haltObserver,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "nodehalt")
+		os.Exit(1)
+	}
 	if err := (&controller.ShutdownFlowReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
@@ -232,6 +246,14 @@ func main() {
 			Client:           mgr.GetClient(),
 			ManagerNamespace: os.Getenv("POD_NAMESPACE"),
 			Recorder:         mgr.GetEventRecorder("shutdownflow-executor"),
+			SignalWritten: func(node, shutdownFlow, executionID string, at time.Time) {
+				haltObserver.SignalWritten(haltwatch.Attempt{
+					Node:            node,
+					ShutdownFlow:    shutdownFlow,
+					ExecutionID:     executionID,
+					SignalWrittenAt: at,
+				})
+			},
 		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "shutdownflow")

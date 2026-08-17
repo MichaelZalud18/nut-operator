@@ -131,6 +131,62 @@ var (
 		Buckets:   prometheus.DefBuckets,
 	}, []string{"action"})
 
+	// HaltAttemptsTotal counts node halt attempts by how they resolved: "Halted" (the node stopped
+	// reporting Ready after being signalled) or "TimedOut" (it was still Ready when the deadline
+	// passed, so the signal was delivered and the machine kept running).
+	//
+	// This is the operator-side record of an event that destroys its own local evidence. The node
+	// logs the syscall and then halts, taking the log with it, so without a counter kept over here
+	// a shutdown leaves nothing behind and success is inferred from a machine being dark.
+	//
+	// Counted per attempt, meaning once per node per signal, not once per flow: a wave that
+	// releases six nodes and halts four of them should read as four and two, which is the whole
+	// question worth asking afterwards.
+	HaltAttemptsTotal = promauto.With(metrics.Registry).NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "halt",
+		Name:      "attempts_total",
+		Help:      "Total node halt attempts, by shutdown flow and observed outcome.",
+	}, []string{"shutdownflow", "outcome"})
+
+	// HaltLastVerifiedTimestampSeconds is when this operator last watched this node actually stop,
+	// as a Unix timestamp.
+	//
+	// The load-bearing one. It answers "has this cluster ever proven it can halt this node", months
+	// later, from a single scrape -- which is the question a shutdown operator cannot otherwise
+	// answer without powering a machine off to find out:
+	//
+	//	time() - nutoperator_halt_last_verified_timestamp_seconds > 86400 * 180
+	//
+	// A timestamp rather than a counter so the answer does not depend on a retention window
+	// outliving the last verification. Absence of a series is itself the finding: this node has
+	// never been proven to halt.
+	HaltLastVerifiedTimestampSeconds = promauto.With(metrics.Registry).NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "halt",
+		Name:      "last_verified_timestamp_seconds",
+		Help:      "When this node was last observed to actually halt after being signalled, as a Unix timestamp.",
+	}, []string{"node"})
+
+	// HaltDurationSeconds is the reconstructed interval from signal write to the node going away.
+	//
+	// A gauge with a node label rather than a histogram. A histogram carrying the same label
+	// multiplies series by bucket count for a value observed a handful of times per node per year,
+	// and the interesting query is per-node anyway -- some machines have far more to flush than
+	// others, and an aggregate hides exactly the outlier that sets the reserve. Scrapes retain the
+	// history a histogram would have summarized.
+	//
+	// Coarser than the actuator's own sync(2) timing, and deliberately so: it includes projection,
+	// poll, and detection latency alongside the flush. It is the durable half of the OD-27
+	// handoff-tail evidence. The container log is the precise half, and it may not survive the
+	// machine long enough to be collected.
+	HaltDurationSeconds = promauto.With(metrics.Registry).NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "halt",
+		Name:      "duration_seconds",
+		Help:      "Reconstructed seconds from shutdown-signal write to the node no longer reporting Ready.",
+	}, []string{"node"})
+
 	// AuditSpoolRecordsTotal counts audit records handled by the shutdown-time fallback journal, by
 	// outcome: "spooled" (PostgreSQL refused the write and the journal took it) or "dropped" (the
 	// journal was at its size cap, so the record exists nowhere). Any non-zero rate means PostgreSQL
