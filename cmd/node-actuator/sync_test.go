@@ -34,6 +34,7 @@ func stubSync(t *testing.T, order *[]string) *int {
 	calls := 0
 	previousSync := syncFilesystems
 	previousReboot := rebootPoweroff
+	previousRaise := raiseHaltCapability
 	syncFilesystems = func() {
 		calls++
 		*order = append(*order, "sync")
@@ -42,9 +43,11 @@ func stubSync(t *testing.T, order *[]string) *int {
 		*order = append(*order, "reboot")
 		return nil
 	}
+	raiseHaltCapability = func() error { return nil }
 	t.Cleanup(func() {
 		syncFilesystems = previousSync
 		rebootPoweroff = previousReboot
+		raiseHaltCapability = previousRaise
 	})
 	return &calls
 }
@@ -121,7 +124,9 @@ func TestSyncTimeoutStillHalts(t *testing.T) {
 	var order []string
 	previousSync := syncFilesystems
 	previousReboot := rebootPoweroff
+	previousRaise := raiseHaltCapability
 	previousTimeout := syncTimeout
+	raiseHaltCapability = func() error { return nil }
 	release := make(chan struct{})
 	syncFilesystems = func() {
 		order = append(order, "sync-started")
@@ -135,6 +140,7 @@ func TestSyncTimeoutStillHalts(t *testing.T) {
 	t.Cleanup(func() {
 		syncFilesystems = previousSync
 		rebootPoweroff = previousReboot
+		raiseHaltCapability = previousRaise
 		syncTimeout = previousTimeout
 		close(release)
 	})

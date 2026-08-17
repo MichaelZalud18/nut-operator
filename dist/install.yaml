@@ -75,7 +75,7 @@ spec:
                 properties:
                   actuator:
                     description: |-
-                      actuator is the host-actuation image. Stub mode runs without host access; real host
+                      actuator is the host-actuation image. Simulate mode runs without host access; real host
                       shutdown is rendered only after explicit actuation approval.
                     properties:
                       digest:
@@ -1298,17 +1298,17 @@ spec:
                 description: shutdown configures the handoff signal and actuator behavior.
                 properties:
                   actuatorPolicy:
-                    default: Stub
-                    description: actuatorPolicy chooses disabled, stubbed, or real
-                      systemd host poweroff.
+                    default: Simulate
+                    description: actuatorPolicy chooses no actuator, a simulated one,
+                      or real host power-off.
                     enum:
                     - Disabled
-                    - Stub
-                    - SystemdPoweroff
+                    - Simulate
+                    - PowerOff
                     type: string
                   approvalAnnotation:
                     description: approvalAnnotation must be present on this NodePowerAgent
-                      before SystemdPoweroff is rendered.
+                      before PowerOff is rendered.
                     type: string
                   requireFreshTelemetry:
                     default: true
@@ -1317,8 +1317,11 @@ spec:
                     type: boolean
                   signalPath:
                     default: /run/power-agent/shutdown.json
-                    description: signalPath is the shared in-pod file path written
-                      by upsmon and watched by the actuator.
+                    description: |-
+                      signalPath is the in-pod file path the local upsmon SHUTDOWNCMD writer targets.
+
+                      The actuator does not read it. OD-37 makes the operator's projected Secret the only path with
+                      authority to halt a node, and this one is scaffolding kept for a later authorization model.
                     type: string
                   signalTTL:
                     description: signalTTL rejects stale signal files older than this
@@ -1351,8 +1354,18 @@ spec:
                   hostSync:
                     description: hostSync sets HOSTSYNC.
                     type: string
+                  noCommWarnTime:
+                    description: |-
+                      noCommWarnTime sets NOCOMMWARNTIME: how long upsmon tolerates having no contact with any
+                      monitored UPS before it starts complaining. Defaults to 5m (F-68).
+                    type: string
                   pollFrequency:
                     description: pollFrequency sets POLLFREQ.
+                    type: string
+                  replaceBatteryWarnTime:
+                    description: |-
+                      replaceBatteryWarnTime sets RBWARNTIME: how often upsmon repeats a replace-battery warning.
+                      Defaults to 12h (F-68).
                     type: string
                 type: object
             required:
@@ -1535,6 +1548,19 @@ spec:
                   observed ready agent pod.
                 format: int32
                 type: integer
+              uncoveredNodes:
+                description: |-
+                  uncoveredNodes names nodes the power inventory describes that this agent's spec.nodeSelector
+                  does not match (F-74).
+
+                  Every other count here is computed over nodes the selector already matched, which answers "is
+                  the pod I scheduled healthy" and cannot answer "is there a node I was supposed to cover and
+                  did not". A node the inventory considers in scope but the selector excludes is not degraded
+                  and not unavailable — it is absent from every count, and the agent reports fully ready.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
             type: object
         required:
         - spec
@@ -3003,6 +3029,13 @@ spec:
                   description: ServiceEndpointStatus reports a reachable endpoint
                     produced by a controller.
                   properties:
+                    clusterIP:
+                      description: |-
+                        clusterIP is the Service's allocated cluster IP, published so consumers can address the
+                        Service without cluster DNS. CoreDNS is an ordinary workload inside a shutdown flow's own
+                        path, and a name that stops resolving mid-flow takes every agent's reconnect with it (F-71).
+                        Empty for a headless Service or before allocation.
+                      type: string
                     dnsName:
                       description: dnsName is the in-cluster DNS name.
                       type: string
@@ -3096,8 +3129,11 @@ spec:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: PDUCapabilityProfile is the Schema for the pducapabilityprofiles
-          API
+        description: |-
+          PDUCapabilityProfile declares capability metadata for NUT-managed PDUs.
+          In v1alpha1 it is scaffolding only: profiles validate and publish catalog
+          metadata, but no PDU inventory entity, driver allowlist entry, render path, or
+          actuation path consumes them.
         properties:
           apiVersion:
             description: |-
@@ -3873,6 +3909,50 @@ spec:
           spec:
             description: spec defines the desired state of PowerManagementCluster
             properties:
+              hooks:
+                description: hooks configures global policy for ShutdownHook delivery.
+                properties:
+                  allowedEndpoints:
+                    description: |-
+                      allowedEndpoints is the HTTP endpoint allowlist for ShutdownHook invocation.
+                      HTTP hooks that do not match an entry are refused before delivery.
+                    items:
+                      description: PowerHookEndpointAllowlistEntry allows one HTTP
+                        hook endpoint shape.
+                      properties:
+                        host:
+                          description: host is the exact DNS name or IP literal allowed
+                            for hook delivery.
+                          minLength: 1
+                          type: string
+                        pathPrefix:
+                          description: pathPrefix limits delivery to paths under this
+                            prefix. Empty allows any path.
+                          type: string
+                        port:
+                          description: port is the allowed TCP port. Empty means the
+                            scheme default port.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        scheme:
+                          description: scheme is the allowed URL scheme.
+                          enum:
+                          - http
+                          - https
+                          type: string
+                      required:
+                      - host
+                      - scheme
+                      type: object
+                    type: array
+                  defaultTimeout:
+                    default: 10s
+                    description: defaultTimeout is used when a hook invocation does
+                      not declare its own timeout.
+                    type: string
+                type: object
               images:
                 description: images provides default images for generated operands.
                 properties:
@@ -4594,7 +4674,7 @@ spec:
                       - CordonNodes
                       - DrainNodes
                       - ScaleWorkload
-                      - RunWorkflow
+                      - RunHook
                       - AgentShutdown
                       type: string
                     after:
@@ -4613,6 +4693,22 @@ spec:
                       description: description explains the operator-facing purpose
                         of the group.
                       type: string
+                    hookRef:
+                      description: hookRef references the ShutdownHook invoked by
+                        RunHook.
+                      properties:
+                        name:
+                          description: name is the referenced object's metadata.name.
+                          minLength: 1
+                          type: string
+                        namespace:
+                          description: namespace is the referenced object's namespace.
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - namespace
+                      type: object
                     name:
                       description: name is unique within the flow and is referenced
                         by dependency fields.
@@ -4623,12 +4719,6 @@ spec:
                         type: string
                       description: params holds action-specific scalar parameters.
                       type: object
-                    phase:
-                      description: |-
-                        phase is a numeric fallback ordering hint. Lower phases are compiled earlier.
-                        Explicit dependencies still take precedence.
-                      format: int32
-                      type: integer
                     requires:
                       description: |-
                         requires names groups that must remain available while this group shuts down.
@@ -4760,6 +4850,41 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        nodeSelectorRequirements:
+                          description: |-
+                            nodeSelectorRequirements further constrain Nodes for node-oriented steps
+                            using Kubernetes node selector operators, including Gt and Lt.
+                            Requirements are ANDed with nodeSelector.
+                          items:
+                            description: |-
+                              A node selector requirement is a selector that contains values, a key, and an operator
+                              that relates the key and values.
+                            properties:
+                              key:
+                                description: The label key that the selector applies
+                                  to.
+                                type: string
+                              operator:
+                                description: |-
+                                  Represents a key's relationship to a set of values.
+                                  Valid operators are In, NotIn, Exists, DoesNotExist. Gt, and Lt.
+                                type: string
+                              values:
+                                description: |-
+                                  An array of string values. If the operator is In or NotIn,
+                                  the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                  the values array must be empty. If the operator is Gt or Lt, the values
+                                  array must have a single element, which will be interpreted as an integer.
+                                  This array is replaced during a strategic merge patch.
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                            required:
+                            - key
+                            - operator
+                            type: object
+                          type: array
                         workloadRefs:
                           description: workloadRefs selects specific workloads.
                           items:
@@ -4875,6 +5000,21 @@ spec:
                 - DryRun
                 - Enforce
                 type: string
+              rehearsal:
+                description: |-
+                  rehearsal controls how explicitly requested rehearsal executions contribute
+                  to observed-duration estimates. Rehearsals are requested by changing the
+                  power.zalud.io/rehearsal-request annotation to a new non-empty token.
+                properties:
+                  includeInEstimates:
+                    default: true
+                    description: |-
+                      includeInEstimates controls whether non-dry-run rehearsal executions are
+                      folded into EX-32 observed-duration estimates. Defaults true: a rehearsal is
+                      real work against real targets, so its durations are evidence unless the
+                      flow author opts out.
+                    type: boolean
+                type: object
               safety:
                 description: safety defines global safety gates for this flow.
                 properties:
@@ -4922,6 +5062,22 @@ spec:
                     duration:
                       description: duration is used by Wait steps.
                       type: string
+                    hookRef:
+                      description: hookRef references the ShutdownHook invoked by
+                        RunHook.
+                      properties:
+                        name:
+                          description: name is the referenced object's metadata.name.
+                          minLength: 1
+                          type: string
+                        namespace:
+                          description: namespace is the referenced object's namespace.
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - namespace
+                      type: object
                     id:
                       description: id is unique within the flow.
                       minLength: 1
@@ -5050,6 +5206,41 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        nodeSelectorRequirements:
+                          description: |-
+                            nodeSelectorRequirements further constrain Nodes for node-oriented steps
+                            using Kubernetes node selector operators, including Gt and Lt.
+                            Requirements are ANDed with nodeSelector.
+                          items:
+                            description: |-
+                              A node selector requirement is a selector that contains values, a key, and an operator
+                              that relates the key and values.
+                            properties:
+                              key:
+                                description: The label key that the selector applies
+                                  to.
+                                type: string
+                              operator:
+                                description: |-
+                                  Represents a key's relationship to a set of values.
+                                  Valid operators are In, NotIn, Exists, DoesNotExist. Gt, and Lt.
+                                type: string
+                              values:
+                                description: |-
+                                  An array of string values. If the operator is In or NotIn,
+                                  the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                  the values array must be empty. If the operator is Gt or Lt, the values
+                                  array must have a single element, which will be interpreted as an integer.
+                                  This array is replaced during a strategic merge patch.
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                            required:
+                            - key
+                            - operator
+                            type: object
+                          type: array
                         workloadRefs:
                           description: workloadRefs selects specific workloads.
                           items:
@@ -5138,7 +5329,7 @@ spec:
                       - CordonNodes
                       - DrainNodes
                       - ScaleWorkload
-                      - RunWorkflow
+                      - RunHook
                       - AgentShutdown
                       type: string
                   required:
@@ -5146,6 +5337,16 @@ spec:
                   - type
                   type: object
                 type: array
+              tierOverrunPolicy:
+                default: Wait
+                description: |-
+                  tierOverrunPolicy controls what the executor does when a tier reaches its
+                  compiled duration while a lower tier is waiting behind it.
+                enum:
+                - Wait
+                - Overlap
+                - Preempt
+                type: string
               triggers:
                 description: triggers define when this flow becomes eligible.
                 items:
@@ -5310,7 +5511,7 @@ spec:
                       - CordonNodes
                       - DrainNodes
                       - ScaleWorkload
-                      - RunWorkflow
+                      - RunHook
                       - AgentShutdown
                       type: string
                   required:
@@ -5341,11 +5542,6 @@ spec:
                       type: array
                     index:
                       description: index is the zero-based wave order.
-                      format: int32
-                      type: integer
-                    phase:
-                      description: phase is the phase hint shared by this wave, when
-                        one was present.
                       format: int32
                       type: integer
                     shutdownTier:
@@ -5555,6 +5751,11 @@ spec:
                     description: reason explains why the execution was started or
                       skipped.
                     type: string
+                  rehearsal:
+                    description: |-
+                      rehearsal is true when this execution was explicitly requested as a rehearsal
+                      rather than started by an eligible power trigger.
+                    type: boolean
                   selectedUPSDevices:
                     description: selectedUPSDevices is the sorted union of UPS devices
                       that made the trigger eligible.
@@ -5566,6 +5767,63 @@ spec:
                       began.
                     format: date-time
                     type: string
+                  tierOverruns:
+                    description: |-
+                      tierOverruns records tier budget overruns observed during this execution.
+                      The values are facts: which tier overran, the budget it had, how long it
+                      actually took, and what configured policy action was taken.
+                    items:
+                      description: |-
+                        ShutdownTierOverrunStatus records one tier transition whose elapsed time
+                        exceeded the tier budget derived from the compiled plan.
+                      properties:
+                        action:
+                          description: action names what the executor did because
+                            of that policy.
+                          type: string
+                        actualSeconds:
+                          description: actualSeconds is how long the tier actually
+                            ran, rounded up to a whole second.
+                          format: int64
+                          type: integer
+                        declaredSeconds:
+                          description: |-
+                            declaredSeconds is the tier's uncompressed declared duration, rounded up to
+                            a whole second.
+                          format: int64
+                          type: integer
+                        effectiveSeconds:
+                          description: |-
+                            effectiveSeconds is the tier budget after adaptive timing compression,
+                            rounded up to a whole second.
+                          format: int64
+                          type: integer
+                        overrunSeconds:
+                          description: overrunSeconds is actualSeconds minus effectiveSeconds,
+                            rounded up to a whole second.
+                          format: int64
+                          type: integer
+                        policy:
+                          description: policy is the configured spec.tierOverrunPolicy
+                            used for this overrun.
+                          enum:
+                          - Wait
+                          - Overlap
+                          - Preempt
+                          type: string
+                        shutdownTier:
+                          description: shutdownTier is the tier that overran.
+                          format: int32
+                          type: integer
+                        waveIndex:
+                          description: waveIndex is the compiled wave after which
+                            the lower tier became due.
+                          format: int32
+                          type: integer
+                      required:
+                      - waveIndex
+                      type: object
+                    type: array
                   triggerActive:
                     description: triggerActive is true while the trigger episode represented
                       by deduplicationKey remains eligible.
@@ -5772,11 +6030,6 @@ spec:
                             label:
                               description: label is the human-readable vertex label.
                               type: string
-                            phase:
-                              description: phase is the shutdown phase hint, when
-                                present.
-                              format: int32
-                              type: integer
                             shutdownTier:
                               description: shutdownTier is the effective numbered
                                 shutdown tier, when present.
@@ -5791,6 +6044,45 @@ spec:
                           type: object
                         type: array
                     type: object
+                  powerDomains:
+                    description: powerDomains are the resolver-derived power-domain
+                      closures available to subscribers.
+                    items:
+                      description: PublishedPowerDomainStatus is one resolver-derived
+                        power-domain closure.
+                      properties:
+                        infrastructure:
+                          description: infrastructure are non-node, non-UPS entities
+                            in the derived feeds closure.
+                          items:
+                            type: string
+                          type: array
+                        members:
+                          description: members are all inventory entities in the derived
+                            feeds closure.
+                          items:
+                            type: string
+                          type: array
+                        name:
+                          description: name is the domain label declared on one or
+                            more UPS roots.
+                          type: string
+                        nodes:
+                          description: nodes are Kubernetes nodes in the derived feeds
+                            closure.
+                          items:
+                            type: string
+                          type: array
+                        upsDevices:
+                          description: upsDevices are the UPSDevice roots that feed
+                            this domain.
+                          items:
+                            type: string
+                          type: array
+                      required:
+                      - name
+                      type: object
+                    type: array
                   startupWaves:
                     description: startupWaves is the advisory reverse-order projection
                       for subscriber-owned recovery.
@@ -5814,11 +6106,6 @@ spec:
                           type: array
                         index:
                           description: index is the zero-based wave order.
-                          format: int32
-                          type: integer
-                        phase:
-                          description: phase is the phase hint shared by this wave,
-                            when one was present.
                           format: int32
                           type: integer
                         shutdownTier:
@@ -5983,6 +6270,390 @@ spec:
                   - upsDevice
                   type: object
                 type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: shutdownhooks.power.zalud.io
+spec:
+  group: power.zalud.io
+  names:
+    kind: ShutdownHook
+    listKind: ShutdownHookList
+    plural: shutdownhooks
+    singular: shutdownhook
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ShutdownHook is the Schema for the shutdownhooks API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of ShutdownHook
+            properties:
+              dryRun:
+                description: |-
+                  dryRun is an optional author-declared rehearsal invocation. If omitted,
+                  dry-run records the request that would have been sent without contacting
+                  the target system.
+                properties:
+                  http:
+                    description: http declares the CloudEvents-over-HTTP invocation.
+                    properties:
+                      cloudEventSource:
+                        description: |-
+                          cloudEventSource overrides the CloudEvents source. Empty uses the
+                          ShutdownFlow name at execution time.
+                        type: string
+                      cloudEventType:
+                        description: cloudEventType overrides the CloudEvents type.
+                          Empty uses the operator default.
+                        type: string
+                      data:
+                        additionalProperties:
+                          type: string
+                        description: data adds static string fields under the CloudEvents
+                          data.extensions object.
+                        type: object
+                      headers:
+                        description: |-
+                          headers are non-secret HTTP headers. Sensitive headers such as
+                          Authorization must be supplied through secretHeaders.
+                        items:
+                          description: ShutdownHookHTTPHeader is one non-secret HTTP
+                            header.
+                          properties:
+                            name:
+                              description: name is the HTTP header name.
+                              minLength: 1
+                              type: string
+                            value:
+                              description: value is the literal header value.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      method:
+                        default: POST
+                        description: |-
+                          method is the HTTP method. POST is the only supported method for v1alpha1
+                          hooks so receivers get one predictable contract.
+                        enum:
+                        - POST
+                        type: string
+                      secretHeaders:
+                        description: secretHeaders are HTTP headers whose values are
+                          read from Secrets.
+                        items:
+                          description: ShutdownHookHTTPSecretHeader is one HTTP header
+                            sourced from a Secret key.
+                          properties:
+                            name:
+                              description: name is the HTTP header name.
+                              minLength: 1
+                              type: string
+                            valueFrom:
+                              description: valueFrom identifies the Secret key containing
+                                the header value.
+                              properties:
+                                key:
+                                  description: key is the data key inside the Secret.
+                                  minLength: 1
+                                  type: string
+                                name:
+                                  description: name is the Secret name.
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: namespace is the Secret namespace.
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              - namespace
+                              type: object
+                          required:
+                          - name
+                          - valueFrom
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      url:
+                        description: url is the endpoint that receives the CloudEvents-shaped
+                          JSON body.
+                        minLength: 1
+                        type: string
+                    required:
+                    - url
+                    type: object
+                  kubernetesObject:
+                    description: |-
+                      kubernetesObject declares a raw Kubernetes object to create. This is a
+                      generic transport, not an Argo-specific workflow path; the install must
+                      grant RBAC for the selected GVK before using it.
+                    properties:
+                      object:
+                        description: |-
+                          object is the Kubernetes object body to create. The object must carry
+                          apiVersion, kind, metadata, and either metadata.name or metadata.generateName.
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    required:
+                    - object
+                    type: object
+                  timeout:
+                    default: 10s
+                    description: |-
+                      timeout limits this hook delivery attempt. The executor may compress the
+                      effective timeout when battery runtime forces faster wave timing.
+                    type: string
+                  transport:
+                    default: HTTP
+                    description: transport selects how the hook is delivered.
+                    enum:
+                    - HTTP
+                    - KubernetesObject
+                    type: string
+                type: object
+              failurePolicy:
+                default: MarkDegraded
+                description: |-
+                  failurePolicy controls how a failed hook is surfaced. Hooks are advisory:
+                  they never hold a shutdown wave and never engage abortPolicy.
+                enum:
+                - MarkDegraded
+                type: string
+              invocation:
+                description: invocation is the request sent during an enforce-mode
+                  shutdown.
+                properties:
+                  http:
+                    description: http declares the CloudEvents-over-HTTP invocation.
+                    properties:
+                      cloudEventSource:
+                        description: |-
+                          cloudEventSource overrides the CloudEvents source. Empty uses the
+                          ShutdownFlow name at execution time.
+                        type: string
+                      cloudEventType:
+                        description: cloudEventType overrides the CloudEvents type.
+                          Empty uses the operator default.
+                        type: string
+                      data:
+                        additionalProperties:
+                          type: string
+                        description: data adds static string fields under the CloudEvents
+                          data.extensions object.
+                        type: object
+                      headers:
+                        description: |-
+                          headers are non-secret HTTP headers. Sensitive headers such as
+                          Authorization must be supplied through secretHeaders.
+                        items:
+                          description: ShutdownHookHTTPHeader is one non-secret HTTP
+                            header.
+                          properties:
+                            name:
+                              description: name is the HTTP header name.
+                              minLength: 1
+                              type: string
+                            value:
+                              description: value is the literal header value.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      method:
+                        default: POST
+                        description: |-
+                          method is the HTTP method. POST is the only supported method for v1alpha1
+                          hooks so receivers get one predictable contract.
+                        enum:
+                        - POST
+                        type: string
+                      secretHeaders:
+                        description: secretHeaders are HTTP headers whose values are
+                          read from Secrets.
+                        items:
+                          description: ShutdownHookHTTPSecretHeader is one HTTP header
+                            sourced from a Secret key.
+                          properties:
+                            name:
+                              description: name is the HTTP header name.
+                              minLength: 1
+                              type: string
+                            valueFrom:
+                              description: valueFrom identifies the Secret key containing
+                                the header value.
+                              properties:
+                                key:
+                                  description: key is the data key inside the Secret.
+                                  minLength: 1
+                                  type: string
+                                name:
+                                  description: name is the Secret name.
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: namespace is the Secret namespace.
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              - namespace
+                              type: object
+                          required:
+                          - name
+                          - valueFrom
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      url:
+                        description: url is the endpoint that receives the CloudEvents-shaped
+                          JSON body.
+                        minLength: 1
+                        type: string
+                    required:
+                    - url
+                    type: object
+                  kubernetesObject:
+                    description: |-
+                      kubernetesObject declares a raw Kubernetes object to create. This is a
+                      generic transport, not an Argo-specific workflow path; the install must
+                      grant RBAC for the selected GVK before using it.
+                    properties:
+                      object:
+                        description: |-
+                          object is the Kubernetes object body to create. The object must carry
+                          apiVersion, kind, metadata, and either metadata.name or metadata.generateName.
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    required:
+                    - object
+                    type: object
+                  timeout:
+                    default: 10s
+                    description: |-
+                      timeout limits this hook delivery attempt. The executor may compress the
+                      effective timeout when battery runtime forces faster wave timing.
+                    type: string
+                  transport:
+                    default: HTTP
+                    description: transport selects how the hook is delivered.
+                    enum:
+                    - HTTP
+                    - KubernetesObject
+                    type: string
+                type: object
+            required:
+            - invocation
+            type: object
+          status:
+            description: status defines the observed state of ShutdownHook
+            properties:
+              conditions:
+                description: conditions represent the current state of the ShutdownHook
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
             type: object
         required:
         - spec
@@ -6551,10 +7222,10 @@ spec:
                 type: string
               driver:
                 description: |-
-                  driver is the Network UPS Tools driver name for a network-capable UPS driver,
-                  such as snmp-ups, netxml-ups, powerman-pdu, apcupsd-ups, or dummy-ups for
-                  tests. It is required unless upstreamNUT is set. Local USB and serial drivers
-                  are intentionally unsupported by this API.
+                  driver is the Network UPS Tools driver name for a network-capable UPS driver:
+                  snmp-ups, netxml-ups, apcupsd-ups, or dummy-ups for tests. It is required
+                  unless upstreamNUT is set. Local USB and serial drivers are intentionally
+                  unsupported by this API.
                 type: string
               driverOptions:
                 additionalProperties:
@@ -6750,6 +7421,61 @@ spec:
                   value.
                 format: int32
                 type: integer
+              capability:
+                description: capability reports the capability profile this device
+                  resolves to.
+                properties:
+                  actuationBehaviors:
+                    description: |-
+                      actuationBehaviors names the actuation behaviors the matched profile declares as verified for
+                      this device. Empty is the normal and deliberate state: profiles declare nothing until the
+                      behavior has been verified against real firmware (F-27), so an empty list means "not
+                      verified", never "not capable".
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  message:
+                    description: message explains reason in one sentence.
+                    type: string
+                  profileHash:
+                    description: |-
+                      profileHash identifies the exact profile content the match was computed against, so a
+                      resolution can be tied to a specific catalog revision.
+                    type: string
+                  profileID:
+                    description: profileID is the capability profile this device currently
+                      resolves to.
+                    type: string
+                  profileSource:
+                    description: profileSource records whether the profile came from
+                      the bundled catalog or a CRD.
+                    type: string
+                  profileVersion:
+                    description: profileVersion is that profile's semantic version.
+                    type: string
+                  quirks:
+                    description: quirks names the profile quirks in force for this
+                      device after firmware scoping.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  reason:
+                    description: |-
+                      reason carries the machine-readable reason the resolution is not a clean product match, or
+                      the reason it could not be computed at all. Empty on a clean match.
+                    type: string
+                  tier:
+                    description: |-
+                      tier is the precedence tier that produced the match, from an exact model and firmware match
+                      down to the unidentified floor.
+                    type: string
+                  unidentified:
+                    description: unidentified is true when no profile matched this
+                      device and the universal floor was used.
+                    type: boolean
+                type: object
               conditions:
                 description: conditions represent the current state of the UPSDevice
                   resource.
@@ -6973,15 +7699,6 @@ rules:
   - update
   - watch
 - apiGroups:
-  - argoproj.io
-  resources:
-  - workflows
-  verbs:
-  - create
-  - get
-  - list
-  - watch
-- apiGroups:
   - networking.k8s.io
   resources:
   - networkpolicies
@@ -7067,6 +7784,14 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - shutdownhooks
+  verbs:
+  - get
+  - list
+  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -7639,6 +8364,84 @@ rules:
   - power.zalud.io
   resources:
   - shutdownflows/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: nut-operator
+  name: nut-operator-shutdownhook-admin-role
+rules:
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - shutdownhooks
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - shutdownhooks/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: nut-operator
+  name: nut-operator-shutdownhook-editor-role
+rules:
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - shutdownhooks
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - shutdownhooks/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: nut-operator
+  name: nut-operator-shutdownhook-viewer-role
+rules:
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - shutdownhooks
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - power.zalud.io
+  resources:
+  - shutdownhooks/status
   verbs:
   - get
 ---
@@ -8311,6 +9114,26 @@ webhooks:
     service:
       name: nut-operator-webhook-service
       namespace: nut-operator-system
+      path: /mutate-power-zalud-io-v1alpha1-shutdownhook
+  failurePolicy: Fail
+  name: mshutdownhook-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - shutdownhooks
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: nut-operator-webhook-service
+      namespace: nut-operator-system
       path: /mutate-power-zalud-io-v1alpha1-upscapabilityprofile
   failurePolicy: Fail
   name: mupscapabilityprofile-v1alpha1.kb.io
@@ -8492,6 +9315,26 @@ webhooks:
     - UPDATE
     resources:
     - shutdownflows
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: nut-operator-webhook-service
+      namespace: nut-operator-system
+      path: /validate-power-zalud-io-v1alpha1-shutdownhook
+  failurePolicy: Fail
+  name: vshutdownhook-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - power.zalud.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - shutdownhooks
   sideEffects: None
 - admissionReviewVersions:
   - v1

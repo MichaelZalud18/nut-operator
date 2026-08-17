@@ -114,6 +114,38 @@ probes that can actually fail, which is the property `--version`-style probes la
   so the failure reaches `status.nodeStatuses` instead of a container log nobody reads during an
   outage.
 
+**NA-9 · The halt path narrates itself, link by link.** A node that stays up after a shutdown signal
+is the same observation whether the operator never wrote the Secret, kubelet never projected it, the
+actuator rejected the payload, the capability was missing, or `reboot(2)` returned an error — and the
+last of those is indistinguishable from success when the container is not really in the host PID
+namespace. So each link logs itself as `halt gate=<name> result=pass|fail`:
+`CapabilityPermitted` at arm time, `SignalChannel` for the projection, then `SignalAccepted`,
+`FlowBinding`, `ModeAuthorized`, `Sync`, `CapabilityEffective`, and `SyscallIssued`.
+
+This is not a log level, and there is nothing to switch on. Global verbosity would bury the trace
+under the polling loop, which deliberately says nothing on a normal tick — `SignalMissing` is the
+common case and logging it would be a line every five seconds forever. The gates are scoped to the
+path that halts the machine, and that path runs at most once in a container's life, so the trace is a
+handful of lines, once, ever. A switch would also have to be thrown at the one moment nobody can
+reach the node to throw it.
+
+Two gates are written where they can still be read rather than where they are cheapest.
+`SignalChannel` reports on transition, including its first evaluation, because it is the only link
+that can be broken for months without anything asking it to do something. `Sync` reports when the
+flush *starts*, not only when it finishes, because a trace that records only completed flushes cannot
+distinguish a sync that hung from a sync that was never reached — and those point at different halves
+of the system. `SyscallIssued` is the last line the process writes on a working path; its presence
+with nothing after it and the node still up is the host-PID-namespace finding.
+
+**The record of whether the node stopped is kept by the operator (`OD-27`).** The actuator times its
+own flush and logs the syscall, but that log lives on a machine which halts immediately afterwards,
+so whether a collector ships it first is a race — and one that loses precisely in the slow-sync case
+the measurement exists to capture. The actuator cannot close that gap and must not try: it holds no
+API token by design (`NA-2`) and that stays. Instead the operator reconstructs the halt from two
+facts it can see on its own — it wrote the signal, and it watched the `Node` stop reporting — and
+publishes them as `nutoperator_halt_*`. Coarser, and it survives the node. See
+[metrics.md](../metrics.md).
+
 **Monitoring configuration does not change during an episode (`F-92`).** DaemonSet spec writes are
 deferred while any owning flow is mid-episode and requeued until it settles, so a configuration edit
 cannot roll the fleet's monitoring during an outage. A missing DaemonSet is still created — deferral

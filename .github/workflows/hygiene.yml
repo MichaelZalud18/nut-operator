@@ -45,6 +45,46 @@ jobs:
       - name: Validate samples and examples
         run: make validate-samples
 
+  installer-freshness:
+    permissions:
+      contents: read
+    name: Check the committed installers match the manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      # dist/install.yaml is the documented one-command install, and it is a build artifact that
+      # happens to be committed -- which means it can silently fall behind the manifests it is built
+      # from. It did: the ShutdownHook CRD and its webhooks were added and the bundle was never
+      # rebuilt, so `kubectl apply -f dist/install.yaml` produced a cluster where the RunHook action
+      # had no CRD to read. Nothing failed at build, test, or lint time, because nothing compared the
+      # committed bytes to what the generator would emit.
+      #
+      # The image tag is pinned to the committed value so this checks staleness of the manifests and
+      # not of the tag, which build-installer rewrites as a side effect.
+      - name: Rebuild the installers and diff them against the tree
+        run: |
+          set -euo pipefail
+          IMG="$(grep -m1 -oE 'ghcr\.io/[^[:space:]]+' dist/install.yaml)"
+          echo "Rebuilding installers with IMG=$IMG"
+          make build-installer build-installer-byo-cert IMG="$IMG"
+          if ! git diff --quiet -- dist/; then
+            echo "::error::dist/ is stale. Run: make build-installer build-installer-byo-cert IMG=$IMG"
+            git diff --stat -- dist/
+            git diff -- dist/ | head -200
+            exit 1
+          fi
+          echo "Committed installers match the generated manifests."
+
   private-ip-scan:
     permissions:
       contents: read

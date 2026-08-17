@@ -10,6 +10,10 @@ func verifySysBootAvailable() error {
 
 var syncFilesystems = func() {}
 
+var raiseHaltCapability = func() error {
+	return fmt.Errorf("reboot-syscall poweroff is supported only on linux")
+}
+
 var rebootPoweroff = func() error {
 	return fmt.Errorf("reboot-syscall poweroff is supported only on linux")
 }

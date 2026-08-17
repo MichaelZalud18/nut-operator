@@ -20,12 +20,19 @@ import (
 func stubRebootPoweroff(t *testing.T) *int {
 	t.Helper()
 	calls := 0
-	previous := rebootPoweroff
+	previousReboot := rebootPoweroff
+	// The raise is stubbed alongside the syscall. Unprivileged, the real one fails, and a test that
+	// left it in place would be asserting on the capability check rather than on the halt path.
+	previousRaise := raiseHaltCapability
 	rebootPoweroff = func() error {
 		calls++
 		return nil
 	}
-	t.Cleanup(func() { rebootPoweroff = previous })
+	raiseHaltCapability = func() error { return nil }
+	t.Cleanup(func() {
+		rebootPoweroff = previousReboot
+		raiseHaltCapability = previousRaise
+	})
 	return &calls
 }
 

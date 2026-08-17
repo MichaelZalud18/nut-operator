@@ -103,6 +103,17 @@ kubectl patch secret "$secret" -n "$NAMESPACE" --type merge \
 
 step "signal written. The operator keeps a signal naming an unknown flow until its TTL expires,"
 step "so it will not be revoked mid-test and will be cleaned up after ~${TTL_SECONDS}s."
+
+# Follow the actuator's gate trace while the node is still able to send it. Each link on the halt
+# path logs itself, and this container is about to power off with its own log -- so the lines are
+# streamed now rather than fetched afterwards from a machine that is gone. The last one is written
+# immediately before reboot(2) and cannot be written after it.
+step "streaming the halt gate trace from the actuator on $NODE"
+gate_log="$(mktemp)"
+kubectl logs -n "$NAMESPACE" "$pod" -c node-actuator --tail=5 --follow >"$gate_log" 2>/dev/null &
+gate_pid=$!
+trap 'kill "$gate_pid" 2>/dev/null || true; rm -f "$gate_log"' EXIT
+
 step "watching $NODE (expect NotReady, then gone)"
 
 deadline=$(( $(date +%s) + TTL_SECONDS + 120 ))
@@ -110,6 +121,10 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   status="$(kubectl get node "$NODE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "gone")"
   step "  node Ready=$status"
   if [ "$status" != "True" ]; then
+    kill "$gate_pid" 2>/dev/null || true
+    echo
+    echo "  gate trace captured from $NODE before it went away:"
+    grep 'halt gate=' "$gate_log" || echo "  (none captured -- the node halted before its log was streamed)"
     cat <<'DONE'
 
   The node stopped reporting Ready. That is the expected outcome and it is the
@@ -119,10 +134,23 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   Confirm the machine is actually powered off, not merely unreachable, before
   recording this as a pass. Then bring it back out of band and uncordon it.
 
+  This run leaves no operator-side metric. The signal above was hand-delivered
+  with kubectl rather than written by the executor, deliberately, so that
+  planner correctness cannot fail this test -- and the halt metrics start their
+  clock in the executor. Real executions are recorded in
+  nutoperator_halt_attempts_total, and per node in
+  nutoperator_halt_last_verified_timestamp_seconds and
+  nutoperator_halt_duration_seconds.
+
 DONE
     exit 0
   fi
   sleep 10
 done
 
-fail "$NODE still reports Ready after the signal TTL. The actuator did not halt it. Check the actuator container log on $NODE for which gate it stopped at -- capability check, permitted-to-effective raise, or the syscall itself."
+kill "$gate_pid" 2>/dev/null || true
+echo
+echo "  gate trace from the actuator on $NODE:"
+grep 'halt gate=' "$gate_log" || echo "  (no gate lines at all -- the actuator never reached the halt path)"
+echo
+fail "$NODE still reports Ready after the signal TTL. The actuator did not halt it. The last passing gate above is the link that held; the one after it is what broke. No gate lines at all means the signal never reached the actuator, so check SignalChannel in the container log directly."

@@ -131,6 +131,10 @@ rehearsals or recorded request summaries, and hook failures mark the flow degrad
 waves or engaging `abortPolicy`. `OD-14`
 partial-domain scope is compiled in `internal/planner`: domain- or UPS-scoped triggers prune only
 groups proved wholly outside affected domains, with ambiguous and mixed-domain groups retained.
+`spec.groups[].phase` is removed. Ordering is tiers plus `requires`/`before`/`after` and nothing
+else, and a wave now holds every group whose dependencies are satisfied — the property the field
+silently broke, pinned by a compiler test that also asserts concurrent groups cost the longest
+timeout rather than the sum.
 
 Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-33`, `OD-4`,
 `OD-11`, `OD-12`, `OD-14`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `OD-33`, `OD-34`, `SB-15`,
@@ -142,9 +146,9 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
   what is left to settle is the 20% runtime reserve (it stands in for a handoff tail nobody has
   timed) and the 10% minimum compression (the point at which the plan is declared not to fit).
   Measured `sync(2)` duration on the halt path is now direct evidence for that tail — one input, not
-  a closure: confirming the reserve still needs a real outage. The actuator's own measurement is
-  precise but dies with the node; the durable version is the operator-side reconstruction tracked
-  under Outputs & Publishing.
+  a closure: confirming the reserve still needs a real outage. Both halves of that evidence now
+  exist: the actuator's own precise measurement, which dies with the node, and the operator-side
+  `nutoperator_halt_duration_seconds` reconstruction, which is coarser and survives it.
 - Feed node metrics into the estimates alongside execution history — draw and capacity readings
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
@@ -154,10 +158,6 @@ Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`
   node, and nothing currently warns. Surfaced by the loose simulation scenarios, where a missing
   edge between a drain and its own nodes' shutdown is silent — see
   `docs/examples/simulation/homelab/`.
-- Remove `spec.groups[].phase`, pending a decision. It arrived with the initial scaffold, was never
-  designed, and does not behave as its description claims: a wave admits only groups whose phase
-  values match, so independent same-tier groups are silently serialized. Ordering is tiers plus
-  `before`/`after`. Cheap to remove in `v1alpha1`, breaking after release.
 
 ---
 
@@ -240,18 +240,21 @@ and `skipSync` cannot reach that case — the executor decides it before the syn
 halts dirty beats a node that never halts, and the cut-short flush is logged as the mount evidence
 it is.
 
+Every link on the halt path logs itself as `halt gate=<name> result=pass|fail` (`NA-9`), always on
+rather than behind a switch, because the path runs at most once per container and a switch would have
+to be thrown when nobody can reach the node. `make verify-actuation` streams the trace while the node
+can still send it and prints it on both outcomes, so a failed run names the link that broke instead
+of reporting a machine that is either dark or not.
+
 Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-60`, `F-61`–`F-65`,
-`F-66`, `F-67`–`F-71`, `F-72`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`–`F-92`, `OD-37`. `F-89` declined — the signal Secret
+`F-66`, `F-67`–`F-71`, `F-72`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`–`F-92`, `NA-9`, `OD-37`. `F-89` declined — the signal Secret
 mounts whole on every node, but the payload carries no credentials and the node-name check holds it
 to exposure rather than actuation; recorded in
 [node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md).
 
 #### Open Work
 
-- Verbose per-gate diagnostics for the verification path: signal written, projection observed,
-  signal read, validation passed, capability check passed, permitted→effective raised, sync started,
-  sync completed with duration, syscall issued. Scoped to this path, not a global log level — the
-  value of the run is knowing which link broke, and there is one attempt per run.
+None.
 
 ---
 
@@ -272,28 +275,25 @@ durable history. Kubernetes-first interface only — CRDs, status, Events, logs,
 no bundled broker. Metrics now cover telemetry polls, capability-match attempts, inventory compiler
 counts, domain counts, orphan nodes, and unmodeled communication paths.
 
+Halt verification is recorded operator-side in `internal/haltwatch` and the `nodehalt` reconciler,
+because the node cannot record it: the actuator logs its own syscall and then halts with the log.
+Both endpoints are things the operator sees on its own — the executor's signal write starts the
+clock, a `Node` that stops reporting `Ready` stops it. Published as
+`nutoperator_halt_attempts_total{shutdownflow,outcome}` plus per-node
+`nutoperator_halt_last_verified_timestamp_seconds` and `nutoperator_halt_duration_seconds`. Only an
+observed halt writes the per-node evidence, so a failed attempt cannot turn "proven to halt" into
+"asked to halt", and the reconstruction takes the earlier of the `Ready` condition's heartbeat and
+transition times rather than the transition alone, which would charge every node the control plane's
+node-monitor grace period. The `Node` watch costs nothing in steady state: with no signal outstanding
+its predicate drops every event before it becomes a reconcile. Full treatment in
+[metrics.md](metrics.md).
+
 Closed: `PL-45`–`PL-48`, `OD-1`, `OD-5`, `F-3`, `F-6`.
 
 #### Open Work
 
 - Publish communication-ordering artifacts once the planner consumes `carries` ordering (see Planning
   & Execution Logic).
-- Verification and halt-path metrics, operator-side. Closer to required than optional — a node that
-  powered off cannot report that it powered off, so without operator-side recording the procedure
-  leaves no durable evidence and success is inferred from a machine being dark. Three parts, one
-  item deliberately: they share the same cause and shipping the first two alone would close the
-  box on the third.
-  - An attempt counter by outcome.
-  - A per-node last-verified-actuation timestamp. The load-bearing one: it answers "has this
-    cluster ever proven it can halt this node" months later.
-  - A per-node halt-duration observation reconstructed from signal-write to node-NotReady. The
-    actuator already times its own `sync(2)` and logs it, but that log lives on a machine that
-    powers off immediately after, so whether a collector ships it first is a race — and one that
-    loses precisely in the slow-sync case the measurement exists to capture. The actuator cannot fix
-    this and must not try: it holds no API token by design (`OD-37`, `NA-2`) and that stays.
-    Operator-side reconstruction is coarser, since it includes projection and poll latency alongside
-    the flush, but it survives the node. This is the durable half of the `OD-27` handoff-tail
-    evidence; the container log is the precise half that may not arrive.
 
 ---
 

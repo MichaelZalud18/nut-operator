@@ -83,11 +83,13 @@ func main() {
 		// This is the configuration that claims it can halt a node, so it is the one place worth
 		// refusing to start over. Every way of losing CAP_SYS_BOOT is silent, and the code that
 		// would have noticed runs once, on a node under load, at the end of a UPS runtime.
+		armed := newGateTrace(logger, config.NodeName, "")
 		if err := verifySysBootAvailable(); err != nil {
+			armed.fail(gateCapabilityPermitted, err.Error())
 			logger.Printf("refusing to arm PowerOff actuation: %v", err)
 			os.Exit(78)
 		}
-		logger.Printf("CAP_SYS_BOOT held in the permitted set; actuation armed")
+		armed.pass(gateCapabilityPermitted, "CAP_SYS_BOOT is in the permitted set; actuation armed")
 		watchSignals(logger, config, powerOffActuator)
 	default:
 		logger.Printf("unknown actuator policy %q", policy)
@@ -232,12 +234,18 @@ func scanSignalPaths(logger *log.Logger, config actuatorConfig, actuate actuator
 			if status.Reason == "SignalFromFuture" {
 				clockSkewed = append(clockSkewed, path)
 			}
-			// SignalMissing is the normal case on every tick and is deliberately not logged.
+			// SignalMissing is the normal case on every tick and is deliberately not logged --
+			// including as a gate. A gate line per path per tick would bury the burst the trace
+			// exists to produce, and "nothing has been asked of this node" is not a broken link.
 			if status.Reason != "SignalMissing" {
+				newGateTrace(logger, status.Payload.NodeName, status.Payload.ExecutionID).
+					fail(gateSignalAccepted, status.Reason+" at "+status.Path)
 				logger.Printf("ignoring shutdown signal path=%s reason=%s", status.Path, status.Reason)
 			}
 			continue
 		}
+		trace := newGateTrace(logger, status.Payload.NodeName, status.Payload.ExecutionID)
+		trace.pass(gateSignalAccepted, "read, parsed, bound to this node, and inside its TTL, from "+status.Path)
 		// Checked by value, not merely for presence (F-55). InspectSignal already binds the signal
 		// to this node; this binds it to the flow the agent declares it belongs to, so a second
 		// flow's release cannot halt a node that was never enrolled in it.
@@ -246,9 +254,16 @@ func scanSignalPaths(logger *log.Logger, config actuatorConfig, actuate actuator
 		// the operator's existing model -- a flow names its agents through AgentRefs, and the
 		// agent's own reference back is optional -- so an unset ref is permission, not an omission.
 		if config.ShutdownFlow != "" && status.Payload.ShutdownFlow != config.ShutdownFlow {
+			trace.fail(gateFlowBinding, "signal names flow "+status.Payload.ShutdownFlow+
+				" but this agent is enrolled in "+config.ShutdownFlow)
 			logger.Printf("ignoring shutdown signal path=%s reason=SignalWrongFlow executionID=%s flow=%s expectedFlow=%s",
 				status.Path, status.Payload.ExecutionID, status.Payload.ShutdownFlow, config.ShutdownFlow)
 			continue
+		}
+		if config.ShutdownFlow == "" {
+			trace.pass(gateFlowBinding, "this agent declares no shutdownFlowRef, so any flow may release it")
+		} else {
+			trace.pass(gateFlowBinding, "signal flow matches this agent's "+config.ShutdownFlow)
 		}
 		if _, alreadySeen := seen[status.Key]; !alreadySeen {
 			seen[status.Key] = struct{}{}
@@ -284,6 +299,10 @@ func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFun
 	// Logged on transition only, so a persistently unwritable state volume does not bury the
 	// actuation log under one line per interval.
 	stateWriteFailed := false
+	// Same discipline for the delivery channel, and the same reason. It is the first link in the
+	// halt chain and the only one that can be broken for months without anything asking it to do
+	// something -- so it reports itself as soon as it is known, and again whenever it changes.
+	channel := channelTrace{trace: newGateTrace(logger, config.NodeName, "")}
 
 	for {
 		clockSkewed := scanSignalPaths(logger, config, actuate, seen)
@@ -292,12 +311,15 @@ func watchSignals(logger *log.Logger, config actuatorConfig, actuate actuatorFun
 		// is running at all, so a failure to write it must be visible rather than swallowed -- a
 		// silently unwritten state file would read as a stalled loop, which is the correct
 		// conclusion but for the wrong reason, and the log line is what separates the two.
+		unreadable := unreadableSignalDirs(config.SignalPaths)
+		unprojected := unprojectedSignalDirs(config.SignalPaths)
+		channel.observe(unreadable, unprojected)
 		state := actuatorState{
 			Timestamp:             time.Now().UTC().Format(time.RFC3339),
 			Policy:                config.Policy,
 			IntervalSeconds:       config.Interval.Seconds(),
-			UnreadableSignalDirs:  unreadableSignalDirs(config.SignalPaths),
-			UnprojectedSignalDirs: unprojectedSignalDirs(config.SignalPaths),
+			UnreadableSignalDirs:  unreadable,
+			UnprojectedSignalDirs: unprojected,
 			ClockSkewedSignals:    clockSkewed,
 			ActuatedKeys:          actuatedKeys(seen),
 		}
@@ -321,14 +343,17 @@ func simulateActuator(logger *log.Logger, config actuatorConfig, status nodeagen
 }
 
 func powerOffActuator(logger *log.Logger, config actuatorConfig, status nodeagent.SignalStatus) error {
+	trace := newGateTrace(logger, status.Payload.NodeName, status.Payload.ExecutionID)
 	// Read from this process's own env, never from the signal (F-56). main() already refuses to
 	// start this policy outside Actuate, so reaching here in another mode should be impossible --
 	// which is exactly why it is worth checking on the one operation that cannot be undone.
 	if config.Mode != modeActuate {
+		trace.fail(gateModeAuthorized, "POWER_AGENT_MODE is "+config.Mode+"; only "+modeActuate+" may halt a node")
 		logger.Printf("refusing to power off in mode=%s: only %s may halt a node, executionID=%s node=%s",
 			config.Mode, modeActuate, status.Payload.ExecutionID, status.Payload.NodeName)
 		return nil
 	}
+	trace.pass(gateModeAuthorized, "POWER_AGENT_MODE="+modeActuate+" from this process's own environment")
 	logger.Printf("poweroff actuator executing poweroff executionID=%s node=%s flow=%s", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow)
 	return runPoweroff(logger, status.Payload)
 }
@@ -352,9 +377,11 @@ var syncTimeout = 30 * time.Second
 // measurement of the handoff tail anyone has. OD-27 currently reserves 20% of runtime for it as a
 // guess, and this is the cheapest real evidence available for settling that.
 func runPoweroff(logger *log.Logger, payload nodeagent.ShutdownSignal) error {
+	trace := newGateTrace(logger, payload.NodeName, payload.ExecutionID)
 	if payload.SkipSync {
 		// Loud, never silent. A node that skipped the flush comes back with more to recover, and
 		// the operator reading the log afterwards needs to know that was chosen rather than failed.
+		trace.pass(gateSync, "skipped: the executor reported the plan overrunning")
 		logger.Printf("poweroff actuator SKIPPING sync before halt: the executor reported the plan overrunning, so dirty page cache is being dropped to save time; expect more filesystem recovery on this node executionID=%s node=%s",
 			payload.ExecutionID, payload.NodeName)
 	} else {
@@ -366,18 +393,34 @@ func runPoweroff(logger *log.Logger, payload nodeagent.ShutdownSignal) error {
 			syncFilesystems()
 			close(done)
 		}()
+		// Logged before the wait, not after it. A trace that only records completed flushes cannot
+		// distinguish a sync that hung from a sync that was never reached, and those two point at
+		// different halves of the system.
+		trace.pass(gateSync, "started, bounded at "+syncTimeout.String())
 		select {
 		case <-done:
+			trace.pass(gateSync, "completed in "+roundedDuration(time.Since(started)))
 			logger.Printf("poweroff actuator sync completed in %s executionID=%s node=%s",
 				time.Since(started).Round(time.Millisecond), payload.ExecutionID, payload.NodeName)
 		case <-time.After(syncTimeout):
 			// Surfaced, not swallowed. A flush that outlasts this is evidence of a sick mount, and
 			// it is evidence that would otherwise be lost with the machine.
+			trace.fail(gateSync, "did not finish within "+syncTimeout.String()+" and was cut short; halting dirty")
 			logger.Printf("poweroff actuator sync did NOT finish within %s and was cut short; halting with dirty pages still in cache. This usually means a hung mount (stalled NFS, dead iSCSI target, failing disk) -- check this node's mounts before returning it to service. executionID=%s node=%s",
 				syncTimeout, payload.ExecutionID, payload.NodeName)
 		}
 	}
+	if err := raiseHaltCapability(); err != nil {
+		trace.fail(gateCapabilityEffective, err.Error())
+		return fmt.Errorf("raise CAP_SYS_BOOT before halting: %w", err)
+	}
+	trace.pass(gateCapabilityEffective, "CAP_SYS_BOOT moved from permitted into effective")
+	// The last line this process writes on a working actuate path. Anything after it is either an
+	// error from the syscall or -- the case with no other check available -- a container that is not
+	// really in the host PID namespace, where reboot(2) returns success and the machine stays up.
+	trace.pass(gateSyscallIssued, "reboot(2) LINUX_REBOOT_CMD_POWER_OFF; no further output is expected from this container")
 	if err := rebootPoweroff(); err != nil {
+		trace.fail(gateSyscallIssued, err.Error())
 		return fmt.Errorf("run reboot poweroff syscall: %w", err)
 	}
 	return nil

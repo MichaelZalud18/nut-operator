@@ -376,6 +376,20 @@ The signal is hand-delivered into the projected Secret — the same path `OD-37`
 second channel — which isolates kubelet admission, file-capability survival, and the host PID
 namespace from planner correctness. See [security.md](security.md) for the boundary this proves.
 
+The run prints the actuator's gate trace on both outcomes, streamed live because the container is
+about to power off with its own log. Each link on the halt path logs itself — `SignalChannel`,
+`SignalAccepted`, `FlowBinding`, `ModeAuthorized`, `Sync`, `CapabilityEffective`, `SyscallIssued` —
+so a node that stays up names the link that broke instead of leaving you with a machine that is
+either dark or not. `SyscallIssued` is written immediately before `reboot(2)` and cannot be written
+after it, which is what makes the host-PID-namespace case detectable at all: that line, nothing after
+it, and a node still running.
+
+Real executions are also recorded on the operator, which is the side that survives them — see
+`nutoperator_halt_*` in [metrics.md](metrics.md), where
+`nutoperator_halt_last_verified_timestamp_seconds` answers "has this cluster ever proven it can halt
+this node" months later. This procedure deliberately does not produce those: it bypasses the executor
+so that planner correctness cannot fail it, and the executor is where the halt clock starts.
+
 ## Upgrade
 
 Re-apply the bundled manifest, or re-apply your Kustomize overlay with a new digest. CRD changes so

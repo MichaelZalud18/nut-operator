@@ -104,6 +104,17 @@ func raiseSysBoot() error {
 // replay. The difference is how much there is to recover, not whether recovery happens.
 var syncFilesystems = func() { unix.Sync() }
 
+// raiseHaltCapability is the gate-traced raise, called by runPoweroff so the permitted-to-effective
+// step announces itself as its own link in the chain (it is the last one that can fail with a
+// diagnosable error).
+//
+// rebootPoweroff below raises again rather than trusting this to have run. The second raise is a
+// no-op -- raiseSysBoot returns nil when the capability is already effective -- and it keeps the
+// invariant local to the function that issues the syscall: reboot(2) with an empty effective set
+// fails EPERM, which reads in a log as an unexplained refusal rather than as a missing capability.
+// That guarantee should not depend on a caller elsewhere having done the right thing first.
+var raiseHaltCapability = raiseSysBoot
+
 var rebootPoweroff = func() error {
 	if err := raiseSysBoot(); err != nil {
 		return err
