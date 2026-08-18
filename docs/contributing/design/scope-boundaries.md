@@ -170,7 +170,7 @@ sidecar proliferation.
 USB-attached UPS support. This is a deliberate extension point, not an oversight.
 
 Recorded so any later reversal is not mistaken for a contradiction: the network-only posture is
-load-bearing for the security narrative. `docs/images.md` and `docs/architecture.md`
+load-bearing for the security narrative. `docs/reference/images.md` and `docs/concepts/architecture.md`
 both justify the absence of host device mounts, host device access, and privileged mode on the
 grounds that UPS reachability is network-only. USB support must arrive with its own isolated
 actuation boundary and its own security rationale.
@@ -265,7 +265,7 @@ validation under the corrected one.
 Orchestrating the ordered shutdown of cluster services is a core product function, not something
 delegated elsewhere. The boundary is on mechanism, not ambition.
 
-Mechanism constraints, already specified in `docs/shutdown-flow.md`:
+Mechanism constraints, already specified in `docs/contributing/design/shutdown-flow.md`:
 
 - Workload controllers are scaled, suspended, or quiesced. Deleting their pods directly is an
   exceptional override only, because controllers recreate pods.

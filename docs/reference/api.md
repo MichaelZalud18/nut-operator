@@ -2,8 +2,8 @@
 
 Components: Cross-cutting.
 
-Every kind in `power.zalud.io/v1alpha1`, what it is for, and how it relates to the others. Twelve
-kinds, all **cluster-scoped**. For the exact field-level schema, read the CRDs themselves —
+Every kind in `power.zalud.io/v1alpha1`, what it is for, and how it relates to the others. All of
+them are **cluster-scoped**. For the exact field-level schema, read the CRDs themselves —
 `kubectl explain <kind>` after install, or `config/crd/bases/` in the repository — which are generated
 from the Go types and are always current.
 

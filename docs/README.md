@@ -34,7 +34,8 @@ behaves. Going further — actually letting it stop a machine — is
 **[Concepts](concepts/README.md)** — what the system is. The control plane and its two operands, how
 a power event moves through them, and where the pods land.
 
-**[Installation](installation/README.md)** — prerequisites and the two install paths,
+**[Installation](installation/README.md)** — prerequisites and the install itself, the
+[webhook certificate decision](installation/webhook-certificate.md),
 [configuration](installation/configuration.md) in dependency order, and
 [upgrade and uninstall](installation/upgrade-and-uninstall.md).
 

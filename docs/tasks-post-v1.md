@@ -64,7 +64,7 @@ actuates them. Making them actuatable means a second actuation path alongside NU
 actuation surface is precisely the exception that rule exists to prevent. `OD-24` is recorded as v2
 scoping and is explicitly decided alongside `OD-10` (USB and serial support), because both are
 control surfaces outside the NUT-network-only posture that the security narrative in
-`docs/architecture.md` and `docs/images.md` rests on.
+`docs/concepts/architecture.md` and `docs/reference/images.md` rests on.
 
 Reversing this is a scope decision, not a planning one.
 
@@ -133,8 +133,8 @@ Local USB and serial UPS connectivity is excluded from v1 by `RB-1`. Only networ
 are supported, and the driver allowlist enforces it.
 
 **Why it is post-v1:** this is load-bearing for the security posture, not an oversight. The absence
-of host device mounts, host device access, and privileged mode in `docs/images.md` and
-`docs/architecture.md` is justified on the grounds that UPS reachability is network-only. Most
+of host device mounts, host device access, and privileged mode in `docs/reference/images.md` and
+`docs/concepts/architecture.md` is justified on the grounds that UPS reachability is network-only. Most
 community NUT container images assume direct USB access and document privileged containers, which
 is precisely what `RB-1` refuses.
 

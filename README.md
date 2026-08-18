@@ -86,9 +86,9 @@ topology this project does not target.
 
 Two ways to connect:
 
-- **Direct NUT drivers**, from a reviewed allowlist — `snmp-ups` for SNMP-capable network cards,
-  `netxml-ups` for Network Management Card XML, `apcupsd-ups`, and `dummy-ups` for simulation and
-  relays. Unknown drivers are rejected at admission rather than passed through.
+- **Direct NUT drivers**, from a reviewed allowlist — SNMP, Network Management Card XML, apcupsd,
+  and a simulation driver ([the list](docs/reference/api.md#power-hardware)). Unknown drivers are
+  rejected at admission rather than passed through.
 - **Upstream NUT relay**, for appliances that already run their own `upsd` — a NAS, or a UPS with an
   embedded NUT server. The operand relays from it instead of driving the device directly.
 
@@ -150,8 +150,8 @@ PostgreSQL; Kubernetes status stays a current-state review surface rather than a
 
 - [Architecture](docs/concepts/architecture.md) — the components, the diagrams, and how a power event
   moves through them.
-- [API reference](docs/reference/api.md) — all twelve `power.zalud.io/v1alpha1` kinds, what each is
-  for, and how they relate.
+- [API reference](docs/reference/api.md) — every `power.zalud.io/v1alpha1` kind, what each is for,
+  and how they relate.
 
 ## Installation
 
@@ -164,8 +164,8 @@ kubectl apply -f https://github.com/MichaelZalud18/nut-operator/releases/latest/
 ```
 
 If you already run cert-manager and want certificate renewal automated, `install.yaml` is the other
-supported bundle. Which one to pick, and why it matters during an outage, is the first decision in
-[the installation guide](docs/installation/README.md#choosing-a-certificate-path).
+supported bundle. Which one to pick, and why it matters during an outage, is
+[its own page](docs/installation/webhook-certificate.md).
 
 Everything defaults to dry-run: a `ShutdownFlow` compiles and publishes its full plan without
 touching a node until enforcement is explicitly enabled.
@@ -204,7 +204,8 @@ Start at **[docs/](docs/README.md)** — it carries a first-hour path and a map 
 
 - **[Concepts](docs/concepts/README.md)** — what the system is: the control plane, the two operands,
   how a power event moves through them, and where the pods land.
-- **[Installation](docs/installation/README.md)** — prerequisites and both install paths,
+- **[Installation](docs/installation/README.md)** — prerequisites and the install itself, the
+  [webhook certificate decision](docs/installation/webhook-certificate.md),
   [configuration](docs/installation/configuration.md) in dependency order, and
   [upgrade and uninstall](docs/installation/upgrade-and-uninstall.md).
 - **[Guides](docs/guides/README.md)** — the judgement calls the operator cannot make for you:

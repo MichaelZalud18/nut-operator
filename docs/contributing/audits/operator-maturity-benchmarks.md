@@ -18,7 +18,7 @@ this operator," so the project is graded against it whether or not it opts in.
 | L1 Basic Install | Provision operands, configuration via CR | Met |
 | L2 Seamless Upgrades | Operator and operand version upgrades handled | Partial — no upgrade path exercised, no conversion webhooks |
 | L3 Full Lifecycle | Backup, restore, failure recovery | Partial — recovery execution is external subscriber scope; audit durability OD-6 is closed with local spool fallback |
-| L4 Deep Insights | Metrics, alerts, log processing, workload analysis | Mostly met for the current v1 operator scope (2026-08-14) — ShutdownFlow, actuator, audit-spool, certificate-expiry, per-UPSDevice telemetry, capability-match, inventory-compiler, and publisher-heartbeat metrics are registered. Alert packaging and external log processing remain deployment concerns. See `docs/metrics.md`. |
+| L4 Deep Insights | Metrics, alerts, log processing, workload analysis | Mostly met for the current v1 operator scope (2026-08-14) — ShutdownFlow, actuator, audit-spool, certificate-expiry, per-UPSDevice telemetry, capability-match, inventory-compiler, and publisher-heartbeat metrics are registered. Alert packaging and external log processing remain deployment concerns. See `docs/reference/metrics.md`. |
 | L5 Auto Pilot | Auto-scaling, auto-config tuning, auto-remediation | Out of scope by design (GP-1: non-power triggers excluded) |
 
 Notes specific to this project:
@@ -27,7 +27,7 @@ Notes specific to this project:
   GP-1 and SB-6. State this in the README so the repo is not graded against a level it declines.
 - **L3 is the real gap and the most consequential.** An operator that shuts a cluster down but has
   no defined recovery story sits at L3-incomplete permanently until OD-1 resolves.
-- **L4 is now instrumented for the operator-owned surfaces.** See `docs/metrics.md`; packaged
+- **L4 is now instrumented for the operator-owned surfaces.** See `docs/reference/metrics.md`; packaged
   alerts and external log processing remain deployment concerns.
 
 Check at: every minor release, and before any `v1beta1` promotion.
@@ -41,10 +41,10 @@ Mechanical, checkable, and where most reviewer friction lands.
 | Idempotent reconcile | **Met (2026-08-04)** — partial-failure convergence tests added for both operand-rendering controllers (`NUTServer`, `NodePowerAgent`; confirmed via grep these are the only two that render Kubernetes child resources). Each seeds a stale, partial operand state, reconciles once and asserts full convergence, then reconciles again and asserts every touched object's `resourceVersion` is unchanged — idempotency, not just no-error. |
 | No in-memory state across reconciles | Appears held; planner purity helps |
 | Status subresource for observed state only | Met — GP-3 enforces it by design |
-| `observedGeneration` tracking | Mostly met — re-counted 2026-08-17 against 12 CRDs: present in every kind except `ShutdownHook`, whose status carries no `observedGeneration` field. The prior "all 9 API types" reading predates three kinds. |
+| `observedGeneration` tracking | Mostly met — re-checked 2026-08-17: present in every API type and every controller **except `ShutdownHook`**, whose status carries no `observedGeneration` field. |
 | Standard condition types with machine-readable reasons | Mostly met — see audit |
 | Finalizers for cleanup | **Met (2026-08-04)** — `NUTServerReconciler`/`NodePowerAgentReconciler` carry finalizers; owner-reference GC for the other 7 was verified never needing one (no Kubernetes child resources rendered). |
-| Status writes use `Patch`, not read-modify-write `Update` | **Met (2026-08-04)** — all 9 controllers switched to `Status().Patch(ctx, obj, client.MergeFrom(base))`. Regression-tested, not just converted: `shutdownflow_controller_test.go`'s `resourceVersionRaceInjectingClient` reproduces the exact production race (a write landing between a reconciler's `Get` and its status write) and confirmed both that the old `Update()` pattern fails with the production-observed 409 Conflict, and that `Patch()` doesn't. |
+| Status writes use `Patch`, not read-modify-write `Update` | **Met (2026-08-04)** — every controller switched to `Status().Patch(ctx, obj, client.MergeFrom(base))`. Regression-tested, not just converted: `shutdownflow_controller_test.go`'s `resourceVersionRaceInjectingClient` reproduces the exact production race (a write landing between a reconciler's `Get` and its status write) and confirmed both that the old `Update()` pattern fails with the production-observed 409 Conflict, and that `Patch()` doesn't. |
 | `RequeueAfter` over sleeps | **Met — confirmed clean.** Zero `time.Sleep` calls in any controller. |
 | Leader election | **Met (2026-08-04)** — code default flipped `false` → `true` (`cmd/main.go`), closing the defense-in-depth gap; `config/manager/manager.yaml` already ran with it active via bare `--leader-elect`. `Makefile`'s `run` target now passes `--leader-elect=false` explicitly, since out-of-cluster leader election has no namespace to create its lease in. |
 | Generated RBAC covers the calls the code makes | **Met (2026-08-17)** — markers are hand-written and the calls are elsewhere, so the two drifted silently and shipped a `403` on the `OD-38` drain fall-back (`F-93`). `executor_rbac_test.go` now binds the generated `ClusterRole` in envtest and asks the real authorizer, via `SubjectAccessReview`, about every call the executor makes against workloads it does not own. Verified non-vacuous (an unbound user is refused) and verified to fail on the real regression. |
@@ -60,7 +60,7 @@ Check at: every controller added, and before release tagging.
 | spec/status separation | Met |
 | Optional fields as pointers | Met in sampled types |
 | Enum validation on constrained strings | Met — `PowerStorageMode`, `ActuatorPolicy`, others |
-| Single storage version per CRD | Met — re-counted 2026-08-17: all 12 CRDs at `v1alpha1`, one version each |
+| Single storage version per CRD | Met — re-checked 2026-08-17: every CRD serves `v1alpha1` and only `v1alpha1` |
 | No required fields added post-GA | N/A at alpha; becomes binding at v1beta1 |
 
 Check at: every API change, and as a hard gate before `v1beta1`.
@@ -114,7 +114,7 @@ endpoint or RBAC. The initial "compile failures by diagnostic class" cut landed 
 original wording implied because `internal/shutdownflow` discarded planner diagnostics before they
 reached the reconciler. That follow-on is now closed: planner diagnostics travel to the reconciler,
 and `compile_total`'s `result` label names the first planner error or warning reason when one exists.
-Full contract in `docs/metrics.md`.
+Full contract in `docs/reference/metrics.md`.
 
 **F-4 · Broad write access to core resources.** The operator holds `create;update;patch` on
 `configmaps`, `secrets`, `serviceaccounts`, `services`, `namespaces`, and `networkpolicies`, plus
@@ -134,14 +134,14 @@ permitted and these are legible, but they should be documented as part of the pu
 since users will alert on them.
 
 **F-7 · Idempotency unverified.** No test found that reconciles from a partial-failure state and
-asserts convergence. Given operand rendering across four image types, this is the most likely place
+asserts convergence. Given operand rendering across every image type, this is the most likely place
 for silent duplicate-creation bugs.
 
 ## Not findings
 
-- `observedGeneration` handling is complete across all nine types and every controller — better
+- `observedGeneration` handling is complete across every type and every controller — better
   than typical for this stage.
-- Single storage version per CRD across all nine, with no conversion debt accumulated.
+- Single storage version across every CRD, with no conversion debt accumulated.
 - Enum validation is used consistently on constrained fields.
 - Status/spec separation holds, reinforced by GP-3.
 
@@ -194,7 +194,7 @@ can make the operator take itself out mid-shutdown, which is the single failure 
 exists to prevent elsewhere.
 
 **F-31 · `Status().Update()` (read-modify-write) is universal, not a `ShutdownFlow`-specific bug.**
-`grep -c "Status().Update("` across all 9 `*_controller.go` files returns exactly 1 in every file;
+`grep -c "Status().Update("` across every `*_controller.go` file returns exactly 1 in each;
 `Status().Patch(` returns 0 everywhere. The observed consequence for `ShutdownFlow` — a 10h
 production log carrying 744 `"the object has been modified"` conflicts — root-causes to the combination of an unpredicated high-frequency watch plus `Update` instead of
 `Patch`. What wasn't previously stated: the `Update`-instead-of-`Patch` half of that root cause is
@@ -249,9 +249,9 @@ substantially defused.
 - `time.Sleep` usage: zero, confirmed by direct grep across `internal/controller`.
 - Owner-reference usage (`SetControllerReference`/`SetOwnerReference`): present and scoped correctly
   in the only two controllers that render child Kubernetes resources (`nutserver_render.go`,
-  `nodepoweragent_render.go`). The remaining 7 controllers own no Kubernetes child objects, so no
+  `nodepoweragent_render.go`). The remaining controllers own no Kubernetes child objects, so no
   owner-reference gap exists there — nothing to close.
-- Cluster-scoped CRD owning namespaced operands (all 9 CRDs are `+kubebuilder:resource:scope=Cluster`
+- Cluster-scoped CRD owning namespaced operands (every CRD is `+kubebuilder:resource:scope=Cluster`
   while `NUTServer`/`NodePowerAgent` render namespaced Deployments/DaemonSets/Secrets/etc): this is a
   supported Kubernetes garbage-collection pattern, not a gap — a namespaced object may carry an owner
   reference to a cluster-scoped owner. Checked because it looked suspicious at a glance; it isn't.
@@ -311,7 +311,7 @@ embeds no RFC1918 pattern of its own, so its config cannot become a second leak 
 than `F-32`/`F-3`/`F-7` — implemented and verified (build, `make lint`, full test suite including a
 new regression spec) the same day. Recorded here for the audit trail:
 
-- **`F-31` fixed** — all 9 controllers converted from `Status().Update()` to
+- **`F-31` fixed** — every controller converted from `Status().Update()` to
   `Status().Patch(ctx, obj, client.MergeFrom(base))`. Not just converted: reproduced the exact
   production race as a new envtest regression test (`resourceVersionRaceInjectingClient`,
   `shutdownflow_controller_test.go`) and confirmed it fails against the old `Update()` pattern with
@@ -320,7 +320,7 @@ new regression spec) the same day. Recorded here for the audit trail:
   regress local development before shipping it: controller-runtime requires an in-cluster-detected
   namespace for leader election, which a `go run` process against kubeconfig doesn't have, so
   `Makefile`'s `run` target now passes `--leader-elect=false` explicitly.
-- **`F-5` closed** — added an "RBAC Scope" section to `docs/security.md` documenting the
+- **`F-5` closed** — added an "RBAC Scope" section to `docs/reference/security.md` documenting the
   `argoproj.io/workflows` grant (`RunWorkflow` executor action, references `WorkflowTemplate`s by
   name, no `workflowtemplates` RBAC) and the `namespaces create` grant (can't be narrowed by name at
   the RBAC layer; closed at the input layer by `F-4` instead) so neither reads as scope creep again.
@@ -354,7 +354,7 @@ diff, ASH) the same day. Recorded here for the audit trail:
 
 `F-3` — the last item from the original "Recommended order" list — implemented and verified (build,
 vet, `make lint`, full test suite including new collector and reconcile-path tests, `make manifests`
-with no RBAC diff, ASH) the same day. Full contract in `docs/metrics.md`; recorded here for the
+with no RBAC diff, ASH) the same day. Full contract in `docs/reference/metrics.md`; recorded here for the
 audit trail:
 
 - **`F-3` fixed** — see the "F-3 update" note above. All seven highest-value candidates the audit
@@ -415,32 +415,32 @@ as an e2e gap.
 ## Findings — sixth pass, 2026-08-12
 
 Recorded here rather than in the two NUT audits it was transferred alongside. `F-52` is about what
-`docs/images.md` claims of the build, which is supply-chain posture and this document's subject,
+`docs/reference/images.md` claims of the build, which is supply-chain posture and this document's subject,
 not NUT-mechanism fidelity or the `upsd` pod's shape.
 
-**F-52 · `docs/images.md` made four claims the build did not meet, and they were not the same
+**F-52 · `docs/reference/images.md` made four claims the build did not meet, and they were not the same
 kind of claim.** Two were stale descriptions of a build that changed underneath them; two were
 aspirations written in the present tense.
 
 Stale descriptions, both left behind by `F-39`'s move from distribution packages to a source build:
 
-- `docs/images.md:20` — "The operand Dockerfiles package real Network UPS Tools binaries from
+- `docs/reference/images.md:20` — "The operand Dockerfiles package real Network UPS Tools binaries from
   **pinned distribution packages**." Both operand Dockerfiles now build NUT from source in a
   dedicated `nut-builder` stage: `images/nut-server/Dockerfile:17` and
   `images/upsmon-agent/Dockerfile:29`, each fetching `nut-${NUT_VERSION}.tar.gz` and running
   `./configure`.
-- `docs/images.md:22-23` — "`nut-server` **installs `nut`**" and "`upsmon-agent` **installs
+- `docs/reference/images.md:22-23` — "`nut-server` **installs `nut`**" and "`upsmon-agent` **installs
   `nut`**". Neither does. The runtime stages `apk add` shared libraries only and copy the built
   tree from the builder stage.
 
 Aspirations stated as fact:
 
-- `docs/images.md:32` — "pinned NUT version and **base image digest**". The NUT version is pinned
+- `docs/reference/images.md:32` — "pinned NUT version and **base image digest**". The NUT version is pinned
   (`ARG NUT_VERSION=2.8.5`, plus the assertion at `images/nut-server/Dockerfile:119-121` that the
   shipped `upsd` reports it and links OpenSSL rather than NSS — a real and unusually good control).
   The base image is not: every stage in both operand Dockerfiles is `FROM alpine:${ALPINE_VERSION}`
   with `ALPINE_VERSION=3.22`, a mutable tag.
-- `docs/images.md:33` — "checksum **and signature** verification for NUT source inputs". Only
+- `docs/reference/images.md:33` — "checksum **and signature** verification for NUT source inputs". Only
   checksum. `images/nut-server/Dockerfile:35` and `images/upsmon-agent/Dockerfile:38` both run
   `sha256sum -c` against a pinned `ARG NUT_SHA256`; a search of both files for `gpg`, `gpgv`,
   `.asc`, and `.sig` returns nothing. NUT does publish detached signatures, so this is unimplemented
@@ -454,12 +454,12 @@ them or move them into the "Roadmap" framing the same file already uses at `:43-
 signatures and digest references. Either is defensible; leaving them in the Build Requirements list
 is not, because a reader takes that list as describing released images.
 
-One related item found while reading: `docs/images.md:26` stated the driver allowlist including
+One related item found while reading: `docs/reference/images.md:26` stated the driver allowlist including
 `powerman-pdu`, which the operand image does not contain. That is `F-50`, recorded in
 [nut-usage-audit.md](nut-usage-audit.md) — the allowlist appears in two places and both need the
 same correction.
 
-Closed 2026-08-14 by rewriting `docs/images.md` and `docs/security.md` into current controls versus
+Closed 2026-08-14 by rewriting `docs/reference/images.md` and `docs/reference/security.md` into current controls versus
 open release-hardening targets. The docs now describe the NUT source build, sha256 verification, and
 OpenSSL assertions as current controls. Base-image digest pinning and detached NUT source signature
 verification remain open work in `docs/tasks.md`.
@@ -479,7 +479,7 @@ Two consequences, both verified by reading the workflows and the suite:
 - Nothing gates publication on e2e passing. `images.yml` pushes `:main`, `:sha-<short>`, and the
   branch tag on every push to `main` regardless of what `test-e2e` concludes, because it never
   learns the result.
-- `test/e2e/e2e_suite_test.go:35-48` builds `example.com/nut-operator:v0.0.1` and the three operand
+- `test/e2e/e2e_suite_test.go:35-48` builds `example.com/nut-operator:v0.0.1` and the operand
   images in `BeforeSuite` and loads them into Kind. The suite therefore exercises a different build
   of the same source than the one published — different tags, different digests, and on `main` a
   different platform set, since `images.yml` builds multi-platform there and the PR path builds
@@ -493,7 +493,7 @@ crash-loop was found only by running the real image.
 The fix does not need stages in the general sense, only one edge: build once, have `test-e2e` pull
 that digest instead of building its own, and gate the `:main` tag on the result. The `sha-<short>`
 tag already exists to hang it on. It would also make `test-e2e` faster, since it currently rebuilds
-two images that compile NUT from source — which is why its timeout is 30 minutes.
+the images that compile NUT from source — which is why its timeout is 30 minutes.
 
 The cost is real and should be weighed rather than assumed away: it serializes the e2e run onto the
 path to a published `:main`, on a repository where `main` receives only its own maintainer's
@@ -508,7 +508,7 @@ with `docker buildx imagetools create`, which adds a tag to an existing manifest
 rebuilding. `main` and `sha-<short>` therefore resolve to one digest by construction, rather than to
 two builds that ought to match.
 
-Between them sits the gate. `test-e2e.yml` gained a `workflow_call` trigger taking four image
+Between them sits the gate. `test-e2e.yml` gained a `workflow_call` trigger taking the image
 references, and `images.yml` invokes it with digests resolved from the registry. Its `push` trigger
 is gone: a run racing the build workflow cannot gate it, and two independent e2e runs on one commit
 is the cost without the benefit. `pull_request` still builds from the checkout, because a PR
@@ -530,7 +530,7 @@ builds and report success. With nothing set it builds from the checkout, which i
 running `make test-e2e` on a branch wants.
 
 `nut-tls` was added to the promotion's `needs` while the edge was being drawn. It already proved the
-two operand images complete a real NUT TLS session; there was no reason for `main` to float past a
+operand images complete a real NUT TLS session; there was no reason for `main` to float past a
 failure it had already caught.
 
 Two things this deliberately does not do. Tag pushes (`v*.*.*`) still publish ungated — the finding
@@ -555,8 +555,8 @@ result it was meant to check — `F-61` measured `CapPrm 0x400000` when the runt
 and `0` when a shell in the container does, so a shell-bearing variant of that image answers the
 capability question wrongly. More generally it institutionalizes exactly the tested-artifact /
 shipped-artifact gap above. `kubectl debug --target` supplies a shell beside a distroless container
-without altering it, and only two of the four images are distroless — `nut-server` and
-`upsmon-agent` already carry shells because NUT tooling needs them.
+without altering it, and the images that are not distroless — `nut-server` and `upsmon-agent` —
+already carry shells because NUT tooling needs them.
 
 **F-78 · The manager image's `HEALTHCHECK` could not fail.** `Dockerfile:59` was
 `HEALTHCHECK ... CMD ["/manager", "--version"]`, the same defect `F-64` fixed on `node-actuator` and
@@ -575,7 +575,7 @@ readiness contract; directly runnable images keep their meaningful in-container 
 
 Non-F-number release-hardening target closed 2026-08-14: `.github/workflows/images.yml` now installs
 cosign from a pinned `sigstore/cosign-installer` action and signs non-PR published image digests
-after the vulnerability scan using GitHub OIDC keyless signing. `docs/images.md` records the
+after the vulnerability scan using GitHub OIDC keyless signing. `docs/reference/images.md` records the
 verification command.
 
 ## Findings — supply chain, 2026-08-15

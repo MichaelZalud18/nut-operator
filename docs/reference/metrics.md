@@ -11,7 +11,7 @@ code to be useful on their own.
 ## Enabling scrape
 
 The metrics endpoint itself is on by default (`config/default/manager_metrics_patch.yaml`, HTTPS on
-`:8443`, behind the `metrics: enabled` namespace-label `NetworkPolicy` — see `docs/security.md`). The
+`:8443`, behind the `metrics: enabled` namespace-label `NetworkPolicy` — see `docs/reference/security.md`). The
 Prometheus Operator `ServiceMonitor` (`config/prometheus/monitor.yaml`) is **not** enabled by default —
 `config/default/kustomization.yaml` leaves `../prometheus` commented out, matching the kubebuilder
 scaffold convention of not assuming the Prometheus Operator CRDs are installed. Uncomment that line to

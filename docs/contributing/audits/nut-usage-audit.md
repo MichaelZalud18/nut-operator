@@ -341,7 +341,7 @@ The cause is in the image: `images/nut-server/Dockerfile:64` passes `--without-p
 accepts a configuration the implementation cannot honor. It differs from those three in being
 resolvable in either direction, since building the driver in is a one-flag change.
 
-`docs/images.md:26` repeats the allowlist including `powerman-pdu`, so the claim exists in two
+`docs/reference/images.md:26` repeats the allowlist including `powerman-pdu`, so the claim exists in two
 places and both need correcting together — see `F-52` in
 [operator-maturity-benchmarks.md](operator-maturity-benchmarks.md).
 
@@ -370,7 +370,7 @@ Sabotage-verified in both directions: re-adding `powerman-pdu` to the Go allowli
 tests; adding it to the smoke list alone failed the smoke test with
 `admission allowlists powerman-pdu but the image does not contain it`.
 
-The claim also existed in `README.md` and `docs/images.md:26`, and in the `UPSDevice.spec.driver`
+The claim also existed in `README.md` and `docs/reference/images.md:26`, and in the `UPSDevice.spec.driver`
 doc comment that generates the CRD description. All four are corrected.
 
 **OD-36 · `clone`, `clone-outlet`, and `failover` are built, unused, and undeclared.** All three

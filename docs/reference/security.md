@@ -43,7 +43,7 @@ removing every other syscall filter from the one container that can halt the mac
 
 The operator serves admission webhooks, and admission is load-bearing here rather than cosmetic. Which
 certificate path to install with, and the commands for each, are in
-[the installation guide](../installation/README.md#choosing-a-certificate-path). This section is the
+[Choosing a webhook certificate path](../installation/webhook-certificate.md). This section is the
 reasoning behind that recommendation.
 
 **The trust model is the same on every supported path.** Webhook certificates are not validated

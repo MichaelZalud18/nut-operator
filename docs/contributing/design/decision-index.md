@@ -13,7 +13,7 @@ each map to a different component — the "Component(s)" column below gives the 
 file-level view for docs where a single tag is precise enough, and points at "varies" where it
 isn't.
 
-The component names are the ten `docs/tasks.md` sections — Inventory System, Capability Profiles,
+The component names are the `docs/tasks.md` sections — Inventory System, Capability Profiles,
 Telemetry & Triggers, Planning & Execution Logic, NUT Server / upsd, Node Agent / DaemonSet, Outputs
 & Publishing, Storage & Audit, Operator Maturity & Hardening, Foundation & Documentation — plus
 `Cross-cutting` for principles and boundaries that don't belong to one. `tasks.md` is the source of

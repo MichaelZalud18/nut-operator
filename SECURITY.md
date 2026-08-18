@@ -30,4 +30,4 @@ Security-sensitive areas include:
 - Node shutdown authorization and actuator isolation.
 - PostgreSQL/CNPG audit storage and retention.
 
-For architecture-level controls, see [docs/security.md](docs/reference/security.md).
+For architecture-level controls, see [Security](docs/reference/security.md).

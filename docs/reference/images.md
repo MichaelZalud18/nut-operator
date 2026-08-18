@@ -28,7 +28,7 @@ stages:
 - `upsmon-agent` builds NUT the same way and includes `upsmon`, `upsc`, and the Go
   `power-signal-writer` binary from this repository.
 
-The operator validates `UPSDevice` drivers against a network-driver allowlist before rendering operands. The allowlist is `snmp-ups`, `netxml-ups`, `apcupsd-ups`, and `dummy-ups` for tests. Every entry is asserted present in the `nut-server` image by `make docker-smoke-nut-server`, so admission cannot accept a driver the operand cannot run.
+The operator validates `UPSDevice` drivers against a network-driver allowlist before rendering operands ([the list](api.md#power-hardware)). Every entry on it is asserted present in the `nut-server` image by `make docker-smoke-nut-server`, so admission cannot accept a driver the operand cannot run.
 
 ## Current Build Controls
 

@@ -21,7 +21,7 @@ Two ways to connect, and you need to know which you have:
 - **A direct NUT driver**, from the reviewed allowlist — `snmp-ups` for SNMP-capable management
   cards, `netxml-ups` for Eaton/MGE Network Management Card XML, `apcupsd-ups` for an existing
   apcupsd daemon, and `dummy-ups` for simulation. A driver outside that list is rejected at
-  admission rather than passed through.
+  admission rather than passed through — [the authoritative list](../reference/api.md#power-hardware).
 - **An upstream NUT relay**, for a NAS or appliance already exposing `upsd`. See
   [upstream-nut-relay.md](../contributing/design/upstream-nut-relay.md).
 

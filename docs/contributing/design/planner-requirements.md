@@ -134,7 +134,7 @@ assisted diagramming, never independent sources of truth.
 
 ## Compilation
 
-The nine compilation steps in `docs/shutdown-flow.md` remain. These are additions and amendments.
+The compilation steps in `docs/contributing/design/shutdown-flow.md` remain. These are additions and amendments.
 
 **PL-19** · Trigger-capability validation. Validate every declared trigger against the resolved
 capability profiles of all devices in the referenced power domains. A `RuntimeBelow` trigger aimed at
