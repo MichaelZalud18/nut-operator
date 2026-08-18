@@ -36,6 +36,14 @@ without that fact being recorded in the execution record.
 requests feasibility recomputation against live telemetry before the first wave starts, and records
 both the compile-time advisory and trigger-time authoritative verdicts.
 
+Both surface on `ShutdownFlow.status.planFeasibility`: the plan's estimated duration against the
+runtime the UPS reports, per tier and in total. It warns and never blocks, which is `OD-12` applied
+— refusing to start mid-outage is the worst outcome available, and truncating the plan would
+substitute this operator's judgement for the flow author's. The author holds the risk; what they are
+owed is the numbers, stated plainly and early enough to act on. That is why the surface exists at
+compile time and not only at trigger time: a plan that cannot fit is worth knowing about on the day
+it is written, not on the day the power fails.
+
 ---
 
 ## Gating

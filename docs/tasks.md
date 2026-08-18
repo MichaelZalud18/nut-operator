@@ -17,7 +17,7 @@ stays answerable to one question: what is left before v1. Items move there only 
 outside the project gates them or scope-boundaries places them beyond v1 — never merely because
 they are hard or unscheduled. Declined work is recorded where it was declined, not parked here.
 
-Last reviewed: 2026-08-15
+Last reviewed: 2026-08-17
 
 ---
 
@@ -32,14 +32,9 @@ resolver/adapter that feeds it into reconciliation. Design contract: `docs/desig
 #### Built
 
 The `internal/inventory` pure compiler, all four inventory CRDs with webhooks and validators,
-numbered shutdown tiers, and compilation wired into `ShutdownFlow` with the topology hash in plan
-identity. The resolver carries full derived power-domain closure — UPS roots, members, nodes, and
-infrastructure — into planner inputs, and runtime trigger evaluation consumes that same closure, so
-domain-scoped triggers select devices from topology membership rather than raw `UPSDevice` labels.
-The declarative provider leaves snapshot `ObservedAt` unstamped to avoid per-reconcile topology hash
-churn, and cyclic `feeds` graphs are rejected with a `FeedsCycle` diagnostic before closure
-derivation. Planner wave compilation consumes that same membership for `OD-14`, pruning groups
-proved wholly outside the affected domain while keeping ambiguous or mixed-domain groups.
+numbered shutdown tiers, derived power-domain closure carried into planner inputs and runtime trigger
+evaluation, and compilation wired into `ShutdownFlow` with the topology hash in plan identity.
+Contract and rationale: [inventory-provider-contract.md](design/inventory-provider-contract.md).
 
 Closed: `IN-1`, `IN-3`, `IN-5`, `IN-7`, `IN-9`–`IN-14`, `IN-16`, `OD-4`, `OD-16`, `F-81`,
 `F-82`, `OD-14`.
@@ -59,18 +54,10 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 #### Built
 
 `UPSCapabilityProfile` and `PDUCapabilityProfile` CRDs over one shared five-tier match precedence
-chain, firmware-scoped quirks, telemetry aliasing, bundled UPS and PDU catalogs at `1.0.0` with drift
-tests, deterministic profile hashing across reordered telemetry, actuation, quirk, and firmware-match
-sets, and `UPSCapabilityProbe` advisory drafting with probe history. A device publishes the profile
-it resolves to on `status.capability` — identity, tier, the quirks in force after firmware scoping,
-and the matcher's own reason when the match is anything but a clean product hit — so a device that
-fell back to the unidentified-device profile is distinguishable from one that matched its product
-profile.
-A PDU profile set that cannot resolve — duplicate ids, two universal profiles — is
-reported on every profile in the set. PDU device matching itself is scaffolding per `OD-25`, and
-the CRD description says so: no device kind, inventory entity, render path, or actuation path
-consumes it. `OD-21` is decided as the code already behaves: driver configuration is owned by
-`UPSDevice` spec in NUT's own vocabulary.
+chain, firmware-scoped quirks, telemetry aliasing, bundled catalogs at `1.0.0` with drift tests,
+order-independent profile hashing, `status.capability` publication, and `UPSCapabilityProbe` advisory
+drafting with probe history. PDU matching is scaffolding per `OD-25`. Full treatment:
+[capability-profiles.md](design/capability-profiles.md).
 
 Closed: `F-25`, `F-26`, `F-79`, `F-80`, `F-83`, `F-84`, `RS-7`–`RS-10`, `PL-30`, `OD-21`, `OD-22`,
 `OD-23`, `OD-25`, `OD-31`. `OD-26` dropped — the `provenance` field whose semantics it decides was never
@@ -95,51 +82,19 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 
 `internal/planner` pure compilation with diagnostics reaching status and audit, `internal/executor`
 wave execution with restart-safe resume, `internal/kubeactions` enforce-mode actions gated on
-node-agent coverage, planner artifacts with diagram exports, and `ShutdownFlow` dry-run dispatch.
-`internal/adaptive` is the pure tier-pointer and timing-mode model (`EX-25`–`EX-30`), wired into the
-executor: power is re-read at every wave boundary, the pointer follows each compiled wave's tier, and
-declared timeouts and `Wait` durations are compressed by a ratio measured from remaining runtime over
-remaining declared plan. Pointer and mode persist in `executor_resume_states` and publish on
-`status.lastExecution.adaptive`. Power returning mid-flow is recorded and nothing else: the execution
-runs to completion, the pointer ascends as bookkeeping, and whether a new execution starts is settled
-by trigger eligibility a level up. `Gate` is
-removed from the action enum; `Notify` emits a Kubernetes Event. Tier inversion is published as
-`nutoperator_shutdownflow_tier_inversions`, and the EX-29 cadence heartbeat as
-`nutoperator_shutdownflow_publish_timestamp_seconds` plus `status.lastPublishTime`. `EX-31` is built:
-`spec.tierOverrunPolicy` defaults to `Wait`, `Overlap` starts the next lower tier on schedule while
-the overrun tier continues, `Preempt` cancels the tier action context when the next lower tier becomes
-due, and overruns are recorded in wave/final audit details, `status.lastExecution.tierOverruns`,
-`nutoperator_shutdownflow_tier_overruns_total`, and
-`nutoperator_shutdownflow_tier_overrun_seconds`. Node clearance is re-derived at execution
-against the pods actually on the node, read uncached, and node-oriented targets accept Kubernetes
-`nodeSelectorRequirements` so authored flows can express native `Gt`/`Lt` label ranges without
-inventing a custom selector language. The provisional `AE-n` identifiers are folded into
-`EX-25`–`EX-30`, and the runtime-estimate gate that shared `AE-6` is now `CR-4`. `EX-32`
-estimates are informed by what previous outages actually took: observed group durations are read from
-the audit tables scoped by plan config hash, injected as a resolved planner input, and published per
-group with provenance and sample counts. `OD-12` is surfaced as
-`status.planFeasibility` — plan estimate against reported runtime, warning and never blocking.
-`EX-14` restart resume is covered by envtest: a second reconciler instance holding no
-in-process state resumes the persisted tier and timing mode instead of re-reporting descended tiers as
-new work. `EX-33` rehearsal execution is built as a generic one-way request: changing the
-`power.zalud.io/rehearsal-request` annotation to a new token runs one approved enforce-mode sample,
-labels status and audit details as rehearsal, and feeds those real durations into estimates unless
-`spec.rehearsal.includeInEstimates: false` opts out. `ShutdownHook`/`RunHook` replaces the removed
-Argo-shaped `RunWorkflow` route: HTTP CloudEvents is the primary transport for non-Kubernetes
-systems, generic Kubernetes objects are the secondary transport, hook dry-runs are either authored
-rehearsals or recorded request summaries, and hook failures mark the flow degraded without holding
-waves or engaging `abortPolicy`. `OD-14`
-partial-domain scope is compiled in `internal/planner`: domain- or UPS-scoped triggers prune only
-groups proved wholly outside affected domains, with ambiguous and mixed-domain groups retained.
-`spec.groups[].phase` is removed. Ordering is tiers plus `requires`/`before`/`after` and nothing
-else, and a wave now holds every group whose dependencies are satisfied — the property the field
-silently broke, pinned by a compiler test that also asserts concurrent groups cost the longest
-timeout rather than the sum. `OD-38` makes a `PodDisruptionBudget` advisory once a flow is enforcing:
-a budget-refused eviction falls back to `Delete`, which still honors `terminationGracePeriodSeconds`,
-and the override is named in the drain's audit details. Only the `DisruptionBudget` status cause is
-overridden — API Priority and Fairness throttling stays fatal. This replaced an unhandled error, not
-a decision: any non-`NotFound` eviction failure used to abort the flow, so one ordinary budget could
-leave a cluster up while its UPS drained.
+node-agent coverage, planner artifacts with diagram exports, and `ShutdownFlow` dispatch in both
+modes. `internal/adaptive` is the pure tier-pointer and timing-mode model wired into the executor,
+persisting to `executor_resume_states` and publishing on `status.lastExecution.adaptive`. Tier-overrun
+policy, rehearsal execution, history-informed estimates, node-clearance revalidation, partial-domain
+scope, and `ShutdownHook`/`RunHook` delivery are all built. `spec.groups[].phase` is removed, so
+ordering is tiers plus `requires`/`before`/`after` and a wave holds every group whose dependencies
+are satisfied.
+
+Requirements and rationale: [planner-requirements.md](design/planner-requirements.md),
+[executor-requirements.md](design/executor-requirements.md),
+[shutdown-flow.md](shutdown-flow.md),
+[adaptive-execution-tier-pointer.md](design/adaptive-execution-tier-pointer.md),
+[shutdown-hooks.md](design/shutdown-hooks.md).
 
 Closed: `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-33`, `OD-4`,
 `OD-11`, `OD-12`, `OD-14`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `OD-33`, `OD-34`, `OD-38`, `SB-15`,
@@ -171,34 +126,12 @@ recommended order are in the audits.
 
 #### Built
 
-`NUTServer` operand rendering with injection-validated NUT config, `credentialSecretRef` wiring, NUT
-protocol TLS proven end to end against operands built from source on OpenSSL, scripted `dummy-ups`
-simulation, and the `snmpsim` driver-conformance fixture. e2e covers `dummy-ups`, `snmp-ups`, and
-`NUTServer`; real actuation stays out of scope for `kind`. The reconciler watches `UPSDevice` through
-a predicate scoped to spec and labels, and maps credential `Secret` and simulation `ConfigMap` changes
-back to the servers whose selected devices reference them, so a driver, port, credential, or fixture
-edit re-renders instead of waiting for an unrelated reconcile. Readiness reads `upsdrvctl status`,
-NUT's own driver-state report, rather than inferring driver health from `upsc` failures, and the
-Docker `HEALTHCHECK` runs that same check instead of the `upsd -V` that could never fail.
-`verifyClientCertificates` is refused at admission because no released
-OpenSSL `upsd` honors CERTREQUEST. The entrypoint runs `upsd -FF`, so the operand is foregrounded
-because that is what was asked for rather than as a side effect of debug logging, and it leaves the
-PID file `upsd -c reload` needs; the smoke test asserts the file rather than the flag. The driver
-allowlist is pinned to the image from both sides — the smoke test asserts every admitted driver is
-present, and a Go test asserts the two lists agree — so admission cannot accept a driver the operand
-cannot run. A `driver-watchdog` sidecar restarts drivers that stop answering, so a driver dying after
-startup no longer leaves the pod permanently out of the Service endpoints. A server whose selector
-matches nothing starts idle and reports NotReady instead of crash-looping. Adding or removing a
-device reloads `upsd` in place instead of replacing the pod; only `LISTEN`, port, and certificate
-changes still roll it, because those are the changes `upsd` ignores on reload — silently, in the
-case of `LISTEN`. The pod shares a process namespace, which is what lets the sidecar signal `upsd`
-and what gives the pause container the orphaned drivers to reap. Verified on `kind`: a killed driver
-is recovered and leaves no zombie, and a device added by patching the ConfigMap is served without
-either container restarting. Driver configuration follows NUT's own vocabulary on `UPSDevice` spec,
-with `spec.driverOptions` as the `ups.conf` escape hatch for anything the typed fields do not cover
-(`OD-21`). The escape hatch cannot reach around the allowlist it sits behind: `driver` is reserved
-on both the direct and `upstreamNUT` paths, so a device cannot pass admission declaring one driver
-and render another.
+`NUTServer` operand rendering with injection-validated NUT config, `credentialSecretRef` wiring,
+NUT protocol TLS proven end to end against operands built from source on OpenSSL, scripted
+`dummy-ups` simulation, and the `snmpsim` driver-conformance fixture. Health reporting, startup,
+driver supervision, in-place reload, and the allowlist/image pinning are described as built in
+[nut-server-operand.md](design/nut-server-operand.md) (`NS-1`–`NS-9`). e2e covers `dummy-ups`,
+`snmp-ups`, and `NUTServer`; real actuation stays out of scope for `kind`.
 
 Closed: `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `F-47`,
 `F-48`–`F-51`, `F-53`, `F-76`, `F-85`, `NS-1`–`NS-9`, `OD-21`, `OD-32`, `OD-36`. `F-19`
@@ -222,32 +155,15 @@ receipt.
 #### Built
 
 The DaemonSet renders in `MonitorOnly`/`DryRun`/`Actuate` with `power-signal-writer` as the
-`SHUTDOWNCMD` binary, `internal/nodeagent` signal validation enforcing TTL and node name, and
-`cmd/node-actuator`'s syscall-backed poweroff, proven on `kind` within the configured TTL. The
-authorization boundary (`OD-37`), the signal lifecycle including revocation (`F-87`) and the
-delivery-channel marker (`F-86`), the permitted-only `CAP_SYS_BOOT` model (`F-61`), the readiness
-contract (`F-59`, `F-64`), and the mid-episode write deferral (`F-92`) are described as built in
-[node-agent-operand.md](design/node-agent-operand.md) (`NA-1`–`NA-8`).
-
-`sync(2)` runs before `reboot(2)` on the `PowerOff` path, timed and logged on every call, because
-`reboot(2)` does not flush the page cache — confirmed against `kernel/reboot.c` and stated in
-`reboot(2)`'s own man page. `spec.skipSync` on the signal lets the executor drop the flush when the
-plan is already overrunning; it is recorded loudly and is never silent. `skipSync` is set by the executor from the live tier-overrun window at
-dispatch and recorded in the handoff's audit details, never from a `NodePowerAgent` setting — `EX-31` owns the lever, and only the thing running
-the plan knows the plan is late. The flush is bounded by a
-timeout and the halt proceeds on expiry, because `unix.Sync()` blocks indefinitely on a hung mount
-and `skipSync` cannot reach that case — the executor decides it before the sync starts. A node that
-halts dirty beats a node that never halts, and the cut-short flush is logged as the mount evidence
-it is.
-
-Every link on the halt path logs itself as `halt gate=<name> result=pass|fail` (`NA-9`), always on
-rather than behind a switch, because the path runs at most once per container and a switch would have
-to be thrown when nobody can reach the node. `make verify-actuation` streams the trace while the node
-can still send it and prints it on both outcomes, so a failed run names the link that broke instead
-of reporting a machine that is either dark or not.
+`SHUTDOWNCMD` binary, `internal/nodeagent` signal validation, and `cmd/node-actuator`'s
+syscall-backed poweroff, proven on `kind` within the configured TTL. The authorization boundary,
+signal lifecycle, permitted-only `CAP_SYS_BOOT` model, readiness contract, bounded pre-halt `sync(2)`
+with executor-driven `skipSync`, and the per-gate halt trace are described as built in
+[node-agent-operand.md](design/node-agent-operand.md) (`NA-1`–`NA-9`). `make verify-actuation` proves
+the path end to end on real hardware; see [install.md](install.md).
 
 Closed: `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-60`, `F-61`–`F-65`,
-`F-66`, `F-67`–`F-71`, `F-72`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`–`F-92`, `NA-9`, `OD-37`. `F-89` declined — the signal Secret
+`F-66`, `F-67`–`F-71`, `F-72`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`–`F-92`, `NA-1`–`NA-9`, `OD-37`. `F-89` declined — the signal Secret
 mounts whole on every node, but the payload carries no credentials and the node-name check holds it
 to exposure rather than actuation; recorded in
 [node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md).
@@ -269,24 +185,10 @@ Design doc: `docs/shutdown-flow.md`, Published Artifacts section (`GP-6`/`GP-7`)
 A single structured planner artifact, the dependency graph as normalized vertices/edges with
 provenance and explanations, resolver-derived power-domain closure artifacts, deterministic
 Mermaid/Graphviz/D2 renderers, advisory startup wave projections, and `internal/metrics` on
-controller-runtime's registry. Delivery is Kubernetes API watch over `ShutdownFlow.status` for the
-current artifact stream, plus Events, logs, and PostgreSQL for transitions, operator detail, and
-durable history. Kubernetes-first interface only — CRDs, status, Events, logs, PostgreSQL, no UI and
-no bundled broker. Metrics now cover telemetry polls, capability-match attempts, inventory compiler
-counts, domain counts, orphan nodes, and unmodeled communication paths.
-
-Halt verification is recorded operator-side in `internal/haltwatch` and the `nodehalt` reconciler,
-because the node cannot record it: the actuator logs its own syscall and then halts with the log.
-Both endpoints are things the operator sees on its own — the executor's signal write starts the
-clock, a `Node` that stops reporting `Ready` stops it. Published as
-`nutoperator_halt_attempts_total{shutdownflow,outcome}` plus per-node
-`nutoperator_halt_last_verified_timestamp_seconds` and `nutoperator_halt_duration_seconds`. Only an
-observed halt writes the per-node evidence, so a failed attempt cannot turn "proven to halt" into
-"asked to halt", and the reconstruction takes the earlier of the `Ready` condition's heartbeat and
-transition times rather than the transition alone, which would charge every node the control plane's
-node-monitor grace period. The `Node` watch costs nothing in steady state: with no signal outstanding
-its predicate drops every event before it becomes a reconcile. Full treatment in
-[metrics.md](metrics.md).
+controller-runtime's registry. Delivery is Kubernetes API watch over `ShutdownFlow.status`, plus
+Events, logs, and PostgreSQL — no UI and no bundled broker. Operator-side halt verification
+(`internal/haltwatch`, the `nodehalt` reconciler) records what a powered-off node cannot report
+itself. Every metric and its rationale: [metrics.md](metrics.md).
 
 Closed: `PL-45`–`PL-48`, `OD-1`, `OD-5`, `F-3`, `F-6`.
 
@@ -330,34 +232,13 @@ image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.m
 #### Built
 
 `observedGeneration`, enum validation, and spec/status separation across all CRDs; project-owned
-multi-arch operand images with SBOM, provenance, and scanning; CI with distinct check names, path
-filters, tidy-drift, ASH, an RFC1918 scan, and CRD-schema validation of every shipped sample and
-example; and the no-cert-manager install path (`config/byo-cert`, `hack/webhook-cert.sh`) verified on
-`kind`.
-
-Sample and example manifests are validated against the generated CRD schemas by
-`make validate-samples`, on every commit and with no path filter, because the CRDs are generated
-from the Go types while the manifests are hand-written and nothing else connects the two. The
-RFC1918 scan moved alongside it into `Repo Hygiene` for the same reason: both guard documentation
-and examples, and both previously sat behind a `docs/**` path filter that skipped exactly the
-commits they exist to check.
-
-Serving-certificate expiry is published as `nutoperator_certificate_not_after_timestamp_seconds`; the
-byo-cert install path is covered end to end on `kind`, including rotation; and the ASH scan runs
-every scanner that can contribute here — `grype` and `syft` installed from pinned checksum-verified
-archives, `cfn-nag`/`cdk-nag`/`opengrep` excluded by decision.
-
-The manager image no longer carries a Docker `HEALTHCHECK` that only ran `--version`; Kubernetes
-`/healthz` and `/readyz` probes are the manager readiness contract, and the Dockerfile carries the
-corresponding `CKV_DOCKER_2` skip rationale. `docs/images.md` and `docs/security.md` now distinguish
-current source-build controls from open release-hardening targets.
-The Images workflow signs non-PR published image digests with keyless Sigstore/cosign after the
-published-image vulnerability scan, and `docs/images.md` documents digest verification. The `main`
-tag is applied only to a digest the e2e suite and the NUT TLS smoke test have both run against: the
-build job publishes immutable `sha-` references, `test-e2e` is invoked with those digests through
-`workflow_call`, and a promote job floats the tag afterwards (`F-77`). A failing ASH scan names its
-actionable findings in the job log and the run summary instead of only counting them, and the
-extraction is reconciled against ASH's own verdict so it cannot report clean while the scan fails.
+multi-arch operand images with SBOM, provenance, digest-pinned bases, signature-verified NUT source,
+and keyless cosign signing; the `main` tag applied only to a digest e2e and the TLS smoke test have
+both run against; Kubernetes `/healthz`/`/readyz` as the manager readiness contract; and the
+no-cert-manager install path verified on `kind` including rotation. CI carries distinct check names,
+path filters, tidy-drift, ASH with actionable-finding extraction, and a `Repo Hygiene` workflow with
+no path filter at all — sample-schema validation, an RFC1918 scan, and installer freshness. Evidence:
+[operator-maturity-benchmarks.md](audits/operator-maturity-benchmarks.md), [images.md](images.md).
 
 Closed: `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`, `F-52`, `F-77`, `F-78`.
 
@@ -382,11 +263,12 @@ Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`
 
 #### Built
 
-`internal/nut` as a real protocol client rather than an `upsc` wrapper, `internal/telemetry`
-normalization with profile-declared aliases, `internal/polling` per-target transport, `internal/trigger`
-pure evaluation wired into `ShutdownFlow`, domain-scoped trigger evaluation against resolver-derived
-power-domain membership, planner compilation of that same partial-domain scope, and `dummy-ups`
-repeater mode for upstream NUT appliances.
+`internal/nut` as a real NUT protocol client rather than an `upsc` wrapper, `internal/telemetry`
+normalization with profile-declared aliases, `internal/polling` per-target transport,
+`internal/trigger` pure evaluation wired into `ShutdownFlow`, domain-scoped trigger evaluation against
+resolver-derived membership, and `dummy-ups` repeater mode for upstream NUT appliances. Boundary and
+trigger semantics: [telemetry-and-triggers.md](design/telemetry-and-triggers.md),
+[upstream-nut-relay.md](design/upstream-nut-relay.md).
 
 Closed: `F-22` relay half, `F-25` runtime half, `OD-9`, `OD-14`, `CR-4`.
 
@@ -401,22 +283,14 @@ None.
 Owns: scaffold, docs upkeep, examples, and decision-registry maintenance — glue work not owned by one
 component.
 
-#### Open Work
-
-None.
-
 #### Built
 
 Component-scoped design docs with stable identifier namespaces, governing principles and scope
 boundaries, the decision index and glossary, the references under `docs/`, the audit records under
-`docs/audits/`, and the diagrams under `docs/diagrams/`. Example node naming is role-based per
-CONTRIBUTING.md — no new decision, that is the example policy applied.
-
-Worked examples are one tight and three loose. `docs/examples/orion-cluster/` authors an explicit
-edge on every group, so it demonstrates field meanings rather than planner behavior — its wave
-structure is identical with or without ordering hints. The scenarios under
-`docs/examples/simulation/` carry tiers and nothing else, so wave structure is derived and changes
-when a tier changes. Every manifest in both is schema-validated in CI by `make validate-samples`.
+`docs/audits/`, and the diagrams under `docs/diagrams/`. Worked examples are one tight
+(`docs/examples/orion-cluster/`, every edge authored) and three loose
+(`docs/examples/simulation/`, tiers only, wave structure derived); each carries its own README, and
+every manifest in both is schema-validated in CI.
 
 #### Open Work
 

@@ -258,6 +258,26 @@ before signalling: a PID file pointing at an unrelated process in the watchdog's
 that process alive. This was tested directly, by pointing a driver's PID file at an innocent
 `sleep` and confirming it survived.
 
+## The admission surface and the image agree
+
+The driver allowlist is pinned to the operand image from both ends. The container smoke test asserts
+that every admitted driver is actually present in the image, and a Go test asserts that the
+admission list and the image's driver list are the same set. Either check alone leaves the failure
+open in one direction; together they make it impossible for admission to accept a `UPSDevice`
+naming a driver the operand cannot run.
+
+`spec.driverOptions` is the `ups.conf` escape hatch for anything the typed fields do not cover
+(`OD-21`), and it cannot reach around the allowlist it sits behind. `driver` is a reserved key on
+both the direct and `upstreamNUT` paths, so a device cannot pass admission declaring one driver and
+then render another.
+
+`verifyClientCertificates` is refused at admission rather than rendered. No released OpenSSL `upsd`
+honors `CERTREQUEST`, so accepting the field would render configuration that silently does nothing —
+a cluster believing it required client certificates while `upsd` asked for none. Refusing at
+admission is the only way that belief cannot form. This is a consequence of the OpenSSL backend
+decision (`OD-32`); it would be a different answer on an NSS build, which is exactly why the field is
+refused rather than ignored.
+
 ## Related
 
 - `F-17`, `F-46` — [nutserver-pod-audit.md](../audits/nutserver-pod-audit.md)

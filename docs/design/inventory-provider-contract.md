@@ -117,6 +117,12 @@ remain product/SKU records and never carry membership.
 roots belongs to both domains. No special case, no override syntax. This is the data PL-16 already
 needed for multi-feed feasibility.
 
+Repository note, and the reason IN-7 can be stated without qualification: a cyclic `feeds` graph is
+rejected with a `FeedsCycle` diagnostic before closure runs. Transitive closure over a cycle does not
+terminate on its own, and a cycle is never a real power topology — a UPS cannot ultimately feed
+itself. Rejecting the input is what leaves no shape for which "membership is computed" is undefined.
+This is enforcement of IN-7 and IN-9, not a separate rule.
+
 **IN-12 · Orphan rule.** Every Kubernetes node must be reachable from at least one `UPSDevice` via
 `feeds` edges, or carry an explicit exemption marker declaring it not UPS-backed and excluded from
 power planning. A node that is neither reachable nor exempted is a hard validation failure.
@@ -186,6 +192,12 @@ The CRD provider satisfies IN-14 through IN-16 trivially, which is an argument f
 beyond the ones in SB-8. It stamps no snapshot time because it is rebuilt from live resources on
 every resolve, and age evaluation stays silent when there is nothing to measure rather than inventing
 staleness from a missing field.
+
+Leaving `ObservedAt` unstamped is load-bearing rather than incidental. The snapshot feeds the
+structural hash (IN-14), so a timestamp refreshed on every resolve would change the topology hash on
+every reconcile — and plan identity is what tells a reader whether the plan actually changed shape.
+A hash that moves continuously reports every reconcile as a new plan and none of them as meaningful,
+which is the opposite of what PL-14 exists to provide.
 
 ---
 

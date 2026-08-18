@@ -370,6 +370,29 @@ do not default or render it.
 
 **OD-26 · Provenance field semantics.** Dropped for v1 because no `provenance` field exists.
 
+## What a device publishes about its own match
+
+A `UPSDevice` publishes the profile it resolved to on `status.capability`: the profile identity, the
+match tier it landed on, the quirks in force after firmware scoping, and the matcher's own reason
+whenever the match is anything other than a clean product hit.
+
+The reason field is the load-bearing part. Without it, a device that fell back to the
+unidentified-device profile and a device that matched its exact product record look identical from
+the outside — both report *a* profile — and the difference between them is the difference between
+"this operator knows what this hardware does" and "this operator knows nothing about this hardware
+and said so" (`PL-33`, `OD-31`). Publishing the reason makes that distinction readable with
+`kubectl` rather than only by reading the matcher.
+
+Profile hashing is deterministic across reordering. Telemetry variables, actuation entries, quirks,
+and firmware-match sets all hash to the same value regardless of the order they were authored in,
+because a profile that reorders its own lists has not changed and must not present as a new one —
+profile identity feeds plan identity, and a hash that moved on cosmetic edits would report every
+catalog reformat as a plan change.
+
+An unresolvable PDU profile set — duplicate ids, or two universal profiles — is reported on every
+profile in the set rather than on one arbitrary member. There is no principled way to choose which
+of two colliding profiles is at fault, and naming one implies the other is fine.
+
 ## Testing Notes
 
 For resolver-only testing, a user inventory object can reference a catalog profile by supplying a

@@ -679,3 +679,33 @@ predictable location under a world-writable directory is somewhere a local proce
 report saying everything is fine. Fixed rather than suppressed — the default is now `$ASH_OUTPUT_DIR`
 and the flag is required when that is unset, which affects only a bare manual invocation and serves
 that better with an error than a guess.
+
+## Findings — repo hygiene gates, 2026-08-15
+
+**Shipped manifests were never checked against the schemas they claim to satisfy.** CRDs are
+generated from the Go types; `config/samples/` and `docs/examples/` are hand-written. Nothing
+connected the two, so a field could be renamed, retyped, or removed and every shipped example
+describing the old shape stayed green. Found by building the check and running it: the PDU sample had
+been invalid against its own CRD since the `OD-22`/`F-26` quirk restructure, declaring integer outlet
+ids where the schema requires strings.
+
+`make validate-samples` (`hack/validate-samples.py`) now validates every manifest under
+`config/samples/` and `docs/examples/` against the generated schemas, via the make target rather than
+the script directly so the CRDs are regenerated from the Go types first — validating against
+committed CRDs would check samples against a previous commit's schema, which is the failure this
+exists to catch.
+
+**The RFC1918 scan sat behind a path filter that excluded what it guards.** It ran in a workflow with
+`paths-ignore: docs/**` and `**.md`. The likeliest place for site topology to leak into a public
+repository is documentation and examples, so the one commit shape it existed to check was the one
+shape that never ran it. `paths-ignore` is workflow-level and not job-level, so the fix was a
+workflow: both checks moved into `Repo Hygiene`, which deliberately carries no path filter at all.
+
+**The published installer was stale and nothing compared it to its source.** `dist/install.yaml` is
+the documented one-command install and a build artifact that happens to be committed, so it can fall
+behind the manifests it is generated from silently. It had: the `ShutdownHook` CRD and its webhooks
+were added and the bundle was never rebuilt, so `kubectl apply -f dist/install.yaml` produced a
+cluster where `RunHook` had no CRD to read. Build, test, and lint all passed over it because none of
+them compares committed bytes to generator output. The `installer-freshness` job in `Repo Hygiene`
+now rebuilds and diffs, pinning the image tag to the committed value so it checks manifest staleness
+rather than tag drift.

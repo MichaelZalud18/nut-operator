@@ -38,9 +38,17 @@ snapshot. That keeps vendor-specific statuses from breaking reconciliation.
 
 ## Polling
 
-The transport layer uses the NUT `LIST VAR <upsname>` command against TCP port 3493 and parses the
-documented `BEGIN LIST VAR`, `VAR ... "<value>"`, `END LIST VAR` response. It never authenticates
-or issues administrative commands.
+The transport layer speaks the NUT protocol directly rather than shelling out to `upsc`. It uses the
+`LIST VAR <upsname>` command against TCP port 3493 and parses the documented `BEGIN LIST VAR`,
+`VAR ... "<value>"`, `END LIST VAR` response. It never authenticates or issues administrative
+commands.
+
+A real client rather than a wrapper, because the wrapper cannot report what this needs. `upsc`
+collapses every failure into an exit code and a line on stderr, so "the server refused the
+connection", "the device is not in this server's list", and "the driver is not answering" arrive
+indistinguishable — and those need different conditions on `UPSDevice.status`. It also puts a
+subprocess on the polling path, which is the wrong shape for something that runs per device per
+interval and must keep working while a cluster is losing power.
 
 The polling layer accepts an already-resolved NUT target, calls the transport, normalizes the raw
 variables, and exposes an audit adapter for `ups_telemetry_snapshots`.
