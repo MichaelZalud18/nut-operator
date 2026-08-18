@@ -31,8 +31,8 @@ behaves. Going further — actually letting it stop a machine — is
 
 ## Sections
 
-**[Concepts](concepts/README.md)** — what the system is. The control plane and its two operands, the
-service-level shape, and where the pods land.
+**[Concepts](concepts/README.md)** — what the system is. The control plane and its two operands, how
+a power event moves through them, and where the pods land.
 
 **[Installation](installation/README.md)** — prerequisites and the two install paths,
 [configuration](installation/configuration.md) in dependency order, and
@@ -42,9 +42,9 @@ service-level shape, and where the pods land.
 hardware, modeling the topology, assigning tiers, choosing what is last-ditch, setting the
 tier-overrun policy, and enabling actuation.
 
-**[Reference](reference/README.md)** — [glossary](reference/glossary.md),
-[metrics](reference/metrics.md), [security](reference/security.md), and
-[image strategy](reference/images.md).
+**[Reference](reference/README.md)** — [API reference](reference/api.md),
+[glossary](reference/glossary.md), [metrics](reference/metrics.md),
+[security](reference/security.md), and [image strategy](reference/images.md).
 
 **[Examples](examples/README.md)** — [Orion cluster](examples/orion-cluster/README.md), one fully authored
 flow with every edge explicit; and [simulation scenarios](examples/simulation/README.md), tiers only,

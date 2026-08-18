@@ -69,7 +69,7 @@ is off stays off, so a leftover signal is inert.
 
 The signal is hand-delivered into the projected Secret — the same path `OD-37` authorizes, not a
 second channel — which isolates kubelet admission, file-capability survival, and the host PID
-namespace from planner correctness. See [security.md](../reference/security.md) for the boundary this
+namespace from planner correctness. See [Security](../reference/security.md) for the boundary this
 proves.
 
 ### Reading the gate trace
@@ -83,7 +83,7 @@ after it, which is what makes the host-PID-namespace case detectable at all: tha
 it, and a node still running.
 
 Real executions are also recorded on the operator, which is the side that survives them — see
-`nutoperator_halt_*` in [metrics.md](../reference/metrics.md), where
+`nutoperator_halt_*` in [Metrics](../reference/metrics.md), where
 `nutoperator_halt_last_verified_timestamp_seconds` answers "has this cluster ever proven it can halt
 this node" months later. This procedure deliberately does not produce those: it bypasses the executor
 so that planner correctness cannot fail it, and the executor is where the halt clock starts.
@@ -113,6 +113,6 @@ you can still undo.
 
 ## Background
 
-[security.md](../reference/security.md) for the privilege boundary,
-[node-agent-operand.md](../contributing/design/node-agent-operand.md) for what the actuator will and
-will not do, [metrics.md](../reference/metrics.md) for what to alert on.
+[Security](../reference/security.md) for the privilege boundary,
+[the node-agent design](../contributing/design/node-agent-operand.md) for what the actuator will and
+will not do, [Metrics](../reference/metrics.md) for what to alert on.

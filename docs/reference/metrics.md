@@ -124,7 +124,7 @@ Expiry of the serving certificates the manager has mounted, read from the files 
 actually serves rather than from the Secret through the API — so a stale mount reports its own stale
 certificate instead of the cluster's current one.
 
-This matters most on the no-cert-manager install path ([install.md](../installation/README.md)), where rotation is a
+This matters most on the no-cert-manager install path ([the installation guide](../installation/README.md)), where rotation is a
 deliberate `hack/webhook-cert.sh` re-run. Nothing renews the certificate on its own there, and a
 1-year lifetime makes expiry a once-a-year surprise — the kind nobody has the procedure in mind for
 when it fires.

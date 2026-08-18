@@ -2,7 +2,16 @@
 
 Components: Cross-cutting.
 
-`nut-operator` is split into a control plane, NUT server operands, node power agents, and durable state.
+`nut-operator` is split into a control plane, NUT server operands, node power agents, and durable
+state. This page explains what each part is and how a power event moves through them. For what to
+*write*, see the [API reference](../reference/api.md); for what to *decide*, see
+[Guides](../guides/README.md).
+
+## The three stages
+
+Everything the operator does falls into detect, decide, or act, and the split is deliberate: the
+component that talks to power hardware is not the component that decides anything, and neither one is
+the component that can stop a machine.
 
 ```mermaid
 flowchart LR
@@ -49,131 +58,62 @@ flowchart LR
   Artifacts -.-> Subscribers
 ```
 
-## Control Plane
+- **Detect** — NUT polling, UPS status normalization, declarative inventory resolution,
+  capability-profile matching, and topology assembly.
+- **Decide** — pure trigger evaluation and `ShutdownFlow` graph planning into deterministic ordered
+  waves. This stage queries nothing live; its inputs are authored and hashed.
+- **Act** — dry-run execution, Kubernetes workload coordination, node-agent handoff, and explicitly
+  approved host shutdown.
 
-The operator runs as a controller-runtime manager and reconciles cluster-scoped CRDs in `power.zalud.io/v1alpha1`.
+## Control plane
+
+The operator runs as a controller-runtime manager and reconciles cluster-scoped CRDs in
+`power.zalud.io/v1alpha1`.
 
 - CRDs carry desired state and small status summaries.
-- `/status` carries conditions, observed generation, rendered config hashes, and compiled shutdown plans.
+- `/status` carries conditions, observed generation, rendered config hashes, and compiled shutdown
+  plans.
 - PostgreSQL carries audit events, telemetry history, and flow execution records.
-- Published planner artifacts expose the current execution plan, dependency graph, wave state, and explanations for consumers.
-- Admission webhooks reject unsafe `UPSDevice`, capability profile, and declarative inventory combinations before persistence. Reconcilers keep the same checks in status for defense in depth and for installs that temporarily disable webhooks.
+- Admission webhooks reject unsafe combinations before persistence, with the same checks repeated in
+  reconcilers for defense in depth.
 
-## Primary Interface
+Kubernetes is the whole interface for v1. CRDs are the configuration and review surface, GitOps is the
+normal way to change them, and `kubectl` plus Events, logs, CR status, and PostgreSQL queries are
+sufficient for day-to-day operation. There is no embedded dashboard (`SB-14`); a future UI would be
+another consumer of the published artifacts, not part of the reconciliation path.
 
-Kubernetes is the primary user interface for v1.
+## Operands
 
-- CRDs are the configuration and review surface.
-- GitOps is the normal configuration mechanism.
-- `kubectl`, Kubernetes Events, controller logs, CR status, and PostgreSQL audit queries are sufficient for day-to-day operation.
-- There is no embedded dashboard or dedicated frontend in v1.
+Each `NUTServer` and `NodePowerAgent` renders a set of ordinary Kubernetes objects:
 
-A future UI is a separate consumer of the operator APIs and published artifacts. It does not become part of the core reconciliation, planning, or execution path.
-
-## Power APIs
-
-`PowerManagementCluster` is the root configuration object. It owns global security defaults, image defaults, observability, operand namespace policy, and storage.
-
-`UPSDevice` represents one physical or simulated network-reachable UPS. It supports either a reviewed NUT network driver or an explicit upstream NUT relay endpoint for appliances that already expose `upsd`. Local USB and serial drivers are out of scope for this API so generated NUT server pods do not need host device mounts or privileged access for UPS connectivity. New direct drivers are added to the network-driver allowlist deliberately; the set is `snmp-ups`, `netxml-ups`, `apcupsd-ups`, and `dummy-ups` for tests and upstream relays.
-
-`NUTServer` represents one logical `upsd` instance. It selects one or more `UPSDevice` objects and renders server-side NUT configuration, credentials, TLS material references, and service exposure.
-
-For built-in NUT appliances, `NUTServer` renders `dummy-ups` repeater mode rather than direct hardware drivers. This keeps Ubiquiti-style network UPS support non-privileged and avoids USB/serial host access.
-
-`NodePowerAgent` represents one DaemonSet fleet. It references one or more `NUTServer` objects, selects nodes, and declares whether the fleet is monitoring, dry-running, or allowed to actuate.
-
-`ShutdownFlow` is the ordered policy layer. Its primary model is a dependency graph of shutdown groups compiled into deterministic execution waves. Linear steps remain available for small test installs, but production flows use graph relationships so independent groups can run concurrently while dependent groups stay protected.
-
-`ShutdownHook` describes one bounded pre-shutdown call to a system outside the cluster, referenced by a `RunHook` group. HTTP CloudEvents is the primary transport and a generic Kubernetes object is the secondary one. This is the operator's only outbound network path, so endpoints are allowlisted on `PowerManagementCluster`; hook failures are advisory and mark the flow degraded without holding a wave or engaging `abortPolicy`.
-
-`PowerInfrastructure` represents a non-node, non-UPS entity in the power or communication path — a PDU, switch, router, panel, or transfer device. It exists so topology can explain how a node is fed and reached without implying anything actuates it.
-
-`PowerInventoryNode` and `PowerInventoryEdge` carry the topology itself. The node object attaches planner-relevant metadata to a Kubernetes node name without displacing the `Node` as canonical identity; the edge object declares provider-neutral `Feeds` and `Carries` relations. Power-domain membership is derived from the transitive closure of `Feeds` edges rather than declared.
-
-`UPSCapabilityProbe` reads what a device actually reports and drafts a `UPSCapabilityProfile` from it, for hardware the bundled catalog does not cover. It is advisory: it never changes how a device resolves and never runs on the failure path.
-
-`PDUCapabilityProfile` is a parallel kind to `UPSCapabilityProfile` carrying PDU records, including outlet count and switchability. It is scaffolding for v1 per `OD-25` — schema, validation, bundled catalog, and matcher support exist, and nothing consumes them. There is no PDU device kind, inventory entity, render path, or actuation path.
-
-See [shutdown-flow.md](../contributing/design/shutdown-flow.md) for the underlying flow design.
-
-## Operand Model
-
-The generated resources are:
-
-- `Deployment` for each `NUTServer`.
-- `Service` for each `NUTServer`.
-- `ConfigMap` for rendered NUT config.
-- `Secret` for generated NUT users when operator-managed auth is selected.
+- `Deployment` and `Service` for each `NUTServer`, plus a `ConfigMap` for rendered NUT config and a
+  `Secret` for generated NUT users when operator-managed auth is selected.
 - `DaemonSet` for each `NodePowerAgent`.
 - `NetworkPolicy` for server, agent, metrics, and database traffic.
 - `ServiceMonitor` when Prometheus Operator integration is enabled.
-- A per-agent projected signal `Secret` used by the executor to release individual nodes without
+- A per-agent projected signal `Secret`, which is how the executor releases individual nodes without
   giving the actuator Kubernetes API credentials.
 
-## Node Agent Pod
+### The node agent pod
 
-The default node agent pod is a network-only, non-privileged monitor. A host-action sidecar is
-rendered only when monitoring is not explicitly disabled.
+The default node agent pod is a network-only, non-privileged monitor. The host-action container is
+rendered only when actuation is configured.
 
-- `upsmon`: unprivileged NUT client, read-only root filesystem, no capabilities, no Kubernetes API
-  token, and a packaged `power-signal-writer` used by NUT `SHUTDOWNCMD`.
-- `actuator`: omitted in `MonitorOnly`, and `Simulate` by default elsewhere. In approved
-  host-actuation mode it watches the executor-projected Secret path and performs the host shutdown
-  path without NUT credentials or policy authority.
+- **`upsmon`** — unprivileged NUT client, read-only root filesystem, no capabilities, no Kubernetes
+  API token, and a packaged `power-signal-writer` used by NUT `SHUTDOWNCMD`.
+- **`actuator`** — omitted entirely in `MonitorOnly`, and `Simulate` by default elsewhere. In approved
+  actuation mode it watches the executor-projected Secret path and performs the host shutdown without
+  NUT credentials or policy authority.
 
-The handoff file contains structured content including execution ID, node name, timestamp, reason,
-UPS identity, flow identity, and plan hash. The actuator rejects stale, malformed, or wrong-node
-signals.
+The signal is structured content carrying execution ID, node name, timestamp, reason, UPS identity,
+flow identity, and plan hash. The actuator rejects stale, malformed, or wrong-node signals.
 
-One path authorizes a halt (`OD-37`). The executor writes projected per-node Secret keys, and that
-is the only path the actuator reads. `upsmon` still writes the same JSON shape locally for NUT
-`SHUTDOWNCMD` events — the writer, the format, and the file all remain — but the shared tmpfs is not
-mounted into the actuator, so no supported configuration lets that file halt a node. The shared
-shape is a format, not a second release path.
+**One path authorizes a halt** (`OD-37`): the executor-projected Secret, and nothing else. Why that
+decision was made, what it costs, and why a local backstop was declined are in
+[Security](../reference/security.md#privilege-boundary) and, in full, in
+[the node-agent design](../contributing/design/node-agent-operand.md).
 
-This was decided against the tempting reading. A local backstop engages precisely when the operator
-is unreachable, which is when ordering matters most, and `MONITOR ... 1 ... secondary` with
-`MINSUPPLIES 1` on every agent would release a UPS's entire coverage simultaneously. The accepted
-cost is stated in `SB-3`: an undeliverable signal leaves nodes running until the UPS dies.
-
-## Storage Model
-
-PostgreSQL is the durable state store. CloudNativePG is the preferred in-cluster implementation, but the API accepts external PostgreSQL as well.
-
-Do not store event history, telemetry streams, or execution logs in CR status. CR status is for current state summaries, conditions, and compiled plan review.
-
-## Publishing Model
-
-The operator publishes facts, not external commands. The planner and executor publish:
-
-- The compiled execution plan.
-- The dependency graph with edge provenance and explanations.
-- Shutdown waves and advisory startup wave projections.
-- Trigger decisions and planner explanations.
-- Current execution state and wave progress.
-
-Publishing targets are Kubernetes status for compact current state, Kubernetes Events for state transitions, logs for operator-readable detail, and PostgreSQL for durable history. Visualization is exported from the same structured artifacts as Mermaid, Graphviz/DOT, and D2; those rendered formats are views, not sources of truth.
-
-No message broker is bundled for v1. Kubernetes API watch semantics on `ShutdownFlow` status are the
-pub/sub surface for current artifacts; Events, logs, and PostgreSQL provide transitions, operator
-detail, and durable history.
-
-Subscribers can include recovery orchestration, dashboards, documentation generators, monitoring systems, and future automation. The boundary is explicit: `nut-operator` owns power-event planning and shutdown; other systems consume the published plan.
-
-## Shutdown Flow Compilation
-
-`ShutdownFlow` compilation turns user-declared `groups` into status-visible `compiledWaves`.
-
-- `requires` means a referenced group must stay available while the current group shuts down.
-- `before` and `after` are direct ordering edges.
-- `shutdownTier` is coarse ordering, compiled into the same derived edges.
-- Groups that are ready at the same time share a wave; there is no additional ordering key.
-- Cycles and unknown group references are rejected before a plan can be accepted.
-- Each compiled wave may execute groups concurrently; later waves wait for earlier waves to complete.
-
-This keeps the CRD declarative while giving operators a reviewable plan before `Enforce` mode is allowed.
-
-## Decision Flow
+## How a power event moves through it
 
 ```mermaid
 sequenceDiagram
@@ -194,16 +134,123 @@ sequenceDiagram
   Agent->>Agent: Validate projected signal and mode gates
 ```
 
-The operator treats PostgreSQL as the durable record path, not as the critical decision path. A
-storage outage degrades auditability but does not erase the current CR specs or compiled status
-surfaces that drive power response. During shutdown execution, an explicitly configured local audit
-spool preserves replayable JSONL records when PostgreSQL stops accepting writes.
+PostgreSQL is the durable record path, not the decision path. A storage outage degrades auditability
+without erasing the CR specs and compiled status surfaces that drive the power response, and during
+execution a configured local audit spool preserves replayable JSONL records while PostgreSQL is
+refusing writes.
+
+The compilation step — how authored groups and tiers become ordered waves — is described in
+[the API reference](../reference/api.md#compiled-output).
+
+## What the operator publishes
+
+The operator publishes facts, not external commands: the compiled execution plan, the dependency
+graph with edge provenance and explanations, shutdown waves and advisory startup projections, trigger
+decisions, and current execution state.
+
+Those land in Kubernetes status for compact current state, Events for state transitions, logs for
+operator-readable detail, and PostgreSQL for durable history. Mermaid, Graphviz/DOT, and D2 exports
+are generated from the same structured artifacts — they are views, not sources of truth.
+
+No message broker is bundled for v1. Watch semantics on `ShutdownFlow` status are the pub/sub surface.
+
+The boundary is explicit: `nut-operator` owns power-event planning and shutdown execution.
+Subscribers — recovery orchestration, dashboards, documentation generators, monitoring — own what they
+do with the published plan.
+
+## The complete picture
+
+The diagram above shows the *flow*. This one shows the *layers*: what a user touches, what the API
+declares, what gets rendered, and what comes back out. Reach for it when you need the whole map at
+once rather than the path a single event takes.
+
+```mermaid
+flowchart TD
+  subgraph Interface["Primary interface"]
+    GitOps["GitOps manifests"]
+    Kubectl["kubectl, CR status, Events, logs"]
+  end
+
+  GitOps --> CRDs["power.zalud.io CRDs"]
+  Kubectl --> CRDs
+
+  subgraph API["Declarative API"]
+    PMC["PowerManagementCluster"]
+    UPS["UPSDevice"]
+    ServerAPI["NUTServer"]
+    AgentAPI["NodePowerAgent"]
+    FlowAPI["ShutdownFlow"]
+    Inventory["PowerInventoryNode / PowerInventoryEdge / PowerInfrastructure"]
+    Profiles["UPSCapabilityProfile catalog"]
+  end
+
+  CRDs --> API
+
+  subgraph Operands["Managed operands"]
+    NUT["NUT server pods / upsd"]
+    AgentDS["NodePowerAgent DaemonSet"]
+    Upsmon["upsmon container"]
+    Actuator["node-actuator container"]
+  end
+
+  UPS -->|"network NUT / SNMP / relay telemetry"| NUT
+  ServerAPI --> NUT
+  AgentAPI --> AgentDS
+  AgentDS --> Upsmon
+  AgentDS --> Actuator
+
+  subgraph ControlPlane["Operator control plane"]
+    Telemetry["Telemetry normalizer"]
+    Resolver["Inventory and capability resolver"]
+    Planner["ShutdownFlow planner"]
+    Publisher["Artifact publisher"]
+    Executor["Execution engine"]
+    Actions["Kubernetes action runners"]
+  end
+
+  NUT --> Telemetry
+  UPS --> Telemetry
+  Inventory --> Resolver
+  Profiles --> Resolver
+  Telemetry --> Planner
+  Resolver --> Planner
+  FlowAPI --> Planner
+
+  Planner --> Publisher
+  Planner --> Executor
+  Executor --> Actions
+  Actions -->|"scale, cordon, drain, workflow hooks"| Kubernetes["Kubernetes workloads and nodes"]
+  Executor -->|"release and signal handoff evidence"| Actuator
+  Actuator --> Host["host shutdown boundary"]
+
+  subgraph Published["Published planning facts"]
+    Status["CR status"]
+    Artifacts["compiled plan, dependency graph, waves, progress, explanations"]
+    Diagrams["Mermaid, Graphviz/DOT, D2"]
+    Audit[("PostgreSQL / CNPG audit store")]
+  end
+
+  Publisher --> Status
+  Publisher --> Artifacts
+  Publisher --> Diagrams
+  Publisher --> Audit
+  Executor --> Audit
+
+  Published --> Subscribers["External subscribers: monitoring, docs, dashboards, recovery orchestration"]
+```
 
 ## Resiliency
 
 Loss of connectivity between the operator, API server, NUT servers, PostgreSQL, or node agents is a
-degraded state, not a permission to assume success. Stale telemetry produces `Unknown` or degraded
-planner output, unreachable nodes are not treated as released or powered off, and node-local
-actuation only honors fresh structured signals for the receiving node.
+degraded state, not permission to assume success. Stale telemetry produces `Unknown` or degraded
+planner output, unreachable nodes are never treated as released or powered off, and node-local
+actuation only honors a fresh signal addressed to the receiving node.
 
-See [resiliency-and-partitions.md](../contributing/design/resiliency-and-partitions.md) for the partition contract.
+The partition contract is in
+[the partition contract](../contributing/design/resiliency-and-partitions.md).
+
+## Related
+
+- [Pod placement](pod-placement.md) — where each pod lands and what pins it there.
+- [API reference](../reference/api.md) — every kind, and the storage model.
+- [Security](../reference/security.md) — the privilege boundary in detail.

@@ -22,6 +22,26 @@ GOCACHE=/tmp/go-build-cache make manifests
 GOCACHE=/tmp/go-build-cache make test
 ```
 
+Full controller tests need Kubebuilder envtest assets:
+
+```sh
+GOCACHE=/tmp/go-build-cache make setup-envtest
+GOCACHE=/tmp/go-build-cache make test
+```
+
+Run the AWS Labs Automated Security Helper scan:
+
+```sh
+uv tool install 'git+https://github.com/awslabs/automated-security-helper.git@v3.5.8'
+make security-scan
+```
+
+The target downloads `grype` and `syft` into `bin/` from pinned, checksum-verified release archives;
+`grype` is the pipeline's dependency-vulnerability coverage. `cfn-nag`, `cdk-nag`, and `opengrep` are
+excluded by decision — no CloudFormation, no CDK, and `semgrep` already covers the same rule surface —
+so they report `SKIPPED` rather than `MISSING`; see `ASH_EXCLUDED_SCANNERS` in the `Makefile`.
+`make security-triage` names the actionable findings from the last scan.
+
 Useful manifest checks:
 
 ```sh

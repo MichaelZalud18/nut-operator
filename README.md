@@ -105,121 +105,67 @@ switches and routers as actuation targets, and USB or serial UPS attachment.
 
 ## Goals
 
-- Manage multiple NUT server instances from one operator.
-- Support many network-reachable UPS devices and physical power domains.
-- Keep UPS telemetry, policy compilation, and node actuation as separate concerns.
-- Default to dry-run and status-visible compiled plans before allowing any host shutdown.
-- Publish reusable planner artifacts: compiled execution plans, dependency graphs, waves, execution progress, and explanations.
-- Treat Kubernetes resources, events, logs, and GitOps-managed manifests as the v1 user interface.
-- Use Kubernetes-native security controls: least-privilege RBAC, status subresources, conditions, NetworkPolicy-ready operands, read-only roots, seccomp, and explicit host-actuator isolation.
-- Keep long-lived audit, telemetry, and flow execution state out of CR status and in PostgreSQL.
+- Manage multiple NUT server instances, many network-reachable UPS devices, and multiple physical
+  power domains from one operator.
+- Keep UPS telemetry, policy compilation, and node actuation as separate concerns with separate
+  privileges.
+- Default to dry-run, and make the compiled plan reviewable in `/status` before anything can halt a
+  node.
+- Publish the plan as consumable facts — execution plan, dependency graph, waves, progress,
+  explanations — so dashboards, monitoring, and recovery tooling can subscribe rather than integrate.
+- Treat Kubernetes resources, Events, logs, and GitOps-managed manifests as the v1 user interface.
+  There is no embedded dashboard.
 - Decline the Operator Framework's "Auto Pilot" maturity level by design: no auto-scaling,
   auto-tuning, or auto-remediation. Power state is the only trigger the operator acts on.
 
-## API Shape
+## Safety model
 
-The API group is `power.zalud.io/v1alpha1`.
+Real host shutdown is not the default, and reaching it takes four separate, reviewable steps.
 
-- `PowerManagementCluster` configures global defaults, operand namespace, images, security posture, observability, and PostgreSQL/CNPG storage.
-- `UPSDevice` describes a physical or simulated network-reachable UPS, its NUT driver or upstream NUT relay endpoint, credentials, power domains, thresholds, and telemetry behavior. Local USB and serial UPS modes are intentionally unsupported. The driver allowlist is `snmp-ups`, `netxml-ups`, `apcupsd-ups`, and `dummy-ups` for tests and upstream relays.
-- `PowerInfrastructure` describes non-node, non-UPS power or communication path entities such as PDUs, switches, routers, panels, and transfer equipment.
-- `PowerInventoryNode` attaches planner-relevant power metadata to Kubernetes node names without replacing the Kubernetes `Node` as the canonical identity.
-- `PowerInventoryEdge` declares provider-neutral `Feeds` and `Carries` topology relations between UPS devices, nodes, and infrastructure entities.
-- `UPSCapabilityProfile` declares reusable product/SKU capability records: authoritative NUT telemetry variables, UPS actuation behaviors, quirks, and deterministic match selectors. These are not per-site inventory records.
-- `UPSCapabilityProbe` reads what a UPS actually reports and drafts a `UPSCapabilityProfile` from it,
-  for hardware the bundled catalog does not cover. Advisory only: it never changes how a device
-  resolves and never runs on the failure path.
-- `NUTServer` renders and operates one logical `upsd` server instance for selected UPS devices.
-- `NodePowerAgent` manages the per-node monitoring and actuation DaemonSet. It separates `MonitorOnly`, `DryRun`, and `Actuate` modes.
-- `ShutdownFlow` defines dependency-graph shutdown policy compiled into ordered waves. Enforced flows require an explicit approval annotation.
-- `ShutdownHook` describes one bounded pre-shutdown call to a system outside the cluster, delivered as HTTP CloudEvents or as a generic Kubernetes object. This is the operator's only outbound network path; endpoints are allowlisted on `PowerManagementCluster`, and a failed hook marks the flow degraded without holding a wave.
-- `PDUCapabilityProfile` declares PDU product records, including outlet count and which outlets are switchable. **Scaffolding for v1** (`OD-25`): the kind, schema, validation, bundled catalog, and matcher exist, and no device kind, inventory entity, render path, or actuation path consumes them. PDU actuation does not work.
+`NodePowerAgent` ships as `mode: DryRun` with `shutdown.actuatorPolicy: Simulate`. Rendering
+`PowerOff` needs `spec.mode: Actuate` **and** an approval annotation on that exact resource.
+`ShutdownFlow` follows the same pattern for `mode: Enforce`. Both approvals are re-checked when the
+flow fires rather than when it was deployed, and absence of either drops to dry-run instead of
+proceeding.
 
-## Safety Model
+The node agent's two containers split credentials from privilege: `upsmon` holds NUT credentials and
+cannot stop a machine; the actuator can stop a machine and holds no NUT credentials, no Kubernetes
+token, and no network listener.
 
-Real host shutdown is not the default.
+**One path authorizes a halt** (`OD-37`). NUT's own local `SHUTDOWNCMD` path keeps its writer, its
+format, and its file, and holds no authority — the shared tmpfs is not mounted into the actuator, so
+no supported configuration lets that file stop a node. A local backstop was declined deliberately,
+and the accepted cost is stated plainly in `SB-3`: an undeliverable signal leaves nodes running until
+the UPS dies.
 
-`NodePowerAgent` defaults to dry-run behavior through `mode: DryRun` and `shutdown.actuatorPolicy: Simulate`. Rendering `PowerOff` requires both:
+Full treatment in [Security](docs/reference/security.md); the walk from dry-run to actuation is
+[its own guide](docs/guides/enable-actuation.md).
 
-- `spec.mode: Actuate`
-- `metadata.annotations[spec.shutdown.approvalAnnotation] == "true"`
+## Architecture and API
 
-`ShutdownFlow` follows the same pattern for `mode: Enforce`. This keeps dangerous behavior reviewable in Git and visible in `/status` before it can affect nodes.
+The control plane separates **detect** (NUT polling, telemetry normalization, inventory resolution,
+capability matching), **decide** (trigger evaluation and planner compilation into ordered waves), and
+**act** (workload coordination, node-agent handoff, approved host shutdown). Durable records go to
+PostgreSQL; Kubernetes status stays a current-state review surface rather than an event log.
 
-The node-agent pod split is:
-
-- `upsmon` container: unprivileged NUT client, no Kubernetes API credentials required for ordinary monitoring.
-- `actuator` container: omitted in `MonitorOnly`, and `Simulate` by default elsewhere — `mode` defaults to `DryRun` and `shutdown.actuatorPolicy` to `Simulate`, two independent gates. Approved real host shutdown watches only the executor-projected signal Secret, then uses the isolated host-action boundary with `hostPID`, `SYS_BOOT`, no Kubernetes token, and no NUT credentials.
-
-One path authorizes a halt (`OD-37`). NUT's local `SHUTDOWNCMD` path keeps its writer, its signal format, and its file, and holds no authority: the shared tmpfs is not mounted into the actuator, so no supported configuration lets that file stop a node. A local backstop was declined deliberately — it would engage exactly when the operator is unreachable, which is when ordering matters most, and `MINSUPPLIES 1` on every agent would release a UPS's whole coverage at once. The accepted cost, per `SB-3`: an undeliverable signal leaves nodes running until the UPS dies.
-
-## Storage
-
-The default durable storage mode is CNPG:
-
-```yaml
-spec:
-  storage:
-    mode: CNPG
-    cnpg:
-      clusterRef:
-        namespace: power-system
-        name: power-audit
-      database: power
-      schema: power
-    auditSpool:
-      enabled: true
-      path: /var/lib/nut-operator/audit-spool
-      maxSize: 64Mi
-```
-
-External PostgreSQL is also modeled for non-CNPG clusters. `Disabled` exists for local development only.
-The audit spool path must be backed by a deployment-supplied durable volume.
-
-## Architecture
-
-```mermaid
-flowchart TD
-  UPS[Network UPS / upstream NUT appliance] -->|NUT protocol| Server[NUTServer operands]
-  Server -->|LIST VAR telemetry| Operator[nut-operator controller]
-  Inventory[Inventory CRDs / provider adapters] --> Operator
-  Profiles[UPSCapabilityProfile catalog] --> Operator
-  Operator -->|status summaries| CRDs[power.zalud.io CRDs]
-  Operator -->|audit and telemetry| Postgres[(PostgreSQL / CNPG)]
-  Operator -->|compiled waves and decisions| Flow[ShutdownFlow]
-  Operator -->|published plan artifacts| Artifacts[Plans / graphs / waves / explanations]
-  Flow -->|approved handoff| Agents[NodePowerAgent DaemonSets]
-  Agents -->|authorized projected signal| Actuator[Host actuator boundary]
-  Artifacts -.-> Subscribers[Dashboards / monitoring / docs / recovery consumers]
-```
-
-The control plane separates detect, decide, and act:
-
-- Detect: NUT polling, UPS status normalization, declarative inventory resolution, capability-profile matching, and topology assembly.
-- Decide: pure trigger evaluation and `ShutdownFlow` graph planning into deterministic ordered waves.
-- Act: dry-run execution, Kubernetes workload coordination, node-agent handoff, and explicitly approved local host shutdown.
-
-Durable records are written to PostgreSQL. Kubernetes status remains a current-state review surface, not an event log.
-
-## Interface Model
-
-Kubernetes is the primary interface:
-
-- CRDs declare desired state.
-- GitOps manages configuration changes.
-- `/status`, Kubernetes Events, logs, and PostgreSQL audit records expose current state and history.
-- `kubectl` is sufficient for day-to-day operation.
-
-The operator publishes facts, not external commands. Other systems may consume published planner artifacts for dashboards, documentation, monitoring, recovery orchestration, or future automation. The project boundary remains: `nut-operator` owns power-event planning and shutdown execution; subscribers own what they do with the published plan.
+- [Architecture](docs/concepts/architecture.md) — the components, the diagrams, and how a power event
+  moves through them.
+- [API reference](docs/reference/api.md) — all twelve `power.zalud.io/v1alpha1` kinds, what each is
+  for, and how they relate.
 
 ## Installation
 
-Requires cert-manager, and PostgreSQL for production use (CloudNativePG or external). Install the
-operator with the bundled manifest:
+Needs a Kubernetes cluster, a webhook serving certificate, and PostgreSQL for production use
+(CloudNativePG or external). The recommended path has no cert-manager dependency:
 
 ```sh
-kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/dist/install.yaml
+kubectl apply -f https://github.com/MichaelZalud18/nut-operator/releases/latest/download/install-byo-cert.yaml
+./hack/webhook-cert.sh
 ```
+
+If you already run cert-manager and want certificate renewal automated, `install.yaml` is the other
+supported bundle. Which one to pick, and why it matters during an outage, is the first decision in
+[the installation guide](docs/installation/README.md#choosing-a-certificate-path).
 
 Everything defaults to dry-run: a `ShutdownFlow` compiles and publishes its full plan without
 touching a node until enforcement is explicitly enabled.
@@ -230,69 +176,18 @@ walkthrough, upgrade and uninstall order, and troubleshooting are in
 
 ## Development
 
-Use a writable Go build cache in restricted shells:
-
-```sh
-GOCACHE=/tmp/go-build-cache make generate
-GOCACHE=/tmp/go-build-cache make manifests
-GOCACHE=/tmp/go-build-cache go test ./api/... ./internal/controller -run TestNonExistent
-```
-
-Full controller tests use Kubebuilder envtest assets:
-
-```sh
-GOCACHE=/tmp/go-build-cache make setup-envtest
-GOCACHE=/tmp/go-build-cache make test
-```
-
-Run the AWS Labs Automated Security Helper scan:
-
-```sh
-uv tool install 'git+https://github.com/awslabs/automated-security-helper.git@v3.5.8'
-make security-scan
-```
-
-The target downloads `grype` and `syft` into `bin/` from pinned, checksum-verified release archives;
-`grype` is the pipeline's dependency-vulnerability coverage. `cfn-nag`, `cdk-nag`, and `opengrep` are
-excluded by decision (no CloudFormation, no CDK, and `semgrep` already covers the same rule surface),
-so they report `SKIPPED` rather than `MISSING` — see `ASH_EXCLUDED_SCANNERS` in the `Makefile`.
-
-Build and push the manager image:
+Building and deploying from a clone:
 
 ```sh
 make docker-build docker-push IMG=<registry>/nut-operator:<tag>
+make install                                    # CRDs
+make deploy IMG=<registry>/nut-operator:<tag>   # controller
+make deploy-catalog                             # UPS capability profiles
+kubectl apply -k config/samples/                # example resources
 ```
 
-Install CRDs:
-
-```sh
-make install
-```
-
-Deploy the controller:
-
-```sh
-make deploy IMG=<registry>/nut-operator:<tag>
-```
-
-Apply the project-maintained capability catalog after CRDs and the controller are installed:
-
-```sh
-make deploy-catalog
-```
-
-Apply example resources:
-
-```sh
-kubectl apply -k config/samples/
-```
-
-Apply the project-maintained capability catalog as CRDs. These are reusable product profiles, not
-customer inventory examples:
-
-```sh
-kubectl apply -k config/catalog/
-```
+`make deploy-catalog` applies the project-maintained capability catalog: reusable product/SKU
+profiles, not site inventory. Run it after the CRDs and controller are installed.
 
 For release bundles:
 
@@ -300,12 +195,15 @@ For release bundles:
 make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 ```
 
+Test, lint, and security-scan commands, and what to run before opening a pull request, are in
+[CONTRIBUTING.md](CONTRIBUTING.md#development-checks).
+
 ## Documentation
 
 Start at **[docs/](docs/README.md)** — it carries a first-hour path and a map of the whole set.
 
 - **[Concepts](docs/concepts/README.md)** — what the system is: the control plane, the two operands,
-  the service-level shape, and where the pods land.
+  how a power event moves through them, and where the pods land.
 - **[Installation](docs/installation/README.md)** — prerequisites and both install paths,
   [configuration](docs/installation/configuration.md) in dependency order, and
   [upgrade and uninstall](docs/installation/upgrade-and-uninstall.md).
@@ -316,9 +214,9 @@ Start at **[docs/](docs/README.md)** — it carries a first-hour path and a map 
   [choosing what is last-ditch](docs/guides/choose-last-ditch-workloads.md),
   [setting a tier-overrun policy](docs/guides/set-tier-overrun-policy.md), and
   [enabling actuation](docs/guides/enable-actuation.md).
-- **[Reference](docs/reference/README.md)** — [glossary](docs/reference/glossary.md),
-  [metrics](docs/reference/metrics.md), [security](docs/reference/security.md),
-  [images](docs/reference/images.md).
+- **[Reference](docs/reference/README.md)** — [API](docs/reference/api.md),
+  [glossary](docs/reference/glossary.md), [metrics](docs/reference/metrics.md),
+  [security](docs/reference/security.md), [images](docs/reference/images.md).
 - **[Examples](docs/examples/README.md)** — [orion cluster](docs/examples/orion-cluster/README.md),
   [simulation scenarios](docs/examples/simulation/README.md).
 - **[Troubleshooting](docs/troubleshooting.md)** — symptoms and causes.

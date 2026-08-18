@@ -18,17 +18,31 @@ for the same objects. If you need to customize the install, use the Kustomize pa
 versions are untested.
 
 **A webhook serving certificate.** The operator serves admission webhooks, and admission is
-load-bearing for safety here (see below). There are two supported ways to provide the certificate,
-and which one you pick has consequences during an outage.
+load-bearing for safety here. There are two supported ways to provide one, and which you pick has
+consequences during an outage — that is the [next section](#choosing-a-certificate-path), and the
+only real decision in this page.
 
-### Choosing a certificate path
+**PostgreSQL — required for production, optional for evaluation.** Kubernetes holds desired state;
+PostgreSQL holds the record of what actually happened. Three modes:
 
-Admission webhook certificates are not validated against any public or cluster trust store. The API
-server validates the webhook's certificate against `.webhooks[].clientConfig.caBundle` on the webhook
-configuration object, which only a cluster administrator can write. A privately issued CA is
-therefore the correct shape here, not a compromise — the bundled `config/certmanager/issuer.yaml` is
-itself a `selfSigned: {}` `Issuer`. **Both paths below have the same trust model.** What differs is
-what has to be working for admission to work.
+| `spec.storage.mode` | Use |
+| --- | --- |
+| `CNPG` (default) | CloudNativePG `Cluster` in the same Kubernetes cluster. Install the [CNPG operator](https://cloudnative-pg.io/) first. |
+| `ExternalPostgres` | A database outside the cluster, referenced by a DSN in a Secret. TLS required by default. |
+| `Disabled` | Evaluation and development only. No audit trail is kept. |
+
+`ExternalPostgres` is the more resilient choice for this workload: a database outside the cluster is
+not in the shutdown path of the event it is recording. See
+[the audit storage schema](../contributing/design/audit-storage-schema.md).
+
+**Image pull access to `ghcr.io`.** Four images are needed — the operator plus three operands. See
+[Images](#images) below.
+
+## Choosing a certificate path
+
+**Both paths below have the same trust model** — a privately issued CA is the correct shape for an
+admission webhook, not a compromise ([why](../reference/security.md#admission-webhook-certificate)).
+What differs is what has to be working for admission to work.
 
 | | `dist/install-byo-cert.yaml` (recommended) | `dist/install.yaml` |
 | --- | --- | --- |
@@ -54,7 +68,7 @@ The cost of the recommended path is that nobody rotates the certificate for you.
 normal-operations discipline problem, not an outage problem, which is why it does not change the
 recommendation.
 
-#### Path A — no cert-manager (recommended)
+### Path A — no cert-manager (recommended)
 
 ```sh
 kubectl apply -f https://github.com/MichaelZalud18/nut-operator/releases/latest/download/install-byo-cert.yaml
@@ -74,14 +88,13 @@ including `--ca-cert`/`--ca-key` to sign from an existing CA without storing its
 
 Because nothing renews the certificate on its own here, the manager publishes when it expires:
 `nutoperator_certificate_not_after_timestamp_seconds{certificate="webhook"}`. Alert on it with
-whatever lead time suits your rotation procedure — see [metrics.md](../reference/metrics.md).
+whatever lead time suits your rotation procedure — see [Metrics](../reference/metrics.md).
 
-Storing the generated CA key in a cluster Secret is the same exposure model cert-manager and
-`cert-controller` both have: read access to that Secret is enough to mint a certificate this
-webhook's `caBundle` trusts. Use `--ca-cert`/`--ca-key` if you would rather that key never live in
-the cluster.
+The generated CA key lives in a cluster Secret. Use `--ca-cert`/`--ca-key` to sign from an existing
+CA if you would rather it never did — see
+[the exposure model](../reference/security.md#admission-webhook-certificate).
 
-#### Path B — cert-manager
+### Path B — cert-manager
 
 ```sh
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
@@ -94,7 +107,7 @@ without cert-manager present fails outright, because its `Certificate` and `Issu
 exist. If you go this route, pin cert-manager to a tier that outlives the operator so a shutdown does
 not take it down first.
 
-#### Any other issuer
+### Any other issuer
 
 The manager reads its serving cert from a directory
 (`--webhook-cert-path=/tmp/k8s-webhook-server/serving-certs`, mounted from the `webhook-server-cert`
@@ -107,55 +120,14 @@ On OpenShift the built-in service CA does both halves with annotations and no ex
 `service.beta.openshift.io/serving-cert-secret-name: webhook-server-cert` on the webhook Service, and
 `service.beta.openshift.io/inject-cabundle: "true"` on the two webhook configurations.
 
-#### In-process certificate rotation
+**Do not simply remove the webhooks.** Admission *defaulting* is load-bearing for safety and is not
+duplicated anywhere else — without it the tier-0 DaemonSet pods land in BestEffort QoS with no
+OOM-score protection (`F-34`). Details in
+[Security](../reference/security.md#admission-webhook-certificate).
 
-Some operators generate and rotate their own serving certificate in-process, most commonly with
-[`open-policy-agent/cert-controller`](https://github.com/open-policy-agent/cert-controller) — the
-library Gatekeeper, Kueue, JobSet, LeaderWorkerSet, MetalLB, KEDA, Azure Workload Identity, and the
-Kubeflow operators all use for exactly this. **This operator does not do that, deliberately.**
-
-It is a legitimate, widely deployed option; the reasons it is not the default here are specific to
-this operator rather than objections to the library:
-
-- **The certificate is generated after the pod starts.** That is a window (Kueue documents 10–30
-  seconds) in which the webhook is not yet serving HTTPS. Every webhook here is
-  `failurePolicy: Fail`, so during it, creates and updates of this operator's custom resources are
-  rejected — and a manager pod rescheduled mid-outage hits that window at the worst possible time.
-  With a static Secret the pod does not start at all until a valid certificate exists: the failure
-  is loud and up front rather than a brief, quiet rejection window.
-- **It requires granting the operator cluster-scoped write on admission configuration.** Injecting
-  `caBundle` in-process means `update` on `validatingwebhookconfigurations` and
-  `mutatingwebhookconfigurations`. That can be narrowed with `resourceNames` to this operator's own
-  two objects, but it is still a privilege the operator does not hold today, and admission
-  configuration is a high-value target.
-- **The trust model is identical.** In-process generation would not weaken anything — but it would
-  not strengthen anything either, so a removed dependency is the whole of what is being bought.
-
-Path A removes the same install-time dependency without the startup window or the extra RBAC, which
-is why it is the recommendation rather than this.
-
-**Do not simply remove the webhooks.** Admission defaulting is load-bearing for safety: the
-`NodePowerAgent` defaulter is the only thing that sets `spec.resources.upsmon` and
-`spec.resources.actuator`, and without it the tier-0 DaemonSet pods land in BestEffort QoS with no
-OOM-score protection or scheduler reservation (F-34). It also supplies
-`spec.placement.priorityClassName`, which has no CRD-level default. Validation is duplicated in the
-controllers as a second layer, but defaulting is not.
-
-**PostgreSQL — required for production, optional for evaluation.** Kubernetes holds desired state;
-PostgreSQL holds the record of what actually happened. Three modes:
-
-| `spec.storage.mode` | Use |
-| --- | --- |
-| `CNPG` (default) | CloudNativePG `Cluster` in the same Kubernetes cluster. Install the [CNPG operator](https://cloudnative-pg.io/) first. |
-| `ExternalPostgres` | A database outside the cluster, referenced by a DSN in a Secret. TLS required by default. |
-| `Disabled` | Evaluation and development only. No audit trail is kept. |
-
-`ExternalPostgres` is the more resilient choice for this workload: a database outside the cluster is
-not in the shutdown path of the event it is recording. See
-[audit-storage-schema.md](../contributing/design/audit-storage-schema.md).
-
-**Image pull access to `ghcr.io`.** Four images are needed — the operator plus three operands. See
-[Images](#images) below.
+This operator does not generate its serving certificate in-process, which is the third option you
+may have seen in other operators; the reasoning is
+[recorded with the rest](../reference/security.md#admission-webhook-certificate).
 
 ## Install
 
@@ -170,7 +142,7 @@ kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/m
 kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/dist/install.yaml
 ```
 
-Either creates the `nut-operator-system` namespace, all 10 CRDs, RBAC, the webhook configuration, a
+Either creates the `nut-operator-system` namespace, all 12 CRDs, RBAC, the webhook configuration, a
 metrics `Service`, two `NetworkPolicy` objects, and the controller-manager `Deployment` (1 replica,
 leader election enabled). `install.yaml` additionally creates a cert-manager `Issuer` and
 `Certificate`; `install-byo-cert.yaml` contains no cert-manager objects at all.
@@ -200,7 +172,7 @@ kubectl apply -k .
 ```sh
 kubectl -n nut-operator-system get secret webhook-server-cert
 kubectl -n nut-operator-system rollout status deploy/nut-operator-controller-manager
-kubectl get crd | grep power.zalud.io          # expect 10
+kubectl get crd | grep power.zalud.io          # expect 12
 ```
 
 A manager pod sitting in `ContainerCreating` is almost always the `webhook-server-cert` Secret not

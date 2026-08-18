@@ -76,4 +76,4 @@ compile that was clean last month may not be now.
 [Choose what is last-ditch](choose-last-ditch-workloads.md), then decide your
 [tier-overrun policy](set-tier-overrun-policy.md).
 
-Model and compilation: [shutdown-flow.md](../contributing/design/shutdown-flow.md).
+Model and compilation: [the shutdown-flow design](../contributing/design/shutdown-flow.md).

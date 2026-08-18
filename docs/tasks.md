@@ -150,13 +150,15 @@ component.
 The `docs/` set follows the section layout the established Kubernetes operators use — Concepts,
 Installation, Guides, Reference, Troubleshooting, Contributing — modeled on the Cluster API Book for
 structure and cert-manager for the front door. [docs/README.md](README.md) is the landing page and
-carries a first-hour path. `guides/` holds the judgement calls only the operator can make, in the
-order a reader hits them; `contributing/` holds the design set and the audits behind it. What is
-left:
+carries a first-hour path.
 
-- Decide the delivery format. A published site (Cluster API uses mdBook) versus rendered-on-GitHub
-  markdown is a real trade — a site gives navigation and search, and adds a build, a deploy target,
-  and a way for docs to break independently of the code. Not obviously worth it pre-v1.
+Each layer has a stated job, and material is placed by that job rather than by where it was written:
+the root README is product, model, safety boundaries, and an install entry point; `concepts/` is how
+the system works; `guides/` holds the judgement calls only the operator can make, in the order a
+reader hits them; `installation/` is procedure; `reference/` is exact fact — API, metrics, security,
+glossary; `contributing/` holds the design set and the audits behind it. Delivery is
+rendered-on-GitHub markdown; a published site was considered and declined pre-v1. What is left:
+
 - Adopt a per-page audience tag, the way each page already carries `Components:`, so a page states
   who it is for and drift is visible at the point of reading.
 

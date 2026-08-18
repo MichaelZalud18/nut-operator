@@ -41,7 +41,7 @@ Mechanical, checkable, and where most reviewer friction lands.
 | Idempotent reconcile | **Met (2026-08-04)** — partial-failure convergence tests added for both operand-rendering controllers (`NUTServer`, `NodePowerAgent`; confirmed via grep these are the only two that render Kubernetes child resources). Each seeds a stale, partial operand state, reconciles once and asserts full convergence, then reconciles again and asserts every touched object's `resourceVersion` is unchanged — idempotency, not just no-error. |
 | No in-memory state across reconciles | Appears held; planner purity helps |
 | Status subresource for observed state only | Met — GP-3 enforces it by design |
-| `observedGeneration` tracking | Met — present in all 9 API types and every controller |
+| `observedGeneration` tracking | Mostly met — re-counted 2026-08-17 against 12 CRDs: present in every kind except `ShutdownHook`, whose status carries no `observedGeneration` field. The prior "all 9 API types" reading predates three kinds. |
 | Standard condition types with machine-readable reasons | Mostly met — see audit |
 | Finalizers for cleanup | **Met (2026-08-04)** — `NUTServerReconciler`/`NodePowerAgentReconciler` carry finalizers; owner-reference GC for the other 7 was verified never needing one (no Kubernetes child resources rendered). |
 | Status writes use `Patch`, not read-modify-write `Update` | **Met (2026-08-04)** — all 9 controllers switched to `Status().Patch(ctx, obj, client.MergeFrom(base))`. Regression-tested, not just converted: `shutdownflow_controller_test.go`'s `resourceVersionRaceInjectingClient` reproduces the exact production race (a write landing between a reconciler's `Get` and its status write) and confirmed both that the old `Update()` pattern fails with the production-observed 409 Conflict, and that `Patch()` doesn't. |
@@ -60,7 +60,7 @@ Check at: every controller added, and before release tagging.
 | spec/status separation | Met |
 | Optional fields as pointers | Met in sampled types |
 | Enum validation on constrained strings | Met — `PowerStorageMode`, `ActuatorPolicy`, others |
-| Single storage version per CRD | Met — all 9 CRDs at one version |
+| Single storage version per CRD | Met — re-counted 2026-08-17: all 12 CRDs at `v1alpha1`, one version each |
 | No required fields added post-GA | N/A at alpha; becomes binding at v1beta1 |
 
 Check at: every API change, and as a hard gate before `v1beta1`.

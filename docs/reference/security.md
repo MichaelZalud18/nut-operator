@@ -26,9 +26,9 @@ The actuator container owns host interaction only when approved actuation is ena
 
 One signal path is authorized, and it is the executor-projected Secret, mounted read-only (`OD-37`). The shared `power-agent-run` tmpfs that `upsmon` writes its `SHUTDOWNCMD` handoff into is **not mounted into the actuator at all**. That is deliberately stronger than mounting it read-only: the halt comes from the actuator *reading* a path, so restricting writes would have closed a threat nobody posed while leaving the read open. A volume the container does not mount is a volume it cannot be tricked through. The actuator's default signal path is derived from `POWER_NODE_NAME` rather than fixed, so a failed environment injection leaves it watching nothing; the previous default was the local tmpfs path, which meant the same failure silently repointed it at the one path this decision declines to trust. The Secret always carries a `delivery-channel` marker key, because an empty Secret projects identically to a missing one and without a key that is always present there is no way to tell "no flow is running" from "this channel does not exist".
 
-The cost is accepted rather than engineered away, and is recorded as `SB-3`: an undeliverable signal leaves nodes running until the UPS dies. A local backstop would engage exactly when the operator is unreachable, which is when ordering matters most, and `MINSUPPLIES 1` on every agent would release a UPS's entire coverage at once. Full treatment in [node-agent-operand.md](../contributing/design/node-agent-operand.md).
+The cost is accepted rather than engineered away, and is recorded as `SB-3`: an undeliverable signal leaves nodes running until the UPS dies. A local backstop would engage exactly when the operator is unreachable, which is when ordering matters most, and `MINSUPPLIES 1` on every agent would release a UPS's entire coverage at once. Full treatment in [the node-agent design](../contributing/design/node-agent-operand.md).
 
-This boundary is testable, and proving it holds is part of reviewing it. `make verify-actuation NODE=<node> AGENT=<agent> APPROVE=yes` renders the real actuate configuration on one named node and delivers a real signal through the projected Secret. It establishes what inspection cannot: that kubelet admits the pod under this cluster's Pod Security Admission, that the binary's `cap_sys_boot` file capability survived the image build and registry round-trip, that it can be raised from permitted into effective, and — the one with no other check available — that the container is genuinely in the host PID namespace, since from a non-initial namespace `reboot(2)` returns success and does nothing. It powers the node off and leaves it off; see [install.md](../installation/README.md).
+This boundary is testable, and proving it holds is part of reviewing it. `make verify-actuation NODE=<node> AGENT=<agent> APPROVE=yes` renders the real actuate configuration on one named node and delivers a real signal through the projected Secret. It establishes what inspection cannot: that kubelet admits the pod under this cluster's Pod Security Admission, that the binary's `cap_sys_boot` file capability survived the image build and registry round-trip, that it can be raised from permitted into effective, and — the one with no other check available — that the container is genuinely in the host PID namespace, since from a non-initial namespace `reboot(2)` returns success and does nothing. It powers the node off and leaves it off; the full procedure is in [Enabling actuation](../guides/enable-actuation.md#proving-the-cluster-can-halt-a-node).
 
 Approved `PowerOff` rendering uses `hostPID` and adds only `CAP_SYS_BOOT` to the actuator
 container. It remains non-root, drops all other capabilities, keeps privilege escalation disabled,
@@ -38,6 +38,56 @@ pod's `RuntimeDefault` seccomp profile with no override (`F-62`). An earlier rev
 does not — with the capability held the syscall reaches the kernel's handler, and without it the
 refusal is on the capability. `CAP_SYS_BOOT` is the gate, so `Unconfined` bought nothing while
 removing every other syscall filter from the one container that can halt the machine.
+
+## Admission webhook certificate
+
+The operator serves admission webhooks, and admission is load-bearing here rather than cosmetic. Which
+certificate path to install with, and the commands for each, are in
+[the installation guide](../installation/README.md#choosing-a-certificate-path). This section is the
+reasoning behind that recommendation.
+
+**The trust model is the same on every supported path.** Webhook certificates are not validated
+against any public or cluster trust store. The API server validates the webhook's certificate against
+`.webhooks[].clientConfig.caBundle` on the webhook configuration object, which only a cluster
+administrator can write. A privately issued CA is therefore the correct shape, not a compromise — the
+bundled `config/certmanager/issuer.yaml` is itself a `selfSigned: {}` `Issuer`. What differs between
+paths is what has to be *working* for admission to work, and that is an availability question rather
+than a trust one.
+
+**The CA key's exposure model.** `hack/webhook-cert.sh` stores the generated CA key in a cluster
+Secret. Read access to that Secret is enough to mint a certificate this webhook's `caBundle` trusts —
+the same exposure cert-manager and `cert-controller` both carry. `--ca-cert`/`--ca-key` sign from an
+existing CA instead, so the key never lives in the cluster.
+
+**Defaulting is not duplicated, so removing the webhooks is not a safe shortcut.** The
+`NodePowerAgent` defaulter is the only thing that sets `spec.resources.upsmon` and
+`spec.resources.actuator`. Without it the tier-0 DaemonSet pods land in BestEffort QoS with no
+OOM-score protection or scheduler reservation (`F-34`), and `spec.placement.priorityClassName` has no
+CRD-level default to fall back on. Validation is duplicated in the controllers as a second layer;
+defaulting is not.
+
+**In-process generation was declined.** Some operators generate and rotate their own serving
+certificate in-process, most commonly with
+[`open-policy-agent/cert-controller`](https://github.com/open-policy-agent/cert-controller) — the
+library Gatekeeper, Kueue, JobSet, LeaderWorkerSet, MetalLB, KEDA, Azure Workload Identity, and the
+Kubeflow operators all use. It is a legitimate, widely deployed option. The reasons it is not the
+default here are specific to this operator rather than objections to the library:
+
+- **The certificate is generated after the pod starts.** That is a window — Kueue documents 10–30
+  seconds — in which the webhook is not yet serving HTTPS. Every webhook here is
+  `failurePolicy: Fail`, so during it, creates and updates of this operator's custom resources are
+  rejected, and a manager pod rescheduled mid-outage hits that window at the worst possible time.
+  With a static Secret the pod does not start at all until a valid certificate exists: the failure is
+  loud and up front rather than a brief, quiet rejection window.
+- **It requires cluster-scoped write on admission configuration.** Injecting `caBundle` in-process
+  means `update` on `validatingwebhookconfigurations` and `mutatingwebhookconfigurations`. That can be
+  narrowed with `resourceNames` to this operator's own two objects, but it is still a privilege the
+  operator does not hold today, and admission configuration is a high-value target.
+- **The trust model is identical.** In-process generation would not weaken anything — but it would not
+  strengthen anything either, so a removed install-time dependency is the whole of what is bought.
+
+The bring-your-own-certificate path removes that same install-time dependency without the startup
+window or the extra RBAC, which is why it is the recommendation instead.
 
 ## RBAC Scope
 
