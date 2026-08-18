@@ -86,10 +86,16 @@ None.
 
 Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_render.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
-`internal/nodeagent`. Design doc: `docs/contributing/design/node-agent-operand.md` (`NA-n`). Audits:
-`docs/contributing/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`, `F-33`–`F-36`, `F-54`–`F-92`, `OD-37`).
+`internal/nodeagent`, plus the operator-side halt evidence in `internal/haltwatch` and
+`internal/controller/nodehalt_controller.go`. Design doc: `docs/contributing/design/node-agent-operand.md`
+(`NA-n`). Audits: `docs/contributing/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`,
+`F-33`–`F-36`, `F-54`–`F-92`, `OD-37`) and `operator-maturity-benchmarks.md` (`F-94`).
 
-None.
+- `F-94` decide whether halt evidence survives a manager restart. Attempts live only in
+  `haltwatch.Observer`'s map, so a restart or leadership handoff between the signal write and the
+  node stopping records no outcome at all. Re-seeding from the signal Secrets would close it; the
+  open question is what an already-`NotReady` node with a live key means, which is an `OD-27`
+  evidence-model decision rather than a patch.
 
 ---
 
@@ -97,7 +103,7 @@ None.
 
 Owns: the published planner artifact contract (compiled plan, dependency graph, waves, explanations,
 diagram exports) and the CR-status-as-interface model — the "what gets exported and how" surface.
-Design doc: `docs/shutdown-flow.md`, Published Artifacts section (`GP-6`/`GP-7`).
+Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts section (`GP-6`/`GP-7`).
 
 - Publish communication-ordering artifacts once the planner consumes `carries` ordering (see Planning
   & Execution Logic).

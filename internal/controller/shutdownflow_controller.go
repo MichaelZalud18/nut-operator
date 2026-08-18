@@ -68,6 +68,10 @@ type ShutdownFlowReconciler struct {
 // +kubebuilder:rbac:groups="",resources=namespaces;nodes;pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=update;patch
 // +kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create
+// OD-38: when a PodDisruptionBudget refuses an eviction on an enforcing flow, the drain falls
+// back to Delete. Without this verb that fall-back is a 403 and the drain aborts on exactly the
+// budget it exists to override, so the grant is what makes OD-38 real rather than a log message.
+// +kubebuilder:rbac:groups="",resources=pods,verbs=delete
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 

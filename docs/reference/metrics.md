@@ -67,8 +67,12 @@ out:
 time() - nutoperator_halt_last_verified_timestamp_seconds > 86400 * 180
 ```
 
-Absence of a series is itself the finding: that node has never been proven to halt. `make
-verify-actuation` is how a node gets its first one — see [install.md](../installation/README.md).
+Absence of a series is itself the finding: that node has never been proven to halt. Only a real
+execution writes one — the halt clock starts in the executor, at the signal write. `make
+verify-actuation` deliberately does not produce a sample: it hand-delivers the signal so that planner
+correctness cannot fail the test, which also puts it outside the path that records the metric. It
+proves the node *can* halt; the series proves this operator *saw* it halt. See
+[Enabling actuation](../guides/enable-actuation.md).
 
 `duration_seconds` is coarser than the actuator's own `sync(2)` timing, deliberately. It spans
 projection, poll, flush, syscall, and detection latency, and it takes the *earlier* of the `Ready`

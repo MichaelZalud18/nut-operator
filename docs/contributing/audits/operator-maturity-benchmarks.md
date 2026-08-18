@@ -47,6 +47,7 @@ Mechanical, checkable, and where most reviewer friction lands.
 | Status writes use `Patch`, not read-modify-write `Update` | **Met (2026-08-04)** — all 9 controllers switched to `Status().Patch(ctx, obj, client.MergeFrom(base))`. Regression-tested, not just converted: `shutdownflow_controller_test.go`'s `resourceVersionRaceInjectingClient` reproduces the exact production race (a write landing between a reconciler's `Get` and its status write) and confirmed both that the old `Update()` pattern fails with the production-observed 409 Conflict, and that `Patch()` doesn't. |
 | `RequeueAfter` over sleeps | **Met — confirmed clean.** Zero `time.Sleep` calls in any controller. |
 | Leader election | **Met (2026-08-04)** — code default flipped `false` → `true` (`cmd/main.go`), closing the defense-in-depth gap; `config/manager/manager.yaml` already ran with it active via bare `--leader-elect`. `Makefile`'s `run` target now passes `--leader-elect=false` explicitly, since out-of-cluster leader election has no namespace to create its lease in. |
+| Generated RBAC covers the calls the code makes | **Met (2026-08-17)** — markers are hand-written and the calls are elsewhere, so the two drifted silently and shipped a `403` on the `OD-38` drain fall-back (`F-93`). `executor_rbac_test.go` now binds the generated `ClusterRole` in envtest and asks the real authorizer, via `SubjectAccessReview`, about every call the executor makes against workloads it does not own. Verified non-vacuous (an unbound user is refused) and verified to fail on the real regression. |
 
 Check at: every controller added, and before release tagging.
 
@@ -709,3 +710,106 @@ cluster where `RunHook` had no CRD to read. Build, test, and lint all passed ove
 them compares committed bytes to generator output. The `installer-freshness` job in `Repo Hygiene`
 now rebuilds and diffs, pinning the image tag to the committed value so it checks manifest staleness
 rather than tag drift.
+
+## Findings — new-controller sweep, 2026-08-17
+
+Against `be9f323`, prompted by this benchmark's own "any new controller or CRD" trigger:
+`NodeHaltReconciler` and the `internal/haltwatch` package landed since the last pass. Scope widened
+from that controller to the RBAC and evidence surfaces it touches. Every claim below was checked
+against current source or a live apiserver; none is carried forward from a prior pass.
+
+**F-93 · The `OD-38` budget-override path had no permission to perform its override.** When a
+`PodDisruptionBudget` refuses an eviction on an enforcing flow, `Runner.evictPodsOnNode` falls back to
+`Delete` on the pod. The generated `ClusterRole` granted `pods: get;list;watch` and
+`pods/eviction: create`. No marker anywhere in the tree granted `delete` on `pods` — confirmed by
+`grep` over every `+kubebuilder:rbac` marker and by reading `config/rbac/role.yaml`.
+
+So the fall-back returned `403 Forbidden`, which is not `NotFound`, so it took the error return —
+aborting the drain on precisely the budget the change existed to override. `OD-38` shipped as a
+different error message and nothing else.
+
+Nothing in the suite could see it. `internal/kubeactions` tests run against a fake client, which has
+no authorizer and allows every call; the e2e suite deploys the real role but never drives a drain
+against a budget-protected workload. Fixed by adding the marker at the call site and regenerating.
+
+**The gap was a class, not an instance, so the fix includes a guard.** Markers are hand-written and
+the calls they describe are somewhere else, so the two drift with nothing comparing them.
+`executor_rbac_test.go` loads the generated `ClusterRole`, binds it to a test subject in envtest, and
+asks the real authorizer — via `SubjectAccessReview` — whether each call the executor makes against
+workloads it does not own is permitted. The grant list is written next to the call site that needs
+it, so it reads as the executor's API contract rather than a restatement of `role.yaml`.
+
+Two properties were established before trusting it. Envtest enforces RBAC at all: confirmed by
+impersonating an unbound user and watching a pod list return `Forbidden`, since a permissive
+authorizer would make every assertion pass vacuously. That check is now a spec in the file rather
+than a thing done once. And it fails on the real regression: confirmed by removing `delete` from the
+generated role and watching the suite fail with the marker to add and the command to re-run.
+
+**F-94 · Halt attempts are held only in process memory, so a manager restart loses the evidence
+silently.** `haltwatch.Observer` keeps unresolved attempts in a mutex-guarded map, seeded empty by
+`NewObserver()` in `cmd/main.go`. Nothing reconstructs it. An attempt is opened when the signal write
+lands and closed when the Node stops reporting or the deadline passes, and both ends have to be
+observed by the same process.
+
+A manager restart or a leader-election handoff between those two moments drops the attempt with no
+outcome recorded — not `Halted`, not `TimedOut`. Silence, in the one component whose entire purpose
+is to stop a halt from being inferred from a machine being dark. The manager is protected from its
+own flow (`F-30`), but that does not cover an OOM kill, a rollout, or the node under it losing power,
+and mid-outage is exactly when this measurement is being taken.
+
+Reconstruction is feasible and the data is already there: the signal Secret carries `nodeName`,
+`shutdownFlow`, `executionID`, and `timestamp` per key, and an outstanding key *is* an outstanding
+attempt (`NA-3` — absence is the record). Re-seeding `pending` from the signal Secrets at startup
+would close it.
+
+Left open rather than fixed here, because it is not mechanical. A key that is still present may
+belong to a node that already halted and was already counted before the restart, so naive re-seeding
+double-counts; distinguishing the two means consulting the node's current `Ready` state at startup
+and deciding what an already-`NotReady` node with a live key means. That is a change to the `OD-27`
+evidence model and wants a decision, not a patch.
+
+**F-95 · The metrics reference contradicted the procedure it cited.**
+`docs/reference/metrics.md` said `make verify-actuation` "is how a node gets its first"
+`halt_last_verified_timestamp_seconds` sample. `hack/verify-actuation.sh` prints the opposite —
+"This run leaves no operator-side metric" — because it hand-delivers the signal with `kubectl` so
+planner correctness cannot fail the test, and that puts it outside the executor where the halt clock
+starts.
+
+Same class as `F-52`: a documentation claim the build does not meet, in the page that tells operators
+what to alert on. An operator following it would run the procedure, watch no series appear, and
+conclude the metric was broken. Corrected to state what the procedure does prove and what it does
+not.
+
+### `NodeHaltReconciler` against Benchmark 2
+
+Conformant, with one deliberate exception. It writes no objects, so `observedGeneration`, status
+patching, and finalizers are all genuinely N/A rather than skipped. Leader election is declared
+(`NeedLeaderElection() true`) — a second replica would double-count every attempt. The Node watch
+carries a predicate that admits an event only for a node with an outstanding signal, so a
+cluster-wide watch on the most frequently updated object in the cluster costs nothing in steady
+state. No `time.Sleep`; the deadline sweep is a `manager.Runnable` ticker, which is the right shape
+for work that no event will ever trigger. Duplicate registration is already covered —
+`TestMainRegistersEachReconcilerOnce` counts every `SetupWithManager` call generically.
+
+The exception is **"no in-memory state across reconciles."** The observer is exactly that, and
+deliberately: the two ends of the measurement arrive on different goroutines minutes apart, and the
+alternative is writing halt bookkeeping to the API during a power event. The cost of the exception is
+`F-94`, and it should be read as the standing price of this design rather than as an oversight.
+
+### Not findings this pass
+
+- **Metric documentation is complete.** All 30 registered collectors appear in
+  `docs/reference/metrics.md`. An earlier check in this pass reported 25 missing; that check was
+  wrong — the reference groups metrics under `## nutoperator_<subsystem>_*` headings and names them
+  by their bare `Name`, which a full-name search does not match.
+- **No other uncovered API call.** `Delete` appears exactly once in non-test code, and it is the
+  `F-93` call. The only subresource write is `pods/eviction`, which is granted. Scaling patches the
+  workload's own `spec.replicas` rather than the `scale` subresource, so `deployments/scale` is
+  correctly absent.
+- **`ShutdownHook` read-only RBAC matches its use.** `RunHook` reads hooks and never writes them.
+
+### Re-audit triggers
+
+Unchanged, plus one: **after `F-94` is decided**, since the outcome determines whether halt evidence
+survives a manager restart and therefore whether `nutoperator_halt_*` can be alerted on as an
+absence.
