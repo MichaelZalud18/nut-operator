@@ -58,7 +58,7 @@ The moving parts, and why each one is separate from the others:
 The red crossed line in the diagram is the point of the whole arrangement. `upsmon` sees the power
 event first and still cannot act on it — the only path that halts a node runs through the operator,
 because only the operator knows what else is still running. That is `OD-37`, and the
-[security model](docs/security.md) covers what it costs and why it was chosen anyway.
+[security model](docs/reference/security.md) covers what it costs and why it was chosen anyway.
 
 ## Vocabulary
 
@@ -76,7 +76,7 @@ Four words carry most of the design, and two of them are easy to confuse:
 
 Tiers are input; waves are output. If a document seems to use them interchangeably, the document is
 wrong. Ordering comes from tiers plus `requires`/`before`/`after` and nothing else — there is no
-third knob. Full glossary in [decision-index.md](docs/design/decision-index.md#glossary).
+third knob. Full glossary in [the glossary](docs/reference/glossary.md).
 
 ## What it runs against
 
@@ -226,7 +226,7 @@ touching a node until enforcement is explicitly enabled.
 
 Full prerequisites, the Kustomize path, network and firewall requirements, a configuration
 walkthrough, upgrade and uninstall order, and troubleshooting are in
-[docs/install.md](docs/install.md).
+[docs/install.md](docs/guides/install.md).
 
 ## Development
 
@@ -302,39 +302,26 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 
 ## Documentation
 
-- [Installation](docs/install.md)
-- [Architecture](docs/architecture.md)
-- [System architecture diagram](docs/diagrams/system-architecture.md)
-- [Example pod placement diagram](docs/diagrams/example-pod-placement.md)
-- [Security](docs/security.md)
-- [Image strategy](docs/images.md)
-- [Shutdown flow design](docs/shutdown-flow.md)
-- [Project tasks and current build state](docs/tasks.md)
-- [Operator maturity benchmarks](docs/audits/operator-maturity-benchmarks.md)
-- [Node agent DaemonSet audit](docs/audits/node-agent-daemonset-audit.md)
-- [NUTServer pod audit](docs/audits/nutserver-pod-audit.md)
-- [NUT usage and fidelity audit](docs/audits/nut-usage-audit.md)
-- [Quirk handling, aliasing, and firmware gating](docs/audits/quirks-aliasing-firmware.md)
-- [Reconciler watch scoping](docs/audits/reconciler-watch-scoping.md)
-- [Pre-shutdown hook transport](docs/audits/pre-shutdown-hook-transport.md)
-- [Capability profiles](docs/design/capability-profiles.md)
-- [Node agent operand](docs/design/node-agent-operand.md)
-- [NUT server operand](docs/design/nut-server-operand.md)
-- [Upstream NUT relay](docs/design/upstream-nut-relay.md)
-- [Audit storage schema](docs/design/audit-storage-schema.md)
-- [Telemetry and triggers](docs/design/telemetry-and-triggers.md)
-- [Resiliency and partitions](docs/design/resiliency-and-partitions.md)
-- [Design decision index](docs/design/decision-index.md)
-- [Scope boundaries](docs/design/scope-boundaries.md)
-- [Planner requirements](docs/design/planner-requirements.md)
-- [Resolver requirements](docs/design/resolver-requirements.md)
-- [Executor requirements](docs/design/executor-requirements.md)
-- [Adaptive execution tier pointer](docs/design/adaptive-execution-tier-pointer.md)
-- [Scaling and sizing](docs/design/scaling-and-sizing.md)
-- [Inventory provider contract](docs/design/inventory-provider-contract.md)
-- [FAQ](docs/design/faq.md)
-- [Orion cluster example](docs/examples/orion-cluster/README.md)
-- [Simulation scenarios](docs/examples/simulation/README.md)
+Start at **[docs/](docs/README.md)** — it carries a first-hour path and a map of the whole set.
+
+- **[Guides](docs/guides/install.md)** — installation, configuration, operation.
+- **[Decisions you have to make](docs/README.md#decisions-you-have-to-make)** — the judgement calls
+  the operator cannot make for you: [preparing the hardware](docs/decisions/physical-setup.md),
+  [modeling your topology](docs/decisions/modeling-your-topology.md),
+  [assigning tiers](docs/decisions/shutdown-tiers.md),
+  [choosing what is last-ditch](docs/decisions/last-ditch.md),
+  [tier-overrun policy](docs/decisions/tier-overrun-policy.md), and
+  [dry-run to actuate](docs/decisions/dry-run-to-actuate.md).
+- **Reference** — [glossary](docs/reference/glossary.md),
+  [architecture](docs/reference/architecture.md), [metrics](docs/reference/metrics.md),
+  [security](docs/reference/security.md), [images](docs/reference/images.md).
+- **Examples** — [orion cluster](docs/examples/orion-cluster/README.md),
+  [simulation scenarios](docs/examples/simulation/README.md).
+- **Design and contribution** — [scope boundaries](docs/design/scope-boundaries.md),
+  [settled questions](docs/design/settled-questions.md),
+  [decision index](docs/design/decision-index.md), the requirement documents under
+  [docs/design/](docs/design/), and the audit records under [docs/audits/](docs/audits/).
+- **[Project tasks](docs/tasks.md)** — what is left before v1.
 
 ## Community and Project Info
 

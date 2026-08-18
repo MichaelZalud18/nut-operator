@@ -157,7 +157,7 @@ as a tie-breaking hint, and behaved as a hard wave partition — a wave admitted
 phase numbers matched, so independent same-tier groups were serialized with no diagnostic and the
 plan was charged the sum of their timeouts instead of the longest. It was removed in `v1alpha1`
 rather than redefined, because nothing needed it: whatever it was reaching for, tiers already
-express. See the glossary entry in [decision-index.md](design/decision-index.md#glossary), which
+express. See the glossary entry in [the glossary](../reference/glossary.md), which
 disambiguates the two unrelated things this project still calls a phase.
 
 ## Compilation

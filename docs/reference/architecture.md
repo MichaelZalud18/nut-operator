@@ -94,7 +94,7 @@ For built-in NUT appliances, `NUTServer` renders `dummy-ups` repeater mode rathe
 
 `PDUCapabilityProfile` is a parallel kind to `UPSCapabilityProfile` carrying PDU records, including outlet count and switchability. It is scaffolding for v1 per `OD-25` — schema, validation, bundled catalog, and matcher support exist, and nothing consumes them. There is no PDU device kind, inventory entity, render path, or actuation path.
 
-See [shutdown-flow.md](shutdown-flow.md) for the underlying flow design.
+See [shutdown-flow.md](../design/shutdown-flow.md) for the underlying flow design.
 
 ## Operand Model
 
@@ -206,4 +206,4 @@ degraded state, not a permission to assume success. Stale telemetry produces `Un
 planner output, unreachable nodes are not treated as released or powered off, and node-local
 actuation only honors fresh structured signals for the receiving node.
 
-See [resiliency-and-partitions.md](design/resiliency-and-partitions.md) for the partition contract.
+See [resiliency-and-partitions.md](../design/resiliency-and-partitions.md) for the partition contract.

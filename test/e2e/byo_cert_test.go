@@ -33,14 +33,14 @@ import (
 	"github.com/MichaelZalud18/nut-operator/test/utils"
 )
 
-// The no-cert-manager install is the recommended one (docs/install.md) and was the only install path
+// The no-cert-manager install is the recommended one (docs/guides/install.md) and was the only install path
 // with no CI coverage: the main suite deploys via config/default, so every run exercised the
 // cert-manager path and none exercised this one. The gap mattered more than an ordinary coverage
 // hole, because the two paths differ in exactly the mechanism that makes admission work at all --
 // who puts a certificate in the Secret and a caBundle on the webhook configurations. A break here is
 // invisible until a CR write is rejected with an x509 error.
 //
-// The four steps below are the ones docs/install.md tells a user to run, in that order, asserted
+// The four steps below are the ones docs/guides/install.md tells a user to run, in that order, asserted
 // rather than described.
 //
 // This container is deliberately self-contained: it creates everything it needs and deletes all of

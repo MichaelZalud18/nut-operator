@@ -3,7 +3,7 @@
 Components: Cross-cutting.
 
 How to install and run the operator in a cluster. For building from source, see the Development
-section of the [README](../README.md).
+section of the [README](../../README.md).
 
 The operator ships as a single bundled manifest, the standard install shape for a kubebuilder
 operator. There is no Helm chart: the RBAC, CRDs, webhook configuration, and cert wiring are all
@@ -74,7 +74,7 @@ including `--ca-cert`/`--ca-key` to sign from an existing CA without storing its
 
 Because nothing renews the certificate on its own here, the manager publishes when it expires:
 `nutoperator_certificate_not_after_timestamp_seconds{certificate="webhook"}`. Alert on it with
-whatever lead time suits your rotation procedure — see [metrics.md](metrics.md).
+whatever lead time suits your rotation procedure — see [metrics.md](../reference/metrics.md).
 
 Storing the generated CA key in a cluster Secret is the same exposure model cert-manager and
 `cert-controller` both have: read access to that Secret is enough to mint a certificate this
@@ -152,7 +152,7 @@ PostgreSQL holds the record of what actually happened. Three modes:
 
 `ExternalPostgres` is the more resilient choice for this workload: a database outside the cluster is
 not in the shutdown path of the event it is recording. See
-[audit-storage-schema.md](design/audit-storage-schema.md).
+[audit-storage-schema.md](../design/audit-storage-schema.md).
 
 **Image pull access to `ghcr.io`.** Four images are needed — the operator plus three operands. See
 [Images](#images) below.
@@ -284,11 +284,11 @@ kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/m
 From a clone, `make deploy-catalog` does the same thing.
 
 If your UPS is not in the catalog, that is expected and handled — see
-[the FAQ](design/faq.md#what-if-my-ups-does-not-have-a-packaged-capability-profile).
+[the FAQ](../design/faq.md#what-if-my-ups-does-not-have-a-packaged-capability-profile).
 
 **2. `PowerManagementCluster`** — cluster-wide policy: operand namespace, storage backend, shutdown
 tiers, and the operand images every other resource inherits. See
-[config/samples/power_v1alpha1_powermanagementcluster.yaml](../config/samples/power_v1alpha1_powermanagementcluster.yaml).
+[config/samples/power_v1alpha1_powermanagementcluster.yaml](../../config/samples/power_v1alpha1_powermanagementcluster.yaml).
 
 **3. `UPSDevice`** — one per UPS, with its network endpoint and a credential Secret reference.
 SNMPv3 credentials go in the Secret, not the spec.
@@ -325,8 +325,8 @@ incomplete graph blocks `ShutdownFlow` acceptance, by design.
 **7. `ShutdownFlow`** — the plan itself (requires `triggers`). Defaults to `DryRun`, which compiles
 and publishes the full plan, including the wave ordering and the reasoning, without touching a node.
 
-A complete worked topology is in [docs/examples/orion-cluster/](examples/orion-cluster/README.md).
-For testing without real hardware, [docs/examples/simulation/](examples/simulation/README.md) drives
+A complete worked topology is in [docs/examples/orion-cluster/](../examples/orion-cluster/README.md).
+For testing without real hardware, [docs/examples/simulation/](../examples/simulation/README.md) drives
 scripted `Online`/`OnBattery`/`LowBattery` transitions through a real NUT driver. Three scenarios:
 one UPS with no topology, a small cluster with a router and switch, and a cascaded UPS → PDU → rack
 layout. The latter two derive their wave structure from tiers rather than authored ordering.
@@ -374,7 +374,7 @@ is off stays off, so a leftover signal is inert.
 
 The signal is hand-delivered into the projected Secret — the same path `OD-37` authorizes, not a
 second channel — which isolates kubelet admission, file-capability survival, and the host PID
-namespace from planner correctness. See [security.md](security.md) for the boundary this proves.
+namespace from planner correctness. See [security.md](../reference/security.md) for the boundary this proves.
 
 The run prints the actuator's gate trace on both outcomes, streamed live because the container is
 about to power off with its own log. Each link on the halt path logs itself — `SignalChannel`,
@@ -385,7 +385,7 @@ after it, which is what makes the host-PID-namespace case detectable at all: tha
 it, and a node still running.
 
 Real executions are also recorded on the operator, which is the side that survives them — see
-`nutoperator_halt_*` in [metrics.md](metrics.md), where
+`nutoperator_halt_*` in [metrics.md](../reference/metrics.md), where
 `nutoperator_halt_last_verified_timestamp_seconds` answers "has this cluster ever proven it can halt
 this node" months later. This procedure deliberately does not produce those: it bypasses the executor
 so that planner correctness cannot fail it, and the executor is where the halt clock starts.

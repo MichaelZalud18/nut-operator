@@ -141,38 +141,20 @@ None.
 Owns: scaffold, docs upkeep, examples, and decision-registry maintenance — glue work not owned by one
 component.
 
-Reorganize `docs/` around the reader instead of around the writer. What exists is a flat list of ~30
-files in which a design requirement, an install step, and a dated audit record all look alike, so
-there is no reading order and no way to tell which three files a new user should open. Two projects
-are the model: [the Cluster API Book](https://cluster-api.sigs.k8s.io/) for structure, and
-[cert-manager](https://cert-manager.io/docs/) for the front door.
+The `docs/` set is reorganized around the reader: `guides/` for doing things, `decisions/` for the
+judgement calls only the operator can make, `reference/` for lookup, and `design/` plus `audits/` for
+contributors. [docs/README.md](README.md) is the landing page and carries a first-hour path. Modeled
+on the Cluster API Book for structure and cert-manager for the front door. What is left:
 
-This project needs more user guidance than most operators, not less. Almost everything that decides
-whether a shutdown is correct is something the user supplies: how their racks are actually wired,
-which workloads are disposable, what must outlive everything else, and whether a machine may be
-powered off at all. The operator cannot derive any of that, and a wrong answer is discovered during a
-power failure. The docs are therefore part of the safety story, not an accompaniment to it.
-
-- Split the doc set four ways, top level: **user guidance** (install, configure, operate), **user
-  decisions** (the judgement calls only the operator can make), **reference** (API, metrics,
-  glossary), and **contributor/design** (requirements, decisions, audits). Today all four are
-  interleaved in one list.
-- Write the decision-shaped guides. Each takes one question the user must answer, explains what
-  hangs on it, and shows how to express the answer: assigning shutdown tiers; deciding what is
-  last-ditch; modeling real wiring as `feeds` and `carries` edges; choosing a tier-overrun policy;
-  deciding when to move from `DryRun` to `Actuate`. These do not exist in any form.
-- Write the physical-setup guide. Wiring a UPS, reaching it over the network, what to record about
-  the topology and how to verify what was recorded matches the room. This is the step with no
-  software fallback and currently no page.
-- Move the glossary out of `decision-index.md` into reference, where a reader would look for it.
-  Keep one definition, linked from both.
-- Give the doc set a landing page that states the problem before the solution, cert-manager style,
-  and routes to a first-hour path: install, model one UPS, compile a dry-run plan, read the plan.
 - Decide the delivery format. A published site (Cluster API uses mdBook) versus rendered-on-GitHub
   markdown is a real trade — a site gives navigation and search, and adds a build, a deploy target,
   and a way for docs to break independently of the code. Not obviously worth it pre-v1.
-- Adopt a per-page audience tag, the way each doc already carries `Components:`, so a page states
+- Adopt a per-page audience tag, the way each page already carries `Components:`, so a page states
   who it is for and drift is visible at the point of reading.
+- Revisit `install.md` once the guides section has more than one page in it. At 443 lines it is
+  prerequisites, two install paths, a configuration walkthrough, upgrade and uninstall order,
+  troubleshooting, and the actuation-verification procedure in one file, which is more than one
+  guide's worth of reader.
 
 ---
 

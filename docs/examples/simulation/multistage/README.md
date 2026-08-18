@@ -11,7 +11,7 @@ is a property of the topology and nothing else.
 It does not mean stages of shutdown: that ordering is **tiers**, and a set of concurrently executing
 groups is a **wave**. It also does not mean the project's own "stage", which is reserved for the
 detect / decide / act pipeline split. See the glossary in
-[decision-index.md](../../../design/decision-index.md#glossary).
+[the glossary](../../../reference/glossary.md).
 
 ## Why the extra hop matters
 

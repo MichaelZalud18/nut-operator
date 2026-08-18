@@ -144,7 +144,7 @@ the measurement exists to capture. The actuator cannot close that gap and must n
 API token by design (`NA-2`) and that stays. Instead the operator reconstructs the halt from two
 facts it can see on its own — it wrote the signal, and it watched the `Node` stop reporting — and
 publishes them as `nutoperator_halt_*`. Coarser, and it survives the node. See
-[metrics.md](../metrics.md).
+[metrics.md](../reference/metrics.md).
 
 **Monitoring configuration does not change during an episode (`F-92`).** DaemonSet spec writes are
 deferred while any owning flow is mid-episode and requeued until it settles, so a configuration edit

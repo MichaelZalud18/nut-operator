@@ -13,7 +13,7 @@
 # It deliberately does not supply the certificate itself. Shipping a key pair in a public repository
 # would publish the private key. Run `make webhook-cert` (hack/webhook-cert.sh) to mint the CA and
 # serving certificate, write the webhook-server-cert Secret, and patch caBundle into both webhook
-# configurations. See docs/install.md.
+# configurations. See docs/guides/install.md.
 
 resources:
 - ../default
