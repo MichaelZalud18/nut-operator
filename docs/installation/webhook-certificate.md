@@ -1,6 +1,7 @@
 # Choosing a webhook certificate path
 
 Components: Cross-cutting.
+Audience: operators.
 
 The operator serves admission webhooks, and admission is load-bearing for safety here rather than
 cosmetic. You have to supply a serving certificate before the manager will start, and which way you

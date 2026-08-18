@@ -1,6 +1,7 @@
 # Audit Storage Schema
 
 Components: Storage & Audit.
+Audience: contributors.
 
 Production durable state is PostgreSQL, with CloudNativePG as the preferred in-cluster provider.
 The project packages PostgreSQL migrations and the PostgreSQL-shaped writer boundary in

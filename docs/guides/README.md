@@ -1,6 +1,7 @@
 # Guides
 
 Components: Foundation & Documentation.
+Audience: operators.
 
 The judgement calls the operator cannot make for you, in the order you hit them. Each page states
 what hangs on the answer, and none of them are optional in the sense that skipping one leaves a

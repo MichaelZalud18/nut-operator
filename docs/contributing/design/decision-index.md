@@ -1,6 +1,7 @@
 # Decision Index and Glossary
 
 Components: Cross-cutting.
+Audience: contributors.
 
 This is the map across the design document set. When a namespace gains or retires an identifier,
 this file updates in the same change.

@@ -3,6 +3,7 @@
 Status: audit record, 2026-08-03, against commit `00eb3c0`. Static reading only.
 
 Components: Node Agent / DaemonSet.
+Audience: contributors.
 
 Supplements `operator-maturity-benchmarks.md`. Findings use the same `F-n` namespace, continuing
 from F-7.

@@ -1,6 +1,7 @@
 # Orion Cluster Example
 
 Components: Foundation & Documentation.
+Audience: operators.
 
 A complete worked example: one power domain, one UPS, three node roles, and a conservation flow that
 runs when the domain goes on battery. It uses placeholder domains and synthetic role names

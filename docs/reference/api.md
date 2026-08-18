@@ -1,6 +1,7 @@
 # API reference
 
 Components: Cross-cutting.
+Audience: operators and integrators.
 
 Every kind in `power.zalud.io/v1alpha1`, what it is for, and how it relates to the others. All of
 them are **cluster-scoped**. For the exact field-level schema, read the CRDs themselves —

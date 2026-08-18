@@ -4,6 +4,7 @@ Status: standing reference. Read before proposing a new decision, opening an `OD
 writing a design paragraph that begins "but what if power…".
 
 Components: all.
+Audience: contributors.
 
 These are questions that keep getting re-raised and are already answered. Each entry states the
 temptation, the requirement that settles it, and the tell — how to recognize you are doing it before

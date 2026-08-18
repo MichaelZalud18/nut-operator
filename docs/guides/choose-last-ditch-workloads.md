@@ -1,6 +1,7 @@
 # Choosing what is last-ditch
 
 Components: Planning & Execution Logic.
+Audience: operators.
 
 **The decision:** what must still be running while everything else stops.
 

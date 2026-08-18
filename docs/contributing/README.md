@@ -1,6 +1,7 @@
 # Contributing
 
 Components: Foundation & Documentation.
+Audience: contributors.
 
 Why the system is shaped the way it is, and the evidence behind it. For build, test, and PR
 mechanics see [CONTRIBUTING.md](../../CONTRIBUTING.md) at the repository root.

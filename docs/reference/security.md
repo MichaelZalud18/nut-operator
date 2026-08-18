@@ -1,6 +1,7 @@
 # Security
 
 Components: Cross-cutting.
+Audience: operators and integrators.
 
 `nut-operator` manages infrastructure that can shut down physical nodes. Security is part of the product contract, not a deployment afterthought.
 

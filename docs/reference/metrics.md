@@ -1,6 +1,7 @@
 # Metrics
 
 Components: Outputs & Publishing, Operator Maturity & Hardening.
+Audience: operators and integrators.
 
 The manager exposes Prometheus metrics on the same `/metrics` endpoint controller-runtime already
 serves — no new port, Service, or RBAC. `internal/metrics` declares this operator's own collectors

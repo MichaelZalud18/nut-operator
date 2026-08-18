@@ -1,6 +1,7 @@
 # Upgrade and uninstall
 
 Components: Cross-cutting.
+Audience: operators.
 
 ## Upgrade
 

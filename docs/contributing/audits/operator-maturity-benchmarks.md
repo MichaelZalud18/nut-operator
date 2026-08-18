@@ -4,6 +4,7 @@ Status: living reference. External standards this project measures itself agains
 audit position.
 
 Components: Operator Maturity & Hardening.
+Audience: contributors.
 
 Re-run this audit at each architecture stage. Benchmark position is a release gate input, not a
 retrospective note.
@@ -41,7 +42,7 @@ Mechanical, checkable, and where most reviewer friction lands.
 | Idempotent reconcile | **Met (2026-08-04)** — partial-failure convergence tests added for both operand-rendering controllers (`NUTServer`, `NodePowerAgent`; confirmed via grep these are the only two that render Kubernetes child resources). Each seeds a stale, partial operand state, reconciles once and asserts full convergence, then reconciles again and asserts every touched object's `resourceVersion` is unchanged — idempotency, not just no-error. |
 | No in-memory state across reconciles | Appears held; planner purity helps |
 | Status subresource for observed state only | Met — GP-3 enforces it by design |
-| `observedGeneration` tracking | Mostly met — re-checked 2026-08-17: present in every API type and every controller **except `ShutdownHook`**, whose status carries no `observedGeneration` field. |
+| `observedGeneration` tracking | Met for every reconciled type. `ShutdownHook` has no field and correctly so: nothing reconciles it — it is watched by `ShutdownFlowReconciler` and validated by a webhook, and the operator holds only `get;list;watch` on it. An `observedGeneration` with no observer would be a field that never moves. Its **declared-but-unwritten status subresource** is the real finding (`F-96`). |
 | Standard condition types with machine-readable reasons | Mostly met — see audit |
 | Finalizers for cleanup | **Met (2026-08-04)** — `NUTServerReconciler`/`NodePowerAgentReconciler` carry finalizers; owner-reference GC for the other 7 was verified never needing one (no Kubernetes child resources rendered). |
 | Status writes use `Patch`, not read-modify-write `Update` | **Met (2026-08-04)** — every controller switched to `Status().Patch(ctx, obj, client.MergeFrom(base))`. Regression-tested, not just converted: `shutdownflow_controller_test.go`'s `resourceVersionRaceInjectingClient` reproduces the exact production race (a write landing between a reconciler's `Get` and its status write) and confirmed both that the old `Update()` pattern fails with the production-observed 409 Conflict, and that `Patch()` doesn't. |
@@ -813,3 +814,26 @@ alternative is writing halt bookkeeping to the API during a power event. The cos
 Unchanged, plus one: **after `F-94` is decided**, since the outcome determines whether halt evidence
 survives a manager restart and therefore whether `nutoperator_halt_*` can be alerted on as an
 absence.
+
+## Findings — documentation sweep, 2026-08-17
+
+**F-96 · `ShutdownHook` declares a status surface that nothing writes.** The type carries
+`+kubebuilder:subresource:status` and a `ShutdownHookStatus` with a `Conditions` array. No controller
+reconciles the kind: `ShutdownFlowReconciler` watches it to re-reconcile flows, a webhook validates
+it, and generated RBAC grants only `get;list;watch`. Confirmed by grep — no `Status().Patch` or
+`Status().Update` call anywhere names it.
+
+So `kubectl get shutdownhook -o yaml` shows `status: {}` permanently, for every hook, forever. That
+reads as a resource whose controller is broken or has not caught up, which is the same shape a real
+outage produces, and there is nothing in the object to distinguish the two.
+
+Found while correcting a claim this benchmark made in the previous pass. That pass recorded
+`ShutdownHook` as missing `observedGeneration` and counted it against the convention. That reading was
+wrong in a way worth naming: `observedGeneration` is a promise that something observed the spec, and
+nothing observes this one, so adding the field would have manufactured a number that never moves. The
+gap is one level up — the status subresource itself is the thing that should not be declared, or the
+kind needs an observer.
+
+Not fixed here. Removing a status subresource is an API change, and adding a reconciler for a kind
+that is deliberately passive is a design question about whether hook health belongs on the hook or on
+the flow that invoked it. Recorded in `docs/tasks.md` under Planning & Execution Logic.

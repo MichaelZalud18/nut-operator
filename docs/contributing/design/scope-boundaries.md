@@ -1,6 +1,7 @@
 # Scope Boundaries
 
 Components: varies by boundary — each `## SB-n` heading below carries its own tag.
+Audience: contributors.
 
 This document records what `nut-operator` is and is not responsible for. These identifiers are
 stable: `SB-n` values do not get reused or renumbered.

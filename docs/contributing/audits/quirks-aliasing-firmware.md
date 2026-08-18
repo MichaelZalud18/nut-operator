@@ -4,6 +4,7 @@ Status: findings record, 2026-08-03, against commit `00eb3c0`. Static reading on
 tested.
 
 Components: Capability Profiles.
+Audience: contributors.
 
 Investigates three gaps surfaced by the recorded UniFi UPS quirks in
 `docs/contributing/design/capability-profiles.md`. Findings continue the shared `F-n` namespace from F-24.

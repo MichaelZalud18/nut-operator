@@ -1,6 +1,7 @@
 # Configuration
 
 Components: Cross-cutting.
+Audience: operators.
 
 What to apply after the operator is running, in order. Everything here defaults to dry-run — nothing
 on this page can power off a node. Turning that on is [its own guide](../guides/enable-actuation.md).

@@ -1,6 +1,7 @@
 # Glossary
 
 Components: Cross-cutting.
+Audience: operators and integrators.
 
 The words this project uses, and the ones it deliberately does not. Where two terms are easy to
 confuse — **tier** and **wave** above all — the entry says which is input and which is output,

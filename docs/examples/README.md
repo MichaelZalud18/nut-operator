@@ -1,6 +1,7 @@
 # Examples
 
 Components: Foundation & Documentation.
+Audience: operators.
 
 Two complete topologies, meant to be read in different ways. Every manifest in both is validated
 against the generated CRD schemas in CI, so nothing here can drift from the API without breaking the

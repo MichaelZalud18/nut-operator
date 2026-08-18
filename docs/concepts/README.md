@@ -1,6 +1,7 @@
 # Concepts
 
 Components: Cross-cutting.
+Audience: operators and evaluators.
 
 What the system is and how its parts relate. Read these when you want to understand the shape of the
 thing; read [Guides](../guides/README.md) when you want to decide something, and

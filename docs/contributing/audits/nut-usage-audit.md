@@ -4,6 +4,7 @@ Status: audit record, 2026-08-03, against commit `00eb3c0`. Static reading only;
 session tested.
 
 Components: NUT Server / upsd, Node Agent / DaemonSet, Telemetry & Triggers.
+Audience: contributors.
 
 Scope: cross-component. Which NUT mechanisms the system uses, which it declines, and whether the
 layering stays upstream-loyal with enhancements stacked on top rather than replacing NUT's own

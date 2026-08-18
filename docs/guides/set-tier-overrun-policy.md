@@ -1,6 +1,7 @@
 # Setting a tier-overrun policy
 
 Components: Planning & Execution Logic.
+Audience: operators.
 
 **The decision:** what happens when a tier runs past its budget and the battery does not wait.
 

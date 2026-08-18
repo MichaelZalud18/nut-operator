@@ -4,6 +4,7 @@ Status: design, 2026-08-03, rev 3. Supersedes the earlier mid-flow adaptive-exec
 tier-pointer revisions 1 and 2; the superseded drafts are not retained in the repository.
 
 Components: Planning & Execution Logic.
+Audience: contributors.
 
 The provisional `AE-n` prefix is retired. The six model requirements are `EX-25`–`EX-30` in
 [executor-requirements.md](executor-requirements.md); the runtime-estimate capability gate, which had

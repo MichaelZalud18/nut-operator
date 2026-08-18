@@ -1,6 +1,7 @@
 # Multistage simulation
 
 Components: Inventory System, Planning & Execution Logic.
+Audience: operators.
 
 Cascaded power: **one UPS feeding two PDUs, each PDU feeding a rack**, with a three-member control
 plane split across both racks. Synthetic names throughout.

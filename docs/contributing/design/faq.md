@@ -1,6 +1,7 @@
 # FAQ
 
 Components: Cross-cutting.
+Audience: contributors.
 
 Answers to the questions the design most often prompts. Internal identifiers (SB-n, GP-n, etc.)
 reference the design documents; users can ignore them.

@@ -1,6 +1,7 @@
 # Modeling your topology
 
 Components: Inventory System.
+Audience: operators.
 
 **The decision:** how the wiring you recorded becomes edges the planner can compute over.
 

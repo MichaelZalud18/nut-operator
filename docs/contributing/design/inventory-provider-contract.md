@@ -1,6 +1,7 @@
 # Inventory Provider Contract
 
 Components: Inventory System.
+Audience: contributors.
 
 This document defines the normalized inventory shape that every topology provider emits, and the
 rules the operator applies to it.

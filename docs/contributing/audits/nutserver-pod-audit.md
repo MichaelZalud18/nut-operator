@@ -3,6 +3,7 @@
 Status: audit record, 2026-08-03, against commit `00eb3c0`. Static reading only.
 
 Components: NUT Server / upsd.
+Audience: contributors.
 
 Scope: the `NUTServer` CRD and the `upsd` Deployment it renders, from
 `internal/controller/nutserver_render.go`. Nothing else.

@@ -4,6 +4,7 @@ Status: design. Covers the DaemonSet the `NodePowerAgent` CRD renders — what a
 halt, how that authorization is delivered and withdrawn, and what the operand refuses to do.
 
 Components: Node Agent / DaemonSet.
+Audience: contributors.
 
 `NA-n` identifiers are stable and are not reused or renumbered.
 

@@ -1,6 +1,7 @@
 # Preparing the hardware
 
 Components: Inventory System, NUT Server / upsd.
+Audience: operators.
 
 **The decision:** what is actually plugged into what, and can the cluster see the UPS.
 

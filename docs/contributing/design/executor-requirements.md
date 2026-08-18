@@ -1,6 +1,7 @@
 # Executor Requirements
 
 Components: Planning & Execution Logic.
+Audience: contributors.
 
 This document defines the requirements for the executor, the "act" stage of `nut-operator`.
 

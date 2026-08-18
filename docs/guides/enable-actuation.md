@@ -1,6 +1,7 @@
 # Enabling actuation
 
 Components: Node Agent / DaemonSet, Planning & Execution Logic.
+Audience: operators.
 
 **The decision:** when to let this operator actually stop a machine.
 

@@ -1,6 +1,7 @@
 # Assigning shutdown tiers
 
 Components: Planning & Execution Logic.
+Audience: operators.
 
 **The decision:** what stops early, what stops late, and what the numbers mean six months from now.
 

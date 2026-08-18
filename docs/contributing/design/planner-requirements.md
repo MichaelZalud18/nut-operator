@@ -1,6 +1,7 @@
 # Planner Requirements
 
 Components: Planning & Execution Logic, Capability Profiles.
+Audience: contributors.
 
 This document defines the requirements for the planner package, the "decide" stage of
 `nut-operator`.

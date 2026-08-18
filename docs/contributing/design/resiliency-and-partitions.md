@@ -1,6 +1,7 @@
 # Resiliency and Partitions
 
 Components: Cross-cutting.
+Audience: contributors.
 
 `nut-operator` treats loss of connectivity as an explicit degraded state, not as proof that a node,
 UPS, database, or network path is safe to ignore.

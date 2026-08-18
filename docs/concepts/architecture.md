@@ -1,6 +1,7 @@
 # Architecture
 
 Components: Cross-cutting.
+Audience: operators and evaluators.
 
 `nut-operator` is split into a control plane, NUT server operands, node power agents, and durable
 state. This page explains what each part is and how a power event moves through them. For what to

@@ -1,6 +1,7 @@
 # Image Strategy
 
 Components: NUT Server / upsd, Node Agent / DaemonSet, Operator Maturity & Hardening.
+Audience: operators and integrators.
 
 `nut-operator` does not default to a third-party NUT container image.
 

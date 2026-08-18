@@ -3,6 +3,7 @@
 Status: working document, 2026-08-03. Derived from the component audits and the placement model.
 
 Components: NUT Server / upsd, Node Agent / DaemonSet, Planning & Execution Logic.
+Audience: contributors.
 
 Covers when to scale each component, when not to, and which constraints actually bind. Node count
 is not the trigger for any of them.

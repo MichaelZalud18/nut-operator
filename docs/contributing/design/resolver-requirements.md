@@ -1,6 +1,7 @@
 # Resolver Requirements
 
 Components: Inventory System, Capability Profiles, Telemetry & Triggers.
+Audience: contributors.
 
 This document defines the requirements for the resolver, the "detect" stage of `nut-operator`.
 

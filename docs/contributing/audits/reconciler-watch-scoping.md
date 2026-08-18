@@ -4,6 +4,7 @@ Status: findings record, 2026-08-09. `F-42` confirmed against a 10h production l
 fixed; `F-43` from reading `SetupWithManager`, since fixed.
 
 Components: Planning & Execution Logic, NUT Server / upsd.
+Audience: contributors.
 
 Two controllers get the same watch wrong in opposite directions. `ShutdownFlow` watches `UPSDevice`
 with no predicate and reconciles on every telemetry tick; `NUTServer` does not watch it at all and

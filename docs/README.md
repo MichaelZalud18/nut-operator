@@ -1,6 +1,7 @@
 # nut-operator documentation
 
 Components: Foundation & Documentation.
+Audience: operators and evaluators.
 
 `nut-operator` decides what your cluster shuts down first when the power fails, and carries that
 order out. A UPS buys minutes; spending them well means shedding what is disposable, quiescing what
@@ -30,6 +31,12 @@ behaves. Going further — actually letting it stop a machine — is
 [its own decision](guides/enable-actuation.md).
 
 ## Sections
+
+Every page states its `Components:` and its `Audience:` under the title, so who a page is for is
+visible at the point of reading rather than inferred from where it sits. The audiences are
+**evaluators** (deciding whether to use this), **operators** (running it), **integrators** (building
+against its API and metrics), and **contributors** (changing it).
+
 
 **[Concepts](concepts/README.md)** — what the system is. The control plane and its two operands, how
 a power event moves through them, and where the pods land.

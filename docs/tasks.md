@@ -68,6 +68,10 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
+- `F-96` decide what `ShutdownHook.status` is for. It declares a status subresource and a conditions
+  array, and nothing writes either — nothing reconciles the kind at all. Either drop the subresource
+  or give hook health an observer; a permanently empty `status: {}` is indistinguishable from a
+  controller that has stalled.
 
 ---
 
@@ -157,10 +161,10 @@ the root README is product, model, safety boundaries, and an install entry point
 the system works; `guides/` holds the judgement calls only the operator can make, in the order a
 reader hits them; `installation/` is procedure; `reference/` is exact fact — API, metrics, security,
 glossary; `contributing/` holds the design set and the audits behind it. Delivery is
-rendered-on-GitHub markdown; a published site was considered and declined pre-v1. What is left:
+rendered-on-GitHub markdown; a published site was considered and declined pre-v1. Every page carries
+`Components:` and `Audience:` under its title, so both are visible at the point of reading.
 
-- Adopt a per-page audience tag, the way each page already carries `Components:`, so a page states
-  who it is for and drift is visible at the point of reading.
+None.
 
 ---
 

@@ -1,6 +1,7 @@
 # Telemetry and Triggers
 
 Components: Telemetry & Triggers, Planning & Execution Logic.
+Audience: contributors.
 
 The detect-side pipeline, end to end: read NUT variables, normalize them into stable facts,
 then evaluate `ShutdownFlow` trigger conditions against those facts. Normalization and trigger

@@ -1,6 +1,7 @@
 # Shutdown Flow Design
 
 Components: Planning & Execution Logic, Outputs & Publishing.
+Audience: contributors.
 
 `ShutdownFlow` is the policy layer that turns UPS events into a safe, reviewable shutdown plan. Its foundation is a declarative dependency graph compiled into ordered shutdown waves.
 

@@ -4,6 +4,7 @@ Status: design. Covers the `upsd` operand the `NUTServer` CRD renders — how it
 starts, and which of NUT's own mechanisms it delegates to.
 
 Components: NUT Server / upsd.
+Audience: contributors.
 
 `NS-n` identifiers are stable and are not reused or renumbered.
 

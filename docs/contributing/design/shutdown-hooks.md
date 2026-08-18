@@ -5,6 +5,7 @@ Status: implemented, 2026-08-14. Answers the direction recorded in
 `SB-15`.
 
 Components: Planning & Execution Logic.
+Audience: contributors.
 
 `HK-n` identifiers are stable and are not reused or renumbered.
 

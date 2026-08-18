@@ -1,6 +1,7 @@
 # Pod placement
 
 Components: Foundation & Documentation.
+Audience: operators and evaluators.
 
 Where this operator's pods land in the `orion-cluster` example, and — more usefully — what actually
 pins each one. Read it with `docs/examples/orion-cluster/`; every placement fact below is declared

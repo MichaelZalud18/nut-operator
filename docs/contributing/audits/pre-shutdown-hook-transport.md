@@ -5,6 +5,7 @@ Status: findings record and implemented direction, 2026-08-06, extended 2026-08-
 `SB-15`.
 
 Components: Planning & Execution Logic.
+Audience: contributors.
 
 Examines the `RunWorkflow` action's claim to be engine-neutral, and what a hook that reaches
 non-Kubernetes systems would have to look like. Findings continue the shared `F-n` namespace from

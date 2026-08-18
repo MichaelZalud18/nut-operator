@@ -1,6 +1,7 @@
 # Troubleshooting
 
 Components: Cross-cutting.
+Audience: operators.
 
 Symptoms and their causes. For a node that stayed up after a shutdown signal, the actuator names the
 link that broke on its own — see

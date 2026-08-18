@@ -1,6 +1,7 @@
 # Simulation scenarios
 
 Components: NUT Server / upsd, Node Agent / DaemonSet, Planning & Execution Logic.
+Audience: operators.
 
 Runnable power topologies backed by `dummy-ups` and a scripted `.seq` fixture, so triggers,
 compilation, wave generation, and release gating can be exercised end to end with no hardware. The

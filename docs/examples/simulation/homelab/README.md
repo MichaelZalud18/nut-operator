@@ -1,6 +1,7 @@
 # Homelab-shaped simulation
 
 Components: Planning & Execution Logic, Node Agent / DaemonSet.
+Audience: operators.
 
 A small cluster on one UPS: **one control plane, three steady workers, one burst worker**, behind a
 switch behind a router. Synthetic names throughout.
