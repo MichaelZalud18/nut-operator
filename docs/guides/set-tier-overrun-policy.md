@@ -1,4 +1,4 @@
-# Tier-overrun policy
+# Setting a tier-overrun policy
 
 Components: Planning & Execution Logic.
 
@@ -60,7 +60,7 @@ so a short timeout you chose stays distinguishable from one the runtime forced.
 
 ## Then
 
-[From dry-run to actuate](dry-run-to-actuate.md).
+[From dry-run to actuate](enable-actuation.md).
 
-Full treatment: [executor-requirements.md](../design/executor-requirements.md) `EX-31`,
-[adaptive-execution-tier-pointer.md](../design/adaptive-execution-tier-pointer.md).
+Full treatment: [executor-requirements.md](../contributing/design/executor-requirements.md) `EX-31`,
+[adaptive-execution-tier-pointer.md](../contributing/design/adaptive-execution-tier-pointer.md).

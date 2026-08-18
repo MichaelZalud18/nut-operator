@@ -36,7 +36,7 @@ anything except power state; a node that needs draining for a kernel patch is so
 
 ## Components
 
-![nut-operator components and the paths between them](docs/diagrams/components.svg)
+![nut-operator components and the paths between them](docs/concepts/components.svg)
 
 The moving parts, and why each one is separate from the others:
 
@@ -226,7 +226,7 @@ touching a node until enforcement is explicitly enabled.
 
 Full prerequisites, the Kustomize path, network and firewall requirements, a configuration
 walkthrough, upgrade and uninstall order, and troubleshooting are in
-[docs/install.md](docs/guides/install.md).
+[docs/installation/](docs/installation/README.md).
 
 ## Development
 
@@ -304,23 +304,28 @@ make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
 
 Start at **[docs/](docs/README.md)** — it carries a first-hour path and a map of the whole set.
 
-- **[Guides](docs/guides/install.md)** — installation, configuration, operation.
-- **[Decisions you have to make](docs/README.md#decisions-you-have-to-make)** — the judgement calls
-  the operator cannot make for you: [preparing the hardware](docs/decisions/physical-setup.md),
-  [modeling your topology](docs/decisions/modeling-your-topology.md),
-  [assigning tiers](docs/decisions/shutdown-tiers.md),
-  [choosing what is last-ditch](docs/decisions/last-ditch.md),
-  [tier-overrun policy](docs/decisions/tier-overrun-policy.md), and
-  [dry-run to actuate](docs/decisions/dry-run-to-actuate.md).
-- **Reference** — [glossary](docs/reference/glossary.md),
-  [architecture](docs/reference/architecture.md), [metrics](docs/reference/metrics.md),
-  [security](docs/reference/security.md), [images](docs/reference/images.md).
-- **Examples** — [orion cluster](docs/examples/orion-cluster/README.md),
+- **[Concepts](docs/concepts/README.md)** — what the system is: the control plane, the two operands,
+  the service-level shape, and where the pods land.
+- **[Installation](docs/installation/README.md)** — prerequisites and both install paths,
+  [configuration](docs/installation/configuration.md) in dependency order, and
+  [upgrade and uninstall](docs/installation/upgrade-and-uninstall.md).
+- **[Guides](docs/guides/README.md)** — the judgement calls the operator cannot make for you:
+  [preparing the hardware](docs/guides/prepare-your-hardware.md),
+  [modeling your topology](docs/guides/model-your-topology.md),
+  [assigning tiers](docs/guides/assign-shutdown-tiers.md),
+  [choosing what is last-ditch](docs/guides/choose-last-ditch-workloads.md),
+  [setting a tier-overrun policy](docs/guides/set-tier-overrun-policy.md), and
+  [enabling actuation](docs/guides/enable-actuation.md).
+- **[Reference](docs/reference/README.md)** — [glossary](docs/reference/glossary.md),
+  [metrics](docs/reference/metrics.md), [security](docs/reference/security.md),
+  [images](docs/reference/images.md).
+- **[Examples](docs/examples/README.md)** — [orion cluster](docs/examples/orion-cluster/README.md),
   [simulation scenarios](docs/examples/simulation/README.md).
-- **Design and contribution** — [scope boundaries](docs/design/scope-boundaries.md),
-  [settled questions](docs/design/settled-questions.md),
-  [decision index](docs/design/decision-index.md), the requirement documents under
-  [docs/design/](docs/design/), and the audit records under [docs/audits/](docs/audits/).
+- **[Troubleshooting](docs/troubleshooting.md)** — symptoms and causes.
+- **[Contributing](docs/contributing/README.md)** — the design set and the audits behind it:
+  [scope boundaries](docs/contributing/design/scope-boundaries.md),
+  [settled questions](docs/contributing/design/settled-questions.md),
+  [decision index](docs/contributing/design/decision-index.md).
 - **[Project tasks](docs/tasks.md)** — what is left before v1.
 
 ## Community and Project Info

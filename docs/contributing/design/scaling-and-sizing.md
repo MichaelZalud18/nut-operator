@@ -19,7 +19,7 @@ is not the trigger for any of them.
 
 Replica count stays at 1 per `NUTServer`, permanently. Multiple replicas behind one Service split
 driver state and client login accounting, which is what NUT uses to determine when all clients have
-disconnected. See F-15 in `docs/audits/nutserver-pod-audit.md`; the recommendation there is to pin
+disconnected. See F-15 in `docs/contributing/audits/nutserver-pod-audit.md`; the recommendation there is to pin
 replicas at admission rather than leave the field settable.
 
 **What scales instead is UPS count.** A second UPS means a second `NUTServer` CR, not
@@ -46,7 +46,7 @@ hot standbys. Scaling buys failover, not throughput.
 **Prerequisite: F-2 must be fixed first.** `--leader-elect` currently defaults to `false`. Adding
 replicas before enabling leader election produces concurrent instances compiling and executing
 competing flows — strictly worse than a single replica. See
-`docs/audits/operator-maturity-benchmarks.md`.
+`docs/contributing/audits/operator-maturity-benchmarks.md`.
 
 **The trigger is availability tolerance, not cluster size.** The failure being protected against is
 "the node running the operator loses power first," which is as likely on a five-node cluster as on
@@ -59,13 +59,13 @@ source is possible but never arranged — and separation is equally unarranged. 
 one host means a single power loss removes the operator's input and its ability to act in one step,
 but nothing today expresses a preference either way; that would be anti-affinity on the shipped
 manager manifest. See the placement caveat in
-[example-pod-placement.md](../diagrams/example-pod-placement.md).
+[example-pod-placement.md](../../concepts/pod-placement.md).
 
 ## Node agent — scales inherently
 
 DaemonSet, one pod per node, no sizing decision. Tier 0 per OD-4. Relevant findings are F-9
 (priority class default) and F-10 (toleration baseline) in
-`docs/audits/node-agent-daemonset-audit.md` — both affect whether the agent is *present* on nodes,
+`docs/contributing/audits/node-agent-daemonset-audit.md` — both affect whether the agent is *present* on nodes,
 which matters more than how it is sized.
 
 ## What actually scales with node count

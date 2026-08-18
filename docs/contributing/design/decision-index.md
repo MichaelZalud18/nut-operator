@@ -5,7 +5,7 @@ Components: Cross-cutting.
 This is the map across the design document set. When a namespace gains or retires an identifier,
 this file updates in the same change.
 
-Every doc under `docs/`, `docs/design/`, and `docs/audits/` carries a `Components:` (or
+Every doc under `docs/`, `docs/contributing/design/`, and `docs/contributing/audits/` carries a `Components:` (or
 `*Components:*`) line naming which `docs/tasks.md` section(s) it belongs to, so the mapping is
 visible at the point of reading, not just here. `scope-boundaries.md` and `resolver-requirements.md`
 tag per-section instead of per-file, since their `## SB-n` boundaries and detect-stage subsections
@@ -45,7 +45,7 @@ tags which design content informs which component.
 
 ## Audit Records
 
-Dated audit and findings records live in `docs/audits/` and share the `F-n` findings namespace.
+Dated audit and findings records live in `docs/contributing/audits/` and share the `F-n` findings namespace.
 
 | Doc | Scope | Findings | Component(s) |
 | --- | --- | --- | --- |
@@ -73,7 +73,7 @@ Dated audit and findings records live in `docs/audits/` and share the `F-n` find
 | NA | Node agent operand requirement | node-agent-operand | NA-1 – NA-9 |
 | HK | Shutdown hook requirement | shutdown-hooks | HK-1 – HK-10 |
 | IN | Inventory contract rule | inventory-provider-contract | IN-1 – IN-16 |
-| F | Audit finding | audit records (`docs/audits/`) | F-1 – F-92 |
+| F | Audit finding | audit records (`docs/contributing/audits/`) | F-1 – F-92 |
 
 Identifiers are stable: never reused, never renumbered. Superseded items are marked in place.
 
@@ -136,6 +136,6 @@ narrative account and now uses the folded numbers.
 
 ## Glossary
 
-Moved to [reference/glossary.md](../reference/glossary.md), so that a reader looking for what a word
+Moved to [reference/glossary.md](../../reference/glossary.md), so that a reader looking for what a word
 means does not have to know it lives in the file named for the decision registry. One definition,
 linked from both.

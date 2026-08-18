@@ -4,7 +4,7 @@ Work that is real and intended, but deliberately not part of v1.
 
 This file exists so [tasks.md](tasks.md) can answer exactly one question — what is left before v1 —
 without carrying items that cannot close no matter how much work is done. Everything here is
-tracked, not dropped: a decision recorded in `docs/design/scope-boundaries.md` or an upstream
+tracked, not dropped: a decision recorded in `docs/contributing/design/scope-boundaries.md` or an upstream
 dependency outside this project is what puts an item on this page.
 
 The bar for moving something here is narrow. "Hard", "unscheduled", or "nobody has picked it up"
@@ -48,7 +48,7 @@ not.
 
 Nothing defines what verification of a profile's declared actuation behaviors consists of, where the
 result is recorded, or how it becomes a profile change
-([quirks-aliasing-firmware.md](audits/quirks-aliasing-firmware.md)).
+([quirks-aliasing-firmware.md](contributing/audits/quirks-aliasing-firmware.md)).
 
 **Why it is post-v1:** the audit's own recommended order puts `F-27` before instant-command work
 under `OD-20`, and `OD-20` is on this page. `UPSCapabilityProfile.spec.actuation.behaviors` has no
@@ -119,7 +119,7 @@ correctness, and two release paths need a decision about which one wins before e
 
 Every agent renders `MONITOR ... 1 ... secondary` with `MINSUPPLIES 1`, so a host fed by two UPS
 devices shuts down when either one goes critical rather than when it actually loses its supplies
-([nut-usage-audit.md](audits/nut-usage-audit.md)).
+([nut-usage-audit.md](contributing/audits/nut-usage-audit.md)).
 
 **Why it is post-v1:** `MINSUPPLIES` governs one host's own supplies and reaches nothing but
 `upsmon`'s local `SHUTDOWNCMD` decision. `OD-37` locks that path down for v1 — the operator path

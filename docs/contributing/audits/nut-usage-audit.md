@@ -99,7 +99,7 @@ Noted and explicitly out of scope: `ups.delay.start` and the power-return cycle 
 which OD-1 closed. Recorded here only so the capability surface is complete, not as a reopening.
 
 *Corrected 2026-08-03: this finding overstated the unused surface. The `dummy-ups` repeater/relay
-path is implemented and upstream-loyal (`docs/design/upstream-nut-relay.md`). F-22 stands only for
+path is implemented and upstream-loyal (`docs/contributing/design/upstream-nut-relay.md`). F-22 stands only for
 instant commands and writable variables. See the correction in `quirks-aliasing-firmware.md`.*
 
 **F-24 · Credential handling: correct validation, plaintext in a rendered Secret.** Config values

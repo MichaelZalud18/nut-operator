@@ -52,7 +52,7 @@ report success because it issued the evictions, and the pods it was protecting w
 the hosts anyway.
 
 There was a requirement for detecting this — `PL-25` — but it described the hazard wrongly and was
-retired; see [planner-requirements.md](../../../design/planner-requirements.md). Nothing replaced it,
+retired; see [planner-requirements.md](../../../contributing/design/planner-requirements.md). Nothing replaced it,
 so for now the edge is the author's to write.
 
 ## Topology

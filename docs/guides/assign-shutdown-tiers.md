@@ -14,7 +14,7 @@ an ordering edge.
 
 | Tier | Meaning |
 | --- | --- |
-| 0 | Last-ditch. Workload-only, and a flow may not target it — see [choosing what is last-ditch](last-ditch.md). |
+| 0 | Last-ditch. Workload-only, and a flow may not target it — see [choosing what is last-ditch](choose-last-ditch-workloads.md). |
 | 1 | The final orchestrated stop. Lowest valid tier for a node. |
 | 2+ | Progressively earlier. |
 
@@ -73,7 +73,7 @@ compile that was clean last month may not be now.
 
 ## Then
 
-[Choose what is last-ditch](last-ditch.md), then decide your
-[tier-overrun policy](tier-overrun-policy.md).
+[Choose what is last-ditch](choose-last-ditch-workloads.md), then decide your
+[tier-overrun policy](set-tier-overrun-policy.md).
 
-Model and compilation: [shutdown-flow.md](../design/shutdown-flow.md).
+Model and compilation: [shutdown-flow.md](../contributing/design/shutdown-flow.md).

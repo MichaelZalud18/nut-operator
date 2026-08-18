@@ -53,8 +53,8 @@ someone adds a group that did not exist when the tiers were chosen.
 
 ## Then
 
-[Set a tier-overrun policy](tier-overrun-policy.md), or go straight to
-[dry-run to actuate](dry-run-to-actuate.md).
+[Set a tier-overrun policy](set-tier-overrun-policy.md), or go straight to
+[dry-run to actuate](enable-actuation.md).
 
-Background: [planner-requirements.md](../design/planner-requirements.md) `PL-22`–`PL-24`,
+Background: [planner-requirements.md](../contributing/design/planner-requirements.md) `PL-22`–`PL-24`,
 [glossary](../reference/glossary.md).

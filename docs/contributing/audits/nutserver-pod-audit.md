@@ -345,7 +345,7 @@ the pod reports NotReady and leaves the Service endpoints.
 **F-53 · The receipt for `F-46` describes the removal and not the replacement.** The NUT Server
 *Built* paragraph in `docs/tasks.md` records that the inert Docker `HEALTHCHECK` "is gone". It is
 not: `images/nut-server/Dockerfile:135-136` carries a `HEALTHCHECK` running the readiness probe's
-`upsdrvctl status` check verbatim, and `NS-3` in `docs/design/nut-server-operand.md` describes it as
+`upsdrvctl status` check verbatim, and `NS-3` in `docs/contributing/design/nut-server-operand.md` describes it as
 present by design.
 
 The sequence that produced the discrepancy is worth recording because it is the general case, not a

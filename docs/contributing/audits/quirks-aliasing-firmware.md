@@ -6,13 +6,13 @@ tested.
 Components: Capability Profiles.
 
 Investigates three gaps surfaced by the recorded UniFi UPS quirks in
-`docs/design/capability-profiles.md`. Findings continue the shared `F-n` namespace from F-24.
+`docs/contributing/design/capability-profiles.md`. Findings continue the shared `F-n` namespace from F-24.
 
 ## Correction to an earlier finding
 
 **F-22 was overstated.** `nut-usage-audit.md` reported that NUT's feature surface beyond basic
 telemetry was unused. That is wrong in one respect: `dummy-ups` repeater mode is implemented and
-documented in `docs/design/upstream-nut-relay.md`, including `repeater_disable_strict_start`
+documented in `docs/contributing/design/upstream-nut-relay.md`, including `repeater_disable_strict_start`
 handling and a citation to the upstream man page. Appliances that expose their own `upsd` are
 modeled as `UPSDevice.spec.upstreamNUT` and relayed.
 

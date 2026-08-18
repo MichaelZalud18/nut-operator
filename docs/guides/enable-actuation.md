@@ -1,4 +1,4 @@
-# From dry-run to actuate
+# Enabling actuation
 
 Components: Node Agent / DaemonSet, Planning & Execution Logic.
 
@@ -41,16 +41,52 @@ guesses. A rehearsal (`power.zalud.io/rehearsal-request`) runs one approved enfo
 against real targets and feeds those durations back into the estimates. That is how the numbers stop
 being fiction before an outage rather than after one.
 
-**Proof the cluster can halt a node at all.** This is the one that cannot be inferred:
+**Proof the cluster can halt a node at all.** The one thing on this list that cannot be inferred from
+any amount of dry-run output. The procedure is below.
+
+## Proving the cluster can halt a node
+
+Everything above verifies that the operator *plans* correctly. It does not verify that this cluster
+can carry the plan out, and those are different questions: the configuration able to halt a node —
+`mode: Actuate` with `actuatorPolicy: PowerOff` — renders `hostPID`, a `CAP_SYS_BOOT` file
+capability, and a Pod Security posture that a dry-run never exercises.
+
+Five things only a real run can establish, and the fourth cannot be checked any other way: **from a
+non-initial PID namespace, `reboot(2)` returns success and does nothing.** A node that actually goes
+dark is the only available proof.
 
 ```sh
 make verify-actuation NODE=<node> AGENT=<agent> APPROVE=yes
 ```
 
-It powers off a real machine and leaves it off. What it establishes cannot be checked any other way —
-in particular, that the actuator is genuinely in the host PID namespace, because from a non-initial
-namespace `reboot(2)` returns success and does nothing. A node that goes dark is the only available
-proof. Full procedure in [install.md](../guides/install.md).
+**This powers off a real machine and leaves it off.** It needs physical or IPMI/BMC access to
+return, and it comes back cordoned. The target must be cordoned and drained first; the procedure
+refuses otherwise. `NODE` has no default.
+
+Restart was considered and rejected rather than overlooked: a restarted node returns with a fresh
+actuator holding an empty dedupe set, and a signal still inside its TTL halts it again. A node that
+is off stays off, so a leftover signal is inert.
+
+The signal is hand-delivered into the projected Secret — the same path `OD-37` authorizes, not a
+second channel — which isolates kubelet admission, file-capability survival, and the host PID
+namespace from planner correctness. See [security.md](../reference/security.md) for the boundary this
+proves.
+
+### Reading the gate trace
+
+The run prints the actuator's gate trace on both outcomes, streamed live because the container is
+about to power off with its own log. Each link on the halt path logs itself — `SignalChannel`,
+`SignalAccepted`, `FlowBinding`, `ModeAuthorized`, `Sync`, `CapabilityEffective`, `SyscallIssued` —
+so a node that stays up names the link that broke instead of leaving you with a machine that is
+either dark or not. `SyscallIssued` is written immediately before `reboot(2)` and cannot be written
+after it, which is what makes the host-PID-namespace case detectable at all: that line, nothing after
+it, and a node still running.
+
+Real executions are also recorded on the operator, which is the side that survives them — see
+`nutoperator_halt_*` in [metrics.md](../reference/metrics.md), where
+`nutoperator_halt_last_verified_timestamp_seconds` answers "has this cluster ever proven it can halt
+this node" months later. This procedure deliberately does not produce those: it bypasses the executor
+so that planner correctness cannot fail it, and the executor is where the halt clock starts.
 
 ## Order to do it in
 
@@ -78,5 +114,5 @@ you can still undo.
 ## Background
 
 [security.md](../reference/security.md) for the privilege boundary,
-[node-agent-operand.md](../design/node-agent-operand.md) for what the actuator will and will not do,
-[metrics.md](../reference/metrics.md) for what to alert on.
+[node-agent-operand.md](../contributing/design/node-agent-operand.md) for what the actuator will and
+will not do, [metrics.md](../reference/metrics.md) for what to alert on.

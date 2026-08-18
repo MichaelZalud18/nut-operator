@@ -23,7 +23,7 @@ Two ways to connect, and you need to know which you have:
   apcupsd daemon, and `dummy-ups` for simulation. A driver outside that list is rejected at
   admission rather than passed through.
 - **An upstream NUT relay**, for a NAS or appliance already exposing `upsd`. See
-  [upstream-nut-relay.md](../design/upstream-nut-relay.md).
+  [upstream-nut-relay.md](../contributing/design/upstream-nut-relay.md).
 
 **Confirm the UPS answers before you model anything.** If the operator cannot poll it, no plan you
 write will ever fire. Reachability, credentials, and the driver choice are all easier to debug now
@@ -64,6 +64,6 @@ Neither check can tell you that a `feeds` edge points at the wrong UPS. Only you
 
 ## Then
 
-[Model your topology](modeling-your-topology.md) — turning this into `feeds` and `carries` edges.
+[Model your topology](model-your-topology.md) — turning this into `feeds` and `carries` edges.
 
-Contract and rules: [inventory-provider-contract.md](../design/inventory-provider-contract.md).
+Contract and rules: [inventory-provider-contract.md](../contributing/design/inventory-provider-contract.md).

@@ -1,4 +1,4 @@
-# Example Pod Placement Diagram
+# Pod placement
 
 Components: Foundation & Documentation.
 
@@ -85,7 +85,7 @@ decision either way, and none exists today. `F-19` does not cover this — it is
 replicas not co-scheduling if an HA topology is ever designed, which is a different pair.
 
 Enforcing separation is a change to the shipped manager manifest, not to the example, so it belongs
-with the leader-election and replica work in `docs/design/scaling-and-sizing.md` rather than here.
+with the leader-election and replica work in `docs/contributing/design/scaling-and-sizing.md` rather than here.
 
 ## Signal delivery crosses the node boundary exactly once
 

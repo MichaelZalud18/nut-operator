@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Package adaptive implements the tier-pointer and timing-mode model from
-// docs/design/adaptive-execution-tier-pointer.md (EX-25 through EX-30).
+// docs/contributing/design/adaptive-execution-tier-pointer.md (EX-25 through EX-30).
 //
 // Pure by construction, like internal/planner and internal/trigger: no I/O, no
 // Kubernetes client, no wall-clock reads. Every function takes the observations

@@ -36,7 +36,7 @@ Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check t
 
 ## Critical Rules
 
-### Read `docs/design/settled-questions.md` Before Proposing a Decision
+### Read `docs/contributing/design/settled-questions.md` Before Proposing a Decision
 Some questions get re-raised every session and are already answered — recovery being out of scope,
 flicker hysteresis being unnecessary under idempotent re-descent, feasibility being warned rather
 than enforced, published status carrying facts and not interpretation. That file lists each one with

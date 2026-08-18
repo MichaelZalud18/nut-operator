@@ -60,6 +60,6 @@ add a field, name the planner rule that reads it — that is the test.
 
 ## Then
 
-[Assign shutdown tiers](shutdown-tiers.md) to the workloads and nodes this topology now covers.
+[Assign shutdown tiers](assign-shutdown-tiers.md) to the workloads and nodes this topology now covers.
 
-Full contract: [inventory-provider-contract.md](../design/inventory-provider-contract.md).
+Full contract: [inventory-provider-contract.md](../contributing/design/inventory-provider-contract.md).

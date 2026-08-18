@@ -68,7 +68,7 @@ time() - nutoperator_halt_last_verified_timestamp_seconds > 86400 * 180
 ```
 
 Absence of a series is itself the finding: that node has never been proven to halt. `make
-verify-actuation` is how a node gets its first one — see [install.md](../guides/install.md).
+verify-actuation` is how a node gets its first one — see [install.md](../installation/README.md).
 
 `duration_seconds` is coarser than the actuator's own `sync(2)` timing, deliberately. It spans
 projection, poll, flush, syscall, and detection latency, and it takes the *earlier* of the `Ready`
@@ -120,7 +120,7 @@ Expiry of the serving certificates the manager has mounted, read from the files 
 actually serves rather than from the Secret through the API — so a stale mount reports its own stale
 certificate instead of the cluster's current one.
 
-This matters most on the no-cert-manager install path ([install.md](../guides/install.md)), where rotation is a
+This matters most on the no-cert-manager install path ([install.md](../installation/README.md)), where rotation is a
 deliberate `hack/webhook-cert.sh` re-run. Nothing renews the certificate on its own there, and a
 1-year lifetime makes expiry a once-a-year surprise — the kind nobody has the procedure in mind for
 when it fires.

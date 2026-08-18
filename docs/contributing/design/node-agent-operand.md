@@ -144,7 +144,7 @@ the measurement exists to capture. The actuator cannot close that gap and must n
 API token by design (`NA-2`) and that stays. Instead the operator reconstructs the halt from two
 facts it can see on its own — it wrote the signal, and it watched the `Node` stop reporting — and
 publishes them as `nutoperator_halt_*`. Coarser, and it survives the node. See
-[metrics.md](../reference/metrics.md).
+[metrics.md](../../reference/metrics.md).
 
 **Monitoring configuration does not change during an episode (`F-92`).** DaemonSet spec writes are
 deferred while any owning flow is mid-episode and requeued until it settles, so a configuration edit
@@ -155,6 +155,6 @@ protects a running fleet, it does not withhold one that does not exist.
 
 - [node-agent-daemonset-audit.md](../audits/node-agent-daemonset-audit.md) — findings and evidence.
 - [scope-boundaries.md](scope-boundaries.md) `SB-3` — the authorization boundary as a scope statement.
-- [example-pod-placement.md](../diagrams/example-pod-placement.md) — where the DaemonSet lands and
+- [example-pod-placement.md](../../concepts/pod-placement.md) — where the DaemonSet lands and
   what the tolerations do.
 - [scaling-and-sizing.md](scaling-and-sizing.md) — why the agent has no sizing decision.

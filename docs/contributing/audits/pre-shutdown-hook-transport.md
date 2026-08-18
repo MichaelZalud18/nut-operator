@@ -85,4 +85,4 @@ it does not manage.
 
 Owning workflow orchestration is out of scope (`GP-4`, `GP-7`): the operator invokes a hook and
 publishes the fact, and never becomes the engine that runs it. Recorded as `SB-15` in
-`docs/design/scope-boundaries.md`.
+`docs/contributing/design/scope-boundaries.md`.

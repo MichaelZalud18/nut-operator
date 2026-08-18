@@ -7,14 +7,14 @@ are listed under their primary owner with a cross-reference.
 
 **This file is for doing work, not for explaining it.** Each component gets what it owns and what is
 left on it, and nothing else. Rationale lives where it was worked out: design docs say what a thing
-*is*, [decision-index.md](design/decision-index.md) holds settled decisions, and `docs/audits/` holds
+*is*, [decision-index.md](contributing/design/decision-index.md) holds settled decisions, and `docs/contributing/audits/` holds
 findings and evidence. An entry that needs a paragraph to justify itself belongs in one of those
 files with a one-line pointer left behind.
 
 Completed work is not tracked here at all. Design docs are written as implemented, so a requirement
 described in one is a requirement that exists — that is the record, and repeating it here would be a
 second copy to keep in sync. Closed decisions are in
-[scope-boundaries.md](design/scope-boundaries.md); findings and their fixes are in `docs/audits/`. A
+[scope-boundaries.md](contributing/design/scope-boundaries.md); findings and their fixes are in `docs/contributing/audits/`. A
 component with nothing outstanding says `None.` and stops, with no notes about what future work might
 look like, because that is speculation wearing a task's clothes.
 
@@ -33,7 +33,7 @@ Last reviewed: 2026-08-17
 
 Owns: the topology and power-domain data model — `UPSDevice`, `PowerInfrastructure`,
 `PowerInventoryNode`, `PowerInventoryEdge`, the `internal/inventory` compiler, and the declarative
-resolver/adapter that feeds it into reconciliation. Design contract: `docs/design/inventory-provider-contract.md` (`IN-n`).
+resolver/adapter that feeds it into reconciliation. Design contract: `docs/contributing/design/inventory-provider-contract.md` (`IN-n`).
 
 None.
 
@@ -43,7 +43,7 @@ None.
 
 Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundled catalog under
 `config/catalog/`, and the device-quirk/aliasing/profile-source design surface. Design docs:
-`docs/design/capability-profiles.md`.
+`docs/contributing/design/capability-profiles.md`.
 
 None.
 
@@ -74,8 +74,8 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 ### NUT Server / upsd
 
 Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_probe.go`, and the
-`nut-server` operand image. Audit: `docs/audits/nutserver-pod-audit.md` (`F-15`–`F-19`, `F-23`,
-`F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`); relevant findings from `docs/audits/nut-usage-audit.md`
+`nut-server` operand image. Audit: `docs/contributing/audits/nutserver-pod-audit.md` (`F-15`–`F-19`, `F-23`,
+`F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
 None.
@@ -86,8 +86,8 @@ None.
 
 Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_render.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
-`internal/nodeagent`. Design doc: `docs/design/node-agent-operand.md` (`NA-n`). Audits:
-`docs/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`, `F-33`–`F-36`, `F-54`–`F-92`, `OD-37`).
+`internal/nodeagent`. Design doc: `docs/contributing/design/node-agent-operand.md` (`NA-n`). Audits:
+`docs/contributing/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`, `F-33`–`F-36`, `F-54`–`F-92`, `OD-37`).
 
 None.
 
@@ -107,7 +107,7 @@ Design doc: `docs/shutdown-flow.md`, Published Artifacts section (`GP-6`/`GP-7`)
 ### Storage & Audit
 
 Owns: the PostgreSQL audit schema, storage backend resolution, retention, and the shutdown-time
-spool. Design doc: `docs/design/audit-storage-schema.md`.
+spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 
 None.
 
@@ -116,7 +116,7 @@ None.
 ### Operator Maturity & Hardening
 
 Owns: reconciler correctness, RBAC scope, leader election, metrics infrastructure, and
-image/supply-chain hardening. Audit: `docs/audits/operator-maturity-benchmarks.md` (`F-1`–`F-7`).
+image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity-benchmarks.md` (`F-1`–`F-7`).
 
 - Enable branch protection on `main` at release. Deliberately off during build: every CI check
   exists and passes, and requiring them would only add a merge round-trip to a single-maintainer
@@ -141,20 +141,18 @@ None.
 Owns: scaffold, docs upkeep, examples, and decision-registry maintenance — glue work not owned by one
 component.
 
-The `docs/` set is reorganized around the reader: `guides/` for doing things, `decisions/` for the
-judgement calls only the operator can make, `reference/` for lookup, and `design/` plus `audits/` for
-contributors. [docs/README.md](README.md) is the landing page and carries a first-hour path. Modeled
-on the Cluster API Book for structure and cert-manager for the front door. What is left:
+The `docs/` set follows the section layout the established Kubernetes operators use — Concepts,
+Installation, Guides, Reference, Troubleshooting, Contributing — modeled on the Cluster API Book for
+structure and cert-manager for the front door. [docs/README.md](README.md) is the landing page and
+carries a first-hour path. `guides/` holds the judgement calls only the operator can make, in the
+order a reader hits them; `contributing/` holds the design set and the audits behind it. What is
+left:
 
 - Decide the delivery format. A published site (Cluster API uses mdBook) versus rendered-on-GitHub
   markdown is a real trade — a site gives navigation and search, and adds a build, a deploy target,
   and a way for docs to break independently of the code. Not obviously worth it pre-v1.
 - Adopt a per-page audience tag, the way each page already carries `Components:`, so a page states
   who it is for and drift is visible at the point of reading.
-- Revisit `install.md` once the guides section has more than one page in it. At 443 lines it is
-  prerequisites, two install paths, a configuration walkthrough, upgrade and uninstall order,
-  troubleshooting, and the actuation-verification procedure in one file, which is more than one
-  guide's worth of reader.
 
 ---
 

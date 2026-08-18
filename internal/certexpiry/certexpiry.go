@@ -17,7 +17,7 @@ limitations under the License.
 // Package certexpiry publishes the expiry of the manager's mounted serving certificates as a
 // metric.
 //
-// It exists for the no-cert-manager install path (docs/guides/install.md). That path is the recommended
+// It exists for the no-cert-manager install path (docs/installation/README.md). That path is the recommended
 // one precisely because a static Secret has nothing to reconcile while the cluster is losing power
 // -- but the cost of having no issuer is that nothing renews the certificate either. Rotation is a
 // deliberate `hack/webhook-cert.sh` re-run, and until now nothing anywhere reported that the

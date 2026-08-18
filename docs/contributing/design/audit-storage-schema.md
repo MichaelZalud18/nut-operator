@@ -33,7 +33,7 @@ are precisely the questions a power product exists to answer.
 punishes hardest.
 
 So the split in GP-3 is not a preference: Kubernetes holds desired state and current summaries,
-PostgreSQL holds history. See `docs/design/scope-boundaries.md` for GP-3 and SB-11.
+PostgreSQL holds history. See `docs/contributing/design/scope-boundaries.md` for GP-3 and SB-11.
 
 The cost of the deviation is real and worth stating plainly. This binary is a PostgreSQL client —
 connection pool, TLS, credentials, an owned schema, versioned migrations, retention enforcement,

@@ -1,4 +1,4 @@
-# System Architecture Diagram
+# System architecture
 
 Components: Cross-cutting.
 

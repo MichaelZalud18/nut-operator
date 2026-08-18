@@ -134,7 +134,7 @@ one row per device per poll indefinitely, which is not a load etcd should carry.
 So Kubernetes holds desired state and current summaries, and PostgreSQL holds history (GP-3). The
 arrangement is uncommon for an operator but not unprecedented: Argo Workflows archives completed
 workflows to PostgreSQL for the same reason, and Tekton Results does the same. Full reasoning is in
-`docs/design/audit-storage-schema.md`.
+`docs/contributing/design/audit-storage-schema.md`.
 
 ## What happens to audit records if PostgreSQL is down during a shutdown?
 

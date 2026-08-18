@@ -42,7 +42,7 @@ Four layers, applied in this order because each depends on the one above it:
 | Policy | `shutdownflow-conservation.yaml` | The hook and the ordered flow |
 
 Pod placement — what lands where, and what does and does not pin it — is drawn separately in
-[example-pod-placement.md](../../diagrams/example-pod-placement.md).
+[example-pod-placement.md](../../concepts/pod-placement.md).
 
 ## Roles, not hosts
 
@@ -135,6 +135,6 @@ In order, and not before a dry run has been reviewed:
 1. Confirm compiled plans and `status.planFeasibility` look right in `DryRun`.
 2. Move `NodePowerAgent.spec.shutdown.actuatorPolicy` from `Simulate` to `PowerOff` — this is the
    step that gives a node the ability to halt, and it needs `CAP_SYS_BOOT` and `hostPID` to be
-   admissible (see [node-agent-operand.md](../../design/node-agent-operand.md)).
+   admissible (see [node-agent-operand.md](../../contributing/design/node-agent-operand.md)).
 3. Move the flow's `mode` from `DryRun` to `Enforce`. `safety.requireManualApproval` is on, so an
    enforce-mode run still waits for the approval annotation.

@@ -158,7 +158,7 @@ mistake, and falling back would hide a broken flow behind a coarser trigger that
 
 Closes a recurring question: if profiles describe the device, should `upsd` be sized or shaped
 to match it? No for sizing, yes for configuration, and the reasons differ enough to state
-separately. Companion to `scaling-and-sizing.md` and `docs/audits/nutserver-pod-audit.md`.
+separately. Companion to `scaling-and-sizing.md` and `docs/contributing/audits/nutserver-pod-audit.md`.
 
 ### The rule
 
@@ -212,7 +212,7 @@ configuration until there is a separate design for safely authoring profile hint
 be model-dependent, but the v1 escape hatch is `UPSDevice.spec.driverOptions` behind the allowlist
 and render-time token/value checks.
 
-**Instant command support.** Already identified as F-22 in `docs/audits/nut-usage-audit.md`. Which of
+**Instant command support.** Already identified as F-22 in `docs/contributing/audits/nut-usage-audit.md`. Which of
 `shutdown.return`, `load.off`, `load.on`, `test.battery.start`, and the writable delay variables the
 device actually supports. Profile-declared per CR-2, and tracked as OD-20.
 

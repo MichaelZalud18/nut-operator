@@ -6,7 +6,7 @@ The words this project uses, and the ones it deliberately does not. Where two te
 confuse — **tier** and **wave** above all — the entry says which is input and which is output,
 because that is the distinction most often gotten wrong.
 
-This is the single definition of each term. [decision-index.md](../design/decision-index.md) links
+This is the single definition of each term. [decision-index.md](../contributing/design/decision-index.md) links
 here rather than repeating it.
 
 **Power domain** — the transitive closure of `feeds` edges from a `UPSDevice` root. Derived, never
