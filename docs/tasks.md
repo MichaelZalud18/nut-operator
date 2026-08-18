@@ -11,9 +11,11 @@ left on it, and nothing else. Rationale lives where it was worked out: design do
 findings and evidence. An entry that needs a paragraph to justify itself belongs in one of those
 files with a one-line pointer left behind.
 
-Completed work is not narrated here. What was built is described in the design docs as built, and the
-identifiers it closed are listed once in [Closed Identifiers](#closed-identifiers). A component with
-nothing outstanding says `None.` and stops — no forward-looking notes about what future work might
+Completed work is not tracked here at all. Design docs are written as implemented, so a requirement
+described in one is a requirement that exists — that is the record, and repeating it here would be a
+second copy to keep in sync. Closed decisions are in
+[scope-boundaries.md](design/scope-boundaries.md); findings and their fixes are in `docs/audits/`. A
+component with nothing outstanding says `None.` and stops, with no notes about what future work might
 look like, because that is speculation wearing a task's clothes.
 
 Work deliberately targeted after v1 lives in [tasks-post-v1.md](tasks-post-v1.md) so this file
@@ -171,35 +173,6 @@ power failure. The docs are therefore part of the safety story, not an accompani
   and a way for docs to break independently of the code. Not obviously worth it pre-v1.
 - Adopt a per-page audience tag, the way each doc already carries `Components:`, so a page states
   who it is for and drift is visible at the point of reading.
-
----
-
-## Closed Identifiers
-
-The receipt for work already done, kept as one ledger rather than a paragraph per component. What
-each identifier *means* is in the doc that owns its namespace — see
-[decision-index.md](design/decision-index.md).
-
-| Component | Closed |
-| --- | --- |
-| Inventory System | `IN-1`, `IN-3`, `IN-5`, `IN-7`, `IN-9`–`IN-14`, `IN-16`, `OD-4`, `OD-16`, `F-81`, `F-82`, `OD-14`. |
-| Capability Profiles | `F-25`, `F-26`, `F-79`, `F-80`, `F-83`, `F-84`, `RS-7`–`RS-10`, `PL-30`, `OD-21`, `OD-22`, `OD-23`, `OD-25`, `OD-31`. |
-| Planning & Execution Logic | `PL-19`, `PL-20`, `PL-43`, `CR-4`, `EX-9`, `EX-11`, `EX-14`, `EX-22`–`EX-33`, `OD-4`, `OD-11`, `OD-12`, `OD-14`, `OD-17`, `OD-18`, `OD-29`, `OD-30`, `OD-33`, `OD-34`, `OD-38`, `SB-15`, `HK-1`–`HK-10`, `F-31`, `F-42`, `F-44`. |
-| NUT Server / upsd | `F-15`–`F-18`, `F-21`, `F-23`, `F-24`, `F-37`, `F-39`–`F-41`, `F-43`, `F-46`, `F-47`, `F-48`–`F-51`, `F-53`, `F-76`, `F-85`, `NS-1`–`NS-9`, `OD-21`, `OD-32`, `OD-36`. |
-| Node Agent / DaemonSet | `F-8`–`F-14`, `F-24`, `F-33`–`F-36`, `F-54`–`F-60`, `F-61`–`F-65`, `F-66`, `F-67`–`F-71`, `F-72`, `F-73`–`F-75`, `F-86`–`F-88`, `F-90`–`F-92`, `NA-1`–`NA-9`, `OD-37`. |
-| Outputs & Publishing | `PL-45`–`PL-48`, `OD-1`, `OD-5`, `F-3`, `F-6`. |
-| Storage & Audit | `OD-6`, `OD-15`. |
-| Operator Maturity & Hardening | `F-1`–`F-5`, `F-7`, `F-28`–`F-32`, `F-38`, `F-52`, `F-77`, `F-78`. |
-| Telemetry & Triggers | `F-22` relay half, `F-25` runtime half, `OD-9`, `OD-14`, `CR-4`. |
-
-Declined rather than closed, and recorded where they were declined:
-
-- `F-19` — only matters with an HA `upsd` topology, which is not designed.
-- `F-89` — the signal Secret mounts whole on every node, but the payload carries no credentials and
-  the node-name check holds it to exposure rather than actuation
-  ([node-agent-daemonset-audit.md](audits/node-agent-daemonset-audit.md)).
-- `OD-26` — the `provenance` field whose semantics it decides was never built, and `ProfileSource`
-  already draws the only distinction that exists.
 
 ---
 
