@@ -52,9 +52,10 @@ while the eviction that was meant to move their workloads was still in flight. T
 report success because it issued the evictions, and the pods it was protecting would go down with
 the hosts anyway.
 
-There was a requirement for detecting this — `PL-25` — but it described the hazard wrongly and was
-retired; see [planner-requirements.md](../../../contributing/design/planner-requirements.md). Nothing replaced it,
-so for now the edge is the author's to write.
+The planner does not detect this for you. A requirement to do so was written and then retired,
+because it described the hazard wrongly; nothing replaced it. So the ordering edge is the author's to
+write — see [the planner requirements](../../../contributing/design/planner-requirements.md) if you
+want the history.
 
 ## Topology
 

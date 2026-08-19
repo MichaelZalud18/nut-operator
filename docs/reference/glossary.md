@@ -7,22 +7,24 @@ The words this project uses, and the ones it deliberately does not. Where two te
 confuse — **tier** and **wave** above all — the entry says which is input and which is output,
 because that is the distinction most often gotten wrong.
 
-This is the single definition of each term. [decision-index.md](../contributing/design/decision-index.md) links
-here rather than repeating it.
+This is the single definition of each term; the design set links here rather than repeating it. Where
+a term has rationale worth reading, it is in
+[the design documents](../contributing/design/decision-index.md), which index every decision behind
+these words.
 
 **Power domain** — the transitive closure of `feeds` edges from a `UPSDevice` root. Derived, never
-declared; named on the UPS. A node can belong to more than one (IN-7, IN-11).
+declared; named on the UPS. A node can belong to more than one.
 
 **feeds / carries** — the two edge relations. `feeds(A→B)`: A powers B; loss means B is on battery.
 `carries(A→B)`: A transports B's NUT/control path; loss means B is unobservable but powered. They
-drive opposite planner behavior and are never conflated (IN-3).
+drive opposite planner behavior and are never conflated.
 
 **Group** — the unit of shutdown policy in a `ShutdownFlow`: a selector-targeted set of workloads
 or agents with an action, relationships, and a timeout.
 
 **Wave** — a compiled set of groups eligible to execute concurrently. Waves are ordered; execution
-is wave-by-wave (PL-12, EX-10). A wave is *output*: the planner derives it from tiers and edges.
-Nobody writes a wave.
+is wave-by-wave. A wave is *output*: the planner derives it from tiers and edges. Nobody writes a
+wave.
 
 **Phase** — overloaded, and the source of more confusion than any other word here. It means two
 unrelated things, neither of which is an ordering concept:
@@ -48,10 +50,10 @@ scenario named for it says so in its own README.
 
 **Structural vs telemetry input** — the load-bearing partition of planner input. Structural:
 slow-changing, hashed, plan-identity-bearing. Telemetry: continuous, never hashed, feeds
-feasibility only (PL-42).
+feasibility only.
 
 **Plan hash** — deterministic hash over structural inputs plus emitted plan; the correlation key
-across CR status, the signal file, and audit records (PL-14).
+across CR status, the signal file, and audit records.
 
 **Published artifact** — structured planner or executor output exposed for consumers: compiled
 plan, dependency graph, waves, trigger decisions, explanations, progress, and renderable graph
@@ -63,40 +65,40 @@ own shutdown planning or host actuation.
 
 **Capability profile** — versioned artifact declaring a device's NUT variables (telemetry section)
 and behaviors/quirks (actuation section). Matched, not merged; declaration authoritative, probing
-advisory (SB-9, CR-1, CR-2).
+advisory.
 
 **Unidentified-device profile** — the least-specific capability profile, bundled with the operator,
-guaranteed to match. The terminal tier of the matching chain, not a special case (PL-33). Matching it
-means nothing is known about the device, not that the device has a known minimum capability, which is
-why it blocks enforcement under OD-31. Formerly called the "universal floor"; renamed 2026-08-05
-because that name implied a capability guarantee it never provided.
+guaranteed to match. The terminal tier of the matching chain, not a special case. Matching it means
+nothing is known about the device, not that the device has a known minimum capability, which is why
+it blocks enforcement. Formerly called the "universal floor"; renamed because that name implied a
+capability guarantee it never provided.
 
-**Last-ditch** — the role marking services and nodes that must survive until a given shutdown
-phase; under HA, the minimum viable control plane. Concretely: tier 0 in the numbered-tier
-scheme (OD-4, closed).
+**Last-ditch** — the role marking services and nodes that must still be running while everything
+else stops; under HA, the minimum viable control plane. Concretely: tier 0 in the numbered-tier
+scheme.
 
 **Shutdown tier** — integer coarse-ordering label on namespaces, workloads, and nodes. Tier 0 =
 last-ditch, workload-only. Tier 1 = final orchestrated stop, lowest valid for nodes. Tier 2+ =
 progressively earlier. Lower shuts down later. Not comparable across kinds — workload-to-node
-ordering comes from clearance edges (PL-20). Compiled into derived edges; `requires` orders within
-a tier.
+ordering comes from clearance edges. Compiled into derived edges; `requires` orders within a
+tier.
 
 **Tier pointer** — the executor's record of how far down the tier sequence a shutdown has
 progressed. Descends as power degrades and waves execute; ascends as bookkeeping only, restoring
-nothing (EX-25 – EX-27).
+nothing.
 
 **Signal file** — the structured in-pod handoff from executor authority to host actuation:
-timestamp, reason, UPS identity, flow identity, plan hash. The actuator rejects stale files
-(EX-16).
+timestamp, reason, UPS identity, flow identity, plan hash. The actuator rejects stale files.
 
 **Dry-run** — full execution minus effects. Sequencing, enumeration, clearance, and evidence all
-run; only mutation and actuation are suppressed (EX-5).
+run; only mutation and actuation are suppressed.
 
-**Orphan rule** — every node is `feeds`-reachable from a UPS or explicitly exempted; neither is a
-hard failure (PL-44, IN-12).
+**Orphan rule** — every node must be `feeds`-reachable from a UPS or carry an explicit exemption. A
+node that is neither raises `PowerPlanningOrphan`, an error. The parallel rule for `carries` is only
+a warning, because a node with no modeled communication path can still be planned for.
 
 **Detect / decide / act** — the three-stage split: resolver / planner / executor. All input I/O in
 detect, pure computation in decide, all effects and evidence in act.
 
 **Provider contract** — the normalized inventory shape all topology providers emit; owned by the
-operator, informed by NetBox, transcribing neither (inventory-provider-contract.md).
+operator, informed by NetBox, transcribing neither.

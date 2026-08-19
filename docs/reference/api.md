@@ -61,7 +61,7 @@ from it, for hardware the bundled catalog does not cover. Advisory only: it neve
 resolves, and never runs on the failure path.
 
 **`PDUCapabilityProfile`** — PDU product records, including outlet count and which outlets are
-switchable. **Scaffolding for v1** (`OD-25`): the kind, schema, validation, bundled catalog, and
+switchable. **Scaffolding for v1**: the kind, schema, validation, bundled catalog, and
 matcher exist, and no device kind, inventory entity, render path, or actuation path consumes them.
 PDU actuation does not work.
 

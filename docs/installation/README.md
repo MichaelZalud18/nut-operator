@@ -13,10 +13,17 @@ for the same objects. If you need to customize the install, use the Kustomize pa
 
 ## Prerequisites
 
-**Kubernetes.** Verified against 1.34 in CI (envtest and kind). The manifests use
-`apiextensions.k8s.io/v1`, `admissionregistration.k8s.io/v1`, `policy/v1`, and
-`networking.k8s.io/v1`, so 1.21 is the minimum supported version. No CEL validation rules are used. Older
-versions are untested.
+**Kubernetes.** Two different claims, worth separating.
+
+*Tested:* controller tests run against the envtest control plane pinned by `k8s.io/api` in `go.mod`
+— **1.36** at present — and the e2e suite runs against whatever node image the current `kind`
+release defaults to. Those are the only versions this project has evidence for.
+
+*Theoretically compatible:* the manifests use `apiextensions.k8s.io/v1`,
+`admissionregistration.k8s.io/v1`, `policy/v1`, and `networking.k8s.io/v1`, all GA by 1.21, and no
+CEL validation rules are used. So nothing in the API surface *should* stop it running on 1.21 —
+but nothing has checked, and "the APIs exist" is not the same as "the operator works." Treat
+anything below the tested version as unverified rather than supported.
 
 **A webhook serving certificate.** The operator serves admission webhooks, and admission is
 load-bearing for safety here. There are two supported ways to provide one, and which you pick has
@@ -47,14 +54,21 @@ issuer, and the rotation procedure.
 
 ### Bundled manifest
 
+**Pre-v1: there is no tagged release.** These URLs point at `main` and move when `main` does. Clone
+and check out a commit if you need a fixed target.
+
 ```sh
 # Recommended: no cert-manager dependency.
 kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/dist/install-byo-cert.yaml
-./hack/webhook-cert.sh
 
 # Or, if you already run cert-manager:
 kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/dist/install.yaml
 ```
+
+The recommended bundle needs one more step: it ships no certificate, so the manager stays in
+`ContainerCreating` until `hack/webhook-cert.sh` mints one.
+[Choosing a webhook certificate path](webhook-certificate.md) has that command in both its
+from-a-clone and standalone forms.
 
 Either creates the `nut-operator-system` namespace, every CRD, RBAC, the webhook configuration, a
 metrics `Service`, two `NetworkPolicy` objects, and the controller-manager `Deployment` (1 replica,
@@ -64,7 +78,8 @@ leader election enabled). `install.yaml` additionally creates a cert-manager `Is
 ### Kustomize
 
 Use this when you need a different namespace, a pinned image digest, or your own patches. Point a
-kustomization at `config/byo-cert` (no cert-manager) or `config/default` (cert-manager):
+kustomization at `config/byo-cert` (no cert-manager) or `config/default` (cert-manager). `ref=main`
+below is the pre-v1 target; change it to a commit SHA to pin:
 
 ```yaml
 # kustomization.yaml
@@ -78,8 +93,11 @@ images:
 
 ```sh
 kubectl apply -k .
-./hack/webhook-cert.sh    # config/byo-cert only
 ```
+
+The `config/byo-cert` overlay still needs the certificate script afterwards — this kustomization
+pulls the overlay from GitHub rather than a clone, so fetch the script the standalone way described
+in [Choosing a webhook certificate path](webhook-certificate.md).
 
 ### Verify
 

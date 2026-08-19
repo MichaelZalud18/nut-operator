@@ -42,55 +42,17 @@ time; it never queries NetBox live during a power event (SB-8, IN-14).
 
 ## What if my UPS does not have a packaged capability profile?
 
-Most won't, and that is expected. UPS hardware varies enormously in what it reports, and the
-project can only verify devices it owns. Two steps:
+Most won't, and that is expected — the project can only verify devices it owns. The device still
+works; what it costs is that the flow refuses to enforce until either a profile matches or the gap is
+explicitly accepted.
 
-**1. Build one with the probe helper.** Create a `UPSCapabilityProbe` pointing at your `UPSDevice`:
+The operator-facing procedure — drafting a profile with `UPSCapabilityProbe`, reviewing it, and
+sending it upstream — is
+[Profiling a UPS the catalog does not cover](../../guides/profile-an-unknown-ups.md). It is not
+repeated here.
 
-```yaml
-apiVersion: power.zalud.io/v1alpha1
-kind: UPSCapabilityProbe
-metadata:
-  name: unidentified-rack-a-ups
-spec:
-  deviceRef:
-    name: rack-a-ups
-```
-
-The operator reads what the device actually reports and writes a ready-to-apply profile into
-`status.draftProfile`, along with the variables it saw, any non-standard names worth a look, and
-suggested aliases where a standard reading appears to have arrived under a different name:
-
-```sh
-kubectl get upscapabilityprobe unidentified-rack-a-ups \
-  -o jsonpath='{.status.draftProfile}' > my-ups-profile.yaml
-```
-
-Review it before applying. The draft declares only what the device demonstrably reported, and the
-actuation section is deliberately left empty — actuation commands can cut power to equipment, so
-support is declared only after it has been verified against the firmware you are running. Anything
-the helper inferred rather than observed is marked as a suggestion in a comment.
-
-**2. Send it upstream.** `status.issueReport` is the same findings formatted for a GitHub issue,
-with a verification checklist:
-
-```sh
-kubectl get upscapabilityprobe unidentified-rack-a-ups \
-  -o jsonpath='{.status.issueReport}'
-```
-
-Open an issue with that and we will add the profile to the bundled catalog, so the next person with
-your hardware does not have to repeat the work. Contributions are how the catalog grows.
-
-Probing is advisory throughout. A probe never changes how a device resolves, never feeds the
-planner, and never runs while power is failing — it reads a device and writes a draft, nothing more.
-
-**Until a profile matches, `Enforce` mode is blocked.** A device with no profile is not a device
-with reduced capability; it is a device nothing has been verified about. Dry-run still compiles and
-publishes the full plan, so you can review exactly what would happen — but the operator will not cut
-power to real nodes on an unverified device's signal. If you accept that risk deliberately, set
-`spec.safety.allowUnidentifiedDevices: true` on the flow, which records the decision in Git where it
-can be reviewed (OD-31).
+Design rationale for why declaration is authoritative and probing stays advisory is in
+[capability-profiles.md](capability-profiles.md).
 
 ## Will upgrading the operator overwrite capability profiles I wrote myself?
 

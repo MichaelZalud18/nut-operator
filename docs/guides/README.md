@@ -21,3 +21,9 @@ default — skipping one leaves a gap that surfaces during a power failure.
    how to prove the cluster can really halt a node.
 
 Steps 1 through 5 change nothing about how the cluster behaves. Step 6 is the one that does.
+
+One more, needed only if it applies to you:
+
+- [Profiling a UPS the catalog does not cover](profile-an-unknown-ups.md) — what to do when your
+  hardware matches no bundled capability profile, which for most hardware is what happens. Relevant
+  between steps 1 and 2, and required before a flow will enforce.

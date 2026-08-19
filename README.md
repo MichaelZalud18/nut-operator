@@ -57,8 +57,8 @@ The moving parts, and why each one is separate from the others:
 
 The red crossed line in the diagram is the point of the whole arrangement. `upsmon` sees the power
 event first and still cannot act on it — the only path that halts a node runs through the operator,
-because only the operator knows what else is still running. That is `OD-37`, and the
-[security model](docs/reference/security.md) covers what it costs and why it was chosen anyway.
+because only the operator knows what else is still running. The
+[security model](docs/reference/security.md) covers what that costs and why it was chosen anyway.
 
 ## Vocabulary
 
@@ -132,11 +132,11 @@ The node agent's two containers split credentials from privilege: `upsmon` holds
 cannot stop a machine; the actuator can stop a machine and holds no NUT credentials, no Kubernetes
 token, and no network listener.
 
-**One path authorizes a halt** (`OD-37`). NUT's own local `SHUTDOWNCMD` path keeps its writer, its
+**One path authorizes a halt.** NUT's own local `SHUTDOWNCMD` path keeps its writer, its
 format, and its file, and holds no authority — the shared tmpfs is not mounted into the actuator, so
 no supported configuration lets that file stop a node. A local backstop was declined deliberately,
-and the accepted cost is stated plainly in `SB-3`: an undeliverable signal leaves nodes running until
-the UPS dies.
+and the cost is accepted rather than engineered away: an undeliverable signal leaves nodes running
+until the UPS dies.
 
 Full treatment in [Security](docs/reference/security.md); the walk from dry-run to actuation is
 [its own guide](docs/guides/enable-actuation.md).
@@ -156,16 +156,22 @@ PostgreSQL; Kubernetes status stays a current-state review surface rather than a
 ## Installation
 
 Needs a Kubernetes cluster, a webhook serving certificate, and PostgreSQL for production use
-(CloudNativePG or external). The recommended path has no cert-manager dependency:
+(CloudNativePG or external).
+
+**There is no tagged release yet.** Pre-v1 means installing from `main`, and the manifests below
+track it. The recommended path has no cert-manager dependency, but it does need
+`hack/webhook-cert.sh` to mint the serving certificate, so the simplest form is from a clone:
 
 ```sh
-kubectl apply -f https://github.com/MichaelZalud18/nut-operator/releases/latest/download/install-byo-cert.yaml
+git clone https://github.com/MichaelZalud18/nut-operator.git
+cd nut-operator
+kubectl apply -f dist/install-byo-cert.yaml
 ./hack/webhook-cert.sh
 ```
 
-If you already run cert-manager and want certificate renewal automated, `install.yaml` is the other
-supported bundle. Which one to pick, and why it matters during an outage, is
-[its own page](docs/installation/webhook-certificate.md).
+The script needs only `kubectl` and `openssl`, so it also runs standalone without a clone — see
+[the certificate page](docs/installation/webhook-certificate.md) for that form and for the
+cert-manager alternative, plus why the choice matters during an outage.
 
 Everything defaults to dry-run: a `ShutdownFlow` compiles and publishes its full plan without
 touching a node until enforcement is explicitly enabled.
@@ -214,7 +220,8 @@ Start at **[docs/](docs/README.md)** — it carries a first-hour path and a map 
   [assigning tiers](docs/guides/assign-shutdown-tiers.md),
   [choosing what is last-ditch](docs/guides/choose-last-ditch-workloads.md),
   [setting a tier-overrun policy](docs/guides/set-tier-overrun-policy.md), and
-  [enabling actuation](docs/guides/enable-actuation.md).
+  [enabling actuation](docs/guides/enable-actuation.md); plus
+  [profiling a UPS](docs/guides/profile-an-unknown-ups.md) the catalog does not cover.
 - **[Reference](docs/reference/README.md)** — [API](docs/reference/api.md),
   [glossary](docs/reference/glossary.md), [metrics](docs/reference/metrics.md),
   [security](docs/reference/security.md), [images](docs/reference/images.md).

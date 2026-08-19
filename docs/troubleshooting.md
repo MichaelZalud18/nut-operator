@@ -14,7 +14,6 @@ link that broke on its own — see
 | `kubectl apply` of `install.yaml` fails on `Certificate`/`Issuer` | cert-manager is not installed, so its CRDs do not exist. Use `install-byo-cert.yaml` instead. |
 | Manager pod stuck in `ContainerCreating` with `FailedMount` on `webhook-certs` | The `webhook-server-cert` Secret does not exist. Run `hack/webhook-cert.sh`, or check that cert-manager issued it. |
 | API rejects CR creates with `failed calling webhook ... x509` | `caBundle` on the webhook configurations does not match the serving certificate's CA. Re-run `hack/webhook-cert.sh`. |
-| Manager `CrashLoopBackOff` with `controller with name ... already exists` | A reconciler is registered twice in `cmd/main.go` (F-38). Guarded by `TestMainRegistersEachReconcilerOnce`. |
 | `ImagePullBackOff` on the manager | Image tag unreachable, or GHCR credentials needed. |
 
 ## Configuration

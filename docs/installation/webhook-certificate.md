@@ -12,6 +12,10 @@ The reasoning behind the recommendation — the trust model, the CA-key exposure
 generation was declined — is in
 [Security](../reference/security.md#admission-webhook-certificate). This page is what to do.
 
+**Pre-v1: there is no tagged release.** Every `nut-operator` URL below points at `main`, and moves
+when `main` moves. Release-asset URLs will exist at v1; until then, pin by cloning at a commit if you
+need a fixed target. The cert-manager URL is upstream's own release and is stable.
+
 **Both bundles have the same trust model** — a privately issued CA is the correct shape for an
 admission webhook, not a compromise. What differs is what has to be working for admission to work.
 
@@ -41,14 +45,33 @@ recommendation.
 
 ### Path A — no cert-manager (recommended)
 
+From a clone, which is the simplest form and the one to prefer pre-v1:
+
 ```sh
-kubectl apply -f https://github.com/MichaelZalud18/nut-operator/releases/latest/download/install-byo-cert.yaml
+git clone https://github.com/MichaelZalud18/nut-operator.git
+cd nut-operator
+kubectl apply -f dist/install-byo-cert.yaml
 ./hack/webhook-cert.sh
 ```
 
-The manager pod stays in `ContainerCreating` until the script runs — the `webhook-server-cert` Secret
-is a non-optional volume — and becomes ready immediately after. From a clone, `make deploy-byo-cert`
-does both steps.
+`make deploy-byo-cert` does both steps in one, building the overlay from `config/byo-cert` rather
+than the committed bundle.
+
+Without a clone. The script needs only `kubectl` and `openssl` — it reads nothing else from the
+repository — so it runs on its own:
+
+```sh
+kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/dist/install-byo-cert.yaml
+curl -fsSLO https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/hack/webhook-cert.sh
+chmod +x webhook-cert.sh
+./webhook-cert.sh
+```
+
+Downloaded rather than piped into a shell on purpose: this script mints the CA the webhook trusts,
+which is worth reading before running.
+
+Either way, the manager pod stays in `ContainerCreating` until the script runs — the
+`webhook-server-cert` Secret is a non-optional volume — and becomes ready immediately after.
 
 The script mints a long-lived CA (10 years, stored in the `nut-operator-webhook-ca` Secret) and a
 serving certificate from it (1 year), writes `webhook-server-cert`, and patches `caBundle` into both
@@ -70,7 +93,7 @@ CA if you would rather it never did — see
 ```sh
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
 kubectl -n cert-manager rollout status deploy/cert-manager-webhook
-kubectl apply -f https://github.com/MichaelZalud18/nut-operator/releases/latest/download/install.yaml
+kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/main/dist/install.yaml
 ```
 
 Pick this if you already run cert-manager and want the renewal automated. Applying `install.yaml`
@@ -93,7 +116,7 @@ On OpenShift the built-in service CA does both halves with annotations and no ex
 
 **Do not simply remove the webhooks.** Admission *defaulting* is load-bearing for safety and is not
 duplicated anywhere else — without it the tier-0 DaemonSet pods land in BestEffort QoS with no
-OOM-score protection (`F-34`). Generating the certificate in-process, the third option you may have
+OOM-score protection. Generating the certificate in-process, the third option you may have
 seen in other operators, was also considered and declined.
 
 ## Next

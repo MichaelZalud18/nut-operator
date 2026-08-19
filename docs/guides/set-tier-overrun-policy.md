@@ -63,5 +63,5 @@ so a short timeout you chose stays distinguishable from one the runtime forced.
 
 [From dry-run to actuate](enable-actuation.md).
 
-Full treatment: [executor-requirements.md](../contributing/design/executor-requirements.md) `EX-31`,
+Full treatment: [the executor requirements](../contributing/design/executor-requirements.md),
 [adaptive-execution-tier-pointer.md](../contributing/design/adaptive-execution-tier-pointer.md).

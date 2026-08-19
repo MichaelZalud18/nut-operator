@@ -20,7 +20,7 @@ kubectl apply -f https://raw.githubusercontent.com/MichaelZalud18/nut-operator/m
 From a clone, `make deploy-catalog` does the same thing.
 
 If your UPS is not in the catalog, that is expected and handled — see
-[the FAQ](../contributing/design/faq.md#what-if-my-ups-does-not-have-a-packaged-capability-profile).
+[Profiling a UPS the catalog does not cover](../guides/profile-an-unknown-ups.md).
 
 **2. `PowerManagementCluster`** — cluster-wide policy: operand namespace, storage backend, shutdown
 tiers, and the operand images every other resource inherits. See
@@ -82,6 +82,8 @@ Two refusals are intentional and worth recognizing:
 - **`UnidentifiedUPSDevice`** — a device matched no product capability profile, so nothing has been
   verified about it. Dry-run still compiles the whole plan; enforcement refuses unless
   `spec.safety.allowUnidentifiedDevices: true` records the acceptance in Git.
+  [Profiling the device](../guides/profile-an-unknown-ups.md) removes the refusal instead of
+  overriding it.
 - **`TriggerUnsupportedByAllDevices`** — a trigger references telemetry (such as battery runtime)
   that none of the targeted devices report, so the plan could never fire.
 

@@ -80,7 +80,7 @@ The operator runs as a controller-runtime manager and reconciles cluster-scoped 
 
 Kubernetes is the whole interface for v1. CRDs are the configuration and review surface, GitOps is the
 normal way to change them, and `kubectl` plus Events, logs, CR status, and PostgreSQL queries are
-sufficient for day-to-day operation. There is no embedded dashboard (`SB-14`); a future UI would be
+sufficient for day-to-day operation. There is no embedded dashboard; a future UI would be
 another consumer of the published artifacts, not part of the reconciliation path.
 
 ## Operands
@@ -109,7 +109,7 @@ rendered only when actuation is configured.
 The signal is structured content carrying execution ID, node name, timestamp, reason, UPS identity,
 flow identity, and plan hash. The actuator rejects stale, malformed, or wrong-node signals.
 
-**One path authorizes a halt** (`OD-37`): the executor-projected Secret, and nothing else. Why that
+**One path authorizes a halt**: the executor-projected Secret, and nothing else. Why that
 decision was made, what it costs, and why a local backstop was declined are in
 [Security](../reference/security.md#privilege-boundary) and, in full, in
 [the node-agent design](../contributing/design/node-agent-operand.md).

@@ -31,11 +31,11 @@ policy engine.
 | `plan_hash_changes_total` | Counter | `shutdownflow` | Incremented when a successful compile's plan hash differs from the previously observed one — how often the compiled plan is actually changing shape, not just re-confirming. |
 | `trigger_evaluations_total` | Counter | `shutdownflow`, `eligible` (`true`/`false`) | Trigger evaluations, by eligibility outcome. |
 | `degraded` | Gauge | `shutdownflow` | Mirrors the `Degraded` status condition (1/0), so it can be alerted on directly. |
-| `tier_inversions` | Gauge | `shutdownflow` | Nodes currently withheld from power-off because a lower-tier group runs on them (`OD-18`). Published on every compile including zero, so the series exists before the first inversion. Inversion develops as workloads reschedule, so a compile-time diagnostic alone misses it. |
+| `tier_inversions` | Gauge | `shutdownflow` | Nodes currently withheld from power-off because a lower-tier group runs on them. Published on every compile including zero, so the series exists before the first inversion. Inversion develops as workloads reschedule, so a compile-time diagnostic alone misses it. |
 | `execution_duration_seconds` | Histogram | `shutdownflow`, `mode` (`DryRun`/`Enforce`) | Time spent recording one wave-execution run (`internal/executor.Executor.Execute`). |
-| `tier_overruns_total` | Counter | `shutdownflow`, `tier`, `policy`, `action` | Tier transitions whose observed elapsed time exceeded the effective tier budget (`EX-31`). `policy` is `Wait`, `Overlap`, or `Preempt`; `action` records what the executor did. |
-| `tier_overrun_seconds` | Histogram | `shutdownflow`, `tier`, `policy`, `action` | Seconds by which an overrun tier exceeded its effective budget (`EX-31`). Same labels as `tier_overruns_total`, so the count and amount describe the same event stream. |
-| `publish_timestamp_seconds` | Gauge | `shutdownflow` | When this flow's state was last republished, as a Unix timestamp — the EX-29 cadence heartbeat. Refreshed every reconcile whether or not anything changed, on a cadence that is faster while a flow is active. |
+| `tier_overruns_total` | Counter | `shutdownflow`, `tier`, `policy`, `action` | Tier transitions whose observed elapsed time exceeded the effective tier budget. `policy` is `Wait`, `Overlap`, or `Preempt`; `action` records what the executor did. |
+| `tier_overrun_seconds` | Histogram | `shutdownflow`, `tier`, `policy`, `action` | Seconds by which an overrun tier exceeded its effective budget. Same labels as `tier_overruns_total`, so the count and amount describe the same event stream. |
+| `publish_timestamp_seconds` | Gauge | `shutdownflow` | When this flow's state was last republished, as a Unix timestamp — the cadence heartbeat. Refreshed every reconcile whether or not anything changed, on a cadence that is faster while a flow is active. |
 
 ## `nutoperator_actuator_*`
 
@@ -80,7 +80,7 @@ projection, poll, flush, syscall, and detection latency, and it takes the *earli
 condition's `lastHeartbeatTime` and `lastTransitionTime` as the moment the node went away — the
 transition alone is written only after the control plane's node-monitor grace period, which would
 inflate every measurement by that lag. What remains is a bias low, bounded by kubelet's status-post
-interval. This is the durable half of the `OD-27` handoff-tail evidence; the container log is the
+interval. This is the durable half of the handoff-tail evidence; the container log is the
 precise half, and it may not survive the machine long enough to be collected.
 
 A gauge per node rather than a histogram: the value is observed a handful of times per node per year,
@@ -92,7 +92,7 @@ at `NotReady`, so an actual deletion means the machine left the cluster.
 ## `nutoperator_audit_*`
 
 The shutdown-time audit spool (`spec.storage.auditSpool`). Any non-zero rate here means PostgreSQL
-was refusing audit writes during execution — the flow continued, which is the intent (SB-11), but
+was refusing audit writes during execution — the flow continued, which is the intent, but
 the audit trail is degraded until the journal drains.
 
 | Metric | Type | Labels | Meaning |
@@ -108,7 +108,7 @@ about to be lost.
 ## Publisher liveness
 
 Change emission alone cannot distinguish "nothing is happening" from "the publisher died" — both
-look like silence. `publish_timestamp_seconds` is the other half of EX-29: republished on a fixed
+look like silence. `publish_timestamp_seconds` is the other half of that: republished on a fixed
 cadence regardless of change, so staleness in it means the operator stopped rather than that the
 power did not move.
 

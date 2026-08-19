@@ -48,7 +48,7 @@ a power event moves through them, and where the pods land.
 
 **[Guides](guides/README.md)** — the six judgement calls, in the order you hit them: preparing the
 hardware, modeling the topology, assigning tiers, choosing what is last-ditch, setting the
-tier-overrun policy, and enabling actuation.
+tier-overrun policy, and enabling actuation — plus profiling a UPS the catalog does not cover.
 
 **[Reference](reference/README.md)** — [API reference](reference/api.md),
 [glossary](reference/glossary.md), [metrics](reference/metrics.md),

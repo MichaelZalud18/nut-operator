@@ -68,7 +68,7 @@ Restart was considered and rejected rather than overlooked: a restarted node ret
 actuator holding an empty dedupe set, and a signal still inside its TTL halts it again. A node that
 is off stays off, so a leftover signal is inert.
 
-The signal is hand-delivered into the projected Secret — the same path `OD-37` authorizes, not a
+The signal is hand-delivered into the projected Secret — the same path the executor uses, not a
 second channel — which isolates kubelet admission, file-capability survival, and the host PID
 namespace from planner correctness. See [Security](../reference/security.md) for the boundary this
 proves.

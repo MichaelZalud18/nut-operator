@@ -82,7 +82,7 @@ risk nor prevents it; it declines to have an opinion.
 That matters because the two pods concentrate different things: `upsd` is the telemetry source and
 the manager is the decision-maker, and a node losing power with both on it removes the operator's
 input and its ability to act in one step. Anti-affinity between them is what would express a
-decision either way, and none exists today. `F-19` does not cover this — it is about multiple `upsd`
+decision either way, and none exists today. The existing anti-affinity finding does not cover this — it is about multiple `upsd`
 replicas not co-scheduling if an HA topology is ever designed, which is a different pair.
 
 Enforcing separation is a change to the shipped manager manifest, not to the example, so it belongs
@@ -90,9 +90,9 @@ with the leader-election and replica work in `docs/contributing/design/scaling-a
 
 ## Signal delivery crosses the node boundary exactly once
 
-The actuator holds no API credentials (`OD-37`). The only thing reaching it is the
+The actuator holds no API credentials. The only thing reaching it is the
 `<agent>-node-signals` Secret, projected by kubelet, with one `<node>.json` key per node. The
 manager writes a node's key to actuate it and deletes that key when the actuation completes, so
-absence is the record and a replacement actuator pod cannot re-read a stale instruction (`F-87`).
+absence is the record and a replacement actuator pod cannot re-read a stale instruction.
 The Secret always carries a `delivery-channel` marker, which is what keeps an empty Secret
-distinguishable from a missing one (`F-86`).
+distinguishable from a missing one.
