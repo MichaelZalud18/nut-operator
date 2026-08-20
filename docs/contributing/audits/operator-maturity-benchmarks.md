@@ -975,3 +975,77 @@ schema, and no e2e path drives an execution against CNPG. It took a real databas
 execution evidence". Correct deduplication of a repeated episode reading as a terminal *failure* is
 suspicious, but the failing resume-state write above is a plausible confounder, so this is recorded
 as a question rather than a finding until `F-100` is fixed and it can be retested cleanly.
+
+## Findings — component sweep, 2026-08-20
+
+Wave recompilation, the capability probe, the node agent operand, and the admission surface, all
+against the live cluster.
+
+**Waves recompile from authored inputs, and only from those.** There is no wave configuration to
+edit; a wave is output. Confirmed by three reconfigurations of the same flow: adding `before` edges
+among three concurrent tier-4 groups split them into three waves (6 waves total, up from 6 to 8);
+removing the one shipped ordering edge merged `drain-workers` and `stop-workers` into one wave (down
+to 5); retiering `quiesce-databases` from 3 to 4 merged it into the scale wave (down to 4). Restoring
+the shipped inputs returned `configHash` to its exact original value, which is `PL-14` determinism
+observed rather than asserted.
+
+The merge case is worth noting: it produces exactly the hazard the `homelab` scenario README
+describes — a drain and the node stop it protects sharing a wave — and the planner accepts it with no
+diagnostic. That matches the documented state, since the requirement to detect it was retired and
+nothing replaced it. It is now confirmed reachable in one edit.
+
+**Privilege boundary verified on a rendered pod.** `automountServiceAccountToken: false`,
+`hostPID: false` under `Simulate`, `priorityClassName: system-node-critical`, `RuntimeDefault`
+seccomp, `runAsNonRoot: true` at uid 65532, read-only roots, `capabilities.drop: [ALL]` with no adds,
+and resource requests and limits on both containers so the tier-0 pods are not BestEffort (`F-34`).
+Most importantly the actuator mounts `power-agent-signals` and `power-agent-actuator-state` and
+**does not mount `power-agent-run`** — the `OD-37` claim in `security.md` observed directly rather
+than taken on trust.
+
+**Admission holds where it should.** Tier-0 targeting is rejected with a group-specific message;
+reserved operand namespaces are rejected; `Actuate` without the approval annotation is rejected.
+
+**`F-101` · A declared model that contradicts the device is never flagged.** `spec.identity.model`
+was set to `simulation-fixture` while the device reported `homelab-fixture`. Matching used the
+declared value and bound the device to a profile keyed on it. No condition, no diagnostic, and the
+`capability_profile_matches` audit row carries `diagnostics: []` and no reported model at all.
+
+`GP-5` says derived data "may verify that input and raise conditions on mismatch". Both values are in
+hand — the operator polls `ups.model` for telemetry and the probe reads it — and nothing compares
+them. The consequence is that a typo in `spec.identity.model` silently binds a device to the wrong
+capability profile, and that profile is what decides which telemetry is trusted and which triggers
+are supported.
+
+**`F-102` · The probe drafts product profiles containing driver-instance variables.** A profile is a
+product/SKU record (`SB-9`), and no bundled profile carries a single `driver.*` variable. A draft
+from `UPSCapabilityProbe` carried ten: `driver.debug`, `driver.state`, `driver.version`,
+`driver.flag.allow_killpower`, and `driver.parameter.{mode,pollinterval,port,synchronous}` among
+them. Those describe the driver instance at one site, not the model.
+
+The drafted `spec` is otherwise correct and the actuation section is properly left empty with its
+explanation. Only variable *names* reach `status.issueReport`, not their values, so nothing
+site-specific leaks — but `driver.parameter.port` is a per-device setting, and the guide directs
+users to send that report upstream for inclusion in the shared catalog.
+
+**`F-103` · The driver rejection message lists the unsupported drivers as the supported ones.**
+`upsdevice_webhook.go:114` calls `field.NotSupported(path, value, unsupportedLocalUPSDrivers())`. The
+third argument of `field.NotSupported` is the set of *valid* values, which Kubernetes renders as
+"supported values". So rejecting `usbhid-ups` produces `Unsupported value: "usbhid-ups": supported
+values: "usbhid-ups", "nutdrv_qx", ...` — naming the rejected driver first in the list of drivers it
+claims are acceptable.
+
+Line 116 does the same call correctly with `supportedNetworkUPSDrivers()`. The reader most likely to
+hit this is someone with a USB UPS, who is exactly the reader the network-only design needs to
+redirect, and who is instead told to retry with a list of drivers that will all be rejected. A
+literal swap of the argument would fix the contradiction; saying plainly that USB and serial
+attachment is out of scope would fix the confusion.
+
+**`F-99` is broader than recorded.** Missing `spec.managementClusterRef` does not only cost the audit
+record. `NodePowerAgent` inherits its operand images from `PowerManagementCluster.spec.images`
+through that same reference, so the simulation scenarios' agents fail to render at all with
+"NodePowerAgent upsmon rendering requires an image repository". Adding the reference rendered all
+three DaemonSets immediately. Every simulation resource needs it, not just the flow.
+
+**`F-98`, third confirmation.** The agent-to-`upsd` edge on 3493 is also unshipped: agents ran but
+stayed NotReady, correctly, because the `upsmon` readiness probe queries the UPS it monitors rather
+than the host (`NA-8`). Supplying the edge made all five agents ready.

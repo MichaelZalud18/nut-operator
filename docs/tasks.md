@@ -47,6 +47,11 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 
 None.
 
+- `F-102` stop drafting `driver.*` variables into probe-generated profiles. A profile is a product
+  record and no bundled profile carries any; a draft carried ten, including
+  `driver.parameter.port`, which is per-device. The guide sends these drafts upstream for the shared
+  catalog.
+
 ---
 
 ### Planning & Execution Logic
@@ -75,6 +80,10 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   cannot work either, since the resume state is never written. Confirmed against a live CNPG store
   after a complete six-wave execution left zero rows. Pick one: widen the columns to `text`, or
   derive a UUID for identity and keep the digest as the dedup key beside it.
+- `F-101` compare the declared `spec.identity.model` against what the device reports, and raise a
+  condition on mismatch. `GP-5` allows for exactly this and nothing does it, so a typo silently binds
+  a device to the wrong capability profile — which is what decides trusted telemetry and supported
+  triggers. Neither status nor the `capability_profile_matches` audit row records the reported model.
 - `F-99` publish planner diagnostics on the rejection path. A rejected compile reports
   `PlannerFailed` with no reason: status carries no diagnostics, nothing is logged, and
   `plannerDiagnostics` reaches only the audit writer — which returns early and silently when
@@ -84,7 +93,9 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   compile on any cluster, and none of them set `managementClusterRef`. Retested 2026-08-20: adding a
   matching capability profile plus `spec.identity.model` is sufficient — the flow then compiles six
   waves and the adaptive pointer descends correctly, so the scenarios need those two inputs shipped,
-  not a code change.
+  not a code change. Broader than first recorded: `NodePowerAgent` inherits operand images through
+  `managementClusterRef` too, so without it the agents fail to render at all. Every simulation
+  resource needs the reference.
 - `F-96` decide what `ShutdownHook.status` is for. It declares a status subresource and a conditions
   array, and nothing writes either — nothing reconciles the kind at all. Either drop the subresource
   or give hook health an observer; a permanently empty `status: {}` is indistinguishable from a
@@ -162,6 +173,11 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   bundle contains no `Egress` rules and rendered operand policies are `Ingress`-only, so on a
   default-deny-egress cluster the operator reaches neither `upsd`, PostgreSQL, nor any hook endpoint
   and fails silently. Confirmed on a live Cilium cluster: adding the two edges fixed it outright.
+
+- `F-103` fix the driver rejection message. `upsdevice_webhook.go:114` passes the *unsupported*
+  driver list to `field.NotSupported`, whose third argument is the valid set, so rejecting
+  `usbhid-ups` reports it as unsupported and then lists it first among "supported values". Line 116
+  does the same call correctly. Say plainly that USB and serial attachment is out of scope.
 
 ---
 
