@@ -102,9 +102,9 @@ aren't mistaken for scope creep in a future audit:
   `PowerManagementCluster.spec.hooks.allowedEndpoints`. Secret-backed headers are read from
   Kubernetes Secrets; sensitive headers such as `Authorization` are rejected when supplied inline.
   Generated RBAC does not grant `argoproj.io/workflows`: Argo is no longer a built-in route.
-- **`namespaces` (`create;update;patch`).** `NUTServer`/`NodePowerAgent`/`PowerManagementCluster`
-  are cluster-scoped CRDs whose `spec`-referenced operand namespace may not exist yet; the operator
-  creates and labels it on first reconcile. Kubernetes RBAC can't scope a `create` verb by resource
+- **`namespaces` (`create;update;patch`).** `NUTServer` and `NodePowerAgent` are cluster-scoped CRDs
+  whose `spec`-referenced operand namespace may not exist yet; their reconcilers create and label it
+  on first render. Kubernetes RBAC can't scope a `create` verb by resource
   name — only verbs acting on an object that already exists support `resourceNames` — so this can't
   be narrowed further at the RBAC layer. The resulting gap (a CR pointing its operand namespace at a
   reserved system namespace) is closed at the input layer instead: `validateOptionalNamespace`

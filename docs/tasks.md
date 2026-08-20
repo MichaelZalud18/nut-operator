@@ -76,8 +76,15 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   `executor_resume_states`, `shutdownflow_execution_waves`, `shutdownflow_execution_groups`, and
   `shutdownflow_action_attempts` fails with SQLSTATE 22P02, on every cluster. Resume-after-restart
   cannot work either, since the resume state is never written. Confirmed against a live CNPG store
-  after a complete six-wave execution left zero rows. Pick one: widen the columns to `text`, or
-  derive a UUID for identity and keep the digest as the dedup key beside it.
+  after a complete six-wave execution left zero rows. It also mismarks the flow: a run that
+  traverses every wave reports `lastExecution.phase: Failed` (surfaced as flow `phase: Aborted`)
+  purely because `shutdownExecutionPhase` folds the accumulated record error into the phase, so
+  the only visible signal of an audit outage is a shutdown that claims to have failed. Pick one:
+  widen the columns to `text`, or derive a UUID for identity and keep the digest as the dedup key
+  beside it.
+- `F-106` clear the stale message in `deactivateLastExecution`. It rewrites `Reason` from
+  `AlreadyExecuted` to `TriggerNotEligible` and leaves `Message` behind, so a flow reports a reason
+  and a message that contradict each other.
 - `F-101` compare the declared `spec.identity.model` against what the device reports, and raise a
   condition on mismatch. `GP-5` allows for exactly this and nothing does it, so a typo silently binds
   a device to the wrong capability profile — which is what decides trusted telemetry and supported
@@ -99,12 +106,6 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   or give hook health an observer; a permanently empty `status: {}` is indistinguishable from a
   controller that has stalled.
 
-- Characterise the executor's terminal state after a completed episode. A dry-run that ran to
-  completion settles at `phase: Aborted` with `lastExecution.reason: AlreadyExecuted` and "eligible
-  trigger episode already has execution evidence". Correct deduplication reading as a terminal
-  failure looks wrong, but `F-100` prevents the resume state from ever being written, which is a
-  plausible confounder. Retest once `F-100` is fixed before deciding whether anything is broken.
-
 ---
 
 ### NUT Server / upsd
@@ -118,7 +119,7 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
   the driver stops answering `upsdrvctl status` while it holds a timed block, the watchdog's
   double-check lands inside that window, and `upsdrvctl start` on the live driver terminates it via
   the PID file. Decide whether liveness should key on something other than `S_RESPONSIVE`, and check
-  whether a real `snmp-ups` device under load can flap the same way. Evidence:
+  whether a real `snmp-ups` device under load can flap the same way. Drives `F-105`. Evidence:
   `operator-maturity-benchmarks.md`.
 
 ---
@@ -137,6 +138,11 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
   node stopping records no outcome at all. Re-seeding from the signal Secrets would close it; the
   open question is what an already-`NotReady` node with a live key means, which is an `OD-27`
   evidence-model decision rather than a patch.
+- `F-105` decide what an agent does after it has signalled. `upsmon` exits 0 once it runs
+  `SHUTDOWNCMD`, which in a DaemonSet is a container restart, and the restarted `upsmon` re-fires as
+  soon as comms are still bad — each cycle writing a fresh timestamp-derived execution ID the
+  actuator's `seen` set cannot match. Observed at 61-67 restarts per agent over seven hours, driven
+  by `F-97`. `NA-3` revocation covers the operator-written Secret, not this node-local path.
 
 ---
 
@@ -156,10 +162,9 @@ Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts sec
 Owns: the PostgreSQL audit schema, storage backend resolution, retention, and the shutdown-time
 spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 
-- `F-100` decide which side of the execution-ID mismatch moves. The audit schema types
-  `execution_id` and the four tables keyed on it as `uuid`; the executor supplies a SHA-256 hex
-  digest. Either the columns widen to `text` or the executor carries a UUID for identity alongside
-  the digest it already uses for deduplication. Owned jointly with Planning & Execution Logic.
+- `F-100` the schema side of the execution-ID mismatch: `execution_id` and the four tables keyed on
+  it are typed `uuid`. Whether they widen or the executor carries a UUID is decided in Planning &
+  Execution Logic, where the finding is stated.
 
 ---
 
@@ -178,6 +183,12 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   bundle contains no `Egress` rules and rendered operand policies are `Ingress`-only, so on a
   default-deny-egress cluster the operator reaches neither `upsd`, PostgreSQL, nor any hook endpoint
   and fails silently. Confirmed on a live Cilium cluster: adding the two edges fixed it outright.
+
+- `F-104` give `spec.operandNamespace.create` a reader or remove it. Nothing reads it; the webhook
+  defaults it to `true` and the operand renders create the namespace unconditionally, so neither
+  value changes anything. A `PowerManagementCluster` alone therefore reaches `Ready` with the
+  namespace absent, and the examples fail on their first namespaced object. `reference/security.md`
+  and the simulation READMEs both state the opposite and need correcting with it.
 
 - `F-103` fix the driver rejection message. `upsdevice_webhook.go:114` passes the *unsupported*
   driver list to `field.NotSupported`, whose third argument is the valid set, so rejecting
@@ -214,12 +225,7 @@ glossary; `contributing/` holds the design set and the audits behind it. Deliver
 rendered-on-GitHub markdown; a published site was considered and declined pre-v1. Every page carries
 `Components:` and `Audience:` under its title, so both are visible at the point of reading.
 
-- `operandNamespace.create: true` does not create the namespace. Only an operand render does
-  (`nutserver_render.go`, `nodepoweragent_render.go`), so a `PowerManagementCluster` can be `Ready`
-  with the namespace still absent, and applying the examples in their documented order fails on the
-  first namespaced object. Hit twice during real deployment. Either have the cluster reconciler
-  create it, or stop implying it already exists — the simulation READMEs say "into a namespace
-  already provisioned by a `PowerManagementCluster`".
+None.
 
 ---
 

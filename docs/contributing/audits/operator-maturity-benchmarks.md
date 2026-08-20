@@ -1049,3 +1049,62 @@ three DaemonSets immediately. Every simulation resource needs it, not just the f
 **`F-98`, third confirmation.** The agent-to-`upsd` edge on 3493 is also unshipped: agents ran but
 stayed NotReady, correctly, because the `upsmon` readiness probe queries the UPS it monitors rather
 than the host (`NA-8`). Supplying the edge made all five agents ready.
+
+## Pass: re-examining the open list, 2026-08-20
+
+Three items carried on the open list were checked against the code rather than against the notes
+that produced them. One was a duplicate of `F-100`, one was described wrongly, and the cluster left
+running since the previous pass had meanwhile produced two findings of its own.
+
+**The executor's terminal state is `F-100`, not a separate question.** The open list carried "a
+dry-run that ran to completion settles at `phase: Aborted`" as an uncharacterised item. It is fully
+explained. `sim-homelab-conservation` reports `waveCount: 2`, `groupCount: 4`,
+`actionAttemptCount: 4`, and both `startedAt` and `completedAt` — the run traversed its plan and
+finished. Its `lastExecution.phase` is nevertheless `Failed`, because `shutdownExecutionPhase(phase,
+err)` returns `Failed` whenever `err != nil` regardless of the executor's own result phase, and the
+executor returns `result, recordErr` on the completion path. With every audit write failing on
+`F-100`, `recordErr` is non-nil for every execution. `applyLastExecutionPhase` then maps execution
+`Failed` to flow `Aborted`, which is the phase the earlier pass reported.
+
+The flow-level and execution-level phases were also being read as one field. They are two, and they
+never carry the same value on this path.
+
+**`F-104` · `spec.operandNamespace.create` is inert in both directions.** Nothing reads it.
+`powermanagementcluster_webhook.go:106` defaults it to `true` and that is the only reference outside
+tests. The namespace is created unconditionally by `ensureOperandNamespace` in
+`nutserver_render.go` and `nodepoweragent_render.go`, on the reconcile of a `NUTServer` or
+`NodePowerAgent` — so `create: false` does not suppress creation, and `create: true` does not cause
+it. A `PowerManagementCluster` alone reaches `Ready` with the namespace still absent, which is what
+makes the examples fail on their first namespaced object.
+
+The field's own documentation says "create allows the operator packaging to create the namespace".
+The packaging creates `nut-operator-system`, the manager's namespace, and never the operand
+namespace. `reference/security.md` compounds this by naming `PowerManagementCluster` among the kinds
+whose "operand namespace may not exist yet; the operator creates and labels it on first reconcile" —
+the cluster reconciler contains no namespace code and never calls
+`rejectReservedOperandNamespace`. Either give the field a reader or remove it; the security note
+needs correcting either way.
+
+**`F-105` · A driver restart drives every node agent into a forced-shutdown loop.** This is `F-97`'s
+downstream cost, and it is larger than `F-97` as recorded. When the watchdog restarts the driver,
+`upsd` drops it (`Can't connect to UPS [sim-homelab-ups] ... Connection refused`), every `upsmon`
+loses comms, and after `DEADTIME` each one concludes "Too few UPS(es) are healthy (0<1), initiating
+forced shutdown". It runs `SHUTDOWNCMD`, `power-signal-writer` writes a shutdown signal, and `upsmon`
+exits 0 — correct NUT behaviour, and in a DaemonSet it is a container exit, so kubelet restarts it
+and the cycle repeats.
+
+Left running for seven and a half hours, the agents accumulated 61 to 67 restarts each, three of
+them sitting in `CrashLoopBackOff`. Each cycle wrote a fresh shutdown signal with a new
+timestamp-derived execution ID (`upsmon-<node>-<nanos>`), so the actuator's `seen` set cannot suppress the
+repeat — `NA-3` revocation governs the operator-written Secret, not this node-local path. Only
+`actuatorPolicy: Simulate` kept this from being a repeated real shutdown of every node in the
+cluster.
+
+Two things need separating here: the driver flap that starts it (`F-97`), and the absence of any
+stand-down state after an agent has signalled (this finding). Fixing the watchdog removes today's
+trigger without addressing what happens the next time comms genuinely drop.
+
+**`F-106` · `deactivateLastExecution` leaves `reason` and `message` contradicting each other.** It
+rewrites `Reason` from `AlreadyExecuted` to `TriggerNotEligible` and does not touch `Message`, so the
+live flow currently reports `reason: TriggerNotEligible` beside `message: "eligible trigger episode
+already has execution evidence"` — a message asserting exactly the state the reason denies.
