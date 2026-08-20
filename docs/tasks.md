@@ -68,13 +68,23 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
+- `F-100` the execution audit trail never persists. `ExecutionID` is a SHA-256 hex digest and
+  `execution_id` is a `uuid` column, so every write to `shutdownflow_executions`,
+  `executor_resume_states`, `shutdownflow_execution_waves`, `shutdownflow_execution_groups`, and
+  `shutdownflow_action_attempts` fails with SQLSTATE 22P02, on every cluster. Resume-after-restart
+  cannot work either, since the resume state is never written. Confirmed against a live CNPG store
+  after a complete six-wave execution left zero rows. Pick one: widen the columns to `text`, or
+  derive a UUID for identity and keep the digest as the dedup key beside it.
 - `F-99` publish planner diagnostics on the rejection path. A rejected compile reports
   `PlannerFailed` with no reason: status carries no diagnostics, nothing is logged, and
   `plannerDiagnostics` reaches only the audit writer — which returns early and silently when
   `spec.managementClusterRef` is unset, and writes nowhere at all under `storage: Disabled`, the
   mode the install guide recommends for evaluation. Also fix the simulation scenarios this exposed:
   they pair a `RuntimeBelow` trigger with a fixture no bundled profile matches, so they cannot
-  compile on any cluster, and none of them set `managementClusterRef`.
+  compile on any cluster, and none of them set `managementClusterRef`. Retested 2026-08-20: adding a
+  matching capability profile plus `spec.identity.model` is sufficient — the flow then compiles six
+  waves and the adaptive pointer descends correctly, so the scenarios need those two inputs shipped,
+  not a code change.
 - `F-96` decide what `ShutdownHook.status` is for. It declares a status subresource and a conditions
   array, and nothing writes either — nothing reconciles the kind at all. Either drop the subresource
   or give hook health an observer; a permanently empty `status: {}` is indistinguishable from a

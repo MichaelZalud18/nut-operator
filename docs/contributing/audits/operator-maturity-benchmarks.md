@@ -917,3 +917,61 @@ which is the one surface a dry-run evaluation is entirely made of.
 
 Added: **after any change to what status publishes on a rejected compile**, since `F-99` is a
 statement about that surface rather than about the planner.
+
+## Findings — rebuild and retest, 2026-08-20
+
+Full teardown and clean rebuild against the current `main` build
+(`nut-operator@sha256:b9889d5e`), pinned by digest rather than tag so there is no ambiguity about
+what ran. The audit schema was dropped beforehand so migrations were exercised from nothing rather
+than re-confirmed.
+
+**Retested clean.** Install, certificate provisioning, CRD registration, and the documented admission
+probe all behaved exactly as the previous pass and as documented. Migrations rebuilt the schema from
+empty. `F-93` holds: the operator's live RBAC permits `delete pods` and eviction creates. Warnings
+surface correctly on an accepted compile — `Degraded` names `InventoryNodeNotInCluster` with its
+subject, which is the counterpart that makes `F-99` precise: the diagnostic surface works, and only
+the *rejection* path publishes nothing.
+
+**The pipeline completed for the first time.** Supplying the two things `F-99` identified as missing —
+a capability profile matching the fixture, and `spec.identity.model` so the matcher has a declared
+model to match against — moved the flow from `PlannerFailed` to `Accepted`, and it compiled six waves
+in the order the tiers imply: burst node shed first, then three scale groups **sharing one wave**,
+then databases, drain, worker stop, and the control plane last. Independent same-tier groups running
+concurrently is the property removing `spec.groups[].phase` was meant to restore, observed here on a
+real cluster.
+
+The adaptive tier pointer then ran against live fixture telemetry: escalated `Relaxed -> Urgent`,
+descended tier 5 through tier 1, and recomputed compression at each boundary — 0.20, 0.22, 0.25,
+0.36, 0.67, 1.00 — as the remaining plan shrank against an assumed 4m runtime. Feasibility warned
+without blocking, exactly as designed.
+
+**`F-100` · Every execution audit write fails, on every cluster, permanently.** The executor derives
+`ExecutionID` from `shutdownExecutionDeduplicationKey`, which returns
+`hex.EncodeToString(sha256.Sum256(...))` — 64 hex characters. `power.shutdownflow_executions.execution_id`
+is a `uuid` column. PostgreSQL rejects every insert with `invalid input syntax for type uuid`
+(SQLSTATE 22P02).
+
+It is not one table. The same identifier keys `executor_resume_states`, `shutdownflow_execution_waves`,
+`shutdownflow_execution_groups`, and `shutdownflow_action_attempts`, and every write to all five
+fails. After a complete execution — eight action attempts across six waves, with the full adaptive
+descent recorded in CR status — the audit store contained zero rows in all five tables, while
+`shutdownflow_compilations`, `shutdownflow_decisions`, and `capability_profile_matches` populated
+normally. Those use `uuid.NewString()`; the execution path does not.
+
+Two consequences beyond the missing rows. `PostgreSQL holds the record of what actually happened` is
+the project's stated division of labour against Kubernetes status, and for executions it holds
+nothing, ever. And `executor_resume_states` is how an interrupted executor knows where it was, so
+resume across a manager restart cannot work either — the state is never written.
+
+The failure is logged loudly at `ERROR` on every reconcile, which is the one mercy here, and it is
+invisible everywhere else: the flow still publishes `status.lastExecution` as though the record
+were durable.
+
+Nothing in the suite covers it. envtest has no PostgreSQL, the audit tests do not run against a real
+schema, and no e2e path drives an execution against CNPG. It took a real database to see it.
+
+**Open, not yet characterised.** The flow settles at `phase: Aborted` with
+`lastExecution.reason: AlreadyExecuted` and the message "eligible trigger episode already has
+execution evidence". Correct deduplication of a repeated episode reading as a terminal *failure* is
+suspicious, but the failing resume-state write above is a plausible confounder, so this is recorded
+as a question rather than a finding until `F-100` is fixed and it can be retested cleanly.
