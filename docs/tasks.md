@@ -45,8 +45,6 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 `config/catalog/`, and the device-quirk/aliasing/profile-source design surface. Design docs:
 `docs/contributing/design/capability-profiles.md`.
 
-None.
-
 - `F-102` stop drafting `driver.*` variables into probe-generated profiles. A profile is a product
   record and no bundled profile carries any; a draft carried ten, including
   `driver.parameter.port`, which is per-device. The guide sends these drafts upstream for the shared
@@ -101,6 +99,12 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   or give hook health an observer; a permanently empty `status: {}` is indistinguishable from a
   controller that has stalled.
 
+- Characterise the executor's terminal state after a completed episode. A dry-run that ran to
+  completion settles at `phase: Aborted` with `lastExecution.reason: AlreadyExecuted` and "eligible
+  trigger episode already has execution evidence". Correct deduplication reading as a terminal
+  failure looks wrong, but `F-100` prevents the resume state from ever being written, which is a
+  plausible confounder. Retest once `F-100` is fixed before deciding whether anything is broken.
+
 ---
 
 ### NUT Server / upsd
@@ -109,8 +113,6 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `nut-server` operand image. Audit: `docs/contributing/audits/nutserver-pod-audit.md` (`F-15`–`F-19`, `F-23`,
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
-
-None.
 
 - `F-97` the driver watchdog restarts a healthy `dummy-ups` driver on a loop. In `dummy-loop` mode
   the driver stops answering `upsdrvctl status` while it holds a timed block, the watchdog's
@@ -154,7 +156,10 @@ Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts sec
 Owns: the PostgreSQL audit schema, storage backend resolution, retention, and the shutdown-time
 spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 
-None.
+- `F-100` decide which side of the execution-ID mismatch moves. The audit schema types
+  `execution_id` and the four tables keyed on it as `uuid`; the executor supplies a SHA-256 hex
+  digest. Either the columns widen to `text` or the executor carries a UUID for identity alongside
+  the digest it already uses for deduplication. Owned jointly with Planning & Execution Logic.
 
 ---
 
@@ -209,7 +214,12 @@ glossary; `contributing/` holds the design set and the audits behind it. Deliver
 rendered-on-GitHub markdown; a published site was considered and declined pre-v1. Every page carries
 `Components:` and `Audience:` under its title, so both are visible at the point of reading.
 
-None.
+- `operandNamespace.create: true` does not create the namespace. Only an operand render does
+  (`nutserver_render.go`, `nodepoweragent_render.go`), so a `PowerManagementCluster` can be `Ready`
+  with the namespace still absent, and applying the examples in their documented order fails on the
+  first namespaced object. Hit twice during real deployment. Either have the cluster reconciler
+  create it, or stop implying it already exists — the simulation READMEs say "into a namespace
+  already provisioned by a `PowerManagementCluster`".
 
 ---
 
