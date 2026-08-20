@@ -68,6 +68,13 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
+- `F-99` publish planner diagnostics on the rejection path. A rejected compile reports
+  `PlannerFailed` with no reason: status carries no diagnostics, nothing is logged, and
+  `plannerDiagnostics` reaches only the audit writer — which returns early and silently when
+  `spec.managementClusterRef` is unset, and writes nowhere at all under `storage: Disabled`, the
+  mode the install guide recommends for evaluation. Also fix the simulation scenarios this exposed:
+  they pair a `RuntimeBelow` trigger with a fixture no bundled profile matches, so they cannot
+  compile on any cluster, and none of them set `managementClusterRef`.
 - `F-96` decide what `ShutdownHook.status` is for. It declares a status subresource and a conditions
   array, and nothing writes either — nothing reconciles the kind at all. Either drop the subresource
   or give hook health an observer; a permanently empty `status: {}` is indistinguishable from a
@@ -83,6 +90,13 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
 None.
+
+- `F-97` the driver watchdog restarts a healthy `dummy-ups` driver on a loop. In `dummy-loop` mode
+  the driver stops answering `upsdrvctl status` while it holds a timed block, the watchdog's
+  double-check lands inside that window, and `upsdrvctl start` on the live driver terminates it via
+  the PID file. Decide whether liveness should key on something other than `S_RESPONSIVE`, and check
+  whether a real `snmp-ups` device under load can flap the same way. Evidence:
+  `operator-maturity-benchmarks.md`.
 
 ---
 
@@ -133,6 +147,11 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   repository that is still changing shape daily. This is a release gate, not a gap — the checks to
   require are already there, so turning it on is a repository-settings change and nothing else.
   Recorded here because this section previously described it as already in place.
+
+- `F-98` ship egress policy, or say plainly that the cluster administrator must author it. The
+  bundle contains no `Egress` rules and rendered operand policies are `Ingress`-only, so on a
+  default-deny-egress cluster the operator reaches neither `upsd`, PostgreSQL, nor any hook endpoint
+  and fails silently. Confirmed on a live Cilium cluster: adding the two edges fixed it outright.
 
 ---
 

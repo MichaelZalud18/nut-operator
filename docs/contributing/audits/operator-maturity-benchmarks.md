@@ -837,3 +837,83 @@ kind needs an observer.
 Not fixed here. Removing a status subresource is an API change, and adding a reconciler for a kind
 that is deliberately passive is a design question about whether hook health belongs on the hook or on
 the flow that invoked it. Recorded in `docs/tasks.md` under Planning & Execution Logic.
+
+## Findings — first real-cluster deployment, 2026-08-20
+
+Against `7068677`, deployed to a live multi-node cluster (Kubernetes 1.35, Cilium CNI) rather than
+kind or envtest. The install itself went clean; everything below is what only a real cluster
+surfaces. Each finding was confirmed by direct observation, and the chain between them is the point:
+the first one makes the operator inert, and the next two make that inertness unexplainable.
+
+**Confirmed working on the way in.** The documented bring-your-own-certificate path installs exactly
+as written — bundle applies, the manager holds in `ContainerCreating` until `hack/webhook-cert.sh`
+runs (the non-optional Secret volume, as documented), then goes Ready. Every CRD registers. The
+documented admission probe returns precisely the rejection the install guide predicts, naming
+`spec.deviceRefs` and `spec.tls.serverCertificateRef`. The documented uninstall order tore down the
+previous install with no finalizer hangs. Operand rendering, namespace adoption, CNPG schema
+migration, and telemetry polling all work.
+
+**`F-97` · The driver watchdog restarts a healthy `dummy-ups` driver, forever.** `upsdrvctl status`
+against a `dummy-ups` device in `dummy-loop` mode reports `RESPONSIVE` briefly and `NOT_RESPONSIVE`
+for most of each fixture cycle, while `PF_PID` stays constant — the driver process is alive and
+simply is not servicing the status socket while it holds a timed block. The watchdog's double-check
+falls inside the same unresponsive window, so it confirms and restarts, and `upsdrvctl start` on a
+live driver hits `Duplicate driver instance detected (PID file exists)! Terminating other driver!`
+The restart is what kills it. Observed cycling on a 30-second interval indefinitely, with `upsd`
+alternating `Connected to UPS` and `Can't connect to UPS`, and `upsc` reporting `Driver not
+connected`.
+
+The watchdog script is unit-tested against *captured* `upsdrvctl status` output, which is why this
+survived: the fixture encodes the belief that `NOT_RESPONSIVE` means dead. For a continuously
+polling network driver that holds. For `dummy-ups` in loop mode it does not, and the simulation
+scenarios are the only thing that uses it. No evidence either way yet about real `snmp-ups` devices
+under load; that is worth checking before treating this as simulation-only.
+
+**`F-98` · Nothing in the shipped bundle grants egress, so the operator is inert in any
+default-deny-egress cluster.** `dist/install-byo-cert.yaml` contains zero `Egress` rules, and the
+`NetworkPolicy` objects rendered for operands are `Ingress`-only. On a cluster whose baseline
+default-denies egress, the operator therefore cannot reach `upsd` on 3493, PostgreSQL on 5432, or
+any `ShutdownHook` endpoint. Telemetry polling fails with `i/o timeout`; the audit store fails with
+a dial timeout.
+
+Confirmed by construction: adding a `NetworkPolicy` granting egress to 3493 flipped `UPSDevice` from
+`TelemetryPollFailed` to `live NUT telemetry is available` immediately, and adding 5432 brought the
+CNPG audit store to `ready` with its schema migration applied. Nothing else changed.
+
+`security.md` states that "generated operands are compatible with default-deny namespaces" and lists
+the expected policy edges. That is true in the narrow sense that nothing here requires being
+un-isolated, and the list is presumably meant as instructions for a cluster administrator. But
+nothing says the administrator *must* author those rules for the operator to function, and the
+install guide's network table reads as firewall information rather than as a required configuration
+step. An operator following the documentation onto a zero-trust cluster gets a silent, total
+failure of the product's core function.
+
+**`F-99` · The shipped simulation scenarios cannot compile, and the reason is unreachable.** The
+`homelab` and `multistage` scenarios pair a `RuntimeBelow` trigger with a `dummy-ups` fixture that no
+bundled capability profile matches. The device resolves to the unidentified profile, so the operator
+cannot confirm it reports `battery.runtime`, so the trigger raises
+`TriggerUnsupportedByAllDevices` at `Error` severity and the flow is rejected. The fixture does in
+fact publish `battery.runtime`, but a declaration is authoritative and an observation is not
+(`GP-5`), so this is the design refusing correctly on inputs that were never made consistent with
+it. It fails this way on every cluster, by construction, not because of anything environmental.
+
+What makes it a finding rather than a broken example is that **the cluster cannot tell you any of
+that.** `ShutdownFlow` status carries `PlannerFailed` and the message "shutdown flow planner failed
+after resolver inputs were attached" — no diagnostic, no subject, no reason. Status publishes no
+diagnostics at all on the rejection path. Nothing is logged at any level. `plannerDiagnostics` is
+computed and reaches only `recordShutdownFlowAudit`, which returns early and silently when
+`spec.managementClusterRef` is unset — and none of the simulation scenarios set it, while every
+`orion-cluster` resource does.
+
+So the naming diagnostic existed the whole time and had nowhere to go. Recovering it took setting
+`managementClusterRef`, granting egress to PostgreSQL, and querying
+`power.shutdownflow_compilations` by hand. On the storage mode the install guide recommends for
+evaluation — `Disabled` — that path does not exist at all and the information is destroyed.
+
+This is the silent-failure class the project's own principles exclude, sitting on the compile path,
+which is the one surface a dry-run evaluation is entirely made of.
+
+### Re-audit triggers
+
+Added: **after any change to what status publishes on a rejected compile**, since `F-99` is a
+statement about that surface rather than about the planner.
