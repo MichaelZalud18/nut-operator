@@ -8406,11 +8406,6 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - power.zalud.io
-  resources: null
-  verbs:
-  - get
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -8432,11 +8427,6 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - power.zalud.io
-  resources: null
-  verbs:
-  - get
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -8454,11 +8444,6 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - power.zalud.io
-  resources: null
-  verbs:
-  - get
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

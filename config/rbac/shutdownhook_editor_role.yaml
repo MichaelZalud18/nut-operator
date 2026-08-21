@@ -25,8 +25,3 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - power.zalud.io
-  resources:
-  verbs:
-  - get

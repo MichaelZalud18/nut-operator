@@ -21,8 +21,3 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - power.zalud.io
-  resources:
-  verbs:
-  - get
