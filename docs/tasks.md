@@ -23,7 +23,7 @@ stays answerable to one question: what is left before v1. Items move there only 
 outside the project gates them or scope-boundaries places them beyond v1 — never merely because
 they are hard or unscheduled. Declined work is recorded where it was declined, not parked here.
 
-Last reviewed: 2026-08-17
+Last reviewed: 2026-08-20
 
 ---
 
@@ -45,10 +45,7 @@ Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundle
 `config/catalog/`, and the device-quirk/aliasing/profile-source design surface. Design docs:
 `docs/contributing/design/capability-profiles.md`.
 
-- `F-102` stop drafting `driver.*` variables into probe-generated profiles. A profile is a product
-  record and no bundled profile carries any; a draft carried ten, including
-  `driver.parameter.port`, which is per-device. The guide sends these drafts upstream for the shared
-  catalog.
+None.
 
 ---
 
@@ -71,40 +68,10 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
-- `F-100` the execution audit trail never persists. `ExecutionID` is a SHA-256 hex digest and
-  `execution_id` is a `uuid` column, so every write to `shutdownflow_executions`,
-  `executor_resume_states`, `shutdownflow_execution_waves`, `shutdownflow_execution_groups`, and
-  `shutdownflow_action_attempts` fails with SQLSTATE 22P02, on every cluster. Resume-after-restart
-  cannot work either, since the resume state is never written. Confirmed against a live CNPG store
-  after a complete six-wave execution left zero rows. It also mismarks the flow: a run that
-  traverses every wave reports `lastExecution.phase: Failed` (surfaced as flow `phase: Aborted`)
-  purely because `shutdownExecutionPhase` folds the accumulated record error into the phase, so
-  the only visible signal of an audit outage is a shutdown that claims to have failed. Pick one:
-  widen the columns to `text`, or derive a UUID for identity and keep the digest as the dedup key
-  beside it.
-- `F-106` clear the stale message in `deactivateLastExecution`. It rewrites `Reason` from
-  `AlreadyExecuted` to `TriggerNotEligible` and leaves `Message` behind, so a flow reports a reason
-  and a message that contradict each other.
-- `F-101` compare the declared `spec.identity.model` against what the device reports, and raise a
-  condition on mismatch. `GP-5` allows for exactly this and nothing does it, so a typo silently binds
-  a device to the wrong capability profile — which is what decides trusted telemetry and supported
-  triggers. Neither status nor the `capability_profile_matches` audit row records the reported model.
-- `F-99` publish planner diagnostics on the rejection path. A rejected compile reports
-  `PlannerFailed` with no reason: status carries no diagnostics, nothing is logged, and
-  `plannerDiagnostics` reaches only the audit writer — which returns early and silently when
-  `spec.managementClusterRef` is unset, and writes nowhere at all under `storage: Disabled`, the
-  mode the install guide recommends for evaluation. Also fix the simulation scenarios this exposed:
-  they pair a `RuntimeBelow` trigger with a fixture no bundled profile matches, so they cannot
-  compile on any cluster, and none of them set `managementClusterRef`. Retested 2026-08-20: adding a
-  matching capability profile plus `spec.identity.model` is sufficient — the flow then compiles six
-  waves and the adaptive pointer descends correctly, so the scenarios need those two inputs shipped,
-  not a code change. Broader than first recorded: `NodePowerAgent` inherits operand images through
-  `managementClusterRef` too, so without it the agents fail to render at all. Every simulation
-  resource needs the reference.
-- `F-96` decide what `ShutdownHook.status` is for. It declares a status subresource and a conditions
-  array, and nothing writes either — nothing reconciles the kind at all. Either drop the subresource
-  or give hook health an observer; a permanently empty `status: {}` is indistinguishable from a
-  controller that has stalled.
+- Read `executor_resume_states` back on startup. The rows now persist, but nothing loads them, so an
+  executor interrupted mid-plan still restarts from the beginning. What it should do with the state
+  it finds is an `OD-27` evidence-model question, not a lookup — see the `F-100` closure in
+  `operator-maturity-benchmarks.md`.
 
 ---
 
@@ -115,8 +82,6 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
-- Set resource requests and limits on the `upsd` container. The `driver-watchdog` sidecar declares
-  `10m`/`32Mi`; the container running `upsd` and every driver declares nothing.
 - `F-97` find out why `dummy-ups` exits, and make the watchdog beat `DEADTIME`. The driver process
   terminates on its own every 4-176 seconds; `PF_PID` persisting is a stale PID file, not a live
   process. The watchdog is the only thing that restarts it and polls every 30s, so every exit
@@ -164,9 +129,7 @@ Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts sec
 Owns: the PostgreSQL audit schema, storage backend resolution, retention, and the shutdown-time
 spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 
-- `F-100` the schema side of the execution-ID mismatch: `execution_id` and the four tables keyed on
-  it are typed `uuid`. Whether they widen or the executor carries a UUID is decided in Planning &
-  Execution Logic, where the finding is stated.
+None.
 
 ---
 
@@ -181,14 +144,6 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   require are already there, so turning it on is a repository-settings change and nothing else.
   Recorded here because this section previously described it as already in place.
 
-- `F-98` ship egress policy, or say plainly that the cluster administrator must author it. The
-  bundle contains no `Egress` rules and rendered operand policies are `Ingress`-only, so on a
-  default-deny-egress cluster the operator reaches neither `upsd`, PostgreSQL, nor any hook endpoint
-  and fails silently. Confirmed on a live Cilium cluster: adding the two edges fixed it outright.
-
-- `F-107` make a version tag go through the same gate as `main`. `digests`, `e2e`, and `promote`
-  are all conditioned on `refs/heads/main`, so a `v*.*.*` push publishes four images with no e2e
-  run — the reference a user is most likely to pin is the least tested one.
 - `F-108` test against more than one Kubernetes version. `ENVTEST_K8S_VERSION` follows the
   `k8s.io/api` minor in `go.mod`, and the e2e cluster takes whatever `kind` `latest` defaults to,
   unpinned. Pin the node image and run a matrix before making any compatibility claim.
@@ -199,21 +154,9 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
 - `F-110` induce failures in the suite, and run something for longer than a few minutes. Nothing
   deletes a pod, partitions the network, or stalls the apiserver; the only restart assertions check
   that a restart did *not* happen. `F-97` and `F-105` are both in the class this would catch.
-- `F-111` do something with `cover.out` or stop generating it. `make test` writes a coverage profile
-  on every run and nothing reads it.
 - `F-112` add upgrade coverage and a release workflow. Nothing tests that a cluster converges after
   the operator is replaced, or that CRD schemas stay compatible across versions. Both become gates
   when a v1 exists.
-- `F-104` give `spec.operandNamespace.create` a reader or remove it. Nothing reads it; the webhook
-  defaults it to `true` and the operand renders create the namespace unconditionally, so neither
-  value changes anything. A `PowerManagementCluster` alone therefore reaches `Ready` with the
-  namespace absent, and the examples fail on their first namespaced object. `reference/security.md`
-  and the simulation READMEs both state the opposite and need correcting with it.
-
-- `F-103` fix the driver rejection message. `upsdevice_webhook.go:114` passes the *unsupported*
-  driver list to `field.NotSupported`, whose third argument is the valid set, so rejecting
-  `usbhid-ups` reports it as unsupported and then lists it first among "supported values". Line 116
-  does the same call correctly. Say plainly that USB and serial attachment is out of scope.
 
 ---
 

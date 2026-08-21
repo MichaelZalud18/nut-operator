@@ -205,3 +205,80 @@ func hasNoteContaining(notes []string, fragment string) bool {
 	}
 	return false
 }
+
+// F-102: a capability profile is a product record. driver.* describes the NUT driver that read the
+// device -- driver.version changes with the operand image, and driver.parameter.port is the
+// connection setting for one installation. No bundled profile carries any, and a draft users are
+// invited to send upstream must not either.
+func TestBuildDraftDropsDriverVariables(t *testing.T) {
+	draft := BuildDraft(ProbeObservation{
+		DeviceID: "ups-1",
+		Variables: map[string]string{
+			"ups.mfr":                   "Vendor",
+			"ups.model":                 "SUPER 1500",
+			"ups.status":                "OL",
+			"battery.charge":            "97",
+			"driver.name":               "snmp-ups",
+			"driver.version":            "2.8.4",
+			"driver.version.data":       "APC MIB 1.2",
+			"driver.version.internal":   "1.24",
+			"driver.parameter.port":     "ups-rack-a.example.net",
+			"driver.parameter.pollfreq": "30",
+		},
+	}, DraftOptions{})
+
+	for _, variable := range draft.Variables {
+		if strings.HasPrefix(variable, "driver.") {
+			t.Errorf("draft declared %q, which describes the driver rather than the product", variable)
+		}
+	}
+	if draft.DroppedDriverVariables != 6 {
+		t.Errorf("dropped driver variable count = %d, want 6", draft.DroppedDriverVariables)
+	}
+
+	// driver.parameter.* is not in the standard set, so before the filter it also arrived as
+	// non-standard and became a candidate for alias suggestion.
+	for _, variable := range draft.NonStandardVariables {
+		if strings.HasPrefix(variable, "driver.") {
+			t.Errorf("driver variable %q was offered as an alias candidate", variable)
+		}
+	}
+	for source := range draft.SuggestedAliases {
+		if strings.HasPrefix(source, "driver.") {
+			t.Errorf("draft suggested aliasing the driver variable %q", source)
+		}
+	}
+
+	yaml := draft.ProfileYAML()
+	if strings.Contains(yaml, "driver.") {
+		t.Errorf("rendered profile carries a driver.* name:\n%s", yaml)
+	}
+	// The port is site data. Leaking it into a manifest the guide sends upstream is the sharpest
+	// edge of this finding.
+	if strings.Contains(yaml, "ups-rack-a.example.net") {
+		t.Errorf("rendered profile leaked the driver's port setting:\n%s", yaml)
+	}
+
+	notes := strings.Join(draft.Notes, "\n")
+	if !strings.Contains(notes, "driver.*") {
+		t.Errorf("dropping variables was not explained in the notes: %v", draft.Notes)
+	}
+}
+
+// A device reporting no driver.* names must not gain a note about variables that were never there.
+func TestBuildDraftIsSilentWhenNoDriverVariablesWereReported(t *testing.T) {
+	draft := BuildDraft(ProbeObservation{
+		DeviceID: "ups-1",
+		Variables: map[string]string{
+			"ups.model":  "SUPER 1500",
+			"ups.status": "OL",
+		},
+	}, DraftOptions{})
+
+	if draft.DroppedDriverVariables != 0 {
+		t.Errorf("dropped driver variable count = %d, want 0", draft.DroppedDriverVariables)
+	}
+	if strings.Contains(strings.Join(draft.Notes, "\n"), "driver.*") {
+		t.Errorf("draft explained a drop that never happened: %v", draft.Notes)
+	}
+}

@@ -233,6 +233,23 @@ status:
       cumulativeDuration: 15m
 ```
 
+### A rejected compile explains itself on the resource
+
+`status.compileDiagnostics` carries every resolver and planner finding from the last compile, each
+tagged with the stage that produced it, and a rejection reports the planner's own reason, subject,
+and message rather than a generic one.
+
+It is published on the resource, not only in audit records, because the audit path is not available
+when it is most needed. The audit writer returns early when `spec.managementClusterRef` is unset and
+writes nothing at all under `storage: Disabled` — the mode the install guide recommends for
+evaluation — so the reader most likely to hit a rejected compile is the reader least likely to have
+somewhere to read the reason. A compile that fails without saying why is the silent-failure class
+this project's principles exclude, sitting on the one surface a dry-run evaluation is entirely made
+of.
+
+The generic `PlannerFailed` reason still exists, for a planner that produces neither a plan nor a
+diagnostic. That case is a bug in the planner, and reporting it as something specific would hide it.
+
 ## Published Artifacts
 
 *Components: Outputs & Publishing. Namespace: the artifact contract (GP-6, GP-7, SB-14).*

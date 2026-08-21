@@ -83,6 +83,17 @@ type ShutdownFlowStatus struct {
 	// +optional
 	Phase ShutdownFlowPhase `json:"phase,omitempty"`
 
+	// compileDiagnostics carries every resolver and planner finding from the last compile.
+	//
+	// Published on the resource rather than only in audit records (F-99). A rejected compile used
+	// to report reason PlannerFailed and nothing else: the diagnostics reached the audit writer,
+	// which returns early when spec.managementClusterRef is unset and writes nowhere at all under
+	// storage: Disabled -- the mode the install guide recommends for evaluation. So the reader most
+	// likely to hit a rejection was the one guaranteed not to see why.
+	// +optional
+	// +listType=atomic
+	CompileDiagnostics []ShutdownFlowDiagnosticStatus `json:"compileDiagnostics,omitempty"`
+
 	// compiledSteps is the controller-compiled view of the flow for pre-flight review.
 	// +optional
 	CompiledSteps []CompiledShutdownStep `json:"compiledSteps,omitempty"`
@@ -343,6 +354,26 @@ type ShutdownTriggerHoldStateStatus struct {
 
 	// startedAt records when the condition first became true.
 	StartedAt metav1.Time `json:"startedAt"`
+}
+
+// ShutdownFlowDiagnosticStatus records one resolver or planner finding from a compile.
+type ShutdownFlowDiagnosticStatus struct {
+	// severity is Info, Warning, or Error.
+	Severity string `json:"severity"`
+
+	// source names the stage that produced the finding: Inventory, Capability, or Planner.
+	// +optional
+	Source string `json:"source,omitempty"`
+
+	// reason is a machine-readable diagnostic reason.
+	Reason string `json:"reason"`
+
+	// subject identifies the affected entity, group, or node.
+	// +optional
+	Subject string `json:"subject,omitempty"`
+
+	// message is the human-readable diagnostic.
+	Message string `json:"message"`
 }
 
 // ShutdownTriggerDiagnosticStatus records a trigger-evaluation warning or error.

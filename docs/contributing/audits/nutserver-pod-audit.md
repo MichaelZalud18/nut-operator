@@ -61,7 +61,15 @@ to node agents. Design this before implementing commands, not after.
 
 - Container security context is strong and consistent: non-root UID 65532, read-only root
   filesystem, all capabilities dropped, no privilege escalation.
-- `Resources` is plumbed from the CR rather than hardcoded.
+- `Resources` is plumbed from the CR rather than hardcoded. Since 2026-08-20 it is also *defaulted*
+  when the CR says nothing. Plumbing alone left the `upsd` container unrequested beside a
+  `driver-watchdog` sidecar that declares `10m`/`32Mi`, which is the pair the wrong way round: an
+  unrequested container is in the first eviction class under node pressure, and node pressure is
+  what a rack losing power produces. The default is 50m/128Mi with requests equal to limits, so the
+  pod is Guaranteed — the same reason the watchdog is sized that way, since a mismatch on either
+  container drops the whole pod to Burstable. A `spec.resources` that declares anything at all is
+  taken verbatim; filling in the missing half would convert a deliberate requests-only declaration
+  into a Guaranteed pod behind the user's back.
 - Service DNS resolution falls back sanely to the in-cluster service name when status endpoints are
   not yet populated.
 - Config values are validated against injection before being written to NUT config files.

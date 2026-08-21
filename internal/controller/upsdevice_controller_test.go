@@ -88,6 +88,12 @@ var _ = Describe("UPSDevice Controller", func() {
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(resource.Status.NUTName).To(Equal(resourceName))
+
+			// F-101: a device that has never polled has nothing to verify. Unknown, not False --
+			// this is a supported configuration, not a fault.
+			identity := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionIdentityVerified)
+			Expect(identity).NotTo(BeNil())
+			Expect(identity.Status).To(Equal(metav1.ConditionUnknown))
 		})
 
 		It("should update telemetry status from a ready selected NUTServer", func() {
@@ -102,7 +108,8 @@ var _ = Describe("UPSDevice Controller", func() {
 			device := &powerv1alpha1.UPSDevice{
 				ObjectMeta: metav1.ObjectMeta{Name: deviceName},
 				Spec: powerv1alpha1.UPSDeviceSpec{
-					Driver: "dummy-ups",
+					Driver:   "dummy-ups",
+					Identity: powerv1alpha1.UPSDeviceIdentitySpec{Model: "Smart-UPS 1500"},
 					Telemetry: powerv1alpha1.UPSTelemetrySpec{
 						PollInterval:      &pollInterval,
 						AlertPollInterval: &alertPollInterval,
@@ -213,6 +220,8 @@ var _ = Describe("UPSDevice Controller", func() {
 							"battery.charge":  "18.5",
 							"battery.runtime": "90",
 							"ups.load":        "44",
+							"ups.model":       "Smart-UPS 1500",
+							"ups.mfr":         "APC",
 						},
 					}),
 				},
@@ -268,6 +277,17 @@ var _ = Describe("UPSDevice Controller", func() {
 			Expect(auditSnapshot.NUTServer).To(Equal(serverName))
 			Expect(auditSnapshot.NUTName).To(Equal(deviceName))
 			Expect(auditSnapshot.UPSStatus).To(Equal("OB LB"))
+
+			// F-101: what the device says it is, recorded beside the declaration the capability
+			// profile is actually selected from.
+			Expect(resource.Status.Identity).NotTo(BeNil())
+			Expect(resource.Status.Identity.ReportedModel).To(Equal("Smart-UPS 1500"))
+			Expect(resource.Status.Identity.ReportedManufacturer).To(Equal("APC"))
+			Expect(resource.Status.Identity.DeclaredModel).To(Equal("Smart-UPS 1500"))
+			identityCondition := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionIdentityVerified)
+			Expect(identityCondition).NotTo(BeNil())
+			Expect(identityCondition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(identityCondition.Reason).To(Equal("IdentityMatches"))
 		})
 	})
 })

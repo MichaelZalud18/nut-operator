@@ -888,6 +888,24 @@ install guide's network table reads as firewall information rather than as a req
 step. An operator following the documentation onto a zero-trust cluster gets a silent, total
 failure of the product's core function.
 
+*Closed 2026-08-20, by saying it — and deliberately not by shipping it.* `config/network-policy/egress/`
+carries the five manager edges as an opt-in overlay, with the two that cannot be written portably
+marked for the administrator to complete. `security.md` now leads with the requirement rather than
+listing the edges as background, and the install walkthrough names it as one of the three things
+that stop a first run.
+
+Shipping it in the default bundle would have been wrong, not merely optional. NetworkPolicy is
+additive per direction: a pod with no `Egress`-typed policy selecting it has unrestricted egress,
+and the moment one appears the pod is restricted to exactly what that policy lists. Two of the five
+edges are unknowable to us — PostgreSQL and hook endpoints are wherever the user put them, and the
+API server's address is cluster-specific — so a default egress policy would take every working
+permissive cluster and break it in order to half-fix the default-deny ones.
+
+The agent half was already closed and the finding's third confirmation is stale:
+`NodePowerAgent` renders its own `Egress` policy naming the `upsd` pods it monitors plus DNS.
+Verified in `resolveAgentMonitorTargets`, which builds one rule per monitored `NUTServer` and
+appends `dnsEgressRule()`.
+
 **`F-99` · The shipped simulation scenarios cannot compile, and the reason is unreachable.** The
 `homelab` and `multistage` scenarios pair a `RuntimeBelow` trigger with a `dummy-ups` fixture that no
 bundled capability profile matches. The device resolves to the unidentified profile, so the operator
@@ -912,6 +930,28 @@ evaluation — `Disabled` — that path does not exist at all and the informatio
 
 This is the silent-failure class the project's own principles exclude, sitting on the compile path,
 which is the one surface a dry-run evaluation is entirely made of.
+
+*Closed 2026-08-20, on both halves.* The unreachable-reason half was the finding; the broken
+scenarios were the thing that exposed it.
+
+Reason: a rejected compile now reports the planner's own diagnostic — reason, subject, and message —
+instead of the generic `PlannerFailed`, and every resolver and planner diagnostic is published on
+`status.compileDiagnostics` tagged by the stage that produced it. Status is the right surface
+precisely because the audit writer is not: it returns early without `managementClusterRef` and
+writes nowhere under `storage: Disabled`. The generic reason survives as the fallback for a planner
+that produces neither a plan nor a diagnostic, because flattening that into a specific-sounding
+reason would hide a real bug.
+
+Scenarios: `docs/examples/simulation/` gained two shared files. `capability-profile.yaml` matches
+the fixture models on a `*-fixture` glob and declares exactly the variables the `.seq` fixtures
+emit, and each `UPSDevice` now declares `spec.identity.model` to match — the two inputs the
+2026-08-20 retest showed were sufficient. `cluster.yaml` is a `PowerManagementCluster` named
+`sim-power` that all eleven referencing resources point at, which also closes the broader half
+recorded below: a `NodePowerAgent` inherits its operand images through that reference and could not
+render without one. It is a local control plane rather than a borrowed `orion-cluster` reference,
+since the scenarios exercise none of that example's CNPG storage, hook allowlist, or actuation
+policy, and requiring a PostgreSQL cluster before a fixture UPS can report `OnBattery` is a barrier
+with nothing behind it.
 
 ### Re-audit triggers
 
@@ -970,6 +1010,31 @@ were durable.
 Nothing in the suite covers it. envtest has no PostgreSQL, the audit tests do not run against a real
 schema, and no e2e path drives an execution against CNPG. It took a real database to see it.
 
+*Closed 2026-08-20, by deriving the identity rather than widening the columns.* Both options were
+on the table and the column widening was rejected. The identity does not stay in PostgreSQL: it is
+stamped on Kubernetes objects as the `power.zalud.io/execution` label, where 63 characters is the
+ceiling — so a 64-character digest was already being silently truncated there, and the label had
+stopped equalling the ID it names. `text` would also have meant rebuilding five foreign keys. A UUID
+is 36 characters, survives the label intact, and is the type every other identity column in this
+schema already uses.
+
+`execution_id` is now a UUIDv5 derived from the episode digest, which keeps the property the digest
+was providing: the same trigger episode always yields the same primary key, so a re-record updates
+the row instead of creating a second one. The digest itself moved to
+`shutdownflow_executions.deduplication_key` (schema migration 7) so a row can still be traced back
+to the episode whose content produced it.
+
+The phase mismarking closed with it, and separately. `Execute` returned the accumulated record error
+as its own error on the completion path, so a run that traversed every wave came back non-nil and
+the controller mapped it to `Failed`. Record errors now travel on `Result.RecordError`, the returned
+error is the execution's alone, and an audit outage is published as a `Degraded` condition with
+reason `ExecutionAuditRecordFailed`. An audit outage is not a shutdown outcome, and reporting it as
+one pointed every reader at the wrong system.
+
+Still open, and deliberately: resume-after-restart. `executor_resume_states` now persists, which was
+the precondition — nothing reads it back yet, and what an interrupted executor should do with the
+state it finds is an `F-94` evidence-model question rather than a write path.
+
 **Open, not yet characterised.** The flow settles at `phase: Aborted` with
 `lastExecution.reason: AlreadyExecuted` and the message "eligible trigger episode already has
 execution evidence". Correct deduplication of a repeated episode reading as a terminal *failure* is
@@ -1016,6 +1081,18 @@ them. The consequence is that a typo in `spec.identity.model` silently binds a d
 capability profile, and that profile is what decides which telemetry is trusted and which triggers
 are supported.
 
+*Closed 2026-08-20.* Every successful telemetry poll now records `ups.model`, `ups.mfr`, and
+`ups.firmware` on `UPSDevice.status.identity` beside an echo of the declared model, and the
+`IdentityVerified` condition states whether the two model strings agree. `capability_profile_matches`
+gained `declared_model` and `reported_model` (schema migration 6), so history can say which device a
+profile was bound to and not only which profile was chosen.
+
+The condition is `Unknown`, not `False`, when either half is missing. A device with no declared model
+matches by driver family and a device that has not polled has reported nothing; failing verification
+on either would leave a permanent red condition on healthy devices, which is how a condition stops
+being read. The reported value still feeds nothing — matching remains on the declared value per
+`GP-5`, and this reports the disagreement rather than resolving it.
+
 **`F-102` · The probe drafts product profiles containing driver-instance variables.** A profile is a
 product/SKU record (`SB-9`), and no bundled profile carries a single `driver.*` variable. A draft
 from `UPSCapabilityProbe` carried ten: `driver.debug`, `driver.state`, `driver.version`,
@@ -1026,6 +1103,16 @@ The drafted `spec` is otherwise correct and the actuation section is properly le
 explanation. Only variable *names* reach `status.issueReport`, not their values, so nothing
 site-specific leaks — but `driver.parameter.port` is a per-device setting, and the guide directs
 users to send that report upstream for inclusion in the shared catalog.
+
+*Closed 2026-08-20.* `BuildDraft` drops the whole `driver.` namespace rather than an enumerated list,
+since the objection is to the namespace: `driver.version` records which NUT build read the device and
+`driver.parameter.*` records how this installation reaches it, and neither is a property of the
+product. The count of dropped names is reported in the draft notes so a user diffing the draft
+against `upsc` output can see the difference was deliberate.
+
+Verification changed with it. `driver.*` had also been counted as an *unexpected* variable, because
+no profile declares one — which would have reported drift on every verification of a healthy device
+the moment profiles stopped carrying them.
 
 **`F-103` · The driver rejection message lists the unsupported drivers as the supported ones.**
 `upsdevice_webhook.go:114` calls `field.NotSupported(path, value, unsupportedLocalUPSDrivers())`. The
@@ -1040,15 +1127,62 @@ redirect, and who is instead told to retry with a list of drivers that will all 
 literal swap of the argument would fix the contradiction; saying plainly that USB and serial
 attachment is out of scope would fix the confusion.
 
+*Closed 2026-08-20, by saying it rather than swapping it.* The swap was available and was not taken:
+`field.NotSupported` exists to offer the reader an alternative, and there is no alternative to offer
+someone with a USB UPS — the network allowlist is not a substitute for a device wired to a host. The
+rejection is now `field.Invalid` carrying the scope boundary in words. The webhook test asserts the
+message names the boundary and that the phrase "supported values" does not appear in it.
+
 **`F-99` is broader than recorded.** Missing `spec.managementClusterRef` does not only cost the audit
 record. `NodePowerAgent` inherits its operand images from `PowerManagementCluster.spec.images`
 through that same reference, so the simulation scenarios' agents fail to render at all with
 "NodePowerAgent upsmon rendering requires an image repository". Adding the reference rendered all
 three DaemonSets immediately. Every simulation resource needs it, not just the flow.
 
+*Closed 2026-08-20 with the rest of `F-99`.* All eleven `NUTServer`, `ShutdownFlow`, and
+`NodePowerAgent` resources under `docs/examples/simulation/` reference `sim-power`, the local
+`PowerManagementCluster` added in `cluster.yaml`.
+
 **`F-98`, third confirmation.** The agent-to-`upsd` edge on 3493 is also unshipped: agents ran but
 stayed NotReady, correctly, because the `upsmon` readiness probe queries the UPS it monitors rather
 than the host (`NA-8`). Supplying the edge made all five agents ready.
+
+## Pass: closing F-96, 2026-08-20
+
+**`F-96` · closed by removing the subresource.** `ShutdownHook` declared a status subresource and a
+conditions array, and nothing reconciled the kind at all. The decision was whether to give hook
+health an observer or drop the field; dropping it is settled by two existing requirements rather
+than by preference. `GP-4` excludes probing declared endpoints on a schedule — that is becoming
+monitoring, not consuming it — and `OD-34` already publishes hook outcome on the owning
+`ShutdownFlow`, which is the resource a failed hook actually degrades. Recorded as `HK-11`.
+
+**`F-113` · A hook outside the allowlist compiles clean and fails during the outage.**
+`shutdownFlowHookDigests` resolves each referenced `ShutdownHook` and hashes its spec, and never
+compares its endpoint against `PowerManagementCluster.spec.hooks.allowedEndpoints`. The allowlist is
+enforced at delivery time only, in `kubeactions/runner.go`.
+
+So a flow referencing a hook whose endpoint is not permitted is accepted, compiles, publishes a plan
+naming the hook, and discovers the problem when it tries to deliver — which is during a power event,
+the one moment `HK-9` exists to have settled in Git beforehand. The same applies after the fact: an
+allowlist edited to drop a host silently invalidates every hook still pointing at it, with nothing
+on any resource saying so.
+
+Found while closing `F-96`. It is the argument a hook status *would* have had, and it does not need
+one: the check belongs on the compile path, where the flow already resolves the hook and already has
+the cluster in hand, and reports through `status.compileDiagnostics` like every other compile
+finding.
+
+*Closed 2026-08-20, as a warning rather than a rejection.* `shutdownFlowHookDigests` now checks both
+the `invocation` and `dryRun` URLs against the allowlist and publishes `HookEndpointNotAllowed` on
+`status.compileDiagnostics`, degrading the flow.
+
+Not a rejection, and the distinction is load-bearing: `OD-34` makes hooks advisory and `HK-7` says a
+hook never holds a wave, so an undeliverable hook must not stop a shutdown plan from existing. It
+degrades and says why, which moves the discovery from mid-outage to `kubectl`.
+
+The check calls the same `HookURLAllowed` the delivery path uses rather than reimplementing it.
+Two copies of one allowlist is the `F-50` shape — they agree until one is edited, and the
+disagreement surfaces at the worst possible moment.
 
 ## Pass: re-examining the open list, 2026-08-20
 
@@ -1085,6 +1219,20 @@ the cluster reconciler contains no namespace code and never calls
 `rejectReservedOperandNamespace`. Either give the field a reader or remove it; the security note
 needs correcting either way.
 
+*Closed 2026-08-20, by giving it a reader in both directions.* `PowerManagementCluster` now creates
+and labels the operand namespace on reconcile and publishes it in `status.managedResources`, so a
+control plane applied on its own leaves a namespace its operands can be rendered into — which is what
+`reference/security.md` and the simulation READMEs already claimed. `create: false` is honoured the
+other way: the operator labels a namespace that exists and otherwise reports `OperandNamespaceMissing`
+rather than creating one.
+
+`create: false` suppresses creation, not adoption. A user saying they own the namespace's existence
+is not saying the operator should leave it unlabelled and then fail to find its own operands in it,
+so the labels are still applied — and only this operator's two, leaving any
+`pod-security.kubernetes.io/*` the cluster's admission owner set untouched. A standalone `NUTServer`
+or `NodePowerAgent` with no `managementClusterRef` still creates: there is no field to read, and
+creation is both the webhook default and the only answer under which such a CR can converge.
+
 **`F-105` · A driver exit drives every node agent into a forced-shutdown loop.** The driver goes
 away, `upsd` drops it (`Can't connect to UPS [sim-homelab-ups] ... Connection refused`), every
 `upsmon` loses comms, and after `DEADTIME` each one concludes "Too few UPS(es) are healthy (0<1),
@@ -1112,6 +1260,12 @@ trigger without addressing what happens the next time comms genuinely drop.
 rewrites `Reason` from `AlreadyExecuted` to `TriggerNotEligible` and does not touch `Message`, so the
 live flow currently reports `reason: TriggerNotEligible` beside `message: "eligible trigger episode
 already has execution evidence"` — a message asserting exactly the state the reason denies.
+
+*Closed 2026-08-20.* Reason and message move together, and `RehearsalAlreadyExecuted` is cleared the
+same way — it reaches deactivation by the same path and would have left the same contradiction. Both
+strings are now constants shared with the `ExecutionReady` condition, which is what let them drift in
+the first place: the condition and `status.lastExecution` were writing the same statement from two
+places.
 
 ## Pass: root-causing the agent crash loop, 2026-08-20
 
@@ -1188,6 +1342,16 @@ has run against, and the comment at the metadata step says so. A version tag —
 is most likely to pin — gets no e2e run at all. Either the gate jobs need to accept tag refs, or
 tagging needs to promote an already-tested digest the way `main` does.
 
+*Closed 2026-08-20, by doing both.* `type=ref,event=tag` is gone from the build metadata, so a tag
+push publishes only the immutable `sha-` reference; `digests` now accepts `refs/tags/v*` alongside
+`refs/heads/main`, which pulls `e2e` and `nut-tls` in behind it; and `promote` resolves its target
+from the triggering ref, applying `vX.Y.Z` on a tag and `main` on a branch push.
+
+Accepting tag refs alone would not have been enough. The images were already on the registry by the
+time the gate ran, so a failing gate would have left four published, pinnable, untested references
+behind it. Withholding the tag until after the gate is what makes the two paths actually equivalent
+— which was the intent the comment at the metadata step already claimed.
+
 **`F-108` · Everything is tested against exactly one Kubernetes version.** `ENVTEST_K8S_VERSION` is
 derived from the `k8s.io/api` minor in `go.mod`, so envtest tracks whatever the operator compiles
 against and nothing else. The e2e cluster takes whatever `kind` `latest` currently defaults to,
@@ -1219,6 +1383,12 @@ was visible as anything but a restart count.
 **`F-111` · Coverage is collected and thrown away.** `make test` writes `cover.out` and nothing
 reads it. No gate, no upload, no trend. The file is produced on every CI run and discarded with the
 runner.
+
+*Closed 2026-08-20, with a reader and not a gate.* `make cover` and `make cover-html` read the
+profile locally, and the Tests workflow puts the total in the job summary and keeps the profile as an
+artifact. No threshold was added: a number nobody chose, enforced as a merge gate, produces tests
+written to move the number. The total is now visible on every run, which is what makes a regression
+arguable.
 
 **`F-112` · No upgrade path is tested, and no workflow produces a release.** There is no release
 workflow and no GitHub release has ever been published, which is already why the install

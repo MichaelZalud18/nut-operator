@@ -24,6 +24,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -271,6 +272,101 @@ var _ = Describe("PowerManagementCluster Controller", func() {
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(resource.Status.Storage.Ready).To(BeTrue())
+		})
+	})
+
+	// F-104: spec.operandNamespace.create had no reader in either direction. The namespace came
+	// into existence only when a NUTServer or NodePowerAgent was reconciled, so a
+	// PowerManagementCluster on its own reached Ready with the namespace absent and the first
+	// namespaced object in the examples failed.
+	Context("When reconciling the operand namespace", func() {
+		ctx := context.Background()
+
+		reconcileCluster := func(name string, operand *powerv1alpha1.OperandNamespaceSpec) *powerv1alpha1.PowerManagementCluster {
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					OperandNamespace: operand,
+					Storage:          powerv1alpha1.PowerStorageSpec{Mode: powerv1alpha1.PowerStorageDisabled},
+				},
+			}
+			Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(k8sClient.Delete(ctx, cluster)).To(Succeed())
+			})
+
+			reconciler := &PowerManagementClusterReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: name}})
+			Expect(err).NotTo(HaveOccurred())
+
+			reconciled := &powerv1alpha1.PowerManagementCluster{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, reconciled)).To(Succeed())
+			return reconciled
+		}
+
+		It("creates and labels the namespace when create is true", func() {
+			create := true
+			cluster := reconcileCluster("operand-ns-create", &powerv1alpha1.OperandNamespaceSpec{
+				Name:   "operand-ns-created",
+				Create: &create,
+			})
+
+			namespace := &corev1.Namespace{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "operand-ns-created"}, namespace)).To(Succeed())
+			Expect(namespace.Labels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "nut-operator"))
+			Expect(namespace.Labels).To(HaveKeyWithValue("power.zalud.io/operand-namespace", "true"))
+
+			ready := meta.FindStatusCondition(cluster.Status.Conditions, powerv1alpha1.ConditionReady)
+			Expect(ready).NotTo(BeNil())
+			Expect(ready.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cluster.Status.ManagedResources).To(ContainElement(powerv1alpha1.ManagedResourceStatus{
+				APIVersion: "v1",
+				Kind:       "Namespace",
+				Name:       "operand-ns-created",
+			}))
+		})
+
+		It("reports the namespace missing rather than creating it when create is false", func() {
+			create := false
+			cluster := reconcileCluster("operand-ns-nocreate", &powerv1alpha1.OperandNamespaceSpec{
+				Name:   "operand-ns-absent",
+				Create: &create,
+			})
+
+			namespace := &corev1.Namespace{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: "operand-ns-absent"}, namespace)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "create: false must not create the namespace")
+
+			ready := meta.FindStatusCondition(cluster.Status.Conditions, powerv1alpha1.ConditionReady)
+			Expect(ready).NotTo(BeNil())
+			Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+			Expect(ready.Reason).To(Equal("OperandNamespaceMissing"))
+			Expect(ready.Message).To(ContainSubstring("operand-ns-absent"))
+		})
+
+		It("adopts a namespace the user already created when create is false", func() {
+			existing := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+				Name:   "operand-ns-adopted",
+				Labels: map[string]string{"pod-security.kubernetes.io/enforce": "baseline"},
+			}}
+			Expect(k8sClient.Create(ctx, existing)).To(Succeed())
+
+			create := false
+			cluster := reconcileCluster("operand-ns-adopt", &powerv1alpha1.OperandNamespaceSpec{
+				Name:   "operand-ns-adopted",
+				Create: &create,
+			})
+
+			namespace := &corev1.Namespace{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "operand-ns-adopted"}, namespace)).To(Succeed())
+			Expect(namespace.Labels).To(HaveKeyWithValue("power.zalud.io/operand-namespace", "true"))
+			// Adoption adds this operator's labels and touches nothing else, so whoever owns the
+			// cluster's admission policy keeps what they set.
+			Expect(namespace.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "baseline"))
+
+			ready := meta.FindStatusCondition(cluster.Status.Conditions, powerv1alpha1.ConditionReady)
+			Expect(ready).NotTo(BeNil())
+			Expect(ready.Status).To(Equal(metav1.ConditionTrue))
 		})
 	})
 

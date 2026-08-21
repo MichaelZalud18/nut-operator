@@ -21,7 +21,9 @@ In order. Each step is verifiable before the next one matters, and nothing here 
 1. **[Install the operator](installation/README.md).** Everything defaults to dry-run.
 2. **[Configure the resources](installation/configuration.md)**, in the order they depend on
    each other.
-3. **[Model one UPS](guides/model-your-topology.md)** and the equipment it feeds.
+3. **[Model one UPS](guides/model-your-topology.md)** and the equipment it feeds — needed once a
+   machine has two supplies or something sits between the UPS and the host, skippable while one UPS
+   feeds everything.
 4. **[Assign shutdown tiers](guides/assign-shutdown-tiers.md)** to a handful of workloads.
 5. **Compile a plan and read it.** `kubectl get shutdownflow -o yaml` — the compiled waves, the
    estimated duration, and the feasibility verdict against your UPS's reported runtime.

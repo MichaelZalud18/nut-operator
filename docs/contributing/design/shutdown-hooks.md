@@ -86,6 +86,20 @@ operator's only outbound egress to arbitrary hosts, and it is reachable from a n
 workload author controls. The allowlist makes the blast radius reviewable in Git before an outage
 rather than discoverable after one.
 
+**HK-11 · A `ShutdownHook` has no status.** The kind carries a spec and nothing else, and no
+controller reconciles it.
+
+A hook is a declaration, not a workload. There is no operand behind it and nothing to drift, so
+admission is where a malformed hook is told it is wrong. The two things a status could plausibly
+carry both belong elsewhere: hook *health* would mean probing declared endpoints on a schedule,
+which `GP-4` excludes — the operator consumes signals from existing monitoring rather than becoming
+monitoring — and hook *outcome* is already published on the owning `ShutdownFlow` under `OD-34`,
+which is the resource that was actually degraded.
+
+The alternative was worse than nothing rather than merely useless. A declared status subresource
+that no controller writes leaves every hook reporting `status: {}` forever, which is
+indistinguishable from a controller that has stalled.
+
 ## Dry-run
 
 `EX-5` makes dry-run a faithful rehearsal of everything except effects, and hooks are exactly where

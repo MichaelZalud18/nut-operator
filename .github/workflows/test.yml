@@ -49,3 +49,25 @@ jobs:
 
       - name: Running Tests
         run: make test
+
+      # F-111: make test has always written a coverage profile and nothing read it. The total goes
+      # in the job summary so a regression is visible without downloading anything, and the profile
+      # itself is kept so `go tool cover -html` can be pointed at a specific run.
+      - name: Report coverage
+        run: |
+          set -o pipefail
+          total="$(make cover | tail -n 1)"
+          {
+            echo '## Coverage'
+            echo
+            echo '```'
+            echo "$total"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-profile
+          path: cover.out
+          retention-days: 14

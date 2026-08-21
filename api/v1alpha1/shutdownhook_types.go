@@ -155,19 +155,26 @@ type ShutdownHookKubernetesObjectSpec struct {
 	Object runtime.RawExtension `json:"object"`
 }
 
-// ShutdownHookStatus defines the observed state of ShutdownHook.
-type ShutdownHookStatus struct {
-	// conditions represent the current state of the ShutdownHook resource.
-	// +listType=map
-	// +listMapKey=type
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-}
-
 // +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced
 // ShutdownHook is the Schema for the shutdownhooks API.
+//
+// Deliberately statusless (F-96). It declared a status subresource and a conditions array that
+// nothing ever wrote, because nothing reconciles the kind — and a permanently empty `status: {}` is
+// indistinguishable from a controller that has stalled, which is worse than having no status field
+// at all.
+//
+// Nothing should reconcile it either, and the two things a status could have carried both belong
+// elsewhere:
+//
+//   - Hook *health* would mean probing declared endpoints on a schedule. `GP-4` excludes that: the
+//     operator consumes signals from existing monitoring rather than becoming monitoring.
+//   - Hook *outcome* already lands on the owning `ShutdownFlow`. `OD-34` makes hooks advisory, so a
+//     failed or timed-out delivery degrades the flow, and the flow is the thing that was affected.
+//     Recording it twice would be two places to keep in sync and one to disagree.
+//
+// A hook is a declaration, not a workload: there is no operand behind it and nothing to drift, so
+// admission is where it gets told it is wrong.
 type ShutdownHook struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -178,10 +185,6 @@ type ShutdownHook struct {
 	// spec defines the desired state of ShutdownHook
 	// +required
 	Spec ShutdownHookSpec `json:"spec"`
-
-	// status defines the observed state of ShutdownHook
-	// +optional
-	Status ShutdownHookStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true

@@ -390,6 +390,29 @@ because a profile that reorders its own lists has not changed and must not prese
 profile identity feeds plan identity, and a hash that moved on cosmetic edits would report every
 catalog reformat as a plan change.
 
+### The declared model is checked against the reported one
+
+Matching runs on `spec.identity.model`, never on what the device reports. `GP-5` puts the failure
+path on authored input, and a value read from the device at match time would make profile selection
+depend on the device being reachable — which is exactly what a power event takes away.
+
+That leaves one blind spot, and the check closes it. A typo in `spec.identity.model` binds the
+device to whatever profile the typo names, and the profile is what decides which telemetry is
+trusted and which triggers are supported, so a wrong bind is a wrong shutdown decision. Every
+successful telemetry poll records `ups.model`, `ups.mfr`, and `ups.firmware` on
+`status.identity`, beside an echo of the declared model, and the `IdentityVerified` condition states
+whether the two model strings agree. `capability_profile_matches` carries both strings too, so
+history can answer which device a profile was bound to and not only which profile was chosen.
+
+`GP-5`'s second clause is what permits this: derived data may verify authored input and raise a
+condition on mismatch. The reported model is never substituted for the declared one, and a mismatch
+changes no plan — it says, in `kubectl`, that the plan was built against the wrong product record.
+
+The condition is `Unknown` when either half is missing. A device with no declared model matches by
+driver family instead, which is a supported configuration, and a device that has not polled yet has
+reported nothing; presenting either as failed verification would leave a permanent red condition on
+a healthy device, which is how a condition stops being read.
+
 An unresolvable PDU profile set — duplicate ids, or two universal profiles — is reported on every
 profile in the set rather than on one arbitrary member. There is no principled way to choose which
 of two colliding profiles is at fault, and naming one implies the other is fine.

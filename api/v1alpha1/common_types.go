@@ -29,6 +29,13 @@ const (
 	ConditionDegraded        = "Degraded"
 	ConditionTriggerEligible = "TriggerEligible"
 	ConditionExecutionReady  = "ExecutionReady"
+
+	// ConditionIdentityVerified reports whether what a device says it is agrees with what was
+	// declared about it. GP-5 permits exactly this use of derived data: it verifies authored input
+	// and raises a condition on mismatch, and never feeds a decision itself. Unknown is the honest
+	// answer when either half is missing, so a device with no declared model does not present as
+	// faulty.
+	ConditionIdentityVerified = "IdentityVerified"
 )
 
 // ObjectNameReference references another cluster-scoped power.zalud.io object by name.
@@ -175,7 +182,10 @@ type OperandNamespaceSpec struct {
 	// +kubebuilder:default=power-system
 	Name string `json:"name"`
 
-	// create allows the operator packaging to create the namespace.
+	// create lets the operator create the namespace if it does not exist. Set it to false to keep
+	// ownership of the namespace's existence -- its quotas, its admission labels, its lifecycle --
+	// with the cluster administrator; the operator then labels a namespace that is already there
+	// and reports the operand namespace missing rather than creating it.
 	// +kubebuilder:default=true
 	// +optional
 	Create *bool `json:"create,omitempty"`

@@ -62,6 +62,7 @@ const powerManagementClusterCNPGRefField = ".spec.storage.cnpg.clusterRef"
 // +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 
 // Reconcile validates the top-level power management contract and records status.
 func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -78,17 +79,26 @@ func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ct
 
 	result := validatePowerManagementCluster(&cluster)
 	storageStatus, storageReady, readyReason, readyMessage := r.evaluateStorage(ctx, &cluster, result)
+
+	// The operand namespace is settled before storage is reported, and its failure outranks
+	// storage's, because nothing namespaced can be rendered into a namespace that is not there.
+	namespaceReady, namespaceStatus, namespaceReason, namespaceMessage := r.reconcileOperandNamespace(ctx, &cluster, result)
+	if result.accepted && !namespaceReady {
+		readyReason, readyMessage = namespaceReason, namespaceMessage
+	}
+
 	cluster.Status.ObservedGeneration = cluster.Generation
 	cluster.Status.Storage = storageStatus
+	cluster.Status.ManagedResources = namespaceStatus
 	setAcceptedCondition(&cluster.Status.Conditions, cluster.Generation, result)
 	setReadyCondition(
 		&cluster.Status.Conditions,
 		cluster.Generation,
-		result.accepted && storageReady,
+		result.accepted && namespaceReady && storageReady,
 		readyReason,
 		readyMessage,
 	)
-	setDegradedCondition(&cluster.Status.Conditions, cluster.Generation, !result.accepted || !storageReady, readyReason, readyMessage)
+	setDegradedCondition(&cluster.Status.Conditions, cluster.Generation, !result.accepted || !namespaceReady || !storageReady, readyReason, readyMessage)
 
 	if err := r.Status().Patch(ctx, &cluster, client.MergeFrom(base)); err != nil {
 		log.Error(err, "failed to update PowerManagementCluster status")
@@ -103,6 +113,48 @@ func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+// reconcileOperandNamespace settles spec.operandNamespace before anything else needs it.
+//
+// F-104: this reconciler used to contain no namespace code at all. The operand namespace came into
+// existence only when a NUTServer or NodePowerAgent was reconciled, so a PowerManagementCluster
+// applied on its own reached Ready with the namespace absent, and the very next namespaced object
+// in the examples failed. reference/security.md already described the behaviour implemented here.
+//
+// create: false is honoured in the other direction: the operator reports the namespace missing
+// rather than creating it, because the user has said they own its existence.
+func (r *PowerManagementClusterReconciler) reconcileOperandNamespace(
+	ctx context.Context,
+	cluster *powerv1alpha1.PowerManagementCluster,
+	result validationResult,
+) (bool, []powerv1alpha1.ManagedResourceStatus, string, string) {
+	if !result.accepted {
+		return false, nil, result.reason, result.message
+	}
+
+	name := powerManagementClusterOperandNamespace(cluster)
+	if _, err := ensureOperandNamespace(ctx, r.Client, name, operandNamespaceCreateAllowed(cluster)); err != nil {
+		if !operandNamespaceCreateAllowed(cluster) {
+			return false, nil, "OperandNamespaceMissing", err.Error()
+		}
+		return false, nil, "OperandNamespaceNotReady", fmt.Sprintf("Could not reconcile operand namespace %q: %v", name, err)
+	}
+
+	return true, []powerv1alpha1.ManagedResourceStatus{{
+		APIVersion: "v1",
+		Kind:       "Namespace",
+		Name:       name,
+	}}, "", ""
+}
+
+// powerManagementClusterOperandNamespace resolves where namespaced operands belong, defaulting the
+// same way the webhook does so a cluster admitted before that default existed still resolves.
+func powerManagementClusterOperandNamespace(cluster *powerv1alpha1.PowerManagementCluster) string {
+	if cluster != nil && cluster.Spec.OperandNamespace != nil && cluster.Spec.OperandNamespace.Name != "" {
+		return cluster.Spec.OperandNamespace.Name
+	}
+	return defaultOperandNamespace
 }
 
 // SetupWithManager sets up the controller with the Manager.

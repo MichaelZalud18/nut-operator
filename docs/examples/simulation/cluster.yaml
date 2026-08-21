@@ -1,0 +1,36 @@
+---
+# The control plane every scenario in this directory references.
+#
+# Kept here rather than borrowing orion-cluster's (F-99). Every simulation resource needs a
+# managementClusterRef -- a NodePowerAgent inherits its operand images through that reference and
+# cannot render without one -- and pointing the scenarios at a production-shaped example dragged in
+# CNPG storage, a hook allowlist, and an actuation policy that none of them exercise.
+#
+# storage: Disabled is deliberate. These scenarios are for reading what the operator decides, not
+# for keeping a durable record of it, and requiring a PostgreSQL cluster before a fixture UPS can
+# report OnBattery is a barrier with nothing behind it. Compile diagnostics are published on
+# ShutdownFlow.status.compileDiagnostics regardless of storage mode, so a rejected plan still
+# explains itself here.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerManagementCluster
+metadata:
+  name: sim-power
+spec:
+  operandNamespace:
+    name: power-system
+    create: true
+  storage:
+    mode: Disabled
+  images:
+    nutServer:
+      repository: ghcr.io/michaelzalud18/nut-server
+      tag: main
+      pullPolicy: IfNotPresent
+    upsmonAgent:
+      repository: ghcr.io/michaelzalud18/upsmon-agent
+      tag: main
+      pullPolicy: IfNotPresent
+    actuator:
+      repository: ghcr.io/michaelzalud18/node-actuator
+      tag: main
+      pullPolicy: IfNotPresent

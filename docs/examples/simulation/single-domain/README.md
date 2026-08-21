@@ -18,8 +18,9 @@ eligibility, and `NodePowerAgent` release gating) without real hardware.
   that ConfigMap, instead of `spec.endpoint` or a static definition.
 - A `NUTServer` that selects it by label, matching the `orion-cluster` example's shape.
 
-Apply order: the ConfigMap and UPSDevice first (or together), then the NUTServer, into a
-namespace already provisioned by a `PowerManagementCluster` (see `../orion-cluster`).
+Apply order: `../cluster.yaml` and `../capability-profile.yaml` first -- the shared
+`PowerManagementCluster` this scenario references by name, which also creates the operand namespace,
+and the profile the scripted fixture matches against. Then `ups-and-server.yaml`.
 
 What to observe:
 

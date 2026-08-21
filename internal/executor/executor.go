@@ -85,7 +85,11 @@ type Executor struct {
 // Input is the executor's pure data contract. It contains already-compiled
 // waves plus the action metadata needed to produce execution evidence.
 type Input struct {
-	ExecutionID        string
+	ExecutionID string
+	// DeduplicationKey is the trigger-episode digest ExecutionID was derived from. Carried so the
+	// audit row can name the episode without ExecutionID having to *be* the digest, which is what
+	// F-100 was: a 64-character hex string written into a uuid column.
+	DeduplicationKey   string
 	ObservedAt         time.Time
 	ShutdownFlow       string
 	TriggerDecisionID  string
@@ -252,6 +256,18 @@ type Result struct {
 	DegradedMessage string
 	TierOverruns    []TierOverrun
 
+	// RecordError is every audit-write failure the run accumulated, kept apart from the error
+	// Execute returns.
+	//
+	// F-100: they used to be the same value. Execute joined the record error into its returned
+	// error on the completion path, so a run that traversed every wave came back with a non-nil
+	// error and the caller mapped it to phase Failed. An audit outage is not a shutdown outcome,
+	// and reporting it as one meant the only visible symptom of a broken audit trail was a
+	// shutdown claiming to have failed -- which points the reader at the wrong system entirely.
+	//
+	// The caller must publish this. Silence here is a shutdown whose evidence was never written.
+	RecordError error
+
 	// Adaptive is the pointer and timing state the run ended on, for the caller to
 	// persist and publish.
 	Adaptive AdaptiveResult
@@ -311,6 +327,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	var recordErr error
 	recordErr = errors.Join(recordErr, writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
 		ExecutionID:       executionID,
+		DeduplicationKey:  input.DeduplicationKey,
 		ObservedAt:        observedAt,
 		ShutdownFlow:      input.ShutdownFlow,
 		TriggerDecisionID: input.TriggerDecisionID,
@@ -355,6 +372,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		}
 		accumulatedRecordErr = errors.Join(accumulatedRecordErr, writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
 			ExecutionID:       executionID,
+			DeduplicationKey:  input.DeduplicationKey,
 			ObservedAt:        completedAt,
 			ShutdownFlow:      input.ShutdownFlow,
 			TriggerDecisionID: input.TriggerDecisionID,
@@ -371,7 +389,8 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			Revalidation:      map[string]any{"inputHash": input.InputHash},
 			Details:           details,
 		}))
-		return result, errors.Join(groupErr, accumulatedRecordErr)
+		result.RecordError = accumulatedRecordErr
+		return result, groupErr
 	}
 
 	runWave := func(wave Wave, waveState waveAdaptiveState, window tierOverrunWindow, lowerTierDue bool, waveStart time.Time, actionCtx context.Context) waveExecutionResult {
@@ -490,7 +509,8 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		waveState, adaptiveErr := e.evaluateWave(ctx, adaptiveInput, wave, remainingPlanDuration(input.Waves, waveIndex))
 		if adaptiveErr != nil {
 			result.Phase = PhaseFailed
-			return result, errors.Join(adaptiveErr, recordErr)
+			result.RecordError = recordErr
+			return result, adaptiveErr
 		}
 		adaptiveInput.Pointer = waveState.Pointer
 		adaptiveInput.Timing = waveState.Timing
@@ -564,7 +584,8 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		DryRun:      dryRun,
 		StartedAt:   startedAt,
 	}))
-	return result, recordErr
+	result.RecordError = recordErr
+	return result, nil
 }
 
 func effectiveTierOverrunPolicy(policy string) string {
@@ -1363,6 +1384,7 @@ func (e Executor) recordCompletion(ctx context.Context, writer audit.Writer, inp
 	}
 	recordErr = errors.Join(recordErr, writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
 		ExecutionID:       rec.ExecutionID,
+		DeduplicationKey:  input.DeduplicationKey,
 		ObservedAt:        completedAt,
 		ShutdownFlow:      input.ShutdownFlow,
 		TriggerDecisionID: input.TriggerDecisionID,

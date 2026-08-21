@@ -125,6 +125,13 @@ func Verify(match MatchResult, observed map[string]string) Verification {
 		declared[expected] = struct{}{}
 	}
 	for name := range reported {
+		// F-102: profiles never declare driver.* names, so counting them as unexpected would
+		// report drift on every verification of a healthy device. driver.parameter.port is the
+		// clearest case -- it is the connection setting for this installation, and no product
+		// record could name it.
+		if isDriverVariable(name) {
+			continue
+		}
 		if _, standard := standardNUTVariables[name]; standard {
 			continue
 		}

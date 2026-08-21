@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
@@ -323,6 +324,17 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.LastExecution.TriggerActive).To(BeTrue())
 			firstKey := resource.Status.LastExecution.DeduplicationKey
 			Expect(firstKey).NotTo(BeEmpty())
+
+			// F-100: the episode digest and the execution identity are two values now. The digest
+			// is 64 hex characters and cannot be a uuid primary key; the identity is derived from
+			// it and is what the six audit tables are keyed on.
+			Expect(resource.Status.LastExecution.ExecutionID).NotTo(Equal(firstKey))
+			_, uuidErr := uuid.Parse(resource.Status.LastExecution.ExecutionID)
+			Expect(uuidErr).NotTo(HaveOccurred(), "execution identity must be a UUID or every audit write fails")
+			for _, execution := range store.shutdownFlowExecutions {
+				Expect(execution.ExecutionID).To(Equal(resource.Status.LastExecution.ExecutionID))
+				Expect(execution.DeduplicationKey).To(Equal(firstKey))
+			}
 			executionReady := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionExecutionReady)
 			Expect(executionReady).NotTo(BeNil())
 			Expect(executionReady.Status).To(Equal(metav1.ConditionTrue))

@@ -31,6 +31,21 @@ const (
 	VariableUPSFirmware     = "ups.firmware"
 )
 
+// driverVariablePrefix is the NUT namespace describing the driver rather than the product.
+//
+// F-102: a profile is a product record, and no bundled profile carries a driver.* name. A draft
+// carried ten of them, including driver.parameter.port -- which is the connection setting for one
+// installation and belongs in the UPSDevice, not in a profile that a guide invites the user to
+// send upstream for the shared catalog. driver.name and driver.version are just as wrong there:
+// they record which NUT build read the device, so they change with the operand image while the
+// product does not.
+const driverVariablePrefix = "driver."
+
+// isDriverVariable reports whether a NUT variable describes the driver rather than the device.
+func isDriverVariable(name string) bool {
+	return strings.HasPrefix(name, driverVariablePrefix)
+}
+
 // standardNUTVariables is the set of NUT variable names treated as standard for
 // drafting purposes. It is not exhaustive of every driver extension in
 // existence, and it does not need to be: anything outside it is reported as
@@ -100,6 +115,11 @@ type Draft struct {
 	NonStandardVariables []string
 	SuggestedAliases     map[string]string
 	Notes                []string
+
+	// DroppedDriverVariables counts the driver.* names the device reported and the draft left
+	// out. Reported rather than silently discarded, so a user comparing the draft against
+	// `upsc` output can see the difference was deliberate.
+	DroppedDriverVariables int
 }
 
 // BuildDraft turns a device read into a proposed profile. It is deliberately
@@ -113,9 +133,14 @@ func BuildDraft(observation ProbeObservation, options DraftOptions) Draft {
 	}
 
 	reported := make(map[string]struct{}, len(observation.Variables))
+	driverVariables := 0
 	for name := range observation.Variables {
 		name = strings.TrimSpace(name)
 		if name == "" {
+			continue
+		}
+		if isDriverVariable(name) {
+			driverVariables++
 			continue
 		}
 		reported[name] = struct{}{}
@@ -124,6 +149,7 @@ func BuildDraft(observation ProbeObservation, options DraftOptions) Draft {
 			draft.NonStandardVariables = append(draft.NonStandardVariables, name)
 		}
 	}
+	draft.DroppedDriverVariables = driverVariables
 	sort.Strings(draft.Variables)
 	sort.Strings(draft.NonStandardVariables)
 
@@ -253,6 +279,12 @@ func draftNotes(draft Draft, reported map[string]struct{}) []string {
 		notes = append(notes, fmt.Sprintf("%d reported variable(s) are not standard NUT names. "+
 			"Check whether any carry a standard reading under a different name and belong in spec.telemetry.aliases.",
 			len(draft.NonStandardVariables)))
+	}
+	if draft.DroppedDriverVariables > 0 {
+		notes = append(notes, fmt.Sprintf("%d reported driver.* variable(s) were left out. They describe the NUT "+
+			"driver rather than the product -- driver.version changes with the operand image, and "+
+			"driver.parameter.* is the connection setting for one installation and belongs in the UPSDevice.",
+			draft.DroppedDriverVariables))
 	}
 	notes = append(notes, "The actuation section is intentionally empty. Actuation commands can cut power to "+
 		"equipment, so support is declared only after it has been verified against the firmware in use.")

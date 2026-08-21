@@ -1,0 +1,34 @@
+---
+# What the scripted fixtures resolve to.
+#
+# Without this, every simulation device fell to the universal unidentified-device profile, which
+# declares ups.status and nothing else -- so a RuntimeBelow or ChargeBelow trigger had no trusted
+# reading behind it and the flow could not compile on any cluster (F-99). The scenarios pair
+# exactly those triggers with these fixtures, so the profile is not optional decoration; it is what
+# makes them runnable.
+#
+# This is not a product record and does not belong in config/catalog/. It describes three .seq
+# fixtures in this directory, and the modelGlob is scoped tightly enough that it can never match a
+# real device: the fixtures set ups.mfr to nut-operator and ups.model to <scenario>-fixture.
+#
+# The variable list is exactly what the fixtures emit. Declaring more would claim readings that are
+# not there, which is the failure a capability profile exists to prevent.
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSCapabilityProfile
+metadata:
+  name: nut-operator-simulation-fixture
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/component: simulation
+spec:
+  version: "1.0.0"
+  selector:
+    modelGlob: "*-fixture"
+  telemetry:
+    variables:
+      - battery.charge
+      - battery.runtime
+      - ups.load
+      - ups.mfr
+      - ups.model
+      - ups.status

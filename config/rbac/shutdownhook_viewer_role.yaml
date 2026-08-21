@@ -24,6 +24,5 @@ rules:
 - apiGroups:
   - power.zalud.io
   resources:
-  - shutdownhooks/status
   verbs:
   - get

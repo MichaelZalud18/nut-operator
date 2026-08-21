@@ -20,6 +20,12 @@ NODE_ACTUATOR_SHA_IMG ?= $(IMAGE_REGISTRY)/node-actuator:$(IMAGE_SHA_TAG)
 # since it is never a real operand and must never be published as one.
 SNMPSIM_FIXTURE_IMG ?= $(IMAGE_REGISTRY)/snmpsim-fixture:$(IMAGE_TAG)
 SNMPSIM_FIXTURE_SHA_IMG ?= $(IMAGE_REGISTRY)/snmpsim-fixture:$(IMAGE_SHA_TAG)
+# COVERAGE_PROFILE is where `make test` writes its coverage profile and where `make cover` and
+# `make cover-html` read it back from. F-111: the profile was written on every run and nothing ever
+# opened it, which is a file that looks like coverage reporting without being any.
+COVERAGE_PROFILE ?= cover.out
+COVERAGE_HTML ?= cover.html
+
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 # Disable VCS stamping by default so local scaffolds outside a clean git repo still build reproducibly.
@@ -106,7 +112,24 @@ vet: ## Run go vet against code.
 
 .PHONY: test
 test: manifests generate fmt vet setup-envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile $(COVERAGE_PROFILE)
+
+.PHONY: cover
+cover: ## Report coverage per function and in total from the profile `make test` wrote.
+	@test -f "$(COVERAGE_PROFILE)" || { \
+		echo "$(COVERAGE_PROFILE) not found. Run 'make test' first."; \
+		exit 1; \
+	}
+	go tool cover -func="$(COVERAGE_PROFILE)"
+
+.PHONY: cover-html
+cover-html: ## Render the coverage profile as a browsable HTML report.
+	@test -f "$(COVERAGE_PROFILE)" || { \
+		echo "$(COVERAGE_PROFILE) not found. Run 'make test' first."; \
+		exit 1; \
+	}
+	go tool cover -html="$(COVERAGE_PROFILE)" -o "$(COVERAGE_HTML)"
+	@echo "Wrote $(COVERAGE_HTML)"
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.

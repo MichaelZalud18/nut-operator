@@ -376,6 +376,32 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              identity:
+                description: identity reports what the device says it is, beside what
+                  spec.identity declares it to be.
+                properties:
+                  declaredModel:
+                    description: |-
+                      declaredModel echoes spec.identity.model as it stood when the comparison was made, so the
+                      two halves of the check are readable together without going back to the spec.
+                    type: string
+                  observedAt:
+                    description: observedAt is when the reported values were read.
+                    format: date-time
+                    type: string
+                  reportedFirmware:
+                    description: reportedFirmware is the ups.firmware value from the
+                      most recent successful telemetry poll.
+                    type: string
+                  reportedManufacturer:
+                    description: reportedManufacturer is the ups.mfr value from the
+                      most recent successful telemetry poll.
+                    type: string
+                  reportedModel:
+                    description: reportedModel is the ups.model value from the most
+                      recent successful telemetry poll.
+                    type: string
+                type: object
               lastPollTime:
                 description: lastPollTime is the most recent successful telemetry
                   poll.

@@ -189,7 +189,7 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		return renderedNodePowerAgent{}, err
 	}
 	namespace := nodePowerAgentNamespace(agent, cluster)
-	operandNamespace, err := r.ensureOperandNamespace(ctx, namespace)
+	operandNamespace, err := ensureOperandNamespace(ctx, r.Client, namespace, operandNamespaceCreateAllowed(cluster))
 	if err != nil {
 		return renderedNodePowerAgent{}, err
 	}
@@ -707,32 +707,6 @@ func nodePowerAgentSignalPath(agent *powerv1alpha1.NodePowerAgent) string {
 
 func shellQuotedNUTValue(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
-}
-
-// ensureOperandNamespace creates or adopts the operand namespace and returns it as it now stands.
-//
-// The returned object carries whatever labels the namespace already had, including any
-// pod-security.kubernetes.io/* set by whoever owns the cluster's admission policy. The mutation
-// below adds this operator's own two labels and touches nothing else, which is what lets
-// nodePowerAgentPodSecurityConflict read the enforced level without a second API call and without
-// any risk of this operator being the thing that changed it.
-func (r *NodePowerAgentReconciler) ensureOperandNamespace(ctx context.Context, name string) (*corev1.Namespace, error) {
-	if err := rejectReservedOperandNamespace(name); err != nil {
-		return nil, err
-	}
-	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, namespace, func() error {
-		if namespace.Labels == nil {
-			namespace.Labels = map[string]string{}
-		}
-		namespace.Labels["app.kubernetes.io/managed-by"] = "nut-operator"
-		namespace.Labels["power.zalud.io/operand-namespace"] = "true"
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return namespace, nil
 }
 
 func (r *NodePowerAgentReconciler) ensureNodePowerAgentConfigMap(ctx context.Context, agent *powerv1alpha1.NodePowerAgent, namespace string, data map[string]string) (*corev1.ConfigMap, error) {

@@ -28,12 +28,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
@@ -42,6 +44,14 @@ import (
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 	"github.com/MichaelZalud18/nut-operator/internal/nodeselector"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
+)
+
+// triggerNotEligibleReason and triggerNotEligibleMessage are the single statement published
+// whenever no trigger is eligible, so the ExecutionReady condition and status.lastExecution cannot
+// drift into saying different things about the same state (F-106).
+const (
+	triggerNotEligibleReason  = "TriggerNotEligible"
+	triggerNotEligibleMessage = "shutdown flow execution has not started because no trigger is eligible"
 )
 
 func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context, writer audit.Writer, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, bundle resolver.StructuralBundle) error {
@@ -82,8 +92,8 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 				&flow.Status.Conditions,
 				flow.Generation,
 				false,
-				"TriggerNotEligible",
-				"shutdown flow execution has not started because no trigger is eligible",
+				triggerNotEligibleReason,
+				triggerNotEligibleMessage,
 			)
 			return nil
 		}
@@ -210,12 +220,40 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 			status.Message,
 		)
 	}
+	// F-100: an audit outage gets its own signal rather than being folded into the execution
+	// phase. A run that traversed every wave used to come back Failed because the record error was
+	// the returned error, which pointed the reader at the shutdown when the broken thing was the
+	// database. Degraded is the honest condition -- the shutdown happened, the evidence for it did
+	// not -- and the phase now reports what the executor actually did.
+	if result.RecordError != nil {
+		log := logf.FromContext(ctx)
+		log.Error(result.RecordError, "Could not record shutdown flow execution evidence",
+			"shutdownflow", flow.Name, "executionID", result.ExecutionID)
+		message := "shutdown flow execution ran but its audit evidence was not recorded: " + result.RecordError.Error()
+		setDegradedCondition(
+			&flow.Status.Conditions,
+			flow.Generation,
+			true,
+			"ExecutionAuditRecordFailed",
+			message,
+		)
+		if status.Message == "" {
+			status.Message = message
+		}
+	}
+
 	flow.Status.LastExecution = status
 	applyLastExecutionPhase(flow)
-	return err
+	if err != nil {
+		return err
+	}
+	// Returned so the caller's audit-failure path still fires, but after the status above has
+	// already said what happened -- the record error must be visible on the resource, not only in
+	// a log line the reader has to know to go looking for.
+	return result.RecordError
 }
 
-func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, executionID string, bundle resolver.StructuralBundle, rehearsal bool) (executorpkg.Input, error) {
+func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, dedupeKey string, bundle resolver.StructuralBundle, rehearsal bool) (executorpkg.Input, error) {
 	waves := executorWavesFromFlow(flow.Status.CompiledWaves, flow.Status.CompiledSteps)
 	groups, err := r.executorGroupsFromFlow(ctx, flow)
 	if err != nil {
@@ -232,7 +270,8 @@ func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flo
 		observation = r.rehearsalPowerObservation(ctx, evaluation.SelectedUPSDevices, observation.RuntimeTrusted)
 	}
 	return executorpkg.Input{
-		ExecutionID:        executionID,
+		ExecutionID:        shutdownExecutionIdentity(dedupeKey),
+		DeduplicationKey:   dedupeKey,
 		ObservedAt:         observedAt,
 		ShutdownFlow:       flow.Name,
 		TriggerDecisionID:  eligibleTriggerDecisionID(evaluation),
@@ -1135,13 +1174,21 @@ func executionAlreadyRecorded(status *powerv1alpha1.ShutdownExecutionStatus, ded
 	return status.TriggerActive && status.DeduplicationKey == dedupeKey
 }
 
+// deactivateLastExecution clears the trigger episode and, with it, any reason that only made
+// sense while the episode was live.
+//
+// F-103's neighbour: rewriting Reason and leaving Message behind published a pair that
+// contradicted each other -- reason TriggerNotEligible beside "eligible trigger episode already
+// has execution evidence". Reason and Message are one statement, so they move together.
 func deactivateLastExecution(status **powerv1alpha1.ShutdownExecutionStatus) {
 	if status == nil || *status == nil {
 		return
 	}
 	(*status).TriggerActive = false
-	if (*status).Reason == "AlreadyExecuted" {
-		(*status).Reason = "TriggerNotEligible"
+	switch (*status).Reason {
+	case "AlreadyExecuted", "RehearsalAlreadyExecuted":
+		(*status).Reason = triggerNotEligibleReason
+		(*status).Message = triggerNotEligibleMessage
 	}
 }
 
@@ -1178,6 +1225,35 @@ func shutdownExecutionDeduplicationKey(flow *powerv1alpha1.ShutdownFlow, evaluat
 	}
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
+}
+
+// shutdownExecutionIDNamespace scopes the derived execution UUIDs to this project, so a digest
+// that happened to collide with one from another system could not produce the same UUID.
+var shutdownExecutionIDNamespace = uuid.NewSHA1(uuid.NameSpaceDNS, []byte("power.zalud.io"))
+
+// shutdownExecutionIdentity derives the execution's identity from its trigger-episode digest.
+//
+// F-100. The digest used to be the identity outright, and it could not be: `execution_id` is a
+// `uuid` column in six tables, so every write failed with SQLSTATE 22P02 and the execution audit
+// trail was empty on every cluster -- resume state included, which is why resume-after-restart
+// could never have worked either.
+//
+// Widening those columns to `text` was the other option and was not taken. The identity does not
+// stay in PostgreSQL: it is stamped on Kubernetes objects as the `power.zalud.io/execution` label,
+// where 63 characters is the ceiling and a 64-character digest is silently truncated -- so the
+// label stopped equalling the ID it names. It also has five foreign keys pointing at it, which
+// `text` would mean rebuilding. A UUID is 36 characters, survives the label intact, and is the type
+// every other identity column in this schema already uses.
+//
+// UUIDv5 keeps what the digest was providing: the derivation is deterministic, so the same trigger
+// episode always yields the same execution ID and a re-record lands on the primary key instead of
+// creating a second row. The digest itself is kept beside it, in status and in
+// `shutdownflow_executions.deduplication_key`.
+func shutdownExecutionIdentity(dedupeKey string) string {
+	if dedupeKey == "" {
+		return uuid.NewString()
+	}
+	return uuid.NewSHA1(shutdownExecutionIDNamespace, []byte(dedupeKey)).String()
 }
 
 func shutdownExecutionPhase(phase string, err error) powerv1alpha1.ShutdownExecutionPhase {

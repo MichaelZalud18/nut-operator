@@ -18,6 +18,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -28,7 +29,11 @@ import (
 )
 
 type fakeAuditWriter struct {
-	mu                       sync.Mutex
+	mu sync.Mutex
+	// writeErr fails every write keyed on execution_id, which is the shape F-100 had in
+	// production: a SHA-256 digest going into a uuid column made all six tables reject their
+	// rows with SQLSTATE 22P02 while the shutdown itself ran normally.
+	writeErr                 error
 	powerEvents              []audit.PowerEvent
 	telemetrySnapshots       []audit.TelemetrySnapshot
 	capabilityProfileMatches []audit.CapabilityProfileMatch
@@ -89,6 +94,9 @@ func (w *fakeAuditWriter) RecordShutdownFlowDecision(_ context.Context, decision
 func (w *fakeAuditWriter) RecordShutdownFlowExecution(_ context.Context, execution audit.ShutdownFlowExecution) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.writeErr != nil {
+		return w.writeErr
+	}
 	w.executions = append(w.executions, execution)
 	return nil
 }
@@ -96,6 +104,9 @@ func (w *fakeAuditWriter) RecordShutdownFlowExecution(_ context.Context, executi
 func (w *fakeAuditWriter) RecordShutdownFlowExecutionWave(_ context.Context, wave audit.ShutdownFlowExecutionWave) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.writeErr != nil {
+		return w.writeErr
+	}
 	w.waves = append(w.waves, wave)
 	return nil
 }
@@ -103,6 +114,9 @@ func (w *fakeAuditWriter) RecordShutdownFlowExecutionWave(_ context.Context, wav
 func (w *fakeAuditWriter) RecordShutdownFlowExecutionGroup(_ context.Context, group audit.ShutdownFlowExecutionGroup) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.writeErr != nil {
+		return w.writeErr
+	}
 	w.groups = append(w.groups, group)
 	return nil
 }
@@ -740,4 +754,97 @@ func resumePhases(states []audit.ExecutorResumeState) []string {
 		phases = append(phases, state.Phase)
 	}
 	return phases
+}
+
+// F-100: a run that traverses every wave must not report as failed because the database rejected
+// its evidence. The audit outage was indistinguishable from a shutdown failure, so the only symptom
+// of a broken audit trail pointed the reader at the wrong system.
+func TestExecutorSeparatesAuditFailureFromExecutionOutcome(t *testing.T) {
+	writeErr := errors.New(`pq: invalid input syntax for type uuid (SQLSTATE 22P02)`)
+	writer := &fakeAuditWriter{writeErr: writeErr}
+	fixed := time.Date(2026, 8, 20, 13, 0, 0, 0, time.UTC)
+	executor := Executor{
+		Writer: writer,
+		Clock:  func() time.Time { return fixed },
+		NewID:  sequenceIDs(),
+	}
+
+	result, err := executor.Execute(context.Background(), Input{
+		ExecutionID:        "00000000-0000-5000-8000-00000000000a",
+		DeduplicationKey:   "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		ObservedAt:         fixed,
+		ShutdownFlow:       "conserve-power",
+		Mode:               ModeDryRun,
+		PlanConfigHash:     "plan-hash-a",
+		InputHash:          "input-hash-a",
+		SelectedUPSDevices: []string{"ups-a"},
+		Waves:              []Wave{{Index: 0, Groups: []string{"applications"}}},
+		Groups: []Group{{
+			Name:            "applications",
+			Action:          "ScaleWorkload",
+			SelectedTargets: []Target{{Kind: "Deployment", Namespace: "apps", Name: "web"}},
+		}},
+	})
+
+	// The execution did what it was asked to do, so Execute reports no execution error.
+	if err != nil {
+		t.Fatalf("an audit-write failure was returned as an execution failure: %v", err)
+	}
+	if result.Phase != PhaseCompleted {
+		t.Errorf("phase = %q, want Completed -- the waves all ran", result.Phase)
+	}
+	if result.Groups != 1 || result.ActionAttempts != 1 {
+		t.Errorf("the run did not complete: %#v", result)
+	}
+
+	// And the outage is still reported, on its own channel. Losing it entirely would be worse than
+	// mislabelling it: a shutdown whose evidence was never written must not look clean.
+	if result.RecordError == nil {
+		t.Fatal("every audit write failed and RecordError is nil")
+	}
+	if !errors.Is(result.RecordError, writeErr) {
+		t.Errorf("RecordError does not carry the write failure: %v", result.RecordError)
+	}
+}
+
+// The dedup key rides along to the audit row so a record can name the trigger episode it belongs
+// to, now that the execution ID is derived from that digest rather than being it.
+func TestExecutorStampsTheDeduplicationKeyOnExecutionRecords(t *testing.T) {
+	const digest = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	writer := &fakeAuditWriter{}
+	fixed := time.Date(2026, 8, 20, 13, 0, 0, 0, time.UTC)
+	executor := Executor{
+		Writer: writer,
+		Clock:  func() time.Time { return fixed },
+		NewID:  sequenceIDs(),
+	}
+
+	_, err := executor.Execute(context.Background(), Input{
+		ExecutionID:        "00000000-0000-5000-8000-00000000000a",
+		DeduplicationKey:   digest,
+		ObservedAt:         fixed,
+		ShutdownFlow:       "conserve-power",
+		Mode:               ModeDryRun,
+		PlanConfigHash:     "plan-hash-a",
+		InputHash:          "input-hash-a",
+		SelectedUPSDevices: []string{"ups-a"},
+		Waves:              []Wave{{Index: 0, Groups: []string{"applications"}}},
+		Groups: []Group{{
+			Name:            "applications",
+			Action:          "ScaleWorkload",
+			SelectedTargets: []Target{{Kind: "Deployment", Namespace: "apps", Name: "web"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	if len(writer.executions) == 0 {
+		t.Fatal("no execution records were written")
+	}
+	for i, execution := range writer.executions {
+		if execution.DeduplicationKey != digest {
+			t.Errorf("execution record %d carries deduplication key %q, want the episode digest", i, execution.DeduplicationKey)
+		}
+	}
 }

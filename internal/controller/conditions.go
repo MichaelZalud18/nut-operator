@@ -97,3 +97,16 @@ func setExecutionReadyCondition(conditions *[]metav1.Condition, generation int64
 		Message:            message,
 	})
 }
+
+// setIdentityVerifiedCondition takes the status directly rather than a bool, because Unknown is a
+// real answer here: a device with no declared model, or one that has not reported yet, has nothing
+// to verify and must not present as either verified or mismatched.
+func setIdentityVerifiedCondition(conditions *[]metav1.Condition, generation int64, status metav1.ConditionStatus, reason, message string) {
+	meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               powerv1alpha1.ConditionIdentityVerified,
+		Status:             status,
+		ObservedGeneration: generation,
+		Reason:             reason,
+		Message:            message,
+	})
+}

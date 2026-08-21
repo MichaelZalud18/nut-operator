@@ -30,7 +30,7 @@ const (
 	DefaultSchema = "power"
 
 	// CurrentSchemaVersion is the latest bundled migration version.
-	CurrentSchemaVersion = 5
+	CurrentSchemaVersion = 7
 )
 
 // Migration is one ordered PostgreSQL migration.
@@ -73,7 +73,62 @@ func Migrations(schema string) ([]Migration, error) {
 			Name:    "retention_index_schema",
 			SQL:     retentionIndexSchemaSQL(quotedSchema),
 		},
+		{
+			Version: 6,
+			Name:    "capability_match_identity_schema",
+			SQL:     capabilityMatchIdentitySchemaSQL(quotedSchema),
+		},
+		{
+			Version: 7,
+			Name:    "execution_deduplication_key_schema",
+			SQL:     executionDeduplicationKeySchemaSQL(quotedSchema),
+		},
 	}, nil
+}
+
+// executionDeduplicationKeySchemaSQL gives the trigger-episode digest a column of its own.
+//
+// F-100: the digest was being used *as* execution_id, which is typed uuid. Every write to
+// shutdownflow_executions and the five tables keyed on it failed with SQLSTATE 22P02 on every
+// cluster, so the execution audit trail was empty everywhere and resume-after-restart could never
+// work. execution_id is now derived from the digest instead of being it, and the digest lands here.
+//
+// No existing row can be backfilled: there are none. That is the finding.
+func executionDeduplicationKeySchemaSQL(schema string) string {
+	return fmt.Sprintf(`ALTER TABLE %[1]s.shutdownflow_executions
+  ADD COLUMN IF NOT EXISTS deduplication_key text NOT NULL DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS shutdownflow_executions_dedupe_idx
+  ON %[1]s.shutdownflow_executions (deduplication_key);
+
+INSERT INTO %[1]s.audit_schema_migrations (version, name)
+VALUES (7, 'execution_deduplication_key_schema')
+ON CONFLICT (version) DO NOTHING;
+`, schema)
+}
+
+// capabilityMatchIdentitySchemaSQL records both halves of the F-101 identity check beside the
+// profile the match selected.
+//
+// A capability match is computed from spec.identity.model alone, so a row saying which profile a
+// device resolved to could not say whether that device was the product the profile describes. The
+// columns default to empty rather than NULL because every existing row predates the check: the
+// absence of evidence is what they record, and an empty string says that without making every
+// reader handle NULL.
+//
+// ADD COLUMN IF NOT EXISTS makes this safe against a schema created from the current initial DDL,
+// which already declares both columns.
+func capabilityMatchIdentitySchemaSQL(schema string) string {
+	return fmt.Sprintf(`ALTER TABLE %[1]s.capability_profile_matches
+  ADD COLUMN IF NOT EXISTS declared_model text NOT NULL DEFAULT '';
+
+ALTER TABLE %[1]s.capability_profile_matches
+  ADD COLUMN IF NOT EXISTS reported_model text NOT NULL DEFAULT '';
+
+INSERT INTO %[1]s.audit_schema_migrations (version, name)
+VALUES (6, 'capability_match_identity_schema')
+ON CONFLICT (version) DO NOTHING;
+`, schema)
 }
 
 // retentionIndexSchemaSQL indexes the column retention actually filters on.
@@ -185,6 +240,8 @@ CREATE TABLE IF NOT EXISTS %[1]s.capability_profile_matches (
   profile_source text NOT NULL,
   match_tier text NOT NULL,
   fallback boolean NOT NULL DEFAULT false,
+  declared_model text NOT NULL DEFAULT '',
+  reported_model text NOT NULL DEFAULT '',
   diagnostics jsonb NOT NULL DEFAULT '[]'::jsonb
 );
 
@@ -248,6 +305,7 @@ func executorStateSchemaSQL(schema string) string {
 
 CREATE TABLE IF NOT EXISTS %[1]s.shutdownflow_executions (
   execution_id uuid PRIMARY KEY,
+  deduplication_key text NOT NULL DEFAULT '',
   observed_at timestamptz NOT NULL DEFAULT now(),
   shutdownflow text NOT NULL,
   trigger_decision_id uuid,

@@ -1,0 +1,103 @@
+# Egress for the controller manager on a default-deny-egress cluster.
+#
+# NOT part of the default bundle, and that is deliberate (F-98). NetworkPolicy is additive per
+# direction: a pod with no Egress-typed policy selecting it has unrestricted egress, and the moment
+# one appears the pod is restricted to exactly what that policy allows. Shipping a partial egress
+# policy by default would therefore take working permissive clusters and break them, while only
+# half-fixing default-deny ones.
+#
+# Two of the five edges below cannot be written portably -- PostgreSQL and hook endpoints are
+# wherever you put them, and the API server's address is cluster-specific -- so this file is a
+# template you complete, not a manifest you apply unchanged. Applying it with the placeholders
+# still in place will leave the operator unable to reach the API server, which is worse than
+# applying nothing.
+#
+# Apply with:
+#   kubectl apply -k config/network-policy/egress/
+#
+# The symptom this fixes: telemetry polling fails with `i/o timeout`, the audit store fails with a
+# dial timeout, and nothing in the operator says the cause is network policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: nut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: allow-operator-egress
+  namespace: system
+spec:
+  podSelector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: nut-operator
+  policyTypes:
+    - Egress
+  egress:
+    # 1. DNS. Every other rule below resolves a name first, so omitting this makes all of them
+    #    fail in a way that looks like the destination is down rather than like DNS is blocked.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # 2. upsd, for telemetry polling. Portable because the operator labels its own operand
+    #    namespace, so this matches wherever spec.operandNamespace points.
+    #    Adjust the port if spec.service.port is not the default 3493.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              power.zalud.io/operand-namespace: "true"
+      ports:
+        - port: 3493
+          protocol: TCP
+
+    # 3. The Kubernetes API server. REQUIRED -- a controller that cannot reach the API server does
+    #    not run at all.
+    #
+    #    There is no portable selector for this. The API server is usually reachable only as a
+    #    host-network endpoint or a ClusterIP with no pod behind it, so a podSelector will not
+    #    match it. Replace the block below with your control plane's addresses:
+    #
+    #      kubectl get endpoints kubernetes -n default
+    #
+    #    On some CNIs there is a better answer than an ipBlock -- Cilium has
+    #    `toEntities: [kube-apiserver]` on its own CiliumNetworkPolicy CRD, which is worth using
+    #    instead of this if you run Cilium.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0        # REPLACE: your API server address(es), e.g. 203.0.113.10/32
+      ports:
+        - port: 6443
+          protocol: TCP
+
+    # 4. PostgreSQL, for the audit store. Delete this rule entirely under `storage: Disabled`.
+    #
+    #    For CNPG, point the namespaceSelector at the namespace holding the Cluster. For
+    #    ExternalPostgres, replace it with an ipBlock for the database host.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: power-system   # REPLACE: your CNPG namespace
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # 5. ShutdownHook endpoints. Delete this rule if no flow declares hooks.
+    #
+    #    Scope it to the hosts in PowerManagementCluster.spec.hooks.allowedEndpoints. Those are
+    #    already an allowlist, so the two should agree -- a hook the policy blocks but the
+    #    allowlist permits fails at delivery time, during an outage.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0        # REPLACE: your hook endpoint address(es)
+      ports:
+        - port: 443
+          protocol: TCP

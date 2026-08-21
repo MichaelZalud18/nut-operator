@@ -1,0 +1,6 @@
+# Opt-in egress policy for default-deny-egress clusters. Complete the placeholders in
+# allow-operator-egress.yaml before applying -- see the comments in that file.
+resources:
+  - allow-operator-egress.yaml
+
+namespace: nut-operator-system

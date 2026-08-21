@@ -851,6 +851,15 @@ func (r Runner) httpClient() *http.Client {
 	return http.DefaultClient
 }
 
+// HookURLAllowed reports whether a hook URL is permitted by the cluster allowlist (HK-9).
+//
+// Exported so the compile path can apply the same check this delivery path does. Two copies of an
+// allowlist is the F-50 shape: they agree until one is edited, and the disagreement surfaces at the
+// worst possible moment. There is one implementation and both callers use it.
+func HookURLAllowed(parsed *url.URL, allowed []powerv1alpha1.PowerHookEndpointAllowlistEntry) bool {
+	return hookURLAllowed(parsed, allowed)
+}
+
 func hookURLAllowed(parsed *url.URL, allowed []powerv1alpha1.PowerHookEndpointAllowlistEntry) bool {
 	for _, endpoint := range allowed {
 		if parsed.Scheme != endpoint.Scheme {

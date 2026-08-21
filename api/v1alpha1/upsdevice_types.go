@@ -209,11 +209,47 @@ type UPSDeviceStatus struct {
 	// +optional
 	Capability *UPSDeviceCapabilityStatus `json:"capability,omitempty"`
 
+	// identity reports what the device says it is, beside what spec.identity declares it to be.
+	// +optional
+	Identity *UPSDeviceIdentityStatus `json:"identity,omitempty"`
+
 	// conditions represent the current state of the UPSDevice resource.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// UPSDeviceIdentityStatus carries the identity a device reported about itself.
+//
+// Facts only, per EX-28: what the device said and what the spec declared, never a verdict on the
+// pair. The verdict is the IdentityVerified condition, so there is one place it is stated.
+//
+// The capability profile is selected from the *declared* model, because GP-5 keeps the failure path
+// on authored input. That makes a typo in spec.identity.model invisible without this: the device
+// binds to whatever profile the typo names, and that profile is what decides which telemetry is
+// trusted and which triggers are supported.
+type UPSDeviceIdentityStatus struct {
+	// reportedModel is the ups.model value from the most recent successful telemetry poll.
+	// +optional
+	ReportedModel string `json:"reportedModel,omitempty"`
+
+	// reportedManufacturer is the ups.mfr value from the most recent successful telemetry poll.
+	// +optional
+	ReportedManufacturer string `json:"reportedManufacturer,omitempty"`
+
+	// reportedFirmware is the ups.firmware value from the most recent successful telemetry poll.
+	// +optional
+	ReportedFirmware string `json:"reportedFirmware,omitempty"`
+
+	// declaredModel echoes spec.identity.model as it stood when the comparison was made, so the
+	// two halves of the check are readable together without going back to the spec.
+	// +optional
+	DeclaredModel string `json:"declaredModel,omitempty"`
+
+	// observedAt is when the reported values were read.
+	// +optional
+	ObservedAt *metav1.Time `json:"observedAt,omitempty"`
 }
 
 // UPSEndpointSpec describes a UPS network endpoint.

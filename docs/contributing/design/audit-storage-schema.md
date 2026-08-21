@@ -68,6 +68,23 @@ such as CloudNativePG: those talk to PostgreSQL as the workload they manage, not
 - `node_signal_handoffs`: signal-file evidence passed to node power agents.
 - `executor_resume_states`: compact restart state for idempotent executor resume.
 
+### Identity
+
+Every table is keyed on a `uuid`. Most are freshly generated per row; `shutdownflow_executions` is
+not, because an execution has to be identifiable by the trigger episode that caused it rather than
+by when it happened to be written.
+
+`execution_id` is a UUIDv5 derived from that episode's content digest, so the same episode always
+resolves to the same key and a re-record updates the row instead of adding a second one. The digest
+is kept beside it in `deduplication_key`, which is what ties a row back to the episode. The two are
+separate columns on purpose: the digest is 64 hex characters and cannot be a `uuid`, and the
+identity is also stamped on Kubernetes objects as the `power.zalud.io/execution` label, where 63
+characters is the ceiling. A UUID fits that; a digest does not.
+
+The five tables carrying execution evidence — waves, groups, action attempts, node releases, signal
+handoffs — plus `executor_resume_states` all reference `execution_id` with `ON DELETE CASCADE`, so
+the identity is load-bearing across the whole execution record and not local to one table.
+
 ## Boundary
 
 CR status remains the current summary and review surface. PostgreSQL holds history, telemetry

@@ -77,6 +77,11 @@ var _ = Describe("UPSDevice Webhook", func() {
 			_, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("spec.driver"))
+			// F-103: the rejection used to hand field.NotSupported the unsupported list, so it
+			// named the rejected driver as a supported value. The message must state the scope
+			// boundary and must not offer the driver back to the user.
+			Expect(err.Error()).To(ContainSubstring("USB and serial attachment is out of scope"))
+			Expect(err.Error()).NotTo(ContainSubstring("supported values"))
 		})
 
 		It("Should admit an upstream NUT relay device", func() {

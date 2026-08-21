@@ -31,6 +31,13 @@ and upstream relays. Unknown drivers are rejected at admission rather than passe
 appliances that already expose their own `upsd`, `spec.upstreamNUT` relays from it instead of driving
 the device directly.
 
+`status.capability` reports which capability profile the device resolved to, and `status.identity`
+reports what the device says it is — `ups.model`, `ups.mfr`, and `ups.firmware` from the last
+successful poll, beside the `spec.identity.model` the profile was actually matched on. The
+`IdentityVerified` condition compares those two model strings: `True` when they agree, `False` when
+a declared model binds the device to a profile describing different hardware, and `Unknown` when
+either half is missing, which is the normal state for a device matched by driver family.
+
 **`PowerInfrastructure`** — a non-node, non-UPS entity on the power or communication path: a PDU,
 switch, router, panel, or transfer device. It exists so topology can explain how a node is fed and
 reached without implying that anything actuates it.

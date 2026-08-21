@@ -330,6 +330,7 @@ func TestSQLStoreRecordsAllAuditPayloadTypes(t *testing.T) {
 			write: func() error {
 				return store.RecordShutdownFlowExecution(context.Background(), ShutdownFlowExecution{
 					ExecutionID:       "00000000-0000-4000-8000-000000000006",
+					DeduplicationKey:  "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 					ObservedAt:        observedAt,
 					ShutdownFlow:      "conserve-power",
 					TriggerDecisionID: "00000000-0000-4000-8000-000000000005",
@@ -717,5 +718,49 @@ func TestSQLStoreRejectsIncompleteRecords(t *testing.T) {
 	}
 	if err := store.UpsertExecutorResumeState(context.Background(), ExecutorResumeState{}); err == nil {
 		t.Fatal("expected incomplete executor resume state to be rejected")
+	}
+}
+
+// F-100: the execution ID had been the trigger-episode digest itself, which cannot go into a uuid
+// column. The digest now has a column of its own, and the row is worthless for tracing an episode
+// if the insert does not carry it.
+func TestRecordShutdownFlowExecutionCarriesTheDeduplicationKey(t *testing.T) {
+	const digest = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	exec := &fakeExecutor{}
+	store, err := NewSQLStore(exec, SQLStoreOptions{})
+	if err != nil {
+		t.Fatalf("NewSQLStore returned error: %v", err)
+	}
+	observedAt := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+
+	err = store.RecordShutdownFlowExecution(context.Background(), ShutdownFlowExecution{
+		ExecutionID:      "00000000-0000-5000-8000-00000000000a",
+		DeduplicationKey: digest,
+		ObservedAt:       observedAt,
+		ShutdownFlow:     "conserve-power",
+		Mode:             "DryRun",
+		Phase:            "Completed",
+		PlanConfigHash:   "hash-a",
+	})
+	if err != nil {
+		t.Fatalf("RecordShutdownFlowExecution returned error: %v", err)
+	}
+
+	if len(exec.calls) == 0 {
+		t.Fatal("no statement was executed")
+	}
+	call := exec.calls[len(exec.calls)-1]
+	if !strings.Contains(call.query, "deduplication_key") {
+		t.Errorf("insert does not name deduplication_key:\n%s", call.query)
+	}
+
+	found := false
+	for _, arg := range call.args {
+		if value, ok := arg.(string); ok && value == digest {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the episode digest was not bound as an argument: %#v", call.args)
 	}
 }

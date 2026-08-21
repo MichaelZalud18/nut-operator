@@ -272,8 +272,11 @@ spec:
                 properties:
                   create:
                     default: true
-                    description: create allows the operator packaging to create the
-                      namespace.
+                    description: |-
+                      create lets the operator create the namespace if it does not exist. Set it to false to keep
+                      ownership of the namespace's existence -- its quotas, its admission labels, its lifecycle --
+                      with the cluster administrator; the operator then labels a namespace that is already there
+                      and reports the operand namespace missing rather than creating it.
                     type: boolean
                   name:
                     default: power-system

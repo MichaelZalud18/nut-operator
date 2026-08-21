@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -570,4 +571,51 @@ type fakeUpstreamNUTProber struct {
 
 func (p fakeUpstreamNUTProber) Probe(context.Context, upstreamNUTProbeTarget) upstreamNUTProbeResult {
 	return p.result
+}
+
+// upsd ran with no requests or limits while the watchdog sidecar beside it declared 10m/32Mi. An
+// unrequested container is in the first eviction class under node pressure, which is the state a
+// rack losing power produces -- so the one container that has to report the outage was the one
+// most likely to be evicted during it.
+func TestUpsdContainerIsSizedWhenSpecResourcesSaysNothing(t *testing.T) {
+	server := &powerv1alpha1.NUTServer{}
+
+	resources := upsdResources(server)
+
+	cpu := resources.Requests[corev1.ResourceCPU]
+	memory := resources.Requests[corev1.ResourceMemory]
+	if cpu.IsZero() || memory.IsZero() {
+		t.Fatalf("upsd container has no CPU or memory request: %+v", resources.Requests)
+	}
+	if len(resources.Limits) == 0 {
+		t.Fatalf("upsd container has no limits: %+v", resources)
+	}
+
+	// Requests equal limits so the pod stays Guaranteed. The watchdog is sized the same way for
+	// the same reason, and a mismatch on either container drops the whole pod to Burstable.
+	if !resources.Requests[corev1.ResourceCPU].Equal(resources.Limits[corev1.ResourceCPU]) {
+		t.Errorf("upsd CPU request and limit differ, so the pod is not Guaranteed: %+v", resources)
+	}
+	if !resources.Requests[corev1.ResourceMemory].Equal(resources.Limits[corev1.ResourceMemory]) {
+		t.Errorf("upsd memory request and limit differ, so the pod is not Guaranteed: %+v", resources)
+	}
+}
+
+// A user who declares part of the shape owns all of it. Filling in the missing half would turn a
+// deliberate requests-only declaration into a Guaranteed pod behind their back.
+func TestUpsdContainerHonorsDeclaredResourcesVerbatim(t *testing.T) {
+	declared := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m")},
+	}
+	server := &powerv1alpha1.NUTServer{Spec: powerv1alpha1.NUTServerSpec{Resources: declared}}
+
+	resources := upsdResources(server)
+
+	if len(resources.Limits) != 0 {
+		t.Errorf("declared requests-only resources gained limits: %+v", resources)
+	}
+	cpu := resources.Requests[corev1.ResourceCPU]
+	if cpu.String() != "250m" {
+		t.Errorf("declared CPU request is %q, want 250m", cpu.String())
+	}
 }

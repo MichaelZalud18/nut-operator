@@ -78,3 +78,45 @@ func TestWithholdBlockedNodeReleasesCanEmptyTheReleaseSet(t *testing.T) {
 		t.Fatalf("expected no releases to survive, got %#v", releaseNames(kept))
 	}
 }
+
+// F-106: reason and message are one statement. Deactivation rewrote the reason and left the
+// message from the live episode behind, so a flow published TriggerNotEligible beside "eligible
+// trigger episode already has execution evidence" -- two claims that cannot both be true.
+func TestDeactivateLastExecutionClearsTheEpisodeMessage(t *testing.T) {
+	for _, reason := range []string{"AlreadyExecuted", "RehearsalAlreadyExecuted"} {
+		status := &powerv1alpha1.ShutdownExecutionStatus{
+			TriggerActive: true,
+			Reason:        reason,
+			Message:       "eligible trigger episode already has execution evidence",
+		}
+		deactivateLastExecution(&status)
+
+		if status.TriggerActive {
+			t.Errorf("%s: trigger episode is still active after deactivation", reason)
+		}
+		if status.Reason != triggerNotEligibleReason {
+			t.Errorf("%s: reason is %q, want %q", reason, status.Reason, triggerNotEligibleReason)
+		}
+		if status.Message != triggerNotEligibleMessage {
+			t.Errorf("%s: message is %q, want %q", reason, status.Message, triggerNotEligibleMessage)
+		}
+	}
+}
+
+// A reason this function does not own must survive untouched: deactivation reports that the
+// episode ended, not that whatever else happened during it is no longer true.
+func TestDeactivateLastExecutionLeavesUnrelatedReasonsAlone(t *testing.T) {
+	status := &powerv1alpha1.ShutdownExecutionStatus{
+		TriggerActive: true,
+		Reason:        "ExecutionFailed",
+		Message:       "wave 2 action attempt exhausted its retries",
+	}
+	deactivateLastExecution(&status)
+
+	if status.TriggerActive {
+		t.Error("trigger episode is still active after deactivation")
+	}
+	if status.Reason != "ExecutionFailed" || status.Message != "wave 2 action attempt exhausted its retries" {
+		t.Errorf("deactivation rewrote an unrelated reason/message pair: %q / %q", status.Reason, status.Message)
+	}
+}

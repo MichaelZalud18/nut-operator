@@ -61,6 +61,12 @@ metadata:
 spec:
   displayName: Orion Core UPS (simulated)
   driver: dummy-ups
+  # F-99: matching runs on the declared model, never on the reported one, so a fixture whose
+  # ups.model nothing declares falls to the unidentified-device profile and takes every
+  # runtime-based trigger down with it. The IdentityVerified condition confirms this agrees with
+  # what the .seq fixture above reports.
+  identity:
+    model: simulation-fixture
   simulation:
     sequenceConfigMapRef:
       namespace: power-system
@@ -81,6 +87,8 @@ kind: NUTServer
 metadata:
   name: orion-core-simulated
 spec:
+  managementClusterRef:
+    name: sim-power
   namespace: power-system
   deviceSelector:
     matchLabels:

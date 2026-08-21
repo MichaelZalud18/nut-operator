@@ -111,7 +111,12 @@ func validateUPSDeviceAdmission(obj *powerv1alpha1.UPSDevice) error {
 		if obj.Spec.Driver == "" {
 			errs = append(errs, field.Required(specPath.Child("driver"), "required unless spec.upstreamNUT is set"))
 		} else if isUnsupportedLocalUPSDriver(obj.Spec.Driver) {
-			errs = append(errs, field.NotSupported(specPath.Child("driver"), obj.Spec.Driver, unsupportedLocalUPSDrivers()))
+			// F-103. Not field.NotSupported: its third argument is the *valid* set, so passing the
+			// unsupported list reported usbhid-ups as unsupported and then listed it first among
+			// "supported values". There is no valid set to offer here either -- the network
+			// allowlist is not an alternative for a device wired over USB -- so say what is out of
+			// scope instead of offering a substitution that does not exist.
+			errs = append(errs, field.Invalid(specPath.Child("driver"), obj.Spec.Driver, unsupportedLocalUPSDriverMessage))
 		} else if !isSupportedNetworkUPSDriver(obj.Spec.Driver) {
 			errs = append(errs, field.NotSupported(specPath.Child("driver"), obj.Spec.Driver, supportedNetworkUPSDrivers()))
 		}
@@ -223,6 +228,12 @@ func isSupportedNetworkUPSDriver(driver string) bool {
 func supportedNetworkUPSDrivers() []string {
 	return []string{"dummy-ups", "snmp-ups", "netxml-ups", "apcupsd-ups"}
 }
+
+// unsupportedLocalUPSDriverMessage states the scope boundary rather than naming a replacement.
+// RB-1 and RB-2 keep this operator on network-reachable devices: a USB or serial driver needs the
+// device attached to the pod's host, which the operand image cannot express and the operator has
+// no way to schedule against.
+const unsupportedLocalUPSDriverMessage = "requires local USB or serial attachment; USB and serial attachment is out of scope and this operator supports network-reachable UPS devices only"
 
 func isUnsupportedLocalUPSDriver(driver string) bool {
 	for _, unsupported := range unsupportedLocalUPSDrivers() {

@@ -14,6 +14,24 @@ the device behind it is scripted.
 | [homelab](homelab/) | 1 control plane, 3 workers, 1 burst, router + switch | Wave generation from tiers alone, with derived multi-group waves |
 | [multistage](multistage/) | UPS → 2 PDUs → 2 racks, 3 control-plane members | Multi-hop `feeds` closure, and racks as concurrent peers |
 
+## Shared prerequisites
+
+Two files in this directory are applied once and used by every scenario:
+
+- **[cluster.yaml](cluster.yaml)** — the `PowerManagementCluster` named `sim-power` that every
+  `NUTServer`, `ShutdownFlow`, and `NodePowerAgent` here references. It creates the operand
+  namespace and supplies the operand images; a `NodePowerAgent` inherits its images through this
+  reference and cannot render without it. Storage is `Disabled`, because these scenarios are for
+  reading what the operator decides rather than keeping a durable record of it.
+- **[capability-profile.yaml](capability-profile.yaml)** — the `UPSCapabilityProfile` the scripted
+  fixtures match. Without it every fixture device falls to the unidentified-device profile, which
+  declares `ups.status` and nothing else, so the `RuntimeBelow` and `ChargeBelow` triggers these
+  scenarios use have no trusted reading behind them and the flows do not compile.
+
+Each `UPSDevice` here declares `spec.identity.model` matching what its fixture reports, because
+profile matching runs on the declared model and never on the reported one. The `IdentityVerified`
+condition on the device confirms the two agree.
+
 ## Tight versus loose scenarios
 
 [orion-cluster](../orion-cluster/) is deliberately tight: every group carries an explicit `before`

@@ -124,7 +124,7 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	// first place. Resolving those refs first would mean the very first reconcile always fails with
 	// NotFound before the namespace it needs ever gets created, and the resource could never
 	// converge without an out-of-band namespace creation.
-	if err := r.ensureOperandNamespace(ctx, namespace); err != nil {
+	if _, err := ensureOperandNamespace(ctx, r.Client, namespace, operandNamespaceCreateAllowed(cluster)); err != nil {
 		return renderedNUTServer{}, err
 	}
 	credentials, err := resolveUPSDeviceCredentials(ctx, r.Client, namespace, devices)
@@ -918,6 +918,44 @@ func driverWatchdogNonResponsiveSelector() string {
   }'`
 }
 
+// upsdResources returns what the upsd container asks for, defaulting it when spec.resources says
+// nothing.
+//
+// The container ran unbounded while the 10m/32Mi sidecar beside it was sized, which is the
+// backwards half of the pair: upsd is the process that must survive a power event, and an
+// unrequested container is the first thing the kubelet evicts under node pressure -- exactly the
+// condition a rack losing power tends to produce.
+//
+// Requests equal limits for the same reason they do on the watchdog: the pod is Guaranteed, so it
+// sits in the last eviction class rather than the first.
+//
+// spec.resources is honoured verbatim the moment it declares anything at all. Filling in
+// individual missing keys would quietly convert a deliberate requests-only declaration into a
+// Guaranteed pod, so a user who states part of the shape owns all of it.
+func upsdResources(server *powerv1alpha1.NUTServer) corev1.ResourceRequirements {
+	declared := server.Spec.Resources
+	if len(declared.Requests) > 0 || len(declared.Limits) > 0 || len(declared.Claims) > 0 {
+		return declared
+	}
+	return defaultUpsdResources()
+}
+
+// defaultUpsdResources sizes upsd plus its drivers. upsd itself is a small single-threaded server;
+// the variable part is one driver process per device, each a few MB of RSS polling on an interval.
+// 128Mi leaves room for a double-digit device count without putting an OOM kill on the path that
+// has to report the outage.
+func defaultUpsdResources() corev1.ResourceRequirements {
+	requests := corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("50m"),
+		corev1.ResourceMemory: resource.MustParse("128Mi"),
+	}
+	limits := corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("50m"),
+		corev1.ResourceMemory: resource.MustParse("128Mi"),
+	}
+	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
+}
+
 // driverWatchdogResources sizes the sidecar without spending the user's budget on it.
 //
 // spec.resources describes upsd. Reusing it here would silently double whatever the user declared
@@ -981,22 +1019,6 @@ func networkPolicyName(server *powerv1alpha1.NUTServer) string {
 
 func podDisruptionBudgetName(server *powerv1alpha1.NUTServer) string {
 	return server.Name + "-nut-server"
-}
-
-func (r *NUTServerReconciler) ensureOperandNamespace(ctx context.Context, name string) error {
-	if err := rejectReservedOperandNamespace(name); err != nil {
-		return err
-	}
-	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, namespace, func() error {
-		if namespace.Labels == nil {
-			namespace.Labels = map[string]string{}
-		}
-		namespace.Labels["app.kubernetes.io/managed-by"] = "nut-operator"
-		namespace.Labels["power.zalud.io/operand-namespace"] = "true"
-		return nil
-	})
-	return err
 }
 
 func (r *NUTServerReconciler) ensureNUTServerConfigMap(ctx context.Context, server *powerv1alpha1.NUTServer, namespace string, data map[string]string) (*corev1.ConfigMap, error) {
@@ -1267,7 +1289,7 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 						Protocol:      corev1.ProtocolTCP,
 					},
 				},
-				Resources: server.Spec.Resources,
+				Resources: upsdResources(server),
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: ptrBool(false),
 					ReadOnlyRootFilesystem:   ptrBool(true),

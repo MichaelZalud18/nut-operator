@@ -124,3 +124,43 @@ func TestEveryRetentionTargetHasAnObservedAtIndex(t *testing.T) {
 		}
 	}
 }
+
+// F-100: schema 7 is what lets the execution audit trail exist at all. Before it, the trigger
+// episode digest was written into execution_id, which is uuid, so every row in the six tables keyed
+// on it was rejected with SQLSTATE 22P02 and the trail was empty on every cluster.
+func TestSchemaCarriesTheExecutionDeduplicationKey(t *testing.T) {
+	migrations, err := Migrations("power")
+	if err != nil {
+		t.Fatalf("Migrations returned error: %v", err)
+	}
+
+	var dedupeMigration string
+	for _, migration := range migrations {
+		if migration.Version == 7 {
+			dedupeMigration = migration.SQL
+		}
+	}
+	if dedupeMigration == "" {
+		t.Fatal("no migration 7")
+	}
+	// IF NOT EXISTS, because a schema created from the current initial DDL already has the column.
+	if !strings.Contains(dedupeMigration, "ADD COLUMN IF NOT EXISTS deduplication_key") {
+		t.Errorf("migration 7 does not add deduplication_key idempotently:\n%s", dedupeMigration)
+	}
+
+	// The CREATE TABLE has to declare it too, or a fresh install would reach a different shape than
+	// an existing install gets by upgrading.
+	creating := ""
+	for _, migration := range migrations {
+		if strings.Contains(migration.SQL, "CREATE TABLE IF NOT EXISTS \"power\".shutdownflow_executions") {
+			creating = migration.SQL
+		}
+	}
+	if creating == "" {
+		t.Fatal("no migration creates shutdownflow_executions")
+	}
+	if !strings.Contains(creating, "deduplication_key") {
+		t.Error("the migration that creates shutdownflow_executions does not declare deduplication_key, " +
+			"so a fresh install and an upgraded one end up with different schemas")
+	}
+}

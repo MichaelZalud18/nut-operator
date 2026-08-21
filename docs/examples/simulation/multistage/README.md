@@ -93,6 +93,17 @@ does not exist yet.
 ## Apply
 
 ```sh
+kubectl apply -f ../cluster.yaml
+kubectl apply -f ../capability-profile.yaml
+```
+
+`cluster.yaml` is the `PowerManagementCluster` every scenario here references by name, and
+`capability-profile.yaml` is what the scripted fixtures match against. Both are shared across the
+scenarios and only need applying once.
+
+Then the scenario itself:
+
+```sh
 kubectl apply -f inventory.yaml
 kubectl apply -f ups-and-flow.yaml
 ```

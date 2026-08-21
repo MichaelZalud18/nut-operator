@@ -21,8 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/google/uuid"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -152,8 +154,9 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var planEstimate *time.Duration
 	var estimateConfidence planner.EstimateConfidence
 	var triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus
+	var hookDiagnostics []powerv1alpha1.ShutdownFlowDiagnosticStatus
 	if result.accepted {
-		digests, err := r.shutdownFlowHookDigests(ctx, &flow)
+		digests, diagnostics, err := r.shutdownFlowHookDigests(ctx, &flow, managementCluster)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				result = rejected("ShutdownHookNotFound", "referenced ShutdownHook could not be found")
@@ -162,6 +165,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			}
 		} else {
 			hookDigests = digests
+			hookDiagnostics = diagnostics
 		}
 	}
 	if result.accepted {
@@ -181,7 +185,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		estimateConfidence = compiledFlow.EstimateConfidence
 		metrics.ShutdownFlowCompileDurationSeconds.WithLabelValues(flow.Name).Observe(time.Since(compileStart).Seconds())
 		if configHash == "" {
-			result = rejected("PlannerFailed", "shutdown flow planner failed after resolver inputs were attached")
+			result = reportPlannerRejection(log, flow.Name, plannerDiagnostics)
 		}
 		metrics.ShutdownFlowCompileTotal.WithLabelValues(flow.Name, plannerCompileMetricResult(configHash, plannerDiagnostics)).Inc()
 	}
@@ -238,37 +242,12 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		flow.Status.TriggerHoldStates = nil
 		deactivateLastExecution(&flow.Status.LastExecution)
 	}
+	// Set on both branches, and outside them: a rejected compile is exactly when the reader needs
+	// these, and clearing the rest of status must not clear the explanation for why it was cleared.
+	flow.Status.CompileDiagnostics = compileDiagnosticStatuses(resolverDiagnostics, plannerDiagnostics, hookDiagnostics)
 	setAcceptedCondition(&flow.Status.Conditions, flow.Generation, result)
-	degraded := !result.accepted
-	degradedReason := result.reason
-	degradedMessage := result.message
-	readyMessage := "shutdown flow compiled for dry-run review"
-	if result.accepted {
-		if warning := firstResolverDiagnostic(resolverDiagnostics, resolver.DiagnosticWarning); warning != nil {
-			degraded = true
-			degradedReason = warning.Reason
-			degradedMessage = warning.Message
-			readyMessage = "shutdown flow compiled with resolver warnings"
-		} else if warning := firstPlannerDiagnostic(plannerDiagnostics, planner.DiagnosticWarning); warning != nil {
-			degraded = true
-			degradedReason = warning.Reason
-			degradedMessage = warning.Message
-			readyMessage = "shutdown flow compiled with planner warnings"
-		} else if diagnostic := firstTriggerDiagnostic(triggerEvaluation, "Error"); diagnostic != nil {
-			degraded = true
-			degradedReason = diagnostic.Reason
-			degradedMessage = diagnostic.Message
-			readyMessage = "shutdown flow compiled with trigger evaluation errors"
-		} else if diagnostic := firstTriggerDiagnostic(triggerEvaluation, "Warning"); diagnostic != nil {
-			degraded = true
-			degradedReason = diagnostic.Reason
-			degradedMessage = diagnostic.Message
-			readyMessage = "shutdown flow compiled with trigger evaluation warnings"
-		} else {
-			degradedReason = "NotDegraded"
-			degradedMessage = "shutdown flow compiled without resolver warnings"
-		}
-	}
+	verdict := compileVerdict(result, resolverDiagnostics, plannerDiagnostics, hookDiagnostics, triggerEvaluation)
+	degraded, degradedReason, degradedMessage, readyMessage := verdict.degraded, verdict.reason, verdict.message, verdict.readyMessage
 	setReadyCondition(
 		&flow.Status.Conditions,
 		flow.Generation,
@@ -299,8 +278,8 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		&flow.Status.Conditions,
 		flow.Generation,
 		false,
-		"TriggerNotEligible",
-		"shutdown flow execution has not started because no trigger is eligible",
+		triggerNotEligibleReason,
+		triggerNotEligibleMessage,
 	)
 
 	if err := r.recordShutdownFlowAudit(ctx, &flow, result, resolverDiagnostics, plannerDiagnostics, bundle, compiledWaves, publishedArtifact, configHash, triggerEvaluation); err != nil {
@@ -415,6 +394,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 	})
 	if result.accepted {
 		for _, match := range bundle.CapabilityMatches {
+			declaredModel, reportedModel := r.deviceIdentityEvidence(ctx, match.DeviceID)
 			err := writer.RecordCapabilityProfileMatch(ctx, audit.CapabilityProfileMatch{
 				MatchID:        uuid.NewString(),
 				ObservedAt:     observedAt,
@@ -426,8 +406,13 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 				// The audit column stays `fallback`: it is persisted
 				// PostgreSQL schema, and renaming it for vocabulary alone would
 				// mean a migration over existing records for no behavior change.
-				Fallback:    match.Unidentified,
-				Diagnostics: auditDiagnosticsForCapabilityMatch(diagnostics, match.DeviceID),
+				Fallback: match.Unidentified,
+				// F-101: which profile a device resolved to is only half the record. Without the
+				// two model strings beside it, history cannot say whether the profile describes
+				// the device that was actually being read.
+				DeclaredModel: declaredModel,
+				ReportedModel: reportedModel,
+				Diagnostics:   auditDiagnosticsForCapabilityMatch(diagnostics, match.DeviceID),
 			})
 			if err != nil {
 				recordErr = errors.Join(recordErr, err)
@@ -616,6 +601,69 @@ func auditDiagnosticsFromPlanner(diagnostics []planner.Diagnostic) []audit.Diagn
 	return records
 }
 
+// compileVerdict picks the one finding a compile reports on its Degraded condition.
+//
+// Ordered most structural first: an inventory problem explains a planning one, and both explain a
+// trigger that cannot fire, so reporting the downstream symptom would send the reader to the wrong
+// place. Only the first is published as the condition — the full set is on
+// status.compileDiagnostics (F-99), which is what makes picking one here safe.
+type compileVerdictResult struct {
+	degraded     bool
+	reason       string
+	message      string
+	readyMessage string
+}
+
+func compileVerdict(
+	result validationResult,
+	resolverDiagnostics []resolver.Diagnostic,
+	plannerDiagnostics []planner.Diagnostic,
+	hookDiagnostics []powerv1alpha1.ShutdownFlowDiagnosticStatus,
+	triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus,
+) compileVerdictResult {
+	if !result.accepted {
+		return compileVerdictResult{
+			degraded:     true,
+			reason:       result.reason,
+			message:      result.message,
+			readyMessage: "shutdown flow compiled for dry-run review",
+		}
+	}
+
+	if warning := firstResolverDiagnostic(resolverDiagnostics, resolver.DiagnosticWarning); warning != nil {
+		return compileVerdictResult{true, warning.Reason, warning.Message, "shutdown flow compiled with resolver warnings"}
+	}
+	if warning := firstPlannerDiagnostic(plannerDiagnostics, planner.DiagnosticWarning); warning != nil {
+		return compileVerdictResult{true, warning.Reason, warning.Message, "shutdown flow compiled with planner warnings"}
+	}
+	// F-113. A hook that cannot deliver never holds a wave (HK-7), so this degrades rather than
+	// rejects -- but it is published before the outage instead of discovered during it.
+	if hook := firstDiagnosticStatus(hookDiagnostics, resolver.DiagnosticWarning); hook != nil {
+		return compileVerdictResult{true, hook.Reason, hook.Message, "shutdown flow compiled with hook endpoint warnings"}
+	}
+	if diagnostic := firstTriggerDiagnostic(triggerEvaluation, "Error"); diagnostic != nil {
+		return compileVerdictResult{true, diagnostic.Reason, diagnostic.Message, "shutdown flow compiled with trigger evaluation errors"}
+	}
+	if diagnostic := firstTriggerDiagnostic(triggerEvaluation, "Warning"); diagnostic != nil {
+		return compileVerdictResult{true, diagnostic.Reason, diagnostic.Message, "shutdown flow compiled with trigger evaluation warnings"}
+	}
+	return compileVerdictResult{
+		reason:       "NotDegraded",
+		message:      "shutdown flow compiled without resolver warnings",
+		readyMessage: "shutdown flow compiled for dry-run review",
+	}
+}
+
+// firstDiagnosticStatus returns the first published diagnostic at a severity.
+func firstDiagnosticStatus(diagnostics []powerv1alpha1.ShutdownFlowDiagnosticStatus, severity string) *powerv1alpha1.ShutdownFlowDiagnosticStatus {
+	for i := range diagnostics {
+		if diagnostics[i].Severity == severity {
+			return &diagnostics[i]
+		}
+	}
+	return nil
+}
+
 // firstPlannerDiagnostic returns the first planner diagnostic at a severity, so
 // the condition names a specific finding rather than a generic count.
 func firstPlannerDiagnostic(diagnostics []planner.Diagnostic, severity string) *planner.Diagnostic {
@@ -787,4 +835,98 @@ func shutdownFlowDecisionDetails(evaluation *powerv1alpha1.ShutdownTriggerEvalua
 		details["diagnostics"] = evaluation.Diagnostics
 	}
 	return details
+}
+
+// deviceIdentityEvidence reads the two model strings the F-101 check compares.
+//
+// The reported half is not in the structural bundle and must not be: the bundle is hashed into plan
+// identity, and a value that changes when a device is re-read would make the plan hash churn on
+// telemetry rather than on topology. It is read from the device's published status instead, which
+// is where the UPSDevice reconciler puts it.
+//
+// A device that cannot be read returns two empty strings rather than an error. This is an audit
+// annotation on a row that is worth writing either way, and failing the whole compilation record
+// over a missing annotation would trade the useful part for the decorative one.
+func (r *ShutdownFlowReconciler) deviceIdentityEvidence(ctx context.Context, deviceName string) (string, string) {
+	if deviceName == "" {
+		return "", ""
+	}
+	var device powerv1alpha1.UPSDevice
+	if err := r.Get(ctx, types.NamespacedName{Name: deviceName}, &device); err != nil {
+		return "", ""
+	}
+	declared := strings.TrimSpace(device.Spec.Identity.Model)
+	reported := ""
+	if device.Status.Identity != nil {
+		reported = strings.TrimSpace(device.Status.Identity.ReportedModel)
+	}
+	return declared, reported
+}
+
+// reportPlannerRejection logs the planner's refusal and returns it as the compile's rejection.
+//
+// F-99: the planner already said why, in a diagnostic nobody read. It reached the audit writer and
+// stopped there, so on a cluster with storage: Disabled the reason existed nowhere the operator
+// could look. It goes to the log here and to status.compileDiagnostics alongside.
+func reportPlannerRejection(log logr.Logger, flowName string, diagnostics []planner.Diagnostic) validationResult {
+	if diagnostic := firstPlannerDiagnostic(diagnostics, planner.DiagnosticError); diagnostic != nil {
+		log.Info("Shutdown flow planner rejected the compile",
+			"shutdownflow", flowName,
+			"reason", diagnostic.Reason,
+			"subject", diagnostic.Subject,
+			"message", diagnostic.Message,
+		)
+	} else {
+		log.Info("Shutdown flow planner produced no plan and no diagnostic", "shutdownflow", flowName)
+	}
+	return plannerRejection(diagnostics)
+}
+
+// plannerRejection names the planner's own reason for refusing to produce a plan.
+//
+// F-99: a rejected compile reported reason PlannerFailed with the message "shutdown flow planner
+// failed after resolver inputs were attached", which says only that the thing that failed was the
+// planner. The diagnostics naming the actual cause went to the audit writer, which returns early
+// when spec.managementClusterRef is unset and writes nothing at all under storage: Disabled -- so
+// on the configuration the install guide recommends for evaluation, the cause was unreachable.
+//
+// The generic reason survives as the fallback. A planner that produces neither a plan nor a
+// diagnostic is its own bug, and flattening that case into a specific-sounding reason would hide it.
+func plannerRejection(diagnostics []planner.Diagnostic) validationResult {
+	if diagnostic := firstPlannerDiagnostic(diagnostics, planner.DiagnosticError); diagnostic != nil {
+		if diagnostic.Subject != "" {
+			return rejected(diagnostic.Reason, "%s: %s", diagnostic.Subject, diagnostic.Message)
+		}
+		return rejected(diagnostic.Reason, "%s", diagnostic.Message)
+	}
+	return rejected("PlannerFailed", "shutdown flow planner produced no plan and no diagnostic explaining why")
+}
+
+// compileDiagnosticStatuses flattens both diagnostic sets into the published list, tagged by the
+// stage that produced each one so a reader can tell an inventory problem from a planning one.
+func compileDiagnosticStatuses(resolverDiagnostics []resolver.Diagnostic, plannerDiagnostics []planner.Diagnostic, extra []powerv1alpha1.ShutdownFlowDiagnosticStatus) []powerv1alpha1.ShutdownFlowDiagnosticStatus {
+	if len(resolverDiagnostics) == 0 && len(plannerDiagnostics) == 0 && len(extra) == 0 {
+		return nil
+	}
+	statuses := make([]powerv1alpha1.ShutdownFlowDiagnosticStatus, 0, len(resolverDiagnostics)+len(plannerDiagnostics)+len(extra))
+	for _, diagnostic := range resolverDiagnostics {
+		statuses = append(statuses, powerv1alpha1.ShutdownFlowDiagnosticStatus{
+			Severity: diagnostic.Severity,
+			Source:   diagnostic.Source,
+			Reason:   diagnostic.Reason,
+			Subject:  diagnostic.Subject,
+			Message:  diagnostic.Message,
+		})
+	}
+	for _, diagnostic := range plannerDiagnostics {
+		statuses = append(statuses, powerv1alpha1.ShutdownFlowDiagnosticStatus{
+			Severity: diagnostic.Severity,
+			Source:   "Planner",
+			Reason:   diagnostic.Reason,
+			Subject:  diagnostic.Subject,
+			Message:  diagnostic.Message,
+		})
+	}
+	statuses = append(statuses, extra...)
+	return statuses
 }

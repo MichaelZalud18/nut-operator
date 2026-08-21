@@ -102,9 +102,15 @@ aren't mistaken for scope creep in a future audit:
   `PowerManagementCluster.spec.hooks.allowedEndpoints`. Secret-backed headers are read from
   Kubernetes Secrets; sensitive headers such as `Authorization` are rejected when supplied inline.
   Generated RBAC does not grant `argoproj.io/workflows`: Argo is no longer a built-in route.
-- **`namespaces` (`create;update;patch`).** `NUTServer` and `NodePowerAgent` are cluster-scoped CRDs
-  whose `spec`-referenced operand namespace may not exist yet; their reconcilers create and label it
-  on first render. Kubernetes RBAC can't scope a `create` verb by resource
+- **`namespaces` (`create;update;patch`).** `PowerManagementCluster`, `NUTServer`, and
+  `NodePowerAgent` are cluster-scoped CRDs whose `spec`-referenced operand namespace may not exist
+  yet. `PowerManagementCluster` creates and labels it on reconcile, so a control plane applied on
+  its own leaves a namespace its operands can be rendered into; the two operand reconcilers do the
+  same for a standalone CR with no `managementClusterRef`. Setting
+  `spec.operandNamespace.create: false` reverses that: the operator labels a namespace that already
+  exists and otherwise reports it missing rather than creating it, which is how a cluster
+  administrator keeps ownership of quotas and admission labels on the namespace.
+  Kubernetes RBAC can't scope a `create` verb by resource
   name — only verbs acting on an object that already exists support `resourceNames` — so this can't
   be narrowed further at the RBAC layer. The resulting gap (a CR pointing its operand namespace at a
   reserved system namespace) is closed at the input layer instead: `validateOptionalNamespace`
@@ -114,17 +120,34 @@ aren't mistaken for scope creep in a future audit:
 
 ## Network Controls
 
-Generated operands are compatible with default-deny namespaces.
+**On a default-deny-egress cluster, you must author the operator's egress policy or the operator
+does not work.** This is a required configuration step, not background information (F-98). Without
+it the manager reaches neither `upsd`, PostgreSQL, nor any hook endpoint; telemetry polling fails
+with `i/o timeout`, the audit store fails with a dial timeout, and nothing in the operator's own
+status attributes any of it to network policy.
 
-Expected policy edges:
+`config/network-policy/egress/` is a template with the five edges and the two that cannot be
+written portably marked for you to complete. It is deliberately **not** in the default bundle:
+NetworkPolicy is additive per direction, so the first `Egress`-typed policy selecting a pod
+restricts it to exactly what that policy lists. Shipping a partial one would break every permissive
+cluster to half-fix the default-deny ones.
 
-- agent to `NUTServer` on TCP 3493
-- operator to Kubernetes API
-- operator and audit writer to PostgreSQL
-- Prometheus to metrics endpoints when enabled
-- DNS only where needed
+What the agent needs is already handled. `NodePowerAgent` renders its own `Egress` policy naming the
+`upsd` pods it monitors plus DNS, so the agent-to-`NUTServer` edge requires nothing from you.
 
-`NUTServer` is not externally exposed by default.
+Edges the manager needs:
+
+| Edge | Shippable | Notes |
+| --- | --- | --- |
+| DNS on 53 | Yes | Every other edge resolves a name first |
+| operator to `upsd` on 3493 | Yes | The operand namespace carries `power.zalud.io/operand-namespace: "true"` |
+| operator to Kubernetes API | No | Address is cluster-specific; on Cilium prefer `toEntities: [kube-apiserver]` |
+| operator to PostgreSQL on 5432 | No | Wherever the CNPG cluster or external host is. Not needed under `storage: Disabled` |
+| operator to `ShutdownHook` endpoints | No | Scope to `spec.hooks.allowedEndpoints`; a hook the policy blocks but the allowlist permits fails during an outage |
+| Prometheus to metrics | Ingress | Already shipped, in `config/network-policy/` |
+
+Generated operands are otherwise compatible with default-deny namespaces, and `NUTServer` is not
+externally exposed by default.
 
 ## Credential Controls
 

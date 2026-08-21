@@ -150,6 +150,7 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				setDegradedCondition(&device.Status.Conditions, device.Generation, true, "TelemetryPollFailed", pollErr.Error())
 			} else {
 				applyTelemetrySnapshotStatus(&device, pollResult.Snapshot)
+				applyIdentityStatus(&device, pollResult.Snapshot)
 				telemetryRecord = pollResult
 				telemetryRecordCluster = resolution.ManagementClusterName
 				shouldRecordTelemetry = telemetryRecordCluster != ""
@@ -166,6 +167,19 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				setDegradedCondition(&device.Status.Conditions, device.Generation, degraded, reason, message)
 			}
 		}
+	}
+
+	// Published on every path, not just the polling one. status.identity keeps the last reported
+	// values when a poll fails, so the verdict stays answerable during an outage -- and a device
+	// that has never polled says so through Unknown rather than through a missing condition.
+	identity := evaluateIdentity(device.Status.Identity)
+	setIdentityVerifiedCondition(&device.Status.Conditions, device.Generation, identity.status, identity.reason, identity.message)
+	if identity.status == metav1.ConditionFalse {
+		log.Info("Declared UPS model does not match the model the device reports",
+			"upsdevice", device.Name,
+			"declaredModel", device.Status.Identity.DeclaredModel,
+			"reportedModel", device.Status.Identity.ReportedModel,
+		)
 	}
 
 	if err := r.Status().Patch(ctx, &device, client.MergeFrom(base)); err != nil {

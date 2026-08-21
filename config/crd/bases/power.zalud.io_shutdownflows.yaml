@@ -880,6 +880,43 @@ spec:
                   capability profile matches.
                 format: int32
                 type: integer
+              compileDiagnostics:
+                description: |-
+                  compileDiagnostics carries every resolver and planner finding from the last compile.
+
+                  Published on the resource rather than only in audit records (F-99). A rejected compile used
+                  to report reason PlannerFailed and nothing else: the diagnostics reached the audit writer,
+                  which returns early when spec.managementClusterRef is unset and writes nowhere at all under
+                  storage: Disabled -- the mode the install guide recommends for evaluation. So the reader most
+                  likely to hit a rejection was the one guaranteed not to see why.
+                items:
+                  description: ShutdownFlowDiagnosticStatus records one resolver or
+                    planner finding from a compile.
+                  properties:
+                    message:
+                      description: message is the human-readable diagnostic.
+                      type: string
+                    reason:
+                      description: reason is a machine-readable diagnostic reason.
+                      type: string
+                    severity:
+                      description: severity is Info, Warning, or Error.
+                      type: string
+                    source:
+                      description: 'source names the stage that produced the finding:
+                        Inventory, Capability, or Planner.'
+                      type: string
+                    subject:
+                      description: subject identifies the affected entity, group,
+                        or node.
+                      type: string
+                  required:
+                  - message
+                  - reason
+                  - severity
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               compiledSteps:
                 description: compiledSteps is the controller-compiled view of the
                   flow for pre-flight review.

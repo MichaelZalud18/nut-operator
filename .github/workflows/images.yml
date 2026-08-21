@@ -89,12 +89,16 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/${{ matrix.image }}
           labels: |
             org.opencontainers.image.description=${{ matrix.description }}
-          # No branch tag and no raw `main` here, deliberately (F-77). This step publishes only
-          # immutable references; the floating `main` tag is applied by the promote job below, and
-          # only to a digest the e2e suite has run against. Publishing `main` here made the tag mean
-          # "built from main" when what anyone pulling it assumes is "tested".
+          # No branch tag, no raw `main`, and no version tag here, deliberately (F-77, F-107). This
+          # step publishes only immutable, unadvertised references; every reference a user would
+          # actually pin -- `main` and `vX.Y.Z` -- is applied by the promote job below, and only to a
+          # digest the e2e suite has run against.
+          #
+          # The version tag is the sharper half. It used to be published here, which meant a
+          # `v*.*.*` push put four images on the registry and then skipped the gate entirely,
+          # because `digests`, `e2e`, and `promote` were all conditioned on `refs/heads/main`. The
+          # reference a user is most likely to pin was the least tested one on the registry.
           tags: |
-            type=ref,event=tag
             type=ref,event=pr
             type=sha,prefix=sha-,format=short
 
@@ -263,7 +267,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     permissions:
       contents: read
       packages: read
@@ -327,7 +331,7 @@ jobs:
   # `sha-` tag resolve to one digest by construction -- not to two builds that ought to match. No
   # re-signing: cosign signs by digest, so the signature the build job attached already covers this.
   promote:
-    name: Promote ${{ matrix.image }} to main
+    name: Promote ${{ matrix.image }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [digests, e2e, nut-tls]
@@ -349,10 +353,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Tag the tested digest as main
+      # A tag push promotes to vX.Y.Z; a main push promotes to main. Same gate either way, which is
+      # the whole point of F-107 -- a release must not reach the registry on a weaker guarantee than
+      # a commit to main already gets.
+      - name: Resolve the promotion target
+        id: target
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "${GITHUB_REF}" in
+            refs/tags/v*) echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT" ;;
+            refs/heads/main) echo "tag=main" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::promote reached an unexpected ref: ${GITHUB_REF}"; exit 1 ;;
+          esac
+
+      - name: Tag the tested digest
         env:
           SOURCE: ${{ needs.digests.outputs[matrix.image] }}
-          TARGET: ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/${{ matrix.image }}:main
+          TARGET: ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/${{ matrix.image }}:${{ steps.target.outputs.tag }}
         run: |
           set -euo pipefail
           echo "promoting ${SOURCE} to ${TARGET}"

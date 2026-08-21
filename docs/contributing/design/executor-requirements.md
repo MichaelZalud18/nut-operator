@@ -226,6 +226,13 @@ wave keys, action-attempt IDs, release IDs, handoff IDs, and resume-state keys t
 PostgreSQL writer uses. If both PostgreSQL and the configured spool path fail, the audit failure is
 returned and the flow records the failed evidence path.
 
+The failure travels separately from the execution's own outcome. `Result.RecordError` carries every
+audit-write failure and the returned error carries only what the execution did, so a run that
+traversed every wave reports its real phase and the audit outage is published as a `Degraded`
+condition with reason `ExecutionAuditRecordFailed`. Merging the two makes the only visible symptom
+of a broken audit trail a shutdown claiming to have failed, which sends the reader to the wrong
+system entirely — and SB-11 says the power response is the thing that must not be misreported.
+
 **EX-21 · Dry-run produces full evidence.** A dry-run flow writes the same record shape with
 effects marked simulated. Rehearsals that leave no trace are not rehearsals.
 

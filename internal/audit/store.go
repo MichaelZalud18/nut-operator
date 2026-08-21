@@ -252,7 +252,13 @@ type CapabilityProfileMatch struct {
 	ProfileSource  string
 	MatchTier      string
 	Fallback       bool
-	Diagnostics    []DiagnosticRecord
+	// DeclaredModel and ReportedModel are the two halves of the F-101 identity check, kept beside
+	// the profile they selected. The match is computed from the declared value alone (GP-5), so a
+	// row with these two differing is a record of a device bound to the wrong product's profile --
+	// and without them, history could not say which device it had actually been reading.
+	DeclaredModel string
+	ReportedModel string
+	Diagnostics   []DiagnosticRecord
 }
 
 // CapabilityProfileVerification records runtime evidence that a matched profile
@@ -313,7 +319,15 @@ type ShutdownFlowDecision struct {
 
 // ShutdownFlowExecution records one executor run for a compiled plan.
 type ShutdownFlowExecution struct {
-	ExecutionID       string
+	ExecutionID string
+	// DeduplicationKey is the content digest of the trigger episode this execution belongs to.
+	//
+	// It is not the identity (F-100). The digest is 64 hex characters, and ExecutionID is a
+	// primary key of type uuid that also has to survive as a Kubernetes label value, where 63
+	// characters is the ceiling. ExecutionID is derived from this digest and stays deterministic
+	// because of it; the digest is kept here so a row can still be traced back to the episode
+	// whose content produced it.
+	DeduplicationKey  string
 	ObservedAt        time.Time
 	ShutdownFlow      string
 	TriggerDecisionID string
@@ -496,8 +510,8 @@ func (s *SQLStore) RecordCapabilityProfileMatch(ctx context.Context, match Capab
 		return err
 	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.capability_profile_matches
-(match_id, observed_at, ups_device, profile_id, profile_version, profile_source, match_tier, fallback, diagnostics)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`, s.quotedSchema),
+(match_id, observed_at, ups_device, profile_id, profile_version, profile_source, match_tier, fallback, declared_model, reported_model, diagnostics)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`, s.quotedSchema),
 		match.MatchID,
 		observedAt(match.ObservedAt),
 		match.UPSDevice,
@@ -506,6 +520,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`, s.quotedSchema),
 		match.ProfileSource,
 		match.MatchTier,
 		match.Fallback,
+		match.DeclaredModel,
+		match.ReportedModel,
 		diagnostics,
 	)
 	if err != nil {
@@ -675,9 +691,10 @@ func (s *SQLStore) RecordShutdownFlowExecution(ctx context.Context, execution Sh
 		return err
 	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.shutdownflow_executions
-(execution_id, observed_at, shutdownflow, trigger_decision_id, mode, phase, reason, plan_config_hash, input_hash, started_at, completed_at, dry_run, approved, approval_evidence, revalidation, details)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16::jsonb)
+(execution_id, deduplication_key, observed_at, shutdownflow, trigger_decision_id, mode, phase, reason, plan_config_hash, input_hash, started_at, completed_at, dry_run, approved, approval_evidence, revalidation, details)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb)
 ON CONFLICT (execution_id) DO UPDATE SET
+  deduplication_key = EXCLUDED.deduplication_key,
   observed_at = EXCLUDED.observed_at,
   shutdownflow = EXCLUDED.shutdownflow,
   trigger_decision_id = EXCLUDED.trigger_decision_id,
@@ -694,6 +711,7 @@ ON CONFLICT (execution_id) DO UPDATE SET
   revalidation = EXCLUDED.revalidation,
   details = EXCLUDED.details`, s.quotedSchema),
 		execution.ExecutionID,
+		execution.DeduplicationKey,
 		observedAt(execution.ObservedAt),
 		execution.ShutdownFlow,
 		optionalString(execution.TriggerDecisionID),
