@@ -1165,3 +1165,63 @@ agents' own reconnect churn on each restart would be part of what kills the driv
 **Container resource limits are asymmetric.** The `driver-watchdog` container carries
 `10m`/`32Mi` requests and limits. The `upsd` container — the one running both `upsd` and every
 driver — declares none at all.
+
+## Pass: benchmarking CI against comparable operator projects, 2026-08-20
+
+The pipeline was compared against the kubebuilder scaffold it started from and against operator
+projects with mature release engineering (cert-manager, Cluster API, CloudNativePG). Roughly half of
+it is beyond the scaffold, which ships only `lint.yml`, `test.yml`, and `test-e2e.yml`.
+
+Where it is ahead is not repeated here: SHA-pinned actions, default-empty workflow permissions,
+cosign signing, `provenance: mode=max` with SBOM, digest-then-promote, installer-freshness diffing,
+and an e2e suite that runs real operand images rather than stopping at envtest. The findings below
+are the places it is behind what comparable projects do.
+
+**`F-107` · A version tag publishes images that no gate has tested.** `images.yml` triggers on
+`push` to `v*.*.*`, and the metadata step emits `type=ref,event=tag`, so a release tag builds and
+pushes all four images. But `digests` carries `if: github.event_name != 'pull_request' &&
+github.ref == 'refs/heads/main'`, and `e2e` needs `digests` while `promote` needs both. On a tag
+push all three are skipped.
+
+The consequence is inverted from the intent. `:main` is carefully a retag of a digest the e2e suite
+has run against, and the comment at the metadata step says so. A version tag — the reference a user
+is most likely to pin — gets no e2e run at all. Either the gate jobs need to accept tag refs, or
+tagging needs to promote an already-tested digest the way `main` does.
+
+**`F-108` · Everything is tested against exactly one Kubernetes version.** `ENVTEST_K8S_VERSION` is
+derived from the `k8s.io/api` minor in `go.mod`, so envtest tracks whatever the operator compiles
+against and nothing else. The e2e cluster takes whatever `kind` `latest` currently defaults to,
+which is unpinned and moves without a commit. Comparable projects run a matrix, usually N-2, and
+pin the node image explicitly. A compatibility claim in `installation/` cannot be supported by a
+single-version pipeline.
+
+**`F-109` · The e2e cluster cannot exercise the two properties the operator exists for.**
+`setup-test-e2e` runs `kind create cluster --name $(KIND_CLUSTER)` with no `--config` and no config
+file in the tree, so every run is a stock single-node cluster on kindnet.
+
+Two consequences. kindnet does not implement `NetworkPolicy`, so policies apply cleanly and enforce
+nothing — which is why `F-98` passed every CI run and failed immediately on a real Cilium cluster.
+And a single node means a `NodePowerAgent` DaemonSet has exactly one pod, so wave ordering, tier
+descent across nodes, and self-exclusion are structurally untestable. A multi-node kind config, and
+a policy-enforcing CNI for at least one job, are what comparable projects use.
+
+**`F-110` · Nothing in the suite induces a failure.** There is no chaos step, no pod deletion, no
+partition, no apiserver stall. The only restart-aware assertions run the other way: `byo_cert_test`
+checks that the manager's restart count does *not* change across a certificate rotation. Every spec
+asserts convergence on a healthy cluster.
+
+For an operator whose entire purpose is acting during failure, this is the largest structural gap,
+and it is the category `F-97` and `F-105` fall into: a driver that exits, a client that reconnects,
+a watchdog that recovers too slowly. Related, the suite is also bounded in minutes, so nothing
+sustained is covered — the agent forced-shutdown loop needed hours of continuous running before it
+was visible as anything but a restart count.
+
+**`F-111` · Coverage is collected and thrown away.** `make test` writes `cover.out` and nothing
+reads it. No gate, no upload, no trend. The file is produced on every CI run and discarded with the
+runner.
+
+**`F-112` · No upgrade path is tested, and no workflow produces a release.** There is no release
+workflow and no GitHub release has ever been published, which is already why the install
+documentation uses clone-based and `raw.githubusercontent.com` paths. Nothing tests that a cluster
+running one version converges after the operator is replaced with the next, and nothing tests CRD
+schema compatibility across versions. Both become gates the moment a v1 exists.

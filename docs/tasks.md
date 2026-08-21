@@ -186,6 +186,24 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   default-deny-egress cluster the operator reaches neither `upsd`, PostgreSQL, nor any hook endpoint
   and fails silently. Confirmed on a live Cilium cluster: adding the two edges fixed it outright.
 
+- `F-107` make a version tag go through the same gate as `main`. `digests`, `e2e`, and `promote`
+  are all conditioned on `refs/heads/main`, so a `v*.*.*` push publishes four images with no e2e
+  run — the reference a user is most likely to pin is the least tested one.
+- `F-108` test against more than one Kubernetes version. `ENVTEST_K8S_VERSION` follows the
+  `k8s.io/api` minor in `go.mod`, and the e2e cluster takes whatever `kind` `latest` defaults to,
+  unpinned. Pin the node image and run a matrix before making any compatibility claim.
+- `F-109` give the e2e cluster more than one node and a CNI that enforces `NetworkPolicy`.
+  `setup-test-e2e` creates a stock single-node kind cluster on kindnet, so policies enforce nothing
+  (this is how `F-98` passed CI) and a DaemonSet has one pod, which makes wave ordering and
+  self-exclusion untestable.
+- `F-110` induce failures in the suite, and run something for longer than a few minutes. Nothing
+  deletes a pod, partitions the network, or stalls the apiserver; the only restart assertions check
+  that a restart did *not* happen. `F-97` and `F-105` are both in the class this would catch.
+- `F-111` do something with `cover.out` or stop generating it. `make test` writes a coverage profile
+  on every run and nothing reads it.
+- `F-112` add upgrade coverage and a release workflow. Nothing tests that a cluster converges after
+  the operator is replaced, or that CRD schemas stay compatible across versions. Both become gates
+  when a v1 exists.
 - `F-104` give `spec.operandNamespace.create` a reader or remove it. Nothing reads it; the webhook
   defaults it to `true` and the operand renders create the namespace unconditionally, so neither
   value changes anything. A `PowerManagementCluster` alone therefore reaches `Ready` with the
