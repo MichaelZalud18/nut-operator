@@ -115,12 +115,13 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
-- `F-97` the driver watchdog restarts a healthy `dummy-ups` driver on a loop. In `dummy-loop` mode
-  the driver stops answering `upsdrvctl status` while it holds a timed block, the watchdog's
-  double-check lands inside that window, and `upsdrvctl start` on the live driver terminates it via
-  the PID file. Decide whether liveness should key on something other than `S_RESPONSIVE`, and check
-  whether a real `snmp-ups` device under load can flap the same way. Drives `F-105`. Evidence:
-  `operator-maturity-benchmarks.md`.
+- Set resource requests and limits on the `upsd` container. The `driver-watchdog` sidecar declares
+  `10m`/`32Mi`; the container running `upsd` and every driver declares nothing.
+- `F-97` find out why `dummy-ups` exits, and make the watchdog beat `DEADTIME`. The driver process
+  terminates on its own every 4-176 seconds; `PF_PID` persisting is a stale PID file, not a live
+  process. The watchdog is the only thing that restarts it and polls every 30s, so every exit
+  becomes `F-105` before recovery lands. An isolated driver on the same fixture ran 236s untouched,
+  so look at `upsd` and its reconnecting clients. Evidence: `operator-maturity-benchmarks.md`.
 
 ---
 
@@ -141,8 +142,9 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 - `F-105` decide what an agent does after it has signalled. `upsmon` exits 0 once it runs
   `SHUTDOWNCMD`, which in a DaemonSet is a container restart, and the restarted `upsmon` re-fires as
   soon as comms are still bad — each cycle writing a fresh timestamp-derived execution ID the
-  actuator's `seen` set cannot match. Observed at 61-67 restarts per agent over seven hours, driven
-  by `F-97`. `NA-3` revocation covers the operator-written Secret, not this node-local path.
+  actuator's `seen` set cannot match. Observed at 61-67 restarts per agent over seven hours,
+  triggered by the `F-97` driver exits. `NA-3` revocation covers the operator-written Secret, not
+  this node-local path.
 
 ---
 

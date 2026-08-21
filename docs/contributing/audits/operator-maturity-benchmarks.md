@@ -1085,13 +1085,17 @@ the cluster reconciler contains no namespace code and never calls
 `rejectReservedOperandNamespace`. Either give the field a reader or remove it; the security note
 needs correcting either way.
 
-**`F-105` · A driver restart drives every node agent into a forced-shutdown loop.** This is `F-97`'s
-downstream cost, and it is larger than `F-97` as recorded. When the watchdog restarts the driver,
-`upsd` drops it (`Can't connect to UPS [sim-homelab-ups] ... Connection refused`), every `upsmon`
-loses comms, and after `DEADTIME` each one concludes "Too few UPS(es) are healthy (0<1), initiating
-forced shutdown". It runs `SHUTDOWNCMD`, `power-signal-writer` writes a shutdown signal, and `upsmon`
-exits 0 — correct NUT behaviour, and in a DaemonSet it is a container exit, so kubelet restarts it
-and the cycle repeats.
+**`F-105` · A driver exit drives every node agent into a forced-shutdown loop.** The driver goes
+away, `upsd` drops it (`Can't connect to UPS [sim-homelab-ups] ... Connection refused`), every
+`upsmon` loses comms, and after `DEADTIME` each one concludes "Too few UPS(es) are healthy (0<1),
+initiating forced shutdown". It runs `SHUTDOWNCMD`, `power-signal-writer` writes a shutdown signal,
+and `upsmon` exits 0 — correct NUT behaviour, and in a DaemonSet it is a container exit, so kubelet
+restarts it and the cycle repeats.
+
+The escalation to a *shutdown* rather than a logged comms failure needs the fixture as well as the
+exit. `upsmon` treats lost comms as fatal only when the UPS was last seen on battery, and the
+homelab sequence holds `OB` or `OB LB` for 180 of every 300 seconds. A driver exit during the `OL`
+block would be logged and survived.
 
 Left running for seven and a half hours, the agents accumulated 61 to 67 restarts each, three of
 them sitting in `CrashLoopBackOff`. Each cycle wrote a fresh shutdown signal with a new
@@ -1108,3 +1112,56 @@ trigger without addressing what happens the next time comms genuinely drop.
 rewrites `Reason` from `AlreadyExecuted` to `TriggerNotEligible` and does not touch `Message`, so the
 live flow currently reports `reason: TriggerNotEligible` beside `message: "eligible trigger episode
 already has execution evidence"` — a message asserting exactly the state the reason denies.
+
+## Pass: root-causing the agent crash loop, 2026-08-20
+
+`F-97` and `F-105` both had the causality backwards. The correction came from watching the driver
+process rather than `upsdrvctl status`.
+
+**`F-97` is wrong about its mechanism, and the wrong half is the part that matters.** It recorded
+that "the driver process is alive and simply is not servicing the status socket while it holds a
+timed block" and that "the restart is what kills it". Neither is true. The driver **exits on its
+own**, and the watchdog is what brings it back.
+
+The evidence is a process count taken alongside the status output. Sampling inside the pod across a
+transition:
+
+```
+00:04:35 | live=2 | sim-homelab-ups dummy-ups RUNNING 34448 RESPONSIVE 34448 "OB DISCHRG"
+00:04:39 | live=1 | sim-homelab-ups dummy-ups N/A     34448 NOT_RESPONSIVE N/A
+```
+
+`RUNNING` drops to `N/A` and `S_PID` drops to `N/A` because the process is gone. `PF_PID` still
+reads `34448` — and `PF_PID` is read from the **PID file**, which the dead driver left behind. That
+stale file is the whole source of the original error: "`PF_PID` stays constant" was taken as
+evidence that the process was alive, when it is only evidence that nothing cleaned up after it.
+
+`Duplicate driver instance detected (PID file exists)! Terminating other driver!` reads the same
+way and is not what it appears to be either. The new instance is clearing a stale PID file, not
+terminating a live driver.
+
+The watchdog's real defect is therefore the opposite of the one recorded. It is not restarting
+healthy drivers; it is the only thing that restarts dead ones, and it does so on a 30-second poll
+that is not faster than `DEADTIME`. Every driver exit becomes a forced shutdown before recovery can
+land. Timestamps from one cycle: the driver exits at `23:59:29`, `upsmon` gives up at `23:59:32`,
+and the watchdog restarts it at `23:59:59` — 27 seconds too late to matter.
+
+**Why the driver exits is narrowed, not answered.** A second `dummy-ups` was run in the same pod
+under a private `NUT_CONFPATH`, on a copy of the same fixture in the same `dummy-loop` mode, with
+debug on and invisible to both the watchdog and the readiness probe. It ran 236 seconds without
+exiting, including a clean `OL`→`OB DISCHRG` transition across a `TIMER` boundary, and it stayed
+`RESPONSIVE` throughout — including while paused inside a timed block, which is the specific
+behaviour `F-97` claimed was absent. It also survived being hammered with `upsdrvctl status` at
+several times the combined probe and watchdog rate, logging only `sock_arg`/`sock_read` churn.
+
+In the same window the production driver died five times, at lifetimes of 41, 55, 17, 4, and 21
+seconds. Observed lifetimes across the session ranged from 4 to 176 seconds with no relation to
+position in the sequence, which rules out the fixture reaching a particular block.
+
+What the isolated instance lacks is `upsd` and the five reconnecting `upsmon` clients behind it.
+That is where to look next, and it raises the possibility that the loop is self-sustaining: the
+agents' own reconnect churn on each restart would be part of what kills the driver again.
+
+**Container resource limits are asymmetric.** The `driver-watchdog` container carries
+`10m`/`32Mi` requests and limits. The `upsd` container — the one running both `upsd` and every
+driver — declares none at all.
