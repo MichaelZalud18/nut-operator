@@ -1395,3 +1395,59 @@ workflow and no GitHub release has ever been published, which is already why the
 documentation uses clone-based and `raw.githubusercontent.com` paths. Nothing tests that a cluster
 running one version converges after the operator is replaced with the next, and nothing tests CRD
 schema compatibility across versions. Both become gates the moment a v1 exists.
+
+## Pass: multi-node e2e cluster with policy enforcement, 2026-08-21
+
+`F-109` is closed. The e2e cluster is now three nodes on Calico instead of one on kindnet, and a
+guard spec fails the run if the cluster underneath it does not enforce `NetworkPolicy`.
+
+**The guard is the part that matters, and it was checked against both CNIs.** Asserting that a
+policy blocks traffic is worth nothing unless the assertion can fail, and under kindnet it cannot.
+The same probe — a pod opening TCP to the API server's ClusterIP, a default-deny egress policy
+selecting that pod, then the policy removed — was run against both:
+
+| | baseline | policy applied | policy removed |
+|---|---|---|---|
+| Calico | connects | **blocked**, 3/3 | connects, 3/3 |
+| kindnet | connects | **connects**, 3/3 | — |
+
+kindnet accepts the policy and reports it created. It simply does not implement it. On that cluster
+the guard fails, which is the intended behaviour and the thing that would have caught `F-98` before
+it shipped.
+
+The restore step is deliberate. A connection that fails after a policy is applied has only been
+shown to fail; showing it succeeds again once the policy is gone is what attributes the failure to
+the policy rather than to a slow pod.
+
+**A silent-undersizing failure showed up while building this, and is now guarded.** Every kind node
+is a container drawing on the host's inotify limits. At the common default of
+`fs.inotify.max_user_instances=128` the third node's kubelet dies with `inotify_init: too many open
+files` and never joins — and `kind create` still exits 0. The first cluster built here came up with
+two nodes and reported success; only counting the containers against the API server's node list
+showed the difference.
+
+That failure mode restores exactly the blind spot this finding exists to remove, so
+`setup-test-e2e` now refuses to run under the default and prints the `sysctl` to fix it, and the CNI
+step compares the node count against `kind-config.yaml` rather than trusting `kubectl wait --all`,
+which is satisfied by however many nodes happen to exist. CI raises the limit explicitly.
+
+**A second hazard turned up in the same target and is fixed with it.** `kind create cluster` sets
+the current kubectl context when it *creates* a cluster and not when it reuses one. Every kubectl in
+the e2e suite is unqualified, and the suite creates and deletes namespaces and patches Secrets, so
+on the reuse path it runs against whatever context is current — which on a workstation that also
+administers a real cluster is not a nuisance. `setup-test-e2e` now pins the context explicitly
+before anything else runs.
+
+**The pod subnet is an RFC1918 literal, and the private-IP scan is narrowed rather than loosened.**
+`kind-config.yaml` sets the pod subnet to Calico's own default pool so its manifest applies
+unedited. That is a generic container-network value describing no real site, the same category as
+the `.devcontainer/` exclusion that already existed, so the scan excludes that one named path. A
+directory-wide or pattern-wide carve-out is how that check would stop being one.
+
+**Still open, and now testable for the first time.** Three nodes give a `NodePowerAgent` DaemonSet
+three pods, one per node, since it tolerates every `NoSchedule` and `NoExecute` taint. Wave
+ordering, tier descent across nodes, and agent self-exclusion have no specs yet. Making them
+possible and writing them are different pieces of work, and only the first is done.
+
+Calico is pinned at `v3.32.1`. The kind node image is still unpinned, which is the remaining half of
+`F-108`.

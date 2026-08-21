@@ -79,6 +79,16 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      # The runner default is 128, which is not enough for the three-node cluster the suite now
+      # creates (F-109): the last node's kubelet dies with "inotify_init: too many open files" and
+      # never joins, while `kind create` still exits 0. `make setup-test-e2e` refuses to continue
+      # under the default rather than run on a cluster that is quietly one node short, so this step
+      # is what lets it proceed.
+      - name: Raise inotify limits for the multi-node Kind cluster
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=512
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+
       - name: Verify go.mod/go.sum are tidy
         run: |
           go mod tidy

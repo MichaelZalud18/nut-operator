@@ -147,10 +147,9 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
 - `F-108` test against more than one Kubernetes version. `ENVTEST_K8S_VERSION` follows the
   `k8s.io/api` minor in `go.mod`, and the e2e cluster takes whatever `kind` `latest` defaults to,
   unpinned. Pin the node image and run a matrix before making any compatibility claim.
-- `F-109` give the e2e cluster more than one node and a CNI that enforces `NetworkPolicy`.
-  `setup-test-e2e` creates a stock single-node kind cluster on kindnet, so policies enforce nothing
-  (this is how `F-98` passed CI) and a DaemonSet has one pod, which makes wave ordering and
-  self-exclusion untestable.
+- Write the multi-node specs the e2e cluster can now carry. `F-109` gave it three nodes and a CNI
+  that enforces `NetworkPolicy`, and the only spec using either is the enforcement guard. Wave
+  ordering, tier descent across nodes, and agent self-exclusion are now testable and still untested.
 - `F-110` induce failures in the suite, and run something for longer than a few minutes. Nothing
   deletes a pod, partitions the network, or stalls the apiserver; the only restart assertions check
   that a restart did *not* happen. `F-97` and `F-105` are both in the class this would catch.

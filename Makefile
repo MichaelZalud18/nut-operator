@@ -138,9 +138,39 @@ cover-html: ## Render the coverage profile as a browsable HTML report.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= nut-operator-test-e2e
+# The cluster shape is a file, not flags, because it carries the reasoning for why the suite needs
+# three nodes and a CNI that enforces NetworkPolicy (F-109).
+KIND_CONFIG ?= test/e2e/kind-config.yaml
+# Pinned. An unpinned CNI changes what the suite runs on without a commit, which is the same defect
+# as the unpinned kind node image (F-108) one layer down.
+CALICO_VERSION ?= v3.32.1
+CALICO_MANIFEST ?= https://raw.githubusercontent.com/projectcalico/calico/$(CALICO_VERSION)/manifests/calico.yaml
+# Every kubectl in the e2e suite is unqualified, so all of them follow the current context.
+KIND_CONTEXT = kind-$(KIND_CLUSTER)
+# Read from the config rather than repeated here, so the two cannot drift.
+E2E_NODE_COUNT = $(shell grep -c '^  - role:' $(KIND_CONFIG))
+# Every kind node is a container sharing the host's inotify limits, and each one's kubelet and
+# containerd take instances from that pool. At the common default of 128 the third node's kubelet
+# dies with "inotify_init: too many open files" and never joins -- while `kind create` still exits
+# 0, leaving a cluster quietly smaller than kind-config.yaml asks for. That silent undersizing is
+# the failure worth guarding: it restores the single-node blind spot F-109 exists to remove, and
+# nothing downstream would report it.
+E2E_MIN_INOTIFY_INSTANCES ?= 512
+
+.PHONY: check-test-e2e-host
+check-test-e2e-host: ## Verify the host can carry a multi-node Kind cluster.
+	@have="$$(cat /proc/sys/fs/inotify/max_user_instances 2>/dev/null || echo 0)"; \
+	if [ "$$have" -lt "$(E2E_MIN_INOTIFY_INSTANCES)" ]; then \
+		echo "fs.inotify.max_user_instances is $$have; a $(E2E_NODE_COUNT)-node Kind cluster needs at least $(E2E_MIN_INOTIFY_INSTANCES)."; \
+		echo "Without this the last node's kubelet fails to start and never joins, and Kind still reports success."; \
+		echo ""; \
+		echo "  sudo sysctl -w fs.inotify.max_user_instances=$(E2E_MIN_INOTIFY_INSTANCES)"; \
+		echo ""; \
+		exit 1; \
+	fi
 
 .PHONY: setup-test-e2e
-setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
+setup-test-e2e: check-test-e2e-host ## Set up a Kind cluster for e2e tests if it does not exist
 	@command -v $(KIND) >/dev/null 2>&1 || { \
 		echo "Kind is not installed. Please install Kind manually."; \
 		exit 1; \
@@ -150,8 +180,32 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
 		*) \
 			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
-			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
+			$(KIND) create cluster --name $(KIND_CLUSTER) --config $(KIND_CONFIG) ;; \
 	esac
+	# kind switches the current context when it *creates* a cluster and not when it reuses one, so
+	# on the reuse path the suite targets whatever context happened to be current. Every kubectl in
+	# the suite is unqualified and the suite deletes namespaces and patches Secrets, so on a
+	# workstation that also talks to a real cluster that is a live hazard rather than a nuisance.
+	# This is the one place that can make the target explicit for all of them.
+	kubectl config use-context $(KIND_CONTEXT)
+	$(MAKE) --no-print-directory setup-test-e2e-cni
+
+.PHONY: setup-test-e2e-cni
+setup-test-e2e-cni: ## Install the policy-enforcing CNI the e2e cluster is created without. Idempotent.
+	@echo "Installing Calico $(CALICO_VERSION) into '$(KIND_CLUSTER)'..."
+	kubectl --context $(KIND_CONTEXT) apply --server-side -f $(CALICO_MANIFEST)
+	kubectl --context $(KIND_CONTEXT) -n kube-system rollout status daemonset/calico-node --timeout=5m
+	kubectl --context $(KIND_CONTEXT) wait --for=condition=Ready nodes --all --timeout=5m
+	# `wait --all` is satisfied by whatever nodes exist, so it passes just as happily on a cluster
+	# that came up short. The count is the only thing that catches a node that never joined.
+	@expected="$(E2E_NODE_COUNT)"; \
+	actual="$$(kubectl --context $(KIND_CONTEXT) get nodes --no-headers | wc -l | tr -d ' ')"; \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "Cluster '$(KIND_CLUSTER)' has $$actual nodes; $(KIND_CONFIG) asks for $$expected."; \
+		echo "A node that fails to join leaves Kind reporting success, so this is checked rather than assumed."; \
+		exit 1; \
+	fi; \
+	echo "Cluster '$(KIND_CLUSTER)' is up on Calico $(CALICO_VERSION) with $$actual nodes."
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.

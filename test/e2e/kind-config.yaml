@@ -1,0 +1,28 @@
+# Cluster shape for the e2e suite.
+#
+# Two properties this file exists to provide, both of which the default `kind create cluster` lacks
+# and neither of which any spec can establish for itself (F-109).
+#
+# 1. More than one node. A NodePowerAgent DaemonSet tolerates every NoSchedule and NoExecute taint,
+#    so on a single-node cluster it has exactly one pod. Wave ordering, tier descent across nodes,
+#    and agent self-exclusion are then structurally untestable -- not weakly covered, but incapable
+#    of failing. Three nodes give the DaemonSet three pods, one of them on the control plane.
+#
+# 2. A CNI that enforces NetworkPolicy. kindnet does not implement it: policies apply cleanly, are
+#    reported as created, and drop nothing. That is exactly how F-98 -- a bundle with no egress
+#    rules at all -- passed every CI run before failing on the first real cluster it met. A suite
+#    that cannot fail a policy assertion should not be trusted to make one, so the default CNI is
+#    disabled here and Calico is installed by `make setup-test-e2e`.
+#
+# podSubnet matches Calico's own default IPv4 pool so its manifest applies unedited. The alternative
+# is patching CALICO_IPV4POOL_CIDR out of a 7800-line upstream manifest on every setup, which breaks
+# silently whenever that file is reformatted.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true
+  podSubnet: "192.168.0.0/16"
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker

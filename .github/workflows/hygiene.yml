@@ -100,14 +100,24 @@ jobs:
       # This repo is public. None of ASH's scanners (detect-secrets, checkov, bandit, semgrep) check
       # for private-network IPv4 literals -- that's not a secret or a misconfiguration by any of their
       # definitions, it's site-specific topology leakage, a different concern CONTRIBUTING.md states as
-      # policy but that had no automated check behind it. .devcontainer/ is excluded: its
-      # RFC1918 usage is a generic Docker network config value, not site-specific infrastructure.
+      # policy but that had no automated check behind it.
+      #
+      # Two exclusions, both for the same reason: the address is a generic container-network value
+      # that describes nothing about any real site. .devcontainer/ carries a Docker network config
+      # value. test/e2e/kind-config.yaml carries the pod subnet of a throwaway Kind cluster, set to
+      # Calico's own default pool so its manifest applies unedited (F-109); the alternative is
+      # patching a CIDR into a 7800-line upstream manifest on every setup, which trades a literal
+      # nobody can leak anything through for surgery that breaks silently.
+      #
+      # Both are single, named paths on purpose. A directory-wide or pattern-wide carve-out is how
+      # this check stops being one.
       - name: Fail on RFC1918 IPv4 literals in tracked files
         run: |
           set -euo pipefail
           PATTERN='\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3})\b'
           if git ls-files -z \
               | grep -zv '^\.devcontainer/' \
+              | grep -zv '^test/e2e/kind-config\.yaml$' \
               | xargs -0 grep -EIno "$PATTERN" > /tmp/private-ip-matches.txt; then
             echo "::error::Found a private (RFC1918) IPv4 address literal in a tracked file. This repo is public -- use a *.example.net/*.example.com hostname (see config/samples/, docs/examples/) or an RFC 5737 documentation address (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24) instead."
             cat /tmp/private-ip-matches.txt
