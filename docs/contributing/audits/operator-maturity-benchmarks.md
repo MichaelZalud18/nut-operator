@@ -1518,8 +1518,10 @@ Too few UPS(es) are healthy (0<1), initiating forced shutdown
 ```
 
 Twenty seconds after the low-battery notification, to the second. That is `DEADTIME` elapsing, not
-comms failing — `upsdrvctl status` reports `RESPONSIVE` throughout, `upsc` returns fresh values
-throughout, and `upsd` logs nothing at all in the same window. The earlier reading of this line as
+comms failing. Measured rather than inferred: `upsc` was sampled forty times across a full
+`OB LB`→`OL` transition and returned a fresh value on every one, with no stale read and no error;
+`upsdrvctl status` reported `RESPONSIVE` throughout; and `upsd` logged nothing at all in the same
+window. The earlier reading of this line as
 comms loss came from a cycle where a driver exit did coincide with it.
 
 So the loop is: the fixture reaches `OB LB`, every orphaned secondary independently force-shuts-down
