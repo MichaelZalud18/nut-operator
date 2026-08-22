@@ -73,6 +73,11 @@ type UPSDeviceReconciler struct {
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+// This reconciler records events on nine paths and had no grant for any of them (F-115).
+// Both groups: the recorder writes through events.k8s.io, while the legacy core group stays
+// for any client still reading events there.
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile validates UPS device configuration and records telemetry readiness status.
 func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

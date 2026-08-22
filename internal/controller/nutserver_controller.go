@@ -56,6 +56,7 @@ type NUTServerReconciler struct {
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=upsdevices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch

@@ -30,7 +30,7 @@ const (
 	DefaultSchema = "power"
 
 	// CurrentSchemaVersion is the latest bundled migration version.
-	CurrentSchemaVersion = 7
+	CurrentSchemaVersion = 8
 )
 
 // Migration is one ordered PostgreSQL migration.
@@ -83,8 +83,28 @@ func Migrations(schema string) ([]Migration, error) {
 			Name:    "execution_deduplication_key_schema",
 			SQL:     executionDeduplicationKeySchemaSQL(quotedSchema),
 		},
+		{
+			Version: 8,
+			Name:    "trigger_decision_id_text_schema",
+			SQL:     triggerDecisionIDTextSchemaSQL(quotedSchema),
+		},
 	}, nil
 }
+
+// triggerDecisionIDTextSchemaSQL finishes what migration 7 started.
+//
+// F-114: migration 7 moved execution_id off the digest and onto a derived UUID, which was correct
+// and was verified against the tables keyed on execution_id. It did not look one column over.
+// trigger_decision_id is also typed uuid, and the value written to it is a trigger identifier like
+// "trigger-001-runtimebelow" -- readable by design, since it names a trigger a person authored.
+//
+// The result was that F-100's symptom survived its fix unchanged: the insert into
+// shutdownflow_executions still failed 22P02, and because the four child tables carry a foreign key
+// to it, every one of them then failed 23503. All five tables stayed empty on a live cluster after a
+// complete six-wave run, which is exactly what F-100 described.
+//
+// text, not uuid, because the value is a name and not an identity the database mints. Nothing
+// generates it and nothing should coerce it.
 
 // executionDeduplicationKeySchemaSQL gives the trigger-episode digest a column of its own.
 //
@@ -103,6 +123,16 @@ CREATE INDEX IF NOT EXISTS shutdownflow_executions_dedupe_idx
 
 INSERT INTO %[1]s.audit_schema_migrations (version, name)
 VALUES (7, 'execution_deduplication_key_schema')
+ON CONFLICT (version) DO NOTHING;
+`, schema)
+}
+
+func triggerDecisionIDTextSchemaSQL(schema string) string {
+	return fmt.Sprintf(`ALTER TABLE %[1]s.shutdownflow_executions
+  ALTER COLUMN trigger_decision_id TYPE text USING trigger_decision_id::text;
+
+INSERT INTO %[1]s.audit_schema_migrations (version, name)
+VALUES (8, 'trigger_decision_id_text_schema')
 ON CONFLICT (version) DO NOTHING;
 `, schema)
 }
@@ -308,7 +338,7 @@ CREATE TABLE IF NOT EXISTS %[1]s.shutdownflow_executions (
   deduplication_key text NOT NULL DEFAULT '',
   observed_at timestamptz NOT NULL DEFAULT now(),
   shutdownflow text NOT NULL,
-  trigger_decision_id uuid,
+  trigger_decision_id text,
   mode text NOT NULL,
   phase text NOT NULL,
   reason text,

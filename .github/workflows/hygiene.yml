@@ -85,6 +85,55 @@ jobs:
           fi
           echo "Committed installers match the generated manifests."
 
+  manifest-admission:
+    permissions:
+      contents: read
+    name: Apply the installers against a real API server
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      # A default single-node cluster on purpose. This job needs an API server to validate against
+      # and nothing else -- no NetworkPolicy enforcement, no second node -- so it deliberately does
+      # not use test/e2e/kind-config.yaml, which is shaped for the e2e suite and costs minutes.
+      - name: Create a throwaway cluster
+        run: kind create cluster --name manifest-admission
+
+      # F-113. Three ShutdownHook helper ClusterRoles shipped with an empty `resources:` list, which
+      # the API server rejects outright and every other gate accepted: envtest never applies these
+      # roles, validate-samples only checks CRs against CRD schemas, and installer-freshness diffs
+      # dist/ against itself. The first thing to notice was the e2e job, four image builds in.
+      #
+      # Server-side, not client-side: `--dry-run=client` does not run admission or API validation,
+      # so it accepts the empty rule too. The whole point is to reach the validation that rejected it.
+      - name: Server-side dry-run both installers
+        run: |
+          set -euo pipefail
+          status=0
+          for bundle in dist/install.yaml dist/install-byo-cert.yaml; do
+            echo "::group::$bundle"
+            if ! kubectl apply --server-side --dry-run=server -f "$bundle"; then
+              echo "::error::$bundle was rejected by the API server"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Delete the throwaway cluster
+        if: always()
+        run: kind delete cluster --name manifest-admission
+
   private-ip-scan:
     permissions:
       contents: read

@@ -144,23 +144,6 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   require are already there, so turning it on is a repository-settings change and nothing else.
   Recorded here because this section previously described it as already in place.
 
-- `F-114` type `trigger_decision_id` as `text`. `F-100` moved `execution_id` to a derived UUID with
-  the digest kept in `deduplication_key`, which was right, but the same column class was missed one
-  field over: `shutdownflow_executions.trigger_decision_id` is `uuid` and the executor supplies
-  `trigger-001-runtimebelow`. The parent insert still fails 22P02 and every child table then fails
-  the foreign key, so the execution tables are still empty on a live cluster. `F-100` is closed on
-  the wrong evidence.
-- `F-115` grant `events.k8s.io`. Every reconciler declares
-  `+kubebuilder:rbac:groups="",resources=events`, which is the legacy core group; the recorder uses
-  `events.k8s.io`, so every event write is refused and no operator event has ever been delivered.
-  Cluster-scoped kinds make it louder — their events land in `default`, so the refusal names a
-  namespace nobody configured.
-- `F-113` validate the rendered manifests against an API server before the e2e job. Three
-  `ShutdownHook` helper `ClusterRole`s shipped with an empty `resources:` list, which every local
-  gate accepted -- envtest never applies them, `validate-samples` only checks CRs against CRD
-  schemas, and installer-freshness only diffs `dist/` against itself. The apiserver rejects them
-  outright, so the first thing to notice was the e2e job, six minutes and four image builds in. A
-  `kubectl apply --dry-run=server -f dist/` in Repo Hygiene catches it in seconds.
 - `F-108` test against more than one Kubernetes version. `ENVTEST_K8S_VERSION` follows the
   `k8s.io/api` minor in `go.mod`, and the e2e cluster takes whatever `kind` `latest` defaults to,
   unpinned. Pin the node image and run a matrix before making any compatibility claim.

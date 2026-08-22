@@ -76,6 +76,7 @@ type ShutdownFlowReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=delete
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile validates shutdown flow safety and records compiled plan status
 // against the current declarative inventory and UPS capability profile bundle.
