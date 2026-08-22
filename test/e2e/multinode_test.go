@@ -83,54 +83,54 @@ func multiNodeSignalTargetingSpecs() {
 
 			By("creating a dummy-ups-backed stack whose agent selects no node in particular")
 			manifest := fmt.Sprintf(`
-	apiVersion: power.zalud.io/v1alpha1
-	kind: UPSDevice
-	metadata:
-	  name: fanout-e2e-ups
-	spec:
-	  displayName: Fanout E2E Dummy UPS
-	  driver: dummy-ups
-	---
-	apiVersion: power.zalud.io/v1alpha1
-	kind: NUTServer
-	metadata:
-	  name: fanout-e2e-nutserver
-	spec:
-	  namespace: %[1]s
-	  deviceRefs:
-	    - name: fanout-e2e-ups
-	  image:
-	    repository: %[2]s
-	    tag: %[5]s
-	    pullPolicy: IfNotPresent
-	  auth:
-	    mode: OperatorManaged
-	  tls:
-	    mode: Disabled
-	---
-	apiVersion: power.zalud.io/v1alpha1
-	kind: NodePowerAgent
-	metadata:
-	  name: %[6]s
-	spec:
-	  namespace: %[1]s
-	  nutServerRefs:
-	    - name: fanout-e2e-nutserver
-	  mode: DryRun
-	  images:
-	    upsmon:
-	      repository: %[3]s
-	      tag: %[5]s
-	      pullPolicy: IfNotPresent
-	    actuator:
-	      repository: %[4]s
-	      tag: %[5]s
-	      pullPolicy: IfNotPresent
-	  shutdown:
-	    actuatorPolicy: Simulate
-	    signalTTL: 2m
-	    requireFreshTelemetry: false
-	`, namespace, nutServerRepository, upsmonAgentRepository, nodeActuatorRepository, operandImageTag, agentName)
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  name: fanout-e2e-ups
+spec:
+  displayName: Fanout E2E Dummy UPS
+  driver: dummy-ups
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  name: fanout-e2e-nutserver
+spec:
+  namespace: %[1]s
+  deviceRefs:
+    - name: fanout-e2e-ups
+  image:
+    repository: %[2]s
+    tag: %[5]s
+    pullPolicy: IfNotPresent
+  auth:
+    mode: OperatorManaged
+  tls:
+    mode: Disabled
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata:
+  name: %[6]s
+spec:
+  namespace: %[1]s
+  nutServerRefs:
+    - name: fanout-e2e-nutserver
+  mode: DryRun
+  images:
+    upsmon:
+      repository: %[3]s
+      tag: %[5]s
+      pullPolicy: IfNotPresent
+    actuator:
+      repository: %[4]s
+      tag: %[5]s
+      pullPolicy: IfNotPresent
+  shutdown:
+    actuatorPolicy: Simulate
+    signalTTL: 2m
+    requireFreshTelemetry: false
+`, namespace, nutServerRepository, upsmonAgentRepository, nodeActuatorRepository, operandImageTag, agentName)
 
 			// Retried for the same reason the handoff spec retries: every kind here has a mutating
 			// webhook, so an apply lands "connection refused" until the manager's webhook server serves.

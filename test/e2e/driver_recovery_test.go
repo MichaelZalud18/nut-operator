@@ -82,31 +82,31 @@ func driverRecoverySpecs() {
 
 			By("creating a dummy-ups-backed UPSDevice and NUTServer")
 			manifest := fmt.Sprintf(`
-	apiVersion: power.zalud.io/v1alpha1
-	kind: UPSDevice
-	metadata:
-	  name: %[3]s
-	spec:
-	  displayName: Driver Recovery E2E Dummy UPS
-	  driver: dummy-ups
-	---
-	apiVersion: power.zalud.io/v1alpha1
-	kind: NUTServer
-	metadata:
-	  name: %[4]s
-	spec:
-	  namespace: %[1]s
-	  deviceRefs:
-	    - name: %[3]s
-	  image:
-	    repository: %[2]s
-	    tag: %[5]s
-	    pullPolicy: IfNotPresent
-	  auth:
-	    mode: OperatorManaged
-	  tls:
-	    mode: Disabled
-	`, namespace, nutServerRepository, upsName, serverName, operandImageTag)
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  name: %[3]s
+spec:
+  displayName: Driver Recovery E2E Dummy UPS
+  driver: dummy-ups
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  name: %[4]s
+spec:
+  namespace: %[1]s
+  deviceRefs:
+    - name: %[3]s
+  image:
+    repository: %[2]s
+    tag: %[5]s
+    pullPolicy: IfNotPresent
+  auth:
+    mode: OperatorManaged
+  tls:
+    mode: Disabled
+`, namespace, nutServerRepository, upsName, serverName, operandImageTag)
 
 			applyFixture := func(g Gomega) {
 				applyCmd := exec.Command("kubectl", "apply", "-f", "-")
