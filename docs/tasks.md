@@ -107,10 +107,14 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
   evidence-model decision rather than a patch.
 - `F-105` decide what an agent does after it has signalled. `upsmon` exits 0 once it runs
   `SHUTDOWNCMD`, which in a DaemonSet is a container restart, and the restarted `upsmon` re-fires as
-  soon as comms are still bad — each cycle writing a fresh timestamp-derived execution ID the
-  actuator's `seen` set cannot match. Observed at 61-67 restarts per agent over seven hours,
-  triggered by the `F-97` driver exits. `NA-3` revocation covers the operator-written Secret, not
-  this node-local path.
+  soon as the condition still holds. Observed at 102-111 restarts per agent within two hours of a
+  fresh rollout. The cause is not the `F-97` driver exits, which were measured at three an hour
+  against roughly fifty agent restarts: every agent is rendered `MONITOR ... secondary` and nothing
+  anywhere is a primary, so on each low-battery episode each one waits `DEADTIME` for a primary that
+  does not exist, gives up, and force-shuts-down independently. `NA-1`/`OD-37` already make that
+  path authority-free -- the tmpfs it writes to is not mounted into the actuator, so no node can
+  halt from it -- which leaves this an operational defect rather than a safety one: a permanent
+  `CrashLoopBackOff` on every agent whenever a UPS is genuinely low.
 
 ---
 

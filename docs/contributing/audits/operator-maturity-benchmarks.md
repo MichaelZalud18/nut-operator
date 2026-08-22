@@ -1497,3 +1497,44 @@ Why `dummy-ups` exits is still open.
 local gate could see, because envtest has no PostgreSQL, applies no helper `ClusterRole`s, and grants
 its client everything. Each was found by running the operator against a real cluster and reading what
 it wrote, and each had been passing CI for as long as it existed.
+
+## Correction: what actually drives the agent restart loop, 2026-08-22
+
+`F-105` was attributed to the `F-97` driver exits. That was wrong, and the arithmetic says so
+plainly: over one hour on a live cluster the watchdog restarted the driver **three** times while each
+agent restarted roughly **fifty**. Whatever produces fifty forced shutdowns an hour is not the thing
+happening three times.
+
+The actual mechanism is in the rendered `upsmon.conf`. Every agent is written as
+`MONITOR <ups> 1 <user> <pass> secondary` (`nodepoweragent_render.go:629`) and nothing anywhere is a
+primary. A NUT secondary does not decide to shut down on low battery — it waits for the primary to
+set the FSD flag. With no primary it waits `DEADTIME` and then gives up, which is what the log line
+says once it is read literally:
+
+```
+UPS <ups> battery is low
+Giving up on the primary for UPS [<ups>] after 20 sec since last comms
+Too few UPS(es) are healthy (0<1), initiating forced shutdown
+```
+
+Twenty seconds after the low-battery notification, to the second. That is `DEADTIME` elapsing, not
+comms failing — `upsdrvctl status` reports `RESPONSIVE` throughout, `upsc` returns fresh values
+throughout, and `upsd` logs nothing at all in the same window. The earlier reading of this line as
+comms loss came from a cycle where a driver exit did coincide with it.
+
+So the loop is: the fixture reaches `OB LB`, every orphaned secondary independently force-shuts-down
+after `DEADTIME`, runs `SHUTDOWNCMD`, and exits 0 — which in a DaemonSet is a container restart, and
+the replacement finds the same condition and does it again. It repeats for as long as the UPS reports
+low battery, which for the looping simulation fixture is 60 seconds in every 300.
+
+**This is not a safety problem, and the design already says why.** `NA-1`/`OD-37` give the
+`SHUTDOWNCMD` path no authority: it writes to a `power-agent-run` tmpfs that is not mounted into the
+actuator, and the actuator derives its signal path from the node name rather than falling back to
+that tmpfs. No supported configuration wires the local path to a halt. The severity is entirely
+operational — every agent sits in `CrashLoopBackOff` for the duration of any genuine low-battery
+episode, which is exactly when their telemetry is most worth having.
+
+**What this means for the `F-97` fix.** Dropping the watchdog interval to 5s is still correct on its
+own terms: the driver does exit, that was measured directly, and a recovery slower than `DEADTIME`
+is a real hazard. But it will not stop the restart loop, and the commit that made it should not be
+read as having done so. The loop ends when `F-105` is decided.
