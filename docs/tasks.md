@@ -82,11 +82,12 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
-- `F-97` find out why `dummy-ups` exits, and make the watchdog beat `DEADTIME`. The driver process
-  terminates on its own every 4-176 seconds; `PF_PID` persisting is a stale PID file, not a live
-  process. The watchdog is the only thing that restarts it and polls every 30s, so every exit
-  becomes `F-105` before recovery lands. An isolated driver on the same fixture ran 236s untouched,
-  so look at `upsd` and its reconnecting clients. Evidence: `operator-maturity-benchmarks.md`.
+- `F-97` find out why `dummy-ups` exits. The recovery half is done: the watchdog now polls every 5s
+  and confirms after a delay, so a driver exit is repaired well inside `DEADTIME` instead of well
+  outside it. Why the process exits at all is still open. An isolated driver on the same fixture ran
+  236s untouched and stayed `RESPONSIVE` even while paused in a timed block, while the production
+  driver died five times in the same window at 4-176s; the difference is `upsd` and its reconnecting
+  `upsmon` clients, which is where to look next.
 
 ---
 

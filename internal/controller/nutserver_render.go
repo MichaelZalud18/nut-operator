@@ -63,14 +63,34 @@ const (
 	// removing a UPSDevice into a pod recreate, which is the outcome F-48 exists to eliminate.
 	driverWatchdogContainerName = "driver-watchdog"
 
-	// driverWatchdogIntervalSeconds is deliberately slower than the readiness probe. Readiness has
-	// to report the fault promptly; the watchdog has to fix it without churning, and every restart
-	// it performs costs a short telemetry gap for that device.
+	// driverWatchdogIntervalSeconds is bounded by upsmon's DEADTIME, not by a preference about churn
+	// (F-97).
 	//
-	// It also bounds how long a reloadable config change takes to reach upsd (F-48), on top of the
-	// kubelet's own projected-volume sync period. Both are far inside any window that matters:
-	// the alternative it replaces was replacing the pod.
-	driverWatchdogIntervalSeconds = 30
+	// It used to be 30, chosen to avoid restarting healthy drivers. That reasoning rested on a
+	// misreading: the driver was believed to be alive and merely quiet during a timed block, so the
+	// watchdog looked like the thing causing harm. It is not. The driver process exits -- `RUNNING`
+	// and `S_PID` both go to `N/A`, and the constant `PF_PID` that suggested otherwise is a stale
+	// PID file the dead driver left behind. The watchdog is the only thing that brings it back.
+	//
+	// That inverts the cost of waiting. While the watchdog sleeps, every upsmon is accumulating
+	// silence toward its own DEADTIME, and when it expires each one declares "too few UPS(es) are
+	// healthy" and runs SHUTDOWNCMD. A recovery slower than DEADTIME does not merely delay
+	// telemetry; it converts a driver exit into a cluster-wide shutdown signal (F-105).
+	//
+	// DEADTIME defaults to 45s and is settable per agent, so this leaves room for a considerably
+	// shorter one: detection is one to two intervals, the confirmation adds
+	// driverWatchdogConfirmDelaySeconds, and `upsdrvctl start` takes a second or two -- well inside
+	// even a 30s DEADTIME. The churn this used to guard against is handled by confirming the reading
+	// instead of by waiting.
+	driverWatchdogIntervalSeconds = 5
+
+	// driverWatchdogConfirmDelaySeconds separates the two non-responsive readings.
+	//
+	// The confirmation used to be two `upsdrvctl status` calls back to back, which is two reads of
+	// the same instant and cannot distinguish a transient miss from a dead driver -- it only ever
+	// agreed with itself. Putting a gap between them makes it an actual second opinion, which is
+	// what lets the interval come down without trading recovery speed for spurious restarts.
+	driverWatchdogConfirmDelaySeconds = 2
 
 	// NUT TLS paths inside the upsd operand. The kubernetes.io/tls Secret is projected read-only
 	// at nutServerCertificateMountPath; the init container concatenates it into a single PEM on a
@@ -851,8 +871,9 @@ func upsdReadinessProbeScript() string {
 //     file, terminates the phantom, and starts a fresh driver, exiting 0. No stop-then-start dance
 //     is needed, and adding one would introduce a window where the driver is deliberately down.
 //   - `upsdrvctl start <ups>` against a *healthy* driver terminates and replaces it. That is why
-//     the non-responsive reading is confirmed with a second probe before acting: a transient miss
-//     would otherwise cost a working driver a restart, and this loop runs unattended forever.
+//     the non-responsive reading is confirmed with a second probe, taken after a delay, before
+//     acting: a transient miss would otherwise cost a working driver a restart, and this loop runs
+//     unattended forever.
 //
 // The RESPONSIVE match is field-exact for the same reason upsdReadinessProbeScript's is --
 // NOT_RESPONSIVE contains RESPONSIVE as a substring, so a substring test would find every dead
@@ -886,6 +907,7 @@ while true; do
     fi
   fi
   for ups in $(notResponsive); do
+    sleep ` + strconv.Itoa(driverWatchdogConfirmDelaySeconds) + `
     if notResponsive | grep -qx "$ups"; then
       echo "driver-watchdog: $ups is not responsive, restarting its driver"
       upsdrvctl start "$ups" || echo "driver-watchdog: restart of $ups failed, will retry"
