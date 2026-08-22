@@ -820,6 +820,12 @@ spec:
 			Eventually(verifyTelemetry, 90*time.Second, 2*time.Second).Should(Succeed())
 		})
 	})
+
+	// Both need the operator installed and neither installs it. They live here, inside the
+	// container that owns the install and the uninstall, rather than at the top level where
+	// they would run against whatever the last container left behind.
+	multiNodeSignalTargetingSpecs()
+	driverRecoverySpecs()
 })
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
