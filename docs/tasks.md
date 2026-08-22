@@ -106,12 +106,14 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
   evidence-model decision rather than a patch.
 - `F-105` decide what an agent does after it has signalled. `upsmon` exits 0 once it runs
   `SHUTDOWNCMD`, which in a DaemonSet is a container restart, and the restarted `upsmon` re-fires if
-  the condition still holds. The `F-97` watchdog fix cut this from roughly 55 restarts an hour per
-  agent to about 4 by shortening each driver outage below `DEADTIME`, which collapses the fan-out of
-  one outage into many forced shutdowns -- but it does not remove the response, only most of its
-  triggers. Every agent is rendered `MONITOR ... secondary` with no primary anywhere, so any
-  `DEADTIME` elapse still produces an independent forced shutdown and another restart.
-  `NA-1`/`OD-37` keep that path authority-free, so this is operational rather than a safety defect.
+  the condition still holds. The `F-97` watchdog fix took this from ~55 restarts an hour per agent to
+  ~12 by shortening each driver outage below `DEADTIME`, which removed the fan-out of one outage into
+  many forced shutdowns. What remains is the baseline and it is measured: all agents restart in
+  lockstep at roughly five-minute intervals, matching the simulation fixture's 300s cycle -- one
+  forced shutdown per low-battery episode, which is what an orphaned secondary is built to do. Every
+  agent is rendered `MONITOR ... secondary` with no primary anywhere. `NA-1`/`OD-37` keep the path
+  authority-free, so this is operational rather than a safety defect, and it is now the only thing
+  driving the loop.
 
 ---
 

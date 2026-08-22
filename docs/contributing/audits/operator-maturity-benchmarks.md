@@ -1624,7 +1624,10 @@ With the interval at 5s instead of 30s, measured over the same kind of window:
 | | watchdog driver restarts | agent restarts |
 |---|---|---|
 | before (30s interval) | ~3/hour | ~55/hour |
-| after (5s interval) | ~36/hour | ~4/hour |
+| after (5s interval) | ~36/hour | ~12/hour |
+
+(The agent figure is from twenty minutes of per-minute sampling, not from one reading; an earlier
+note in this session put it at ~4/hour on a single sample and was too optimistic.)
 
 Both numbers moved, in opposite directions, and that is the whole explanation. The three-per-hour
 figure was never the rate at which the driver exited — it was the rate at which a watchdog sleeping
@@ -1632,7 +1635,19 @@ figure was never the rate at which the driver exited — it was the rate at whic
 elapse repeatedly, and every elapse is one `upsmon` forced shutdown, one `SHUTDOWNCMD`, one exit,
 one container restart, and a fresh `upsmon` that finds the same dead driver. One long outage
 produces many agent restarts. Shortening the outage below `DEADTIME` collapses that fan-out, and
-agent restarts fell about 93%.
+agent restarts fell about 78%.
+
+**What the residual rate is, and why it is the interesting number.** Twelve an hour is not noise. All
+five agents restart in lockstep — identical counts at every transition, which is a shared condition
+and not five independent faults — and the transitions land roughly five minutes apart: `05:52`,
+`05:53`, `05:58`, `06:03`. The simulation fixture cycles every 300 seconds. That is one forced
+shutdown per low-battery episode, which is exactly what an orphaned secondary is supposed to do.
+
+So the two entries above are each half right, and the split is clean. The watchdog interval governed
+the *fan-out* — how many forced shutdowns one driver outage produced — and fixing it removed those.
+The orphaned-secondary rendering governs the *baseline*, one per genuine low-battery episode, and no
+watchdog change can remove that. `F-105` is what remains, and it is now the only thing left driving
+the loop.
 
 So the mechanism is a conjunction, and the earlier correction over-rotated by naming one half and
 dismissing the other. Both are needed: an agent rendered `MONITOR ... secondary` with no primary
