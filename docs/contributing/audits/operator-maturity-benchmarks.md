@@ -1540,3 +1540,47 @@ episode, which is exactly when their telemetry is most worth having.
 own terms: the driver does exit, that was measured directly, and a recovery slower than `DEADTIME`
 is a real hazard. But it will not stop the restart loop, and the commit that made it should not be
 read as having done so. The loop ends when `F-105` is decided.
+
+## Pass: verifying the closed findings on a live cluster, 2026-08-22
+
+The batch that closed `F-96`–`F-111` was committed on unit tests, and this session found three
+defects in it that no unit test could see. So each closure was re-checked against a running cluster
+rather than against its own tests.
+
+**`F-115` verified.** Zero `Server rejected event` lines since the rollout, against every event
+previously being refused, and the events are now readable from the API server. Both halves matter:
+the operator emitting them and the cluster storing them.
+
+**`F-103` verified through admission.** Applying a `usbhid-ups` device now returns "requires local
+USB or serial attachment; USB and serial attachment is out of scope and this operator supports
+network-reachable UPS devices only". The old message named the rejected driver first in a list of
+drivers it claimed were supported.
+
+**`F-104` verified.** `operandNamespaceCreateAllowed` reads the field and
+`powermanagementcluster_controller.go` now calls `ensureOperandNamespace` — the reconciler that
+previously contained no namespace code at all. `rejectReservedOperandNamespace` moved inside
+`ensureOperandNamespace`, so the reserved-namespace guard now covers every path that creates one
+rather than only the two operand renders.
+
+**`F-101` verified in both directions**, which is the part worth stating. On a live device declaring
+`simulation-fixture` against a fixture reporting `homelab-fixture`, the operator raised
+`IdentityVerified=False`. Correcting the declared model to match cleared it to `True`. A condition
+that only ever reports one value proves nothing; this one moves with the fact it describes.
+
+The mismatch it caught was a hand-made test resource, not a shipped example — those are internally
+consistent, declaring `homelab-fixture` against a fixture reporting the same and a profile whose
+`modelGlob` is `*-fixture`.
+
+**`F-114` verified as far as the write path goes.** Migration 8 applied on the first reconcile that
+opened the store, `trigger_decision_id` is `text`, and the operator log carries no 22P02 and no
+23503 since. The flow's `lastExecution.phase` also moved from `Failed` to `Completed`, which
+confirms the earlier reading that the `Failed` was never an execution failure — it was
+`shutdownExecutionPhase` folding the accumulated record error into the phase.
+
+Row counts are still zero at the time of writing, and that is expected rather than contradictory:
+the stored execution predates the fix and is deduplicated, so the tables stay empty until a fresh
+trigger episode runs. Persisted rows are the assertion that closes this, and it is not yet made.
+
+**`F-97` deployed.** The rendered watchdog now carries `sleep 5` and `sleep 2`, and the agents rolled
+fresh at zero restarts. Whether they stay there is the open question, and the correction above
+predicts they will not.
