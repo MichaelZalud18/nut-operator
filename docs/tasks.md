@@ -144,9 +144,6 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   require are already there, so turning it on is a repository-settings change and nothing else.
   Recorded here because this section previously described it as already in place.
 
-- `F-108` test against more than one Kubernetes version. `ENVTEST_K8S_VERSION` follows the
-  `k8s.io/api` minor in `go.mod`, and the e2e cluster takes whatever `kind` `latest` defaults to,
-  unpinned. Pin the node image and run a matrix before making any compatibility claim.
 - Write the multi-node specs the e2e cluster can now carry. `F-109` gave it three nodes and a CNI
   that enforces `NetworkPolicy`, and the only spec using either is the enforcement guard. Wave
   ordering, tier descent across nodes, and agent self-exclusion are now testable and still untested.

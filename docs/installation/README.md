@@ -15,9 +15,9 @@ for the same objects. If you need to customize the install, use the Kustomize pa
 
 **Kubernetes.** Two different claims, worth separating.
 
-*Tested:* controller tests run against the envtest control plane pinned by `k8s.io/api` in `go.mod`
-— **1.36** at present — and the e2e suite runs against whatever node image the current `kind`
-release defaults to. Those are the only versions this project has evidence for.
+*Tested:* controller and webhook tests run against envtest on **1.34, 1.35, and 1.36**, and the e2e
+suite runs against a **1.34** node image pinned by digest in `test/e2e/kind-config.yaml`. Those are
+the only versions this project has evidence for, and every one of them runs on every commit.
 
 *Theoretically compatible:* the manifests use `apiextensions.k8s.io/v1`,
 `admissionregistration.k8s.io/v1`, `policy/v1`, and `networking.k8s.io/v1`, all GA by 1.21, and no

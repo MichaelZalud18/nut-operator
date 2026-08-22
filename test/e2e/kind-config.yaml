@@ -22,7 +22,16 @@ apiVersion: kind.x-k8s.io/v1alpha4
 networking:
   disableDefaultCNI: true
   podSubnet: "192.168.0.0/16"
+# Pinned, and pinned by digest (F-108). CI installs `kind` from `latest`, so without this the
+# Kubernetes version the suite runs against changes whenever kind cuts a release -- silently, with no
+# commit and no way to tell from a failing run which version it failed on. The tested-version claim
+# in docs/installation/README.md is only meaningful if this is fixed somewhere a reader can find it.
+#
+# Raising it is a deliberate act: bump the tag and digest together, and update that claim.
 nodes:
   - role: control-plane
+    image: kindest/node:v1.34.0@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a
   - role: worker
+    image: kindest/node:v1.34.0@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a
   - role: worker
+    image: kindest/node:v1.34.0@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a
