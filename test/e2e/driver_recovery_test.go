@@ -71,6 +71,8 @@ var _ = Describe("Driver recovery under failure", Ordered, Serial, func() {
 	}
 
 	BeforeAll(func() {
+		ensureOperatorInstalled()
+
 		By("creating the recovery namespace")
 		_, err := utils.Run(exec.Command("kubectl", "create", "ns", namespace))
 		Expect(err).NotTo(HaveOccurred())

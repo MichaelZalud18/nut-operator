@@ -63,6 +63,8 @@ var _ = Describe("Multi-node signal targeting", Ordered, Serial, func() {
 	)
 
 	BeforeAll(func() {
+		ensureOperatorInstalled()
+
 		By("counting the cluster's nodes")
 		cmd := exec.Command("kubectl", "get", "nodes", "-o", "jsonpath={.items[*].metadata.name}")
 		out, err := utils.Run(cmd)
