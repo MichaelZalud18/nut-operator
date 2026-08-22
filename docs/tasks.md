@@ -68,10 +68,9 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
-- Read `executor_resume_states` back on startup. The rows now persist, but nothing loads them, so an
-  executor interrupted mid-plan still restarts from the beginning. What it should do with the state
-  it finds is an `OD-27` evidence-model question, not a lookup — see the `F-100` closure in
-  `operator-maturity-benchmarks.md`.
+- Read `executor_resume_states` back on startup. The rows persist now -- verified on a live cluster
+  after `F-114` -- and nothing loads them, so a manager restart mid-execution still resumes from
+  nothing. The state is there to resume from for the first time.
 
 ---
 
@@ -106,15 +105,13 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
   open question is what an already-`NotReady` node with a live key means, which is an `OD-27`
   evidence-model decision rather than a patch.
 - `F-105` decide what an agent does after it has signalled. `upsmon` exits 0 once it runs
-  `SHUTDOWNCMD`, which in a DaemonSet is a container restart, and the restarted `upsmon` re-fires as
-  soon as the condition still holds. Observed at 102-111 restarts per agent within two hours of a
-  fresh rollout. The cause is not the `F-97` driver exits, which were measured at three an hour
-  against roughly fifty agent restarts: every agent is rendered `MONITOR ... secondary` and nothing
-  anywhere is a primary, so on each low-battery episode each one waits `DEADTIME` for a primary that
-  does not exist, gives up, and force-shuts-down independently. `NA-1`/`OD-37` already make that
-  path authority-free -- the tmpfs it writes to is not mounted into the actuator, so no node can
-  halt from it -- which leaves this an operational defect rather than a safety one: a permanent
-  `CrashLoopBackOff` on every agent whenever a UPS is genuinely low.
+  `SHUTDOWNCMD`, which in a DaemonSet is a container restart, and the restarted `upsmon` re-fires if
+  the condition still holds. The `F-97` watchdog fix cut this from roughly 55 restarts an hour per
+  agent to about 4 by shortening each driver outage below `DEADTIME`, which collapses the fan-out of
+  one outage into many forced shutdowns -- but it does not remove the response, only most of its
+  triggers. Every agent is rendered `MONITOR ... secondary` with no primary anywhere, so any
+  `DEADTIME` elapse still produces an independent forced shutdown and another restart.
+  `NA-1`/`OD-37` keep that path authority-free, so this is operational rather than a safety defect.
 
 ---
 

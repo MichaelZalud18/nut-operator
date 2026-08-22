@@ -1577,10 +1577,73 @@ opened the store, `trigger_decision_id` is `text`, and the operator log carries 
 confirms the earlier reading that the `Failed` was never an execution failure — it was
 `shutdownExecutionPhase` folding the accumulated record error into the phase.
 
-Row counts are still zero at the time of writing, and that is expected rather than contradictory:
-the stored execution predates the fix and is deduplicated, so the tables stay empty until a fresh
-trigger episode runs. Persisted rows are the assertion that closes this, and it is not yet made.
+**And now verified where it counts.** A fresh trigger episode ran and the tables filled for the
+first time:
+
+```
+executions=1  waves=2  groups=4  attempts=4  resume=1
+```
+
+matching the flow's own `waveCount: 2`, `groupCount: 4`, `actionAttemptCount: 4` exactly. The stored
+row carries `execution_id=60af4ad4-…` as a real UUID, `deduplication_key` holding the digest beside
+it, and `trigger_decision_id=trigger-001-runtimebelow` — the readable name that used to fail 22P02,
+now sitting in a `text` column. `executor_resume_states` has a row too, so resume-after-restart has
+state to resume from for the first time.
 
 **`F-97` deployed.** The rendered watchdog now carries `sleep 5` and `sleep 2`, and the agents rolled
 fresh at zero restarts. Whether they stay there is the open question, and the correction above
 predicts they will not.
+
+**`F-99` verified, by accident and then on purpose.** Correcting the declared model above changed
+which capability profile matched the device, and the flow stopped compiling. What it said about that
+is the point:
+
+```
+Accepted=False  reason=TriggerUnsupportedByAllDevices
+  RuntimeBelow: trigger "RuntimeBelow" requires NUT battery.runtime, which no device in power
+  domain sim-homelab declares (sim-homelab-ups); this plan can never fire. Declaring
+  fallbackType: LowBattery would cover them
+```
+
+Before `F-99` this was `PlannerFailed` with no reason at all, published nowhere. It now names the
+trigger, the variable, the domain, the device, and the fix. Diagnosing it took one `kubectl get`.
+
+The cause was a hand-made profile with `modelGlob: simulation-fixture` rather than the shipped
+`*-fixture`, so the device fell back to the universal profile, which declares only `ups.status`.
+Applying the shipped `docs/examples/simulation/capability-profile.yaml` restored it — and moved that
+cluster onto the shipped fixtures rather than a bespoke one, which is where it should have been.
+
+## Correction to the correction: the driver exits do drive the loop, 2026-08-22
+
+The correction above said the restart loop was not caused by the `F-97` driver exits, on the strength
+of a rate comparison: three watchdog restarts an hour against roughly fifty agent restarts. That
+inference was wrong, and deploying the watchdog fix is what showed it.
+
+With the interval at 5s instead of 30s, measured over the same kind of window:
+
+| | watchdog driver restarts | agent restarts |
+|---|---|---|
+| before (30s interval) | ~3/hour | ~55/hour |
+| after (5s interval) | ~36/hour | ~4/hour |
+
+Both numbers moved, in opposite directions, and that is the whole explanation. The three-per-hour
+figure was never the rate at which the driver exited — it was the rate at which a watchdog sleeping
+30s at a time *noticed*. Each unnoticed exit left the driver down long enough for `DEADTIME` to
+elapse repeatedly, and every elapse is one `upsmon` forced shutdown, one `SHUTDOWNCMD`, one exit,
+one container restart, and a fresh `upsmon` that finds the same dead driver. One long outage
+produces many agent restarts. Shortening the outage below `DEADTIME` collapses that fan-out, and
+agent restarts fell about 93%.
+
+So the mechanism is a conjunction, and the earlier correction over-rotated by naming one half and
+dismissing the other. Both are needed: an agent rendered `MONITOR ... secondary` with no primary
+anywhere will force-shutdown when `DEADTIME` elapses, and the driver exiting is what makes it
+elapse. `F-97` supplies the trigger, the orphaned-secondary configuration supplies the response.
+
+What stands from the earlier entry: the log line means what it says (`upsmon` is waiting for a
+primary, not reporting comms failure), every agent really is an orphaned secondary, and `NA-1`/
+`OD-37` really do leave that path authority-free so no node can halt from it. What does not stand is
+the claim that driver exits were not the cause.
+
+Still open, and unchanged: why `dummy-ups` exits at all. It now exits often enough to be measured
+properly — roughly thirty-six times an hour — which is a better starting point than the three an
+hour the old watchdog was reporting.
