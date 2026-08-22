@@ -1451,3 +1451,49 @@ possible and writing them are different pieces of work, and only the first is do
 
 Calico is pinned at `v3.32.1`. The kind node image is still unpinned, which is the remaining half of
 `F-108`.
+
+## Pass: closing the CI and audit-trail findings, 2026-08-21
+
+Five findings closed and one halved, all verified before commit.
+
+**`F-114` closed.** Migration 8 types `trigger_decision_id` as `text`. Migration 7 had moved
+`execution_id` off the SHA-256 digest and onto a derived UUID, keeping the digest in
+`deduplication_key` — the right shape, and verified against the tables keyed on `execution_id`. It
+did not look one column over. `trigger_decision_id` is also `uuid`, and the executor writes
+`trigger-001-runtimebelow` into it: a name for a trigger a person authored, which nothing mints and
+nothing should coerce.
+
+So `F-100`'s symptom survived `F-100`'s fix exactly. The insert into `shutdownflow_executions` still
+failed 22P02, and because the four child tables carry a foreign key to it, each then failed 23503.
+On a live cluster the counts told the story on their own — thousands of rows in every table not
+keyed on an execution, zero in all five that are.
+
+**`F-115` closed.** Every reconciler declared `+kubebuilder:rbac:groups=""` for events, the legacy
+core group, while the recorder writes through `events.k8s.io`. No grant existed for that group at
+all, so every event the operator has ever emitted was refused — not degraded, refused. It surfaced
+only because cluster-scoped kinds have no namespace on the regarding object, which lands their
+events in `default` and makes the refusal name a namespace nobody configured.
+`upsdevice_controller.go` records on nine paths and had no events grant in either group.
+
+**`F-113` closed.** A Repo Hygiene job now applies both installers to a throwaway Kind cluster with
+`--dry-run=server`. Server-side and not client-side: `--dry-run=client` runs no API validation and
+accepts an empty `resources:` list as happily as anything else, which is precisely the check that
+was missing.
+
+**`F-108` closed.** envtest runs 1.34, 1.35 and 1.36 on every commit with `fail-fast` off, and the
+e2e node image is pinned by digest to 1.34 — the matrix floor, so a break that only appears on the
+version e2e actually runs cannot hide behind a green unit run on a newer control plane. The tested
+claim in `installation/README.md` now states versions instead of describing how a version is derived.
+
+**`F-97` halved.** The watchdog interval drops from 30s to 5s and the confirmation now waits between
+its two readings rather than taking them back to back, which was two reads of one instant and could
+only ever agree with itself. The old interval was justified by not churning healthy drivers; that
+rationale came from the misreading this audit already corrected, and once the driver is understood
+to be exiting, the binding constraint is `DEADTIME` on the other side. A recovery slower than
+`DEADTIME` does not delay telemetry, it converts a driver exit into a cluster-wide shutdown signal.
+Why `dummy-ups` exits is still open.
+
+**A gate gap worth naming.** `F-113`, `F-114`, and `F-115` are all the same shape: a defect that no
+local gate could see, because envtest has no PostgreSQL, applies no helper `ClusterRole`s, and grants
+its client everything. Each was found by running the operator against a real cluster and reading what
+it wrote, and each had been passing CI for as long as it existed.

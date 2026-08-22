@@ -145,12 +145,13 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   require are already there, so turning it on is a repository-settings change and nothing else.
   Recorded here because this section previously described it as already in place.
 
-- Write the multi-node specs the e2e cluster can now carry. `F-109` gave it three nodes and a CNI
-  that enforces `NetworkPolicy`, and the only spec using either is the enforcement guard. Wave
-  ordering, tier descent across nodes, and agent self-exclusion are now testable and still untested.
-- `F-110` induce failures in the suite, and run something for longer than a few minutes. Nothing
-  deletes a pod, partitions the network, or stalls the apiserver; the only restart assertions check
-  that a restart did *not* happen. `F-97` and `F-105` are both in the class this would catch.
+
+- `F-110` run something for longer than a few minutes. Failure injection now exists: a spec kills
+  the driver through its own PID file and asserts recovery inside a budget below the smallest
+  `DEADTIME` the operator renders, which is the `F-105` relationship stated as a bound rather than
+  as prose. Still nothing partitions the network or stalls the apiserver, and nothing runs long
+  enough to catch what only appears over hours -- the agent restart loop needed 23 of them before it
+  was visible as anything but a restart count.
 - `F-112` add upgrade coverage and a release workflow. Nothing tests that a cluster converges after
   the operator is replaced, or that CRD schemas stay compatible across versions. Both become gates
   when a v1 exists.
