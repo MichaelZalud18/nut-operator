@@ -81,14 +81,19 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
-- Settle how UPS drivers get supervised. The polling watchdog sidecar is doing a job the kubelet
-  already does, and doing it wrong: eight of the ten restarts it performed on a live cluster were not
-  corroborated by `upsd`, which held a working session across all of them. NUT 2.8 drivers take
-  `-F`/`-FF` to stay foregrounded and answer `-c exit` "so an external caller like the systemd or SMF
-  frameworks would start another copy", so a driver can be a supervised process rather than a
-  start-once one. What has to be settled first is `F-48`: a container per driver makes the container
-  list a function of the device set, which is exactly what that finding forbids. Evidence for the
-  misfires is in the 2026-08-24 correction in `operator-maturity-benchmarks.md`.
+- Settle how UPS drivers get started and supervised, starting with the start method. `upsdrvctl
+  start` is the suspect, not just the watchdog around it: it backgrounds the driver, hands ownership
+  to a PID file, and on every subsequent call detects the file and terminates whatever it points at
+  ("Duplicate driver instance detected ... Terminating other driver!"). That is the mechanism behind
+  every restart in the `F-97` startup burst, and it is worth establishing whether the burst survives
+  at all once the driver is started foregrounded -- test that before designing anything around it.
+  NUT 2.8 drivers take `-F`/`-FF` to stay foregrounded and answer `-c exit` "so an external caller
+  like the systemd or SMF frameworks would start another copy", so a driver can be a supervised
+  process rather than a start-once one, and the kubelet can do what the sidecar is polling for. The
+  sidecar's own record argues for this: eight of the ten restarts it performed on a live cluster were
+  not corroborated by `upsd`, which held a working session across all of them. What has to be settled
+  before any container-per-driver shape is `F-48`, which forbids making the container list a function
+  of the device set. Evidence is in the 2026-08-24 correction in `operator-maturity-benchmarks.md`.
 - `F-97` find out why the driver stops answering new probes in the minutes after a pod start. The
   recovery half is done and now measured: a killed driver is back in 9.75s against a 30s budget
   (`test/e2e/driver_recovery_test.go`). The question changed shape on 2026-08-24 — the exit rate is a
@@ -106,6 +111,11 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 (`NA-n`). Audits: `docs/contributing/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`,
 `F-33`–`F-36`, `F-54`–`F-92`, `OD-37`) and `operator-maturity-benchmarks.md` (`F-94`).
 
+- Add Talos support to the actuator. The halt path is a single fixed mechanism -- `reboot(2)` with
+  `LINUX_REBOOT_CMD_POWER_OFF`, `CAP_SYS_BOOT`, host PID namespace -- and Talos manages shutdown
+  through its own machine API instead. Establish what Talos actually needs and what credential it
+  needs it under.
+- Find a way to add boundaries around the actuator.
 - `F-94` decide whether halt evidence survives a manager restart. Attempts live only in
   `haltwatch.Observer`'s map, so a restart or leadership handoff between the signal write and the
   node stopping records no outcome at all. Re-seeding from the signal Secrets would close it; the
