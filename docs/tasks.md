@@ -81,6 +81,14 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
+- Settle how UPS drivers get supervised. The polling watchdog sidecar is doing a job the kubelet
+  already does, and doing it wrong: eight of the ten restarts it performed on a live cluster were not
+  corroborated by `upsd`, which held a working session across all of them. NUT 2.8 drivers take
+  `-F`/`-FF` to stay foregrounded and answer `-c exit` "so an external caller like the systemd or SMF
+  frameworks would start another copy", so a driver can be a supervised process rather than a
+  start-once one. What has to be settled first is `F-48`: a container per driver makes the container
+  list a function of the device set, which is exactly what that finding forbids. Evidence for the
+  misfires is in the 2026-08-24 correction in `operator-maturity-benchmarks.md`.
 - `F-97` find out why the driver stops answering new probes in the minutes after a pod start. The
   recovery half is done and now measured: a killed driver is back in 9.75s against a 30s budget
   (`test/e2e/driver_recovery_test.go`). The question changed shape on 2026-08-24 — the exit rate is a
@@ -144,13 +152,23 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   require are already there, so turning it on is a repository-settings change and nothing else.
   Recorded here because this section previously described it as already in place.
 
-
 - `F-110` run something for longer than a few minutes. Failure injection now exists: a spec kills
   the driver through its own PID file and asserts recovery inside a budget below the smallest
-  `DEADTIME` the operator renders, which is the `F-105` relationship stated as a bound rather than
-  as prose. Still nothing partitions the network or stalls the apiserver, and nothing runs long
+  `DEADTIME` the operator renders, and it measured 9.75s on its first run. That bounds the
+  driver-outage path, not `F-105`, which the 2026-08-24 correction separated out. Still nothing
+  partitions the network or stalls the apiserver, and nothing runs long
   enough to catch what only appears over hours -- the agent restart loop needed 23 of them before it
   was visible as anything but a restart count.
+- Set a retention policy on the four GHCR packages. About 1,780 of ~2,180 versions carry no tag at
+  all as of 2026-08-25 -- superseded digests and attestation layers from 550+ builds -- and nothing
+  prunes them.
+- Delete the one tag on the `nut-operator` package that is neither `main` nor a digest reference,
+  pushed by hand on 2026-07-31. It is the only human-readable tag on a public package that the
+  promote job did not put there.
+- Clean up the e2e Kind cluster when the suite fails. `test-e2e` runs `cleanup-test-e2e` as a
+  following recipe line, so a failing `go test` aborts make and leaves a multi-node cluster running
+  indefinitely. A stale one on the workstation was later consistent with the inotify exhaustion
+  `check-test-e2e-host` exists to catch, blocking an unrelated `kind create`.
 - `F-112` add upgrade coverage and a release workflow. Nothing tests that a cluster converges after
   the operator is replaced, or that CRD schemas stay compatible across versions. Both become gates
   when a v1 exists.
