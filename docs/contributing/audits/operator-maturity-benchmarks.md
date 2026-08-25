@@ -1719,3 +1719,60 @@ failure-injection spec had never run anywhere — the placement failure is in an
 it skipped the two driver-recovery specs behind it every time — and on its first execution it
 measured recovery at **9.75s**, against a 30s budget and the 45s `DEADTIME` that budget sits below.
 That is the `F-97` watchdog change stated as a number for the first time.
+
+## Correction: the driver exit rate is a startup burst, and `HOSTSYNC` is the timer, 2026-08-24
+
+Sixty-eight hours of the same pod, read directly rather than sampled, contradicts both numbers the
+previous two sections rest on.
+
+**The driver has not exited once in 68 hours.** The `nut-server` pod started at `05:36:34Z` on
+2026-08-22. The driver-watchdog restarted the driver ten times, between `05:37:15` and `05:47:33` —
+and never again. The current driver's socket and PID file are dated `05:47`, the PID in that file is
+still the process serving now, and forty consecutive `upsdrvctl status` probes at one-second
+intervals just returned `RESPONSIVE` forty times.
+
+So "roughly thirty-six times an hour" describes eleven minutes after a pod start, extrapolated. Ten
+restarts in eleven minutes is about fifty-five an hour, which is where that figure came from. The
+steady-state rate is zero.
+
+**Most of those ten were not visible to `upsd`.** It logged `Can't connect to UPS
+[...] (/run/nut/dummy-ups-...): Connection refused` exactly twice in the window, at `05:37:08` and
+`05:42:58`. Across the other eight restarts it stayed connected and only reported reconnecting
+afterwards — so whatever the watchdog's probe saw, a client already holding a session did not. The
+two readings the watchdog takes are `upsdrvctl status` calls, which open a *new* connection to the
+driver socket; that is a different question from whether the driver is still serving an established
+one, and the answers disagreed eight times out of ten.
+
+What separates the window from the 68 hours after it: eight `upsmon` clients were logged in during
+it, against five in steady state — three belonged to agent pods being replaced. That is a
+correlation with client count and nothing stronger, but it is the first evidence pointing anywhere,
+and it points where the previous pass said to look.
+
+**`F-105` does not need a driver exit, and the timer is not `DEADTIME`.** An agent forced shutdown at
+`02:23:27Z` today, with the driver continuously responsive for the preceding 68 hours and `upsd`
+never losing it:
+
+```
+02:21:12  UPS ... on battery
+02:23:07  UPS ... battery is low
+02:23:27  Giving up on the primary for UPS [...] after 20 sec since last comms
+02:23:27  Too few UPS(es) are healthy (0<1), initiating forced shutdown
+```
+
+Twenty seconds after the low-battery notification, and the rendered `upsmon.conf` sets `DEADTIME 30`.
+It cannot be `DEADTIME` elapsing. It is `HOSTSYNC 15` — how long a secondary waits for a primary to
+set FSD after low battery — reached at the next `POLLFREQALERT 5` poll, which lands at twenty seconds
+exactly.
+
+That corrects two things at once. The conjunction claimed in the previous section is wrong: `F-97`
+supplies no part of the residual rate, because the residual rate is happening right now with no
+driver exits at all. And the timer that fires is `HOSTSYNC`, which is shorter than `DEADTIME`, fires
+on low battery rather than on silence, and cannot be avoided by making driver recovery faster. The
+earlier "orphaned secondary only" correction was right, and this pass over-rotated away from it.
+
+`F-105` is unchanged as a decision — an agent rendered `MONITOR ... secondary` with no primary
+anywhere will force-shutdown fifteen seconds into every low-battery episode — but it is now the whole
+of the loop rather than a share of it, and the number to design against is `HOSTSYNC`.
+
+Still open on `F-97`, and now stated properly: what makes a driver that `upsd` is still talking to
+fail two `upsdrvctl status` probes two seconds apart, and why only in the minutes after a pod start.

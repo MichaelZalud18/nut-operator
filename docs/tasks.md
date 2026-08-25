@@ -81,12 +81,11 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
-- `F-97` find out why `dummy-ups` exits. The recovery half is done: the watchdog now polls every 5s
-  and confirms after a delay, so a driver exit is repaired well inside `DEADTIME` instead of well
-  outside it. Why the process exits at all is still open. An isolated driver on the same fixture ran
-  236s untouched and stayed `RESPONSIVE` even while paused in a timed block, while the production
-  driver died five times in the same window at 4-176s; the difference is `upsd` and its reconnecting
-  `upsmon` clients, which is where to look next.
+- `F-97` find out why the driver stops answering new probes in the minutes after a pod start. The
+  recovery half is done and now measured: a killed driver is back in 9.75s against a 30s budget
+  (`test/e2e/driver_recovery_test.go`). The question changed shape on 2026-08-24 — the exit rate is a
+  startup burst, not a steady state, and eight of ten restarts happened while `upsd` still held a
+  working session. See the correction of that date in `operator-maturity-benchmarks.md`.
 
 ---
 
@@ -106,14 +105,11 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
   evidence-model decision rather than a patch.
 - `F-105` decide what an agent does after it has signalled. `upsmon` exits 0 once it runs
   `SHUTDOWNCMD`, which in a DaemonSet is a container restart, and the restarted `upsmon` re-fires if
-  the condition still holds. The `F-97` watchdog fix took this from ~55 restarts an hour per agent to
-  ~12 by shortening each driver outage below `DEADTIME`, which removed the fan-out of one outage into
-  many forced shutdowns. What remains is the baseline and it is measured: all agents restart in
-  lockstep at roughly five-minute intervals, matching the simulation fixture's 300s cycle -- one
-  forced shutdown per low-battery episode, which is what an orphaned secondary is built to do. Every
-  agent is rendered `MONITOR ... secondary` with no primary anywhere. `NA-1`/`OD-37` keep the path
-  authority-free, so this is operational rather than a safety defect, and it is now the only thing
-  driving the loop.
+  the condition still holds. Every agent is rendered `MONITOR ... secondary` with no primary
+  anywhere, so each one force-shuts-down `HOSTSYNC` seconds into every low-battery episode -- no
+  driver outage required, and no watchdog change reaches it. `NA-1`/`OD-37` keep the path
+  authority-free, so this is operational rather than a safety defect. The timer is `HOSTSYNC` and not
+  `DEADTIME`; see the 2026-08-24 correction in `operator-maturity-benchmarks.md` for the measurement.
 
 ---
 

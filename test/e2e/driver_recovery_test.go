@@ -41,9 +41,14 @@ import (
 //
 // What is asserted here is a bound, not just recovery. The driver dying is survivable; the driver
 // staying dead longer than upsmon's DEADTIME is not, because every agent then concludes "too few
-// UPS(es) are healthy" and runs SHUTDOWNCMD. That is the whole of F-105, and it is a timing
-// relationship between two components that never appear in the same test. A watchdog that recovers
-// eventually passes a liveness check and still shuts down the cluster.
+// UPS(es) are healthy" and runs SHUTDOWNCMD. That is a timing relationship between two components
+// that never appear in the same test: a watchdog that recovers eventually passes a liveness check
+// and still shuts down the cluster.
+//
+// This is not F-105, which the 2026-08-24 correction in operator-maturity-benchmarks.md separated
+// out. F-105 is an orphaned secondary reaching HOSTSYNC on low battery with the driver perfectly
+// healthy, and no recovery budget touches it. The path bounded here is the other one -- silence long
+// enough to expire DEADTIME -- which is the one a driver outage can actually cause.
 //
 // driverRecoveryBudget is deliberately below the smallest DEADTIME the operator renders (45s
 // default, settable per agent). Detection is one to two watchdog intervals, the confirmation adds
@@ -187,9 +192,10 @@ spec:
 				g.Expect(state).To(ContainSubstring("RESPONSIVE"))
 				g.Expect(state).NotTo(ContainSubstring("NOT_RESPONSIVE"))
 			}, driverRecoveryBudget, time.Second).Should(Succeed(),
-				"the driver did not come back inside the budget. Every upsmon is in DEADTIME for this "+
-					"whole window, and on expiry each one runs SHUTDOWNCMD -- so a recovery slower than "+
-					"DEADTIME turns one driver exit into a cluster-wide shutdown signal (F-97, F-105)")
+				"the driver did not come back inside the budget. Every upsmon is accumulating silence "+
+					"toward its DEADTIME for this whole window, and on expiry each one runs SHUTDOWNCMD "+
+					"-- so a recovery slower than DEADTIME turns one driver exit into a cluster-wide "+
+					"shutdown signal (F-97)")
 
 			recovered := time.Since(killedAt)
 			AddReportEntry("driver recovery", recovered.String())
