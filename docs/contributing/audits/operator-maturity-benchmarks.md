@@ -1476,7 +1476,7 @@ events in `default` and makes the refusal name a namespace nobody configured.
 `upsdevice_controller.go` records on nine paths and had no events grant in either group.
 
 **`F-113` closed.** A Repo Hygiene job now applies both installers to a throwaway Kind cluster with
-`--dry-run=server`. Server-side and not client-side: `--dry-run=client` runs no API validation and
+`--dry-run=server`. (That job did not actually pass until 2026-08-24 — see the pass below.) Server-side and not client-side: `--dry-run=client` runs no API validation and
 accepts an empty `resources:` list as happily as anything else, which is precisely the check that
 was missing.
 
@@ -1662,3 +1662,60 @@ the claim that driver exits were not the cause.
 Still open, and unchanged: why `dummy-ups` exits at all. It now exits often enough to be measured
 properly — roughly thirty-six times an hour — which is a better starting point than the three an
 hour the old watchdog was reporting.
+
+## Pass: both gates added on 2026-08-21 had never run green, 2026-08-24
+
+Two checks were committed in that pass and described as closing findings. Neither passed on its first
+run or on any run after it, so `Repo Hygiene` and `Images` were red for three days and the `:main`
+tag went unpromoted the whole time. A gate that has never been observed to pass is not evidence about
+the thing it gates; it is only evidence about itself.
+
+**The installer check failed for two reasons, neither of them about the installers.**
+
+`--dry-run=server` creates nothing, including the `Namespace` the bundle declares in its own first
+document, so every namespaced object after it was rejected with `namespaces "nut-operator-system" not
+found` — nine per bundle. And `dist/install.yaml` carries cert-manager `Certificate` and `Issuer`
+objects, which fail RESTMapping on a cluster with no cert-manager CRDs (`no matches for kind
+"Certificate"`) before reaching any validation the job exists to run.
+
+Both are now handled ahead of the dry-run: the CRDs are installed first — only the CRDs, since
+nothing here waits on a controller and a dry-run never asks one to issue a certificate — and the
+`Namespace` documents are extracted from the bundles and applied for real. The cert-manager version is
+read from `test/utils/utils.go` rather than pinned a second time, and the namespace is read from the
+manifests rather than named again in the check.
+
+The whole thing moved to `hack/validate-installers.sh` behind `make validate-installers`, so the check
+that gates a push is the one a contributor can run before pushing. It creates and destroys its own
+Kind cluster instead of using the current context, because two of its steps write.
+
+**The multi-node spec waited on the wrong objects.** `kubectl wait --for=condition=Ready pod -l ...`
+waits on every pod object carrying the label, including ones the DaemonSet has already replaced. The
+rendered `updateStrategy` is `maxSurge: 1, maxUnavailable: 0` (`F-72`), and the pod template carries a
+hash of the NUT server configuration — so a DaemonSet created while the `NUTServer` is still settling
+is rolled once it has, and the replaced pods never become Ready because they are being deleted. The
+failing run reported seven timed-out pods on a three-node cluster, of which at most three were ever
+expected to be alive at the end.
+
+It now asks the DaemonSet whether it has converged and reads the pod list afterwards. That tolerates
+the roll, still fails when a node genuinely has no ready agent, and hands the next spec pods that
+still exist — the previous version captured pod names before the roll and would have fetched logs
+from a deleted pod.
+
+**The spec produced no diagnostics, which is what made this expensive.** Four minutes of waiting, one
+line saying "timed out", and then the `AfterAll` deleted the namespace. Root-causing it needed a
+multi-node cluster and a full operand build locally, to recover information the failing run had in
+hand and discarded. `utils.DumpNamespaceDiagnostics` now writes pods, events, descriptions, and
+per-container logs before teardown, on failure only.
+
+What separates the two runs is timing, not node count. Locally the DaemonSet appears about a minute
+after the fixture is applied, by which point the `NUTServer` has settled and the config hash is
+final, so nothing rolls; in the failing CI run it appeared within half a second of the apply, well
+before the server was serving. The spec passes on a two-node Kind cluster with Calico, which is
+enough to distinguish "the targeted node" from "the others" — the claim `F-109` exists to make — and
+was never going to reproduce a roll that does not happen there.
+
+**What the fixed specs report.** Both now pass against a two-node Kind cluster with Calico. The
+failure-injection spec had never run anywhere — the placement failure is in an `Ordered` container, so
+it skipped the two driver-recovery specs behind it every time — and on its first execution it
+measured recovery at **9.75s**, against a 30s budget and the 45s `DEADTIME` that budget sits below.
+That is the `F-97` watchdog change stated as a number for the first time.

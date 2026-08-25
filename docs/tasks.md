@@ -23,7 +23,7 @@ stays answerable to one question: what is left before v1. Items move there only 
 outside the project gates them or scope-boundaries places them beyond v1 — never merely because
 they are hard or unscheduled. Declined work is recorded where it was declined, not parked here.
 
-Last reviewed: 2026-08-20
+Last reviewed: 2026-08-24
 
 ---
 

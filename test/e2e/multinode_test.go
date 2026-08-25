@@ -144,6 +144,15 @@ spec:
 		})
 
 		AfterAll(func() {
+			// Before the deletes, and only on failure. The first CI run of this spec timed out
+			// waiting on pod readiness, tore the namespace down, and reported nothing about which
+			// pod was unready or why -- so the cheapest information in the whole run was the one
+			// thing it did not keep.
+			if CurrentSpecReport().Failed() {
+				By("dumping the fanout namespace before tearing it down")
+				utils.DumpNamespaceDiagnostics(namespace)
+			}
+
 			By("removing the fanout namespace and its cluster-scoped fixture")
 			for _, args := range [][]string{
 				{"delete", "nodepoweragent", agentName, "--ignore-not-found=true"},
@@ -156,33 +165,63 @@ spec:
 		})
 
 		It("runs one agent pod on every node", func() {
+			By("finding the agent's DaemonSet")
+			// By label rather than by name. The DaemonSet's name is derived from the NodePowerAgent's
+			// by the renderer, and a spec that spells the derivation out a second time asserts the
+			// renderer's naming as a side effect of asking about placement.
+			var daemonSet string
+			findDaemonSet := func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "-n", namespace, "get", "daemonset",
+					"-l", "power.zalud.io/nodepoweragent="+agentName,
+					"-o", "jsonpath={.items[0].metadata.name}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).NotTo(BeEmpty())
+				daemonSet = strings.TrimSpace(out)
+			}
+			Eventually(findDaemonSet, 3*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("waiting for it to converge on every node")
+			// `rollout status` and not `kubectl wait --for=condition=Ready pod -l ...`, which is what
+			// this used to do and what made its first CI run unreadable. That waits on every pod object
+			// carrying the label, including ones the DaemonSet has already replaced -- the run reported
+			// seven timed-out pods on a three-node cluster, none of which was necessarily unhealthy.
+			//
+			// A roll is expected here rather than exceptional: the pod template carries a hash of the
+			// NUT server configuration, so a DaemonSet created while the NUTServer is still settling is
+			// replaced once it has. Asking the DaemonSet whether it has converged tolerates that and
+			// still fails when a node genuinely has no ready agent, which is the claim.
+			_, err := utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "status",
+				"daemonset/"+daemonSet, "--timeout=5m"))
+			Expect(err).NotTo(HaveOccurred(), "the agent DaemonSet never converged")
+
+			// Read after convergence, not before. Pods captured ahead of the roll can be gone by the
+			// time the next spec asks one for its logs, which fails for a reason that has nothing to do
+			// with signal targeting.
+			//
 			// The DaemonSet tolerates every NoSchedule and NoExecute taint, so "every node" includes the
 			// control plane. A count short of the node total means placement silently lost a node, and
 			// an operator that misses a node at shutdown leaves it running on a dead battery.
+			By("recording the ready agent pod on each node")
 			byNode := func(g Gomega) {
 				cmd := exec.Command("kubectl", "-n", namespace, "get", "pods",
 					"-l", "power.zalud.io/nodepoweragent="+agentName,
-					"-o", "jsonpath={range .items[*]}{.spec.nodeName}{\" \"}{.metadata.name}{\"\\n\"}{end}")
+					"--field-selector=status.phase=Running",
+					"-o", "jsonpath={range .items[*]}{.spec.nodeName}{\" \"}{.metadata.name}{\" \"}"+
+						"{.status.conditions[?(@.type=='Ready')].status}{\"\\n\"}{end}")
 				out, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 
 				found := map[string]string{}
 				for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 					fields := strings.Fields(line)
-					if len(fields) == 2 {
+					if len(fields) == 3 && fields[2] == "True" {
 						found[fields[0]] = fields[1]
 					}
 				}
-				g.Expect(found).To(HaveLen(nodeCount), "expected one agent pod per node")
+				g.Expect(found).To(HaveLen(nodeCount), "expected one ready agent pod per node")
 				podsByNode = found
 			}
-			Eventually(byNode, 3*time.Minute, 5*time.Second).Should(Succeed())
-
-			By("waiting for every agent pod to be Ready")
-			cmd := exec.Command("kubectl", "-n", namespace, "wait", "--for=condition=Ready",
-				"pod", "-l", "power.zalud.io/nodepoweragent="+agentName, "--timeout=4m")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "not every agent pod became Ready")
+			Eventually(byNode, 2*time.Minute, 5*time.Second).Should(Succeed())
 		})
 
 		It("delivers a signal to the node it names and to no other", func() {

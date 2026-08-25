@@ -224,3 +224,61 @@ func UncommentCode(filename, target, prefix string) error {
 
 	return nil
 }
+
+// DumpNamespaceDiagnostics writes everything needed to explain why a fixture in this namespace did
+// not converge, to the Ginkgo output.
+//
+// The suite had no equivalent, and the cost showed the first time the multi-node spec (F-109)
+// failed in CI: `kubectl wait --for=condition=Ready` spent four minutes and reported "timed out",
+// the AfterAll then deleted the namespace, and the run produced not one fact about which pod was
+// unready or why. Reproducing it locally needs a multi-node cluster and a full operand build, which
+// is a long way to travel for information the failing run already had in hand.
+//
+// Every command is best-effort. This runs on a cluster that is already misbehaving, so a failure to
+// collect one section must not lose the others -- and it must never itself fail a spec that had
+// otherwise passed.
+func DumpNamespaceDiagnostics(namespace string) {
+	sections := [][]string{
+		{"get", "pods", "-o", "wide"},
+		{"get", "events", "--sort-by=.lastTimestamp"},
+		{"describe", "pods"},
+	}
+	for _, args := range sections {
+		full := append([]string{"-n", namespace}, args...)
+		out, err := Run(exec.Command("kubectl", full...))
+		if err != nil {
+			_, _ = fmt.Fprintf(GinkgoWriter, "diagnostics: kubectl %s failed: %v\n",
+				strings.Join(full, " "), err)
+			continue
+		}
+		_, _ = fmt.Fprintf(GinkgoWriter, "=== kubectl %s ===\n%s\n", strings.Join(full, " "), out)
+	}
+
+	// Container logs are fetched per container rather than with --all-containers, because the point
+	// is to tell them apart: an agent pod that is unready because upsmon cannot reach its NUT server
+	// and one whose actuator never started its watch loop are different defects, and interleaved
+	// output hides which container said what.
+	podNames, err := Run(exec.Command("kubectl", "-n", namespace, "get", "pods",
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}"))
+	if err != nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "diagnostics: could not list pods in %s: %v\n", namespace, err)
+		return
+	}
+	for _, pod := range GetNonEmptyLines(podNames) {
+		containers, containerErr := Run(exec.Command("kubectl", "-n", namespace, "get", "pod", pod,
+			"-o", "jsonpath={range .spec.containers[*]}{.name}{\"\\n\"}{end}"))
+		if containerErr != nil {
+			continue
+		}
+		for _, container := range GetNonEmptyLines(containers) {
+			logs, logErr := Run(exec.Command("kubectl", "-n", namespace, "logs", pod,
+				"-c", container, "--tail=60"))
+			if logErr != nil {
+				_, _ = fmt.Fprintf(GinkgoWriter, "=== logs %s/%s: unavailable: %v ===\n",
+					pod, container, logErr)
+				continue
+			}
+			_, _ = fmt.Fprintf(GinkgoWriter, "=== logs %s/%s ===\n%s\n", pod, container, logs)
+		}
+	}
+}

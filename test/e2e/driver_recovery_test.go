@@ -130,6 +130,11 @@ spec:
 		})
 
 		AfterAll(func() {
+			if CurrentSpecReport().Failed() {
+				By("dumping the recovery namespace before tearing it down")
+				utils.DumpNamespaceDiagnostics(namespace)
+			}
+
 			By("removing the recovery namespace and its cluster-scoped fixture")
 			for _, args := range [][]string{
 				{"delete", "nutserver", serverName, "--ignore-not-found=true"},

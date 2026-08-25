@@ -251,6 +251,13 @@ security-triage: ## Name the actionable findings from the last ASH scan.
 validate-samples: manifests ## Check config/samples and docs/examples against the generated CRD schemas.
 	python3 hack/validate-samples.py
 
+# Not a dependency of anything: it creates and destroys a Kind cluster, which is too much to attach
+# to `make test`. It is the only gate that hands dist/ to an API server, though -- see the script's
+# own header for why diffing the committed bytes was not enough.
+.PHONY: validate-installers
+validate-installers: ## Apply the committed installers against a throwaway Kind cluster's API server.
+	KIND=$(KIND) ./hack/validate-installers.sh
+
 # No default for NODE, deliberately. This is the one target where a forgotten variable would pick a
 # machine on its own.
 .PHONY: verify-actuation
