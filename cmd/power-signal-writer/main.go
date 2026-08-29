@@ -58,6 +58,7 @@ func main() {
 		ShutdownFlow:       env("POWER_SHUTDOWN_FLOW", "upsmon-local"),
 		SignalPath:         env("POWER_SIGNAL_PATH", defaultSignalPath),
 		SignalTTL:          parseDuration(env("POWER_SIGNAL_TTL", "2m"), 2*time.Minute),
+		HoldAfterWrite:     parseBool(env("POWER_SIGNAL_HOLD_AFTER_WRITE", "false")),
 	}
 	payload, reused, err := writeSignal(config, time.Now().UTC())
 	if err != nil {
@@ -66,9 +67,15 @@ func main() {
 	}
 	if reused {
 		logger.Printf("reused active signal executionID=%s node=%s signalPath=%s", payload.ExecutionID, payload.NodeName, config.SignalPath)
+		if config.HoldAfterWrite {
+			holdAfterSignal(logger, payload)
+		}
 		return
 	}
 	logger.Printf("wrote signal executionID=%s node=%s signalPath=%s mode=%s", payload.ExecutionID, payload.NodeName, config.SignalPath, config.Mode)
+	if config.HoldAfterWrite {
+		holdAfterSignal(logger, payload)
+	}
 }
 
 type signalWriterConfig struct {
@@ -81,6 +88,7 @@ type signalWriterConfig struct {
 	ShutdownFlow       string
 	SignalPath         string
 	SignalTTL          time.Duration
+	HoldAfterWrite     bool
 }
 
 func writeSignal(config signalWriterConfig, now time.Time) (nodeagent.ShutdownSignal, bool, error) {
@@ -147,6 +155,22 @@ func parseDuration(value string, fallback time.Duration) time.Duration {
 		return duration
 	}
 	return fallback
+}
+
+func parseBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func holdAfterSignal(logger *log.Logger, payload nodeagent.ShutdownSignal) {
+	logger.Printf("holding after signal executionID=%s node=%s; waiting for container termination", payload.ExecutionID, payload.NodeName)
+	for {
+		time.Sleep(time.Hour)
+	}
 }
 
 func splitCSV(value string) []string {

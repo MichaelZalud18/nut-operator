@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -29,8 +30,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/haltwatch"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
+	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
 var haltSignalTime = time.Date(2026, 8, 17, 4, 0, 0, 0, time.UTC)
@@ -40,6 +43,9 @@ func haltScheme(t *testing.T) *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add corev1 to scheme: %v", err)
+	}
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add powerv1alpha1 to scheme: %v", err)
 	}
 	return scheme
 }
@@ -55,6 +61,67 @@ func haltTestNode(name string, status corev1.ConditionStatus, heartbeat time.Tim
 				LastTransitionTime: metav1.NewTime(heartbeat.Add(40 * time.Second)),
 			}},
 		},
+	}
+}
+
+func haltSignal(node, flow, executionID string, written time.Time) nodeagent.ShutdownSignal {
+	return nodeagent.ShutdownSignal{
+		ExecutionID:        executionID,
+		NodeName:           node,
+		PlanConfigHash:     "plan-abc",
+		Reason:             "ReleaseApproved",
+		SelectedUPSDevices: []string{"ups-a"},
+		ShutdownFlow:       flow,
+		Timestamp:          written.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func haltFlow(name, executionID string, completedAt time.Time, triggerActive bool) *powerv1alpha1.ShutdownFlow {
+	completed := metav1.NewTime(completedAt.UTC())
+	return &powerv1alpha1.ShutdownFlow{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: powerv1alpha1.ShutdownFlowStatus{
+			LastExecution: &powerv1alpha1.ShutdownExecutionStatus{
+				ExecutionID:   executionID,
+				CompletedAt:   &completed,
+				TriggerActive: triggerActive,
+				Phase:         powerv1alpha1.ShutdownExecutionPhaseCompleted,
+			},
+		},
+	}
+}
+
+func haltAgent(name, namespace string, ttl time.Duration) *powerv1alpha1.NodePowerAgent {
+	return &powerv1alpha1.NodePowerAgent{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: powerv1alpha1.NodePowerAgentSpec{
+			Namespace: namespace,
+			Shutdown: powerv1alpha1.AgentShutdownSpec{
+				SignalTTL: &metav1.Duration{Duration: ttl},
+			},
+		},
+	}
+}
+
+func haltSignalSecret(t *testing.T, agent *powerv1alpha1.NodePowerAgent, namespace string, signals ...nodeagent.ShutdownSignal) *corev1.Secret {
+	t.Helper()
+	data := map[string][]byte{
+		nodeagent.DeliveryChannelMarker: []byte(agent.Name),
+	}
+	for _, signal := range signals {
+		encoded, err := json.Marshal(signal)
+		if err != nil {
+			t.Fatalf("encode signal: %v", err)
+		}
+		data[nodePowerAgentSignalKey(signal.NodeName)] = encoded
+	}
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      nodePowerAgentSignalSecretName(agent),
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: data,
 	}
 }
 
@@ -184,5 +251,95 @@ func TestNodeHaltDropsSeriesForDeletedNodes(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(metrics.HaltAttemptsTotal.WithLabelValues("halt-deleted-flow", "Halted")); got != 0 {
 		t.Fatalf("expected a deleted node not to count as halted, got %v", got)
+	}
+}
+
+func TestNodeHaltSeedsPendingAttemptsFromLiveSignalSecrets(t *testing.T) {
+	agent := haltAgent("agent-a", "power-system", time.Hour)
+	node := haltTestNode("seed-ready", corev1.ConditionTrue, haltSignalTime.Add(time.Second))
+	signal := haltSignal("seed-ready", "flow-a", "exec-a", haltSignalTime)
+	reconciler := &NodeHaltReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(haltScheme(t)).
+			WithObjects(
+				agent,
+				haltFlow("flow-a", "exec-a", haltSignalTime.Add(time.Second), true),
+				haltSignalSecret(t, agent, "power-system", signal),
+				node,
+			).
+			Build(),
+		Observer: haltwatch.NewObserver(),
+		Clock:    func() time.Time { return haltSignalTime.Add(10 * time.Second) },
+	}
+
+	seeded, err := reconciler.seedPendingAttempts(context.Background())
+	if err != nil {
+		t.Fatalf("seedPendingAttempts returned error: %v", err)
+	}
+	if seeded != 1 {
+		t.Fatalf("expected one pending attempt to be seeded, got %d", seeded)
+	}
+	if !reconciler.Observer.Watching("seed-ready") {
+		t.Fatal("expected the ready node's live signal to be tracked after restart")
+	}
+}
+
+func TestNodeHaltDoesNotSeedAlreadyNotReadyNodes(t *testing.T) {
+	agent := haltAgent("agent-a", "power-system", time.Hour)
+	node := haltTestNode("seed-notready", corev1.ConditionUnknown, haltSignalTime.Add(time.Second))
+	signal := haltSignal("seed-notready", "flow-a", "exec-a", haltSignalTime)
+	reconciler := &NodeHaltReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(haltScheme(t)).
+			WithObjects(
+				agent,
+				haltFlow("flow-a", "exec-a", haltSignalTime.Add(time.Second), true),
+				haltSignalSecret(t, agent, "power-system", signal),
+				node,
+			).
+			Build(),
+		Observer: haltwatch.NewObserver(),
+		Clock:    func() time.Time { return haltSignalTime.Add(10 * time.Second) },
+	}
+
+	seeded, err := reconciler.seedPendingAttempts(context.Background())
+	if err != nil {
+		t.Fatalf("seedPendingAttempts returned error: %v", err)
+	}
+	if seeded != 0 {
+		t.Fatalf("expected no already-NotReady node attempts to be seeded, got %d", seeded)
+	}
+	if reconciler.Observer.Watching("seed-notready") {
+		t.Fatal("an already-NotReady node was left pending; a later sweep would publish a timeout on ambiguous evidence")
+	}
+}
+
+func TestNodeHaltDoesNotSeedSpentSignals(t *testing.T) {
+	agent := haltAgent("agent-a", "power-system", time.Hour)
+	node := haltTestNode("seed-spent", corev1.ConditionTrue, haltSignalTime.Add(time.Second))
+	signal := haltSignal("seed-spent", "flow-a", "exec-a", haltSignalTime)
+	reconciler := &NodeHaltReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(haltScheme(t)).
+			WithObjects(
+				agent,
+				haltFlow("flow-a", "exec-a", haltSignalTime.Add(time.Second), false),
+				haltSignalSecret(t, agent, "power-system", signal),
+				node,
+			).
+			Build(),
+		Observer: haltwatch.NewObserver(),
+		Clock:    func() time.Time { return haltSignalTime.Add(10 * time.Second) },
+	}
+
+	seeded, err := reconciler.seedPendingAttempts(context.Background())
+	if err != nil {
+		t.Fatalf("seedPendingAttempts returned error: %v", err)
+	}
+	if seeded != 0 {
+		t.Fatalf("expected no spent signal attempts to be seeded, got %d", seeded)
+	}
+	if reconciler.Observer.Watching("seed-spent") {
+		t.Fatal("a spent signal was re-seeded after restart")
 	}
 }

@@ -328,6 +328,7 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].LivenessProbe).NotTo(BeNil())
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].LivenessProbe.Exec.Command).To(Equal([]string{"pgrep", "-x", "upsmon"}))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_SIGNAL_PATH", Value: "/run/power-agent/shutdown.json"}))
+			Expect(daemonSet.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_SIGNAL_HOLD_AFTER_WRITE", Value: "true"}))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_SHUTDOWN_FLOW", Value: "upsmon-local"}))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "POWER_SELECTED_UPS_DEVICES", Value: "rack-a-ups"}))
 			Expect(daemonSet.Spec.Template.Spec.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{

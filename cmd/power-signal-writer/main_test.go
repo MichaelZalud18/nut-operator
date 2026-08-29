@@ -114,3 +114,16 @@ func TestWriteSignalRejectsWrongNodeSignal(t *testing.T) {
 		t.Fatal("expected wrong-node signal to be rejected")
 	}
 }
+
+func TestParseBoolAcceptsTruthyValues(t *testing.T) {
+	for _, value := range []string{"1", "true", "TRUE", "yes", "on", " on "} {
+		if !parseBool(value) {
+			t.Fatalf("expected %q to parse as true", value)
+		}
+	}
+	for _, value := range []string{"", "0", "false", "no", "off", "anything else"} {
+		if parseBool(value) {
+			t.Fatalf("expected %q to parse as false", value)
+		}
+	}
+}

@@ -18,10 +18,13 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,8 +32,10 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
+	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/haltwatch"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
+	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
 // nodeHaltSweepInterval is how often unresolved halt attempts are checked against their deadline.
@@ -55,6 +60,8 @@ type NodeHaltReconciler struct {
 }
 
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=power.zalud.io,resources=nodepoweragents;powermanagementclusters;shutdownflows,verbs=get;list;watch
 
 // Reconcile resolves a pending halt attempt when its node stops reporting Ready.
 func (r *NodeHaltReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -99,6 +106,11 @@ func (r *NodeHaltReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 // Start runs the deadline sweep until the context is cancelled. It implements manager.Runnable.
 func (r *NodeHaltReconciler) Start(ctx context.Context) error {
 	log := logf.FromContext(ctx).WithName("nodehalt-sweep")
+	if seeded, err := r.seedPendingAttempts(ctx); err != nil {
+		log.Error(err, "Could not seed pending halt attempts from signal Secrets")
+	} else if seeded > 0 {
+		log.Info("Seeded pending halt attempts from signal Secrets", "attempts", seeded)
+	}
 	ticker := time.NewTicker(nodeHaltSweepInterval)
 	defer ticker.Stop()
 	for {
@@ -116,6 +128,130 @@ func (r *NodeHaltReconciler) Start(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// seedPendingAttempts reconstructs in-memory halt attempts from the operator's projected signal
+// Secrets after a manager restart or leader handoff.
+//
+// Only nodes still reporting Ready are retained. A live signal plus an already-NotReady Node is an
+// evidence-model question the signal alone cannot settle: it might be the requested halt, a
+// partition, or a node that was already unhealthy. Keeping it pending would later publish a timeout
+// against a node that may have halted before this process started, while resolving it would claim
+// evidence the restarted process did not observe. So this seed closes the restart window where the
+// node is still up, and leaves the already-gone case to a separate decision.
+func (r *NodeHaltReconciler) seedPendingAttempts(ctx context.Context) (int, error) {
+	if r.Observer == nil {
+		return 0, nil
+	}
+	var agents powerv1alpha1.NodePowerAgentList
+	if err := r.List(ctx, &agents); err != nil {
+		return 0, fmt.Errorf("list NodePowerAgents for halt attempt seed: %w", err)
+	}
+
+	now := r.now()
+	flows := map[string]*powerv1alpha1.ShutdownFlow{}
+	seeded := 0
+	for i := range agents.Items {
+		agent := &agents.Items[i]
+		namespace, err := r.nodePowerAgentSignalNamespace(ctx, agent)
+		if err != nil {
+			return seeded, err
+		}
+		secret := &corev1.Secret{}
+		key := types.NamespacedName{Namespace: namespace, Name: nodePowerAgentSignalSecretName(agent)}
+		if err := r.Get(ctx, key, secret); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return seeded, fmt.Errorf("get signal Secret %s/%s for halt attempt seed: %w", key.Namespace, key.Name, err)
+		}
+
+		ttl := durationOrDefault(agent.Spec.Shutdown.SignalTTL, 2*time.Minute)
+		for name, raw := range secret.Data {
+			if name == nodeagent.DeliveryChannelMarker {
+				continue
+			}
+			var payload nodeagent.ShutdownSignal
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				continue
+			}
+			flow, err := r.shutdownFlowForSignal(ctx, payload.ShutdownFlow, flows)
+			if err != nil {
+				return seeded, err
+			}
+			if !signalStillAuthorized(payload, flow, ttl, now) {
+				continue
+			}
+			written, err := time.Parse(time.RFC3339Nano, payload.Timestamp)
+			if err != nil {
+				continue
+			}
+			attempt := haltwatch.Attempt{
+				Node:            payload.NodeName,
+				ShutdownFlow:    payload.ShutdownFlow,
+				ExecutionID:     payload.ExecutionID,
+				SignalWrittenAt: written.UTC(),
+			}
+			r.Observer.SignalWritten(attempt)
+
+			reporting, err := r.nodeReportsReady(ctx, payload.NodeName)
+			if err != nil {
+				r.Observer.Forget(payload.NodeName)
+				return seeded, err
+			}
+			if !reporting {
+				r.Observer.Forget(payload.NodeName)
+				continue
+			}
+			seeded++
+		}
+	}
+	return seeded, nil
+}
+
+func (r *NodeHaltReconciler) nodePowerAgentSignalNamespace(ctx context.Context, agent *powerv1alpha1.NodePowerAgent) (string, error) {
+	if agent.Spec.Namespace != "" || agent.Spec.ManagementClusterRef == nil || agent.Spec.ManagementClusterRef.Name == "" {
+		return nodePowerAgentNamespace(agent, nil), nil
+	}
+	cluster := &powerv1alpha1.PowerManagementCluster{}
+	name := agent.Spec.ManagementClusterRef.Name
+	if err := r.Get(ctx, types.NamespacedName{Name: name}, cluster); err != nil {
+		return "", fmt.Errorf("get PowerManagementCluster %q for halt attempt seed: %w", name, err)
+	}
+	return nodePowerAgentNamespace(agent, cluster), nil
+}
+
+func (r *NodeHaltReconciler) shutdownFlowForSignal(ctx context.Context, name string, cache map[string]*powerv1alpha1.ShutdownFlow) (*powerv1alpha1.ShutdownFlow, error) {
+	if name == "" {
+		return nil, nil
+	}
+	if flow, resolved := cache[name]; resolved {
+		return flow, nil
+	}
+	var flow powerv1alpha1.ShutdownFlow
+	if err := r.Get(ctx, types.NamespacedName{Name: name}, &flow); err != nil {
+		if apierrors.IsNotFound(err) {
+			cache[name] = nil
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get ShutdownFlow %q for halt attempt seed: %w", name, err)
+	}
+	cache[name] = &flow
+	return &flow, nil
+}
+
+func (r *NodeHaltReconciler) nodeReportsReady(ctx context.Context, name string) (bool, error) {
+	if name == "" {
+		return false, nil
+	}
+	var node corev1.Node
+	if err := r.Get(ctx, types.NamespacedName{Name: name}, &node); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("get Node %q for halt attempt seed: %w", name, err)
+	}
+	return haltwatch.Reporting(&node), nil
 }
 
 // NeedLeaderElection reports true. Unlike the certificate reporter, this is cluster state rather

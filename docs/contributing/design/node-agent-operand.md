@@ -138,6 +138,13 @@ distinguish a sync that hung from a sync that was never reached — and those po
 of the system. `SyscallIssued` is the last line the process writes on a working path; its presence
 with nothing after it and the node still up is the host-PID-namespace finding.
 
+**NA-10 · The local `upsmon` signal path stands down after signalling (`F-105`).** The
+`SHUTDOWNCMD` writer does not return in the rendered `upsmon` container after it writes or reuses a
+live local signal. That local path still has no halt authority (`NA-1`), but returning from
+`SHUTDOWNCMD` makes `upsmon` exit 0, and a DaemonSet restart then repeats the same forced-shutdown
+path while the UPS remains low-battery. Holding the writer process leaves kubelet with one stable
+container to terminate when the pod is replaced instead of a restart loop at the worst possible time.
+
 **The record of whether the node stopped is kept by the operator (`OD-27`).** The actuator times its
 own flush and logs the syscall, but that log lives on a machine which halts immediately afterwards,
 so whether a collector ships it first is a race — and one that loses precisely in the slow-sync case
@@ -146,6 +153,11 @@ API token by design (`NA-2`) and that stays. Instead the operator reconstructs t
 facts it can see on its own — it wrote the signal, and it watched the `Node` stop reporting — and
 publishes them as `nutoperator_halt_*`. Coarser, and it survives the node. See
 [metrics.md](../../reference/metrics.md).
+
+After a manager restart or leader handoff, the operator re-seeds this in-memory watch from
+still-authorized signal Secret keys only for nodes that still report Ready. A live signal beside a
+node that is already `NotReady` is not classified here: it may be the requested halt, a partition, or
+pre-existing node health, and recording it as any one of those would overstate the evidence.
 
 **Monitoring configuration does not change during an episode (`F-92`).** DaemonSet spec writes are
 deferred while any owning flow is mid-episode and requeued until it settles, so a configuration edit

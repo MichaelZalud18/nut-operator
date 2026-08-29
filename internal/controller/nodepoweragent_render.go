@@ -1442,6 +1442,7 @@ func nodePowerAgentSignalEnv(agent *powerv1alpha1.NodePowerAgent, configHash str
 		},
 		{Name: "POWER_SIGNAL_PATH", Value: nodePowerAgentSignalPath(agent)},
 		{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
+		{Name: "POWER_SIGNAL_HOLD_AFTER_WRITE", Value: "true"},
 		{Name: "POWER_AGENT_CONFIG_HASH", Value: configHash},
 		{Name: "POWER_SELECTED_UPS_DEVICES", Value: strings.Join(selectedUPSDevices, ",")},
 		{Name: "POWER_SHUTDOWN_FLOW", Value: nodePowerAgentShutdownFlowName(agent)},

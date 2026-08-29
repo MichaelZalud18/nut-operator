@@ -113,18 +113,6 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
   through its own machine API instead. Establish what Talos actually needs and what credential it
   needs it under.
 - Find a way to add boundaries around the actuator.
-- `F-94` decide whether halt evidence survives a manager restart. Attempts live only in
-  `haltwatch.Observer`'s map, so a restart or leadership handoff between the signal write and the
-  node stopping records no outcome at all. Re-seeding from the signal Secrets would close it; the
-  open question is what an already-`NotReady` node with a live key means, which is an `OD-27`
-  evidence-model decision rather than a patch.
-- `F-105` decide what an agent does after it has signalled. `upsmon` exits 0 once it runs
-  `SHUTDOWNCMD`, which in a DaemonSet is a container restart, and the restarted `upsmon` re-fires if
-  the condition still holds. Every agent is rendered `MONITOR ... secondary` with no primary
-  anywhere, so each one force-shuts-down `HOSTSYNC` seconds into every low-battery episode -- no
-  driver outage required, and no watchdog change reaches it. `NA-1`/`OD-37` keep the path
-  authority-free, so this is operational rather than a safety defect. The timer is `HOSTSYNC` and not
-  `DEADTIME`; see the 2026-08-24 correction in `operator-maturity-benchmarks.md` for the measurement.
 
 ---
 
@@ -172,9 +160,10 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
 - Delete the one tag on the `nut-operator` package that is neither `main` nor a digest reference,
   pushed by hand on 2026-07-31. It is the only human-readable tag on a public package that the
   promote job did not put there.
-- `F-112` add upgrade coverage and a release workflow. Nothing tests that a cluster converges after
-  the operator is replaced, or that CRD schemas stay compatible across versions. Both become gates
-  when a v1 exists.
+- `F-112` run and verify the first `v*.*.*` release through the existing tag-promotion workflow.
+  Local upgrade coverage now checks CRD/deployment reapply plus manager replacement over an existing
+  resource. True previous-release schema compatibility starts after there is a previous released API
+  to install.
 
 ---
 

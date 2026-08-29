@@ -1794,3 +1794,25 @@ of resolved as `latest`, and the Makefile now keeps the upstream linter binary a
 binary as separate versioned files. The runnable `bin/golangci-lint` symlink points at the custom
 binary, so repeated `make lint` and `make lint-config` runs no longer rebuild or re-download the
 tool just because the custom build replaced the symlink with a real file.
+
+`F-94` is closed locally. `NodeHaltReconciler` now re-seeds pending attempts at manager startup from
+still-authorized signal Secret keys, but only while the target node still reports Ready. The
+already-`NotReady` case is settled as deliberately unclassified: a live signal in the Secret proves
+only that a halt was requested, not that this restarted manager observed the node leave. Counting it
+as `Halted` would turn ambiguity into verification, and counting it as `TimedOut` would publish a
+failure against a node that may already have done exactly what it was told.
+
+`F-105` is closed locally. The rendered `upsmon` container now sets
+`POWER_SIGNAL_HOLD_AFTER_WRITE=true`, and `power-signal-writer` honors it by holding after it writes
+or reuses a live signal. The local `SHUTDOWNCMD` path remains authority-free under `NA-1`/`OD-37`;
+this only prevents a low-battery episode from becoming a DaemonSet restart loop after `upsmon`
+correctly runs its shutdown command.
+
+`F-112` is narrowed locally. The image workflow already has a release-tag path: non-PR `v*.*.*`
+pushes publish immutable `sha-` references, resolve them by digest, run the same e2e gate and NUT
+TLS smoke as `main`, then promote the tested digests to the version tag. The missing local proof was
+replacement convergence, so the e2e suite now keeps a `PowerManagementCluster` present while it
+reapplies CRDs and the manager deployment, forces a manager rollout, mutates the existing resource,
+and waits for the replacement manager to observe the new generation. Previous-release schema
+compatibility is not meaningful until there is a previous release to install, so the remaining
+pre-v1 gate is to run and verify the first tag-promotion workflow.
