@@ -69,6 +69,7 @@ func driverRecoverySpecs() {
 		)
 
 		var serverPod string
+		podSelector := "power.zalud.io/nutserver=" + serverName
 
 		// driverState returns the `upsdrvctl status` row for the device, which carries both whether a
 		// process is running and whether it answers. Read as one string because the two have to agree:
@@ -122,16 +123,23 @@ spec:
 			Eventually(applyFixture, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("waiting for the NUT server pod to be Ready")
-			_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "wait", "--for=condition=Ready",
-				"pod", "-l", "power.zalud.io/nutserver="+serverName, "--timeout=4m"))
-			Expect(err).NotTo(HaveOccurred(), "the NUT server never became Ready")
+			Eventually(func(g Gomega) {
+				out, getErr := utils.Run(exec.Command("kubectl", "-n", namespace, "get", "pods",
+					"-l", podSelector,
+					"-o", `jsonpath={range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}`))
+				g.Expect(getErr).NotTo(HaveOccurred())
 
-			out, err := utils.Run(exec.Command("kubectl", "-n", namespace, "get", "pods",
-				"-l", "power.zalud.io/nutserver="+serverName,
-				"-o", "jsonpath={.items[0].metadata.name}"))
-			Expect(err).NotTo(HaveOccurred())
-			serverPod = strings.TrimSpace(out)
-			Expect(serverPod).NotTo(BeEmpty())
+				readyPod := ""
+				for _, line := range utils.GetNonEmptyLines(out) {
+					fields := strings.Fields(line)
+					if len(fields) >= 2 && fields[1] == "True" {
+						readyPod = fields[0]
+						break
+					}
+				}
+				g.Expect(readyPod).NotTo(BeEmpty(), "no Ready pod matched %s; observed pods: %q", podSelector, out)
+				serverPod = readyPod
+			}, 4*time.Minute, 5*time.Second).Should(Succeed(), "the NUT server never became Ready")
 		})
 
 		AfterAll(func() {
