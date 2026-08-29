@@ -36,6 +36,8 @@ type Store interface {
 	EnsureSchema(ctx context.Context) error
 	EnforceRetention(ctx context.Context, now time.Time) error
 	Writer
+	HistoryReader
+	ResumeReader
 	Close() error
 }
 
@@ -431,6 +433,17 @@ type ExecutorResumeState struct {
 	CurrentWaveIndex *int32
 	Phase            string
 	State            map[string]any
+}
+
+// ExecutionGroupProgress is the durable group evidence used to resume an
+// interrupted executor without re-running work that already reached a terminal
+// record.
+type ExecutionGroupProgress struct {
+	WaveIndex   int32
+	GroupName   string
+	Action      string
+	Phase       string
+	CompletedAt time.Time
 }
 
 // DiagnosticRecord is the durable, package-local diagnostic shape.

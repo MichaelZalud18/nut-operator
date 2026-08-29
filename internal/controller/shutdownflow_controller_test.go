@@ -279,6 +279,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 
 		It("records dry-run execution once per active trigger episode", func() {
 			observedAt := time.Date(2026, 8, 2, 11, 0, 0, 0, time.UTC)
+			currentTime := observedAt
 			cluster := &powerv1alpha1.PowerManagementCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestPowerClusterName},
 			}
@@ -307,7 +308,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				Scheme:           k8sClient.Scheme(),
 				StorageConnector: &fakeAuditConnector{store: store},
 				Clock: func() time.Time {
-					return observedAt
+					return currentTime
 				},
 			}
 
@@ -347,23 +348,29 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.Phase).To(Equal(powerv1alpha1.ShutdownFlowPhaseCompleted))
 			Expect(resource.Status.LastExecution.Reason).To(Equal("AlreadyExecuted"))
 
+			currentTime = observedAt.Add(time.Minute)
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
 			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnline
+			pollTime = metav1.NewTime(currentTime.Add(-10 * time.Second))
+			device.Status.LastPollTime = &pollTime
 			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
 			Expect(resource.Status.LastExecution.TriggerActive).To(BeFalse())
 
+			currentTime = observedAt.Add(2 * time.Minute)
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
 			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery
+			pollTime = metav1.NewTime(currentTime.Add(-10 * time.Second))
+			device.Status.LastPollTime = &pollTime
 			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(store.shutdownFlowExecutions).To(HaveLen(4))
 			Expect(store.actionAttempts).To(HaveLen(4))
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
-			Expect(resource.Status.LastExecution.DeduplicationKey).To(Equal(firstKey))
+			Expect(resource.Status.LastExecution.DeduplicationKey).NotTo(Equal(firstKey))
 			Expect(resource.Status.LastExecution.TriggerActive).To(BeTrue())
 		})
 
@@ -442,6 +449,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 		// would exercise suspension, not restart.
 		It("resumes a restarted execution from the tier it left behind rather than starting over", func() {
 			observedAt := time.Date(2026, 8, 4, 9, 0, 0, 0, time.UTC)
+			currentTime := observedAt
 			cluster := &powerv1alpha1.PowerManagementCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestPowerClusterName},
 			}
@@ -474,7 +482,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				Client:           k8sClient,
 				Scheme:           k8sClient.Scheme(),
 				StorageConnector: &fakeAuditConnector{store: store},
-				Clock:            func() time.Time { return observedAt },
+				Clock:            func() time.Time { return currentTime },
 			}
 
 			By("descending the full tier range on the first run")
@@ -495,17 +503,30 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(firstRun.TimingMode).To(Equal(string(adaptive.ModeUrgent)))
 			executionsAfterFirstRun := len(store.shutdownFlowExecutions)
 
-			By("clearing the episode the way a trigger going ineligible would")
+			By("clearing the episode through trigger evaluation")
+			currentTime = observedAt.Add(time.Minute)
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnline
+			pollTime = metav1.NewTime(currentTime.Add(-10 * time.Second))
+			device.Status.LastPollTime = &pollTime
+			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+			_, err = firstInstance.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
-			resource.Status.LastExecution.TriggerActive = false
-			Expect(k8sClient.Status().Update(ctx, resource)).To(Succeed())
+			Expect(resource.Status.LastExecution.TriggerActive).To(BeFalse())
 
 			By("reconciling through a second instance holding no in-process state")
+			currentTime = observedAt.Add(2 * time.Minute)
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery
+			pollTime = metav1.NewTime(currentTime.Add(-10 * time.Second))
+			device.Status.LastPollTime = &pollTime
+			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
 			secondInstance := &ShutdownFlowReconciler{
 				Client:           k8sClient,
 				Scheme:           k8sClient.Scheme(),
 				StorageConnector: &fakeAuditConnector{store: store},
-				Clock:            func() time.Time { return observedAt },
+				Clock:            func() time.Time { return currentTime },
 			}
 			_, err = secondInstance.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -530,6 +551,132 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			// hands back time the flow already decided it needed and cannot get back.
 			Expect(resumed.TimingMode).To(Equal(string(adaptive.ModeUrgent)))
 			Expect(resumed.Events).NotTo(ContainElement(ContainSubstring("Escalated")))
+		})
+
+		It("loads durable resume state when status was not published before restart", func() {
+			observedAt := time.Date(2026, 8, 29, 9, 0, 0, 0, time.UTC)
+			cluster := &powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestPowerClusterName},
+			}
+			Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
+			cluster.Status.Storage = powerv1alpha1.StorageStatus{
+				Mode:  powerv1alpha1.PowerStorageExternalPostgres,
+				Ready: true,
+			}
+			Expect(k8sClient.Status().Update(ctx, cluster)).To(Succeed())
+
+			earlyTier := int32(5)
+			lateTier := int32(3)
+			resource := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Spec.ManagementClusterRef = &powerv1alpha1.ObjectNameReference{Name: shutdownFlowTestPowerClusterName}
+			resource.Spec.Groups[0].ShutdownTier = &earlyTier
+			resource.Spec.Groups[1].ShutdownTier = &lateTier
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			store := &fakeAuditStore{}
+			currentTime := observedAt
+			controllerReconciler := &ShutdownFlowReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				StorageConnector: &fakeAuditConnector{store: store},
+				Clock:            func() time.Time { return currentTime },
+			}
+
+			By("compiling the plan before the trigger fires")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.ConfigHash).NotTo(BeEmpty())
+
+			By("seeding the durable evidence a previous manager wrote before it died")
+			currentTime = observedAt.Add(time.Minute)
+			holdStartedAt := metav1.NewTime(currentTime)
+			triggerObservedAt := metav1.NewTime(currentTime)
+			evaluation := &powerv1alpha1.ShutdownTriggerEvaluationStatus{
+				ObservedAt:         &triggerObservedAt,
+				Eligible:           true,
+				SelectedUPSDevices: []string{shutdownFlowTestUPSName},
+				Decisions: []powerv1alpha1.ShutdownTriggerDecisionStatus{{
+					TriggerID:          "trigger-000-onbattery",
+					Eligible:           true,
+					HoldStartedAt:      &holdStartedAt,
+					SelectedUPSDevices: []string{shutdownFlowTestUPSName},
+				}},
+			}
+			dedupeKey := shutdownExecutionDeduplicationKey(resource, evaluation, resource.Status.ConfigHash)
+			executionID := shutdownExecutionIdentity(dedupeKey)
+			currentWave := int32(0)
+			store.executorResumeStates = append(store.executorResumeStates, audit.ExecutorResumeState{
+				ExecutionID:      executionID,
+				ObservedAt:       currentTime,
+				ShutdownFlow:     resource.Name,
+				PlanConfigHash:   resource.Status.ConfigHash,
+				CurrentWaveIndex: &currentWave,
+				Phase:            executorpkg.PhaseRunning,
+				State: map[string]any{
+					"tier":              lateTier,
+					"deepestTier":       lateTier,
+					"pointerStarted":    true,
+					"pointerHalted":     false,
+					"timingMode":        string(adaptive.ModeUrgent),
+					"timingPendingMode": "",
+					"timingPending":     0,
+					"onBattery":         true,
+					"lowBattery":        false,
+					"runtimeTrusted":    true,
+				},
+			})
+			completedAt := currentTime.Add(10 * time.Second)
+			store.executionGroups = append(store.executionGroups, audit.ShutdownFlowExecutionGroup{
+				GroupRecordID: "00000000-0000-4000-8000-000000000101",
+				ExecutionID:   executionID,
+				ObservedAt:    completedAt,
+				WaveIndex:     0,
+				GroupName:     "applications",
+				Action:        string(powerv1alpha1.ShutdownStepScaleWorkload),
+				Phase:         executorpkg.PhaseCompleted,
+				StartedAt:     &currentTime,
+				CompletedAt:   &completedAt,
+			})
+
+			By("clearing status to match a restart before the previous status patch")
+			resource.Status.LastExecution = nil
+			resource.Status.TriggerHoldStates = nil
+			Expect(k8sClient.Status().Update(ctx, resource)).To(Succeed())
+
+			pollTime := metav1.NewTime(currentTime.Add(-10 * time.Second))
+			device := &powerv1alpha1.UPSDevice{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, device)).To(Succeed())
+			device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery
+			device.Status.LastPollTime = &pollTime
+			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Status.LastExecution).NotTo(BeNil())
+			Expect(resource.Status.LastExecution.ExecutionID).To(Equal(executionID))
+			Expect(resource.Status.LastExecution.Adaptive).NotTo(BeNil())
+			Expect(resource.Status.LastExecution.Adaptive.Events).NotTo(ContainElement(ContainSubstring("entered tier 5")))
+			Expect(resource.Status.LastExecution.Adaptive.Events).To(ContainElement(ContainSubstring("held at tier 3")))
+			Expect(resource.Status.LastExecution.Adaptive.TimingMode).To(Equal(string(adaptive.ModeUrgent)))
+
+			var applicationsRecords int
+			var databasesRecords int
+			for _, group := range store.executionGroups {
+				switch group.GroupName {
+				case "applications":
+					applicationsRecords++
+				case "databases":
+					databasesRecords++
+				}
+			}
+			Expect(applicationsRecords).To(Equal(1))
+			Expect(databasesRecords).To(Equal(1))
+			Expect(store.actionAttempts).To(HaveLen(1))
+			Expect(store.actionAttempts[0].GroupName).To(Equal("databases"))
 		})
 
 		It("should change plan identity when capability profiles change", func() {

@@ -1031,15 +1031,19 @@ error is the execution's alone, and an audit outage is published as a `Degraded`
 reason `ExecutionAuditRecordFailed`. An audit outage is not a shutdown outcome, and reporting it as
 one pointed every reader at the wrong system.
 
-Still open, and deliberately: resume-after-restart. `executor_resume_states` now persists, which was
-the precondition — nothing reads it back yet, and what an interrupted executor should do with the
-state it finds is an `F-94` evidence-model question rather than a write path.
+*Closed locally 2026-08-29.* The controller now reads `executor_resume_states` for the exact
+deterministic execution ID before starting a run. A completed resume row publishes the same
+`AlreadyExecuted`/`RehearsalAlreadyExecuted` state as a live status match rather than starting the
+episode again. A running resume row seeds the adaptive pointer and timing mode, and the executor
+receives already-terminal group records so it does not repeat completed groups or advisory failed
+`RunHook` calls.
 
-**Open, not yet characterised.** The flow settles at `phase: Aborted` with
-`lastExecution.reason: AlreadyExecuted` and the message "eligible trigger episode already has
-execution evidence". Correct deduplication of a repeated episode reading as a terminal *failure* is
-suspicious, but the failing resume-state write above is a plausible confounder, so this is recorded
-as a question rather than a finding until `F-100` is fixed and it can be retested cleanly.
+The same pass fixed the adjacent episode-identity gap: the deduplication payload now includes the
+eligible trigger's hold-start timestamp. Reconciles inside one active episode still reuse the same
+key, while a later clear-and-refire episode produces a different key and execution UUID instead of
+overwriting the previous PostgreSQL execution row. The local envtest/fake-store path proves the
+controller behavior; live manager-kill validation remains unavailable while the physical
+infrastructure is offline.
 
 ## Findings — component sweep, 2026-08-20
 
@@ -1776,3 +1780,17 @@ of the loop rather than a share of it, and the number to design against is `HOST
 
 Still open on `F-97`, and now stated properly: what makes a driver that `upsd` is still talking to
 fail two `upsdrvctl status` probes two seconds apart, and why only in the minutes after a pod start.
+
+## Local hardening closure, 2026-08-29
+
+The `test-e2e` cleanup gap is closed locally. `make test-e2e` now runs local generation/format/vet
+gates before creating the Kind cluster, then performs setup, the e2e suite, and teardown in one
+status-preserving recipe. Failed setup and failed test execution both still reach
+`cleanup-test-e2e`, and the target exits with the original failure unless the suite passed and
+cleanup itself failed.
+
+The custom `golangci-lint` tool cache is hardened locally too. The logcheck plugin is pinned instead
+of resolved as `latest`, and the Makefile now keeps the upstream linter binary and the custom linter
+binary as separate versioned files. The runnable `bin/golangci-lint` symlink points at the custom
+binary, so repeated `make lint` and `make lint-config` runs no longer rebuild or re-download the
+tool just because the custom build replaced the symlink with a real file.

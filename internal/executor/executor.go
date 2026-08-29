@@ -111,6 +111,25 @@ type Input struct {
 	// Adaptive carries the tier pointer and timing mode across the boundary. The
 	// zero value runs a flow with default parameters from a fresh pointer.
 	Adaptive AdaptiveInput
+
+	// Resume carries durable execution evidence from a prior manager instance for
+	// the same deterministic execution ID. It is empty for a fresh execution.
+	Resume ResumeInput
+}
+
+// ResumeInput identifies work already recorded for this execution ID.
+type ResumeInput struct {
+	CurrentWaveIndex *int32
+	Phase            string
+	CompletedGroups  []CompletedGroup
+}
+
+// CompletedGroup is terminal group evidence already present in the audit store.
+type CompletedGroup struct {
+	WaveIndex int32
+	GroupName string
+	Action    string
+	Phase     string
 }
 
 // Wave is one ordered unit from the compiled plan.
@@ -303,6 +322,7 @@ type waveExecutionResult struct {
 	DegradedReason  string
 	DegradedMessage string
 	TierOverrun     *TierOverrun
+	ResumedGroups   []string
 }
 
 // Execute records the execution in compiled wave order.
@@ -354,6 +374,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 
 	adaptiveInput := input.Adaptive
 	tierPolicy := effectiveTierOverrunPolicy(input.TierOverrunPolicy)
+	resumedGroups := resumableGroupSet(input.Resume)
 	var tierWindow tierOverrunWindow
 	var pending []<-chan waveExecutionResult
 
@@ -361,127 +382,6 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		firstErr, failedGroup, pendingRecordErr := drainPending(pending, &result)
 		pending = nil
 		return firstErr, failedGroup, pendingRecordErr
-	}
-
-	recordAborted := func(groupErr error, failedGroup string, accumulatedRecordErr error) (Result, error) {
-		result.Phase = PhaseAborted
-		completedAt := e.now()
-		details := executionDetails(input, nil)
-		if failedGroup != "" {
-			details["failedGroup"] = failedGroup
-		}
-		accumulatedRecordErr = errors.Join(accumulatedRecordErr, writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
-			ExecutionID:       executionID,
-			DeduplicationKey:  input.DeduplicationKey,
-			ObservedAt:        completedAt,
-			ShutdownFlow:      input.ShutdownFlow,
-			TriggerDecisionID: input.TriggerDecisionID,
-			Mode:              mode,
-			Phase:             PhaseAborted,
-			Reason:            groupErr.Error(),
-			PlanConfigHash:    input.PlanConfigHash,
-			InputHash:         input.InputHash,
-			StartedAt:         &startedAt,
-			CompletedAt:       &completedAt,
-			DryRun:            dryRun,
-			Approved:          input.Approved,
-			ApprovalEvidence:  map[string]any{"approved": input.Approved, "requestedMode": mode, "effectiveDryRun": dryRun},
-			Revalidation:      map[string]any{"inputHash": input.InputHash},
-			Details:           details,
-		}))
-		result.RecordError = accumulatedRecordErr
-		return result, groupErr
-	}
-
-	runWave := func(wave Wave, waveState waveAdaptiveState, window tierOverrunWindow, lowerTierDue bool, waveStart time.Time, actionCtx context.Context) waveExecutionResult {
-		var run waveExecutionResult
-		waveRecordID := e.newID()
-		currentWave := wave.Index
-		run.RecordError = errors.Join(run.RecordError, writer.UpsertExecutorResumeState(ctx, audit.ExecutorResumeState{
-			ExecutionID:      executionID,
-			ObservedAt:       waveStart,
-			ShutdownFlow:     input.ShutdownFlow,
-			PlanConfigHash:   input.PlanConfigHash,
-			CurrentWaveIndex: &currentWave,
-			Phase:            PhaseRunning,
-			State: mergeDetails(adaptiveStateRecord(waveState), map[string]any{
-				"currentWaveIndex": wave.Index,
-				"groups":           append([]string(nil), wave.Groups...),
-			}),
-		}))
-		run.RecordError = errors.Join(run.RecordError, writer.RecordShutdownFlowExecutionWave(ctx, audit.ShutdownFlowExecutionWave{
-			WaveRecordID: waveRecordID,
-			ExecutionID:  executionID,
-			ObservedAt:   waveStart,
-			WaveIndex:    wave.Index,
-			Phase:        PhaseRunning,
-			StartedAt:    &waveStart,
-			GroupNames:   append([]string(nil), wave.Groups...),
-			Details: mergeDetails(adaptiveStateRecord(waveState), map[string]any{
-				"dryRun": dryRun,
-				"events": append([]string(nil), waveState.Events...),
-			}),
-		}))
-
-		preempted := false
-		for _, groupName := range wave.Groups {
-			group := groups[groupName]
-			groupResult, groupErr := e.executeGroup(ctx, actionCtx, writer, input, executionID, mode, dryRun, wave.Index, group, waveState, tierWindowOverrunning(window, e.now()))
-			run.Groups++
-			run.ActionAttempts += groupResult.ActionAttempts
-			run.NodeReleases += groupResult.NodeReleases
-			if groupResult.Degraded {
-				run.Degraded = true
-				if run.DegradedReason == "" {
-					run.DegradedReason = groupResult.DegradedReason
-					run.DegradedMessage = groupResult.DegradedMessage
-				}
-			}
-			run.RecordError = errors.Join(run.RecordError, groupResult.RecordError)
-			if groupErr != nil {
-				if tierPreempted(ctx, actionCtx, tierPolicy, lowerTierDue) {
-					preempted = true
-					break
-				}
-				run.Err = groupErr
-				run.FailedGroup = group.Name
-				break
-			}
-			if tierPreempted(ctx, actionCtx, tierPolicy, lowerTierDue) {
-				preempted = true
-				break
-			}
-		}
-
-		waveCompletedAt := e.now()
-		wavePhase := PhaseCompleted
-		if preempted {
-			wavePhase = PhaseAborted
-		}
-		waveDetails := mergeDetails(adaptiveStateRecord(waveState), map[string]any{
-			"dryRun":                dryRun,
-			"rehearsal":             input.Rehearsal,
-			"tierOverrunPolicy":     tierPolicy,
-			"declaredTierSeconds":   durationSeconds(window.DeclaredDuration),
-			"effectiveTierSeconds":  durationSeconds(window.EffectiveDuration),
-			"tierTransitionPending": lowerTierDue,
-		})
-		if overrun := tierOverrunRecord(wave, window, tierPolicy, tierOverrunAction(tierPolicy, preempted), lowerTierDue, waveCompletedAt); overrun != nil {
-			run.TierOverrun = overrun
-			waveDetails["tierOverrun"] = tierOverrunDetails(*overrun)
-		}
-		run.RecordError = errors.Join(run.RecordError, writer.RecordShutdownFlowExecutionWave(ctx, audit.ShutdownFlowExecutionWave{
-			WaveRecordID: waveRecordID,
-			ExecutionID:  executionID,
-			ObservedAt:   waveCompletedAt,
-			WaveIndex:    wave.Index,
-			Phase:        wavePhase,
-			StartedAt:    &waveStart,
-			CompletedAt:  &waveCompletedAt,
-			GroupNames:   append([]string(nil), wave.Groups...),
-			Details:      waveDetails,
-		}))
-		return run
 	}
 
 	handleWaveResult := func(run waveExecutionResult) (Result, error, bool) {
@@ -492,12 +392,28 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		}
 		if pendingErr, failedGroup, pendingRecordErr := waitForPending(); pendingErr != nil {
 			recordErr = errors.Join(recordErr, pendingRecordErr)
-			returnResult, returnErr := recordAborted(errors.Join(run.Err, pendingErr), firstNonEmpty(run.FailedGroup, failedGroup), recordErr)
+			returnResult, returnErr := e.recordAborted(ctx, writer, input, &result, abortRecord{
+				ExecutionID: executionID,
+				Mode:        mode,
+				Err:         errors.Join(run.Err, pendingErr),
+				FailedGroup: firstNonEmpty(run.FailedGroup, failedGroup),
+				DryRun:      dryRun,
+				StartedAt:   startedAt,
+				RecordError: recordErr,
+			})
 			return returnResult, returnErr, true
 		} else {
 			recordErr = errors.Join(recordErr, pendingRecordErr)
 		}
-		returnResult, returnErr := recordAborted(run.Err, run.FailedGroup, recordErr)
+		returnResult, returnErr := e.recordAborted(ctx, writer, input, &result, abortRecord{
+			ExecutionID: executionID,
+			Mode:        mode,
+			Err:         run.Err,
+			FailedGroup: run.FailedGroup,
+			DryRun:      dryRun,
+			StartedAt:   startedAt,
+			RecordError: recordErr,
+		})
 		return returnResult, returnErr, true
 	}
 
@@ -532,7 +448,20 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		if tierPolicy == TierOverrunPolicyOverlap && lowerTierDue && tierWindow.EffectiveDuration > 0 {
 			runCh := make(chan waveExecutionResult, 1)
 			go func() {
-				runCh <- runWave(wave, waveState, tierWindow, lowerTierDue, waveStart, ctx)
+				runCh <- e.runWave(ctx, waveRunConfig{
+					Writer:        writer,
+					Input:         input,
+					Groups:        groups,
+					ExecutionID:   executionID,
+					Mode:          mode,
+					DryRun:        dryRun,
+					TierPolicy:    tierPolicy,
+					ResumedGroups: resumedGroups,
+					Window:        tierWindow,
+					LowerTierDue:  lowerTierDue,
+					WaveStart:     waveStart,
+					ActionContext: ctx,
+				}, wave, waveState)
 			}()
 			dueAfter := tierWindow.StartedAt.Add(tierWindow.EffectiveDuration).Sub(e.now())
 			if dueAfter <= 0 {
@@ -558,7 +487,20 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			if tierPolicy == TierOverrunPolicyPreempt && lowerTierDue && tierWindow.EffectiveDuration > 0 {
 				actionCtx, cancelActionCtx = context.WithDeadline(ctx, tierWindow.StartedAt.Add(tierWindow.EffectiveDuration))
 			}
-			run := runWave(wave, waveState, tierWindow, lowerTierDue, waveStart, actionCtx)
+			run := e.runWave(ctx, waveRunConfig{
+				Writer:        writer,
+				Input:         input,
+				Groups:        groups,
+				ExecutionID:   executionID,
+				Mode:          mode,
+				DryRun:        dryRun,
+				TierPolicy:    tierPolicy,
+				ResumedGroups: resumedGroups,
+				Window:        tierWindow,
+				LowerTierDue:  lowerTierDue,
+				WaveStart:     waveStart,
+				ActionContext: actionCtx,
+			}, wave, waveState)
 			if cancelActionCtx != nil {
 				cancelActionCtx()
 			}
@@ -572,7 +514,15 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	}
 	if pendingErr, failedGroup, pendingRecordErr := waitForPending(); pendingErr != nil {
 		recordErr = errors.Join(recordErr, pendingRecordErr)
-		return recordAborted(pendingErr, failedGroup, recordErr)
+		return e.recordAborted(ctx, writer, input, &result, abortRecord{
+			ExecutionID: executionID,
+			Mode:        mode,
+			Err:         pendingErr,
+			FailedGroup: failedGroup,
+			DryRun:      dryRun,
+			StartedAt:   startedAt,
+			RecordError: recordErr,
+		})
 	} else {
 		recordErr = errors.Join(recordErr, pendingRecordErr)
 	}
@@ -588,11 +538,223 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	return result, nil
 }
 
+type abortRecord struct {
+	ExecutionID string
+	Mode        string
+	Err         error
+	FailedGroup string
+	DryRun      bool
+	StartedAt   time.Time
+	RecordError error
+}
+
+func (e Executor) recordAborted(ctx context.Context, writer audit.Writer, input Input, result *Result, rec abortRecord) (Result, error) {
+	if result == nil {
+		return Result{}, rec.Err
+	}
+	result.Phase = PhaseAborted
+	completedAt := e.now()
+	details := executionDetails(input, nil)
+	if rec.FailedGroup != "" {
+		details["failedGroup"] = rec.FailedGroup
+	}
+	reason := ""
+	if rec.Err != nil {
+		reason = rec.Err.Error()
+	}
+	accumulatedRecordErr := errors.Join(rec.RecordError, writer.RecordShutdownFlowExecution(ctx, audit.ShutdownFlowExecution{
+		ExecutionID:       rec.ExecutionID,
+		DeduplicationKey:  input.DeduplicationKey,
+		ObservedAt:        completedAt,
+		ShutdownFlow:      input.ShutdownFlow,
+		TriggerDecisionID: input.TriggerDecisionID,
+		Mode:              rec.Mode,
+		Phase:             PhaseAborted,
+		Reason:            reason,
+		PlanConfigHash:    input.PlanConfigHash,
+		InputHash:         input.InputHash,
+		StartedAt:         &rec.StartedAt,
+		CompletedAt:       &completedAt,
+		DryRun:            rec.DryRun,
+		Approved:          input.Approved,
+		ApprovalEvidence:  map[string]any{"approved": input.Approved, "requestedMode": rec.Mode, "effectiveDryRun": rec.DryRun},
+		Revalidation:      map[string]any{"inputHash": input.InputHash},
+		Details:           details,
+	}))
+	result.RecordError = accumulatedRecordErr
+	return *result, rec.Err
+}
+
+type waveRunConfig struct {
+	Writer        audit.Writer
+	Input         Input
+	Groups        map[string]Group
+	ExecutionID   string
+	Mode          string
+	DryRun        bool
+	TierPolicy    string
+	ResumedGroups map[string]CompletedGroup
+	Window        tierOverrunWindow
+	LowerTierDue  bool
+	WaveStart     time.Time
+	ActionContext context.Context
+}
+
+func (e Executor) runWave(ctx context.Context, cfg waveRunConfig, wave Wave, waveState waveAdaptiveState) waveExecutionResult {
+	var run waveExecutionResult
+	waveRecordID := e.newID()
+	currentWave := wave.Index
+	run.RecordError = errors.Join(run.RecordError, cfg.Writer.UpsertExecutorResumeState(ctx, audit.ExecutorResumeState{
+		ExecutionID:      cfg.ExecutionID,
+		ObservedAt:       cfg.WaveStart,
+		ShutdownFlow:     cfg.Input.ShutdownFlow,
+		PlanConfigHash:   cfg.Input.PlanConfigHash,
+		CurrentWaveIndex: &currentWave,
+		Phase:            PhaseRunning,
+		State: mergeDetails(adaptiveStateRecord(waveState), map[string]any{
+			"currentWaveIndex": wave.Index,
+			"groups":           append([]string(nil), wave.Groups...),
+		}),
+	}))
+	run.RecordError = errors.Join(run.RecordError, cfg.Writer.RecordShutdownFlowExecutionWave(ctx, audit.ShutdownFlowExecutionWave{
+		WaveRecordID: waveRecordID,
+		ExecutionID:  cfg.ExecutionID,
+		ObservedAt:   cfg.WaveStart,
+		WaveIndex:    wave.Index,
+		Phase:        PhaseRunning,
+		StartedAt:    &cfg.WaveStart,
+		GroupNames:   append([]string(nil), wave.Groups...),
+		Details: mergeDetails(adaptiveStateRecord(waveState), map[string]any{
+			"dryRun": cfg.DryRun,
+			"events": append([]string(nil), waveState.Events...),
+		}),
+	}))
+
+	preempted := false
+	for _, groupName := range wave.Groups {
+		group := cfg.Groups[groupName]
+		if e.recordResumedGroup(&run, cfg.ResumedGroups, wave.Index, groupName) {
+			continue
+		}
+		groupResult, groupErr := e.executeGroup(ctx, cfg.ActionContext, cfg.Writer, cfg.Input, cfg.ExecutionID, cfg.Mode, cfg.DryRun, wave.Index, group, waveState, tierWindowOverrunning(cfg.Window, e.now()))
+		run.Groups++
+		run.ActionAttempts += groupResult.ActionAttempts
+		run.NodeReleases += groupResult.NodeReleases
+		if groupResult.Degraded {
+			run.Degraded = true
+			if run.DegradedReason == "" {
+				run.DegradedReason = groupResult.DegradedReason
+				run.DegradedMessage = groupResult.DegradedMessage
+			}
+		}
+		run.RecordError = errors.Join(run.RecordError, groupResult.RecordError)
+		if groupErr != nil {
+			if tierPreempted(ctx, cfg.ActionContext, cfg.TierPolicy, cfg.LowerTierDue) {
+				preempted = true
+				break
+			}
+			run.Err = groupErr
+			run.FailedGroup = group.Name
+			break
+		}
+		if tierPreempted(ctx, cfg.ActionContext, cfg.TierPolicy, cfg.LowerTierDue) {
+			preempted = true
+			break
+		}
+	}
+
+	waveCompletedAt := e.now()
+	wavePhase := PhaseCompleted
+	if preempted {
+		wavePhase = PhaseAborted
+	}
+	waveDetails := mergeDetails(adaptiveStateRecord(waveState), map[string]any{
+		"dryRun":                cfg.DryRun,
+		"rehearsal":             cfg.Input.Rehearsal,
+		"tierOverrunPolicy":     cfg.TierPolicy,
+		"declaredTierSeconds":   durationSeconds(cfg.Window.DeclaredDuration),
+		"effectiveTierSeconds":  durationSeconds(cfg.Window.EffectiveDuration),
+		"tierTransitionPending": cfg.LowerTierDue,
+	})
+	if overrun := tierOverrunRecord(wave, cfg.Window, cfg.TierPolicy, tierOverrunAction(cfg.TierPolicy, preempted), cfg.LowerTierDue, waveCompletedAt); overrun != nil {
+		run.TierOverrun = overrun
+		waveDetails["tierOverrun"] = tierOverrunDetails(*overrun)
+	}
+	if len(run.ResumedGroups) > 0 {
+		waveDetails["resumedGroups"] = append([]string(nil), run.ResumedGroups...)
+	}
+	run.RecordError = errors.Join(run.RecordError, cfg.Writer.RecordShutdownFlowExecutionWave(ctx, audit.ShutdownFlowExecutionWave{
+		WaveRecordID: waveRecordID,
+		ExecutionID:  cfg.ExecutionID,
+		ObservedAt:   waveCompletedAt,
+		WaveIndex:    wave.Index,
+		Phase:        wavePhase,
+		StartedAt:    &cfg.WaveStart,
+		CompletedAt:  &waveCompletedAt,
+		GroupNames:   append([]string(nil), wave.Groups...),
+		Details:      waveDetails,
+	}))
+	return run
+}
+
+func (e Executor) recordResumedGroup(run *waveExecutionResult, groups map[string]CompletedGroup, waveIndex int32, groupName string) bool {
+	if run == nil {
+		return false
+	}
+	resumed, ok := groups[resumableGroupKey(waveIndex, groupName)]
+	if !ok {
+		return false
+	}
+	run.Groups++
+	run.ActionAttempts++
+	run.ResumedGroups = append(run.ResumedGroups, groupName)
+	if resumed.Action == ActionRunHook && resumed.Phase == PhaseFailed {
+		run.Degraded = true
+		if run.DegradedReason == "" {
+			run.DegradedReason = "ShutdownHookFailed"
+			run.DegradedMessage = fmt.Sprintf("RunHook group %q failure was resumed from audit evidence", groupName)
+		}
+	}
+	return true
+}
+
 func effectiveTierOverrunPolicy(policy string) string {
 	if policy == "" {
 		return TierOverrunPolicyWait
 	}
 	return policy
+}
+
+func resumableGroupSet(resume ResumeInput) map[string]CompletedGroup {
+	if len(resume.CompletedGroups) == 0 {
+		return nil
+	}
+	groups := make(map[string]CompletedGroup, len(resume.CompletedGroups))
+	for _, group := range resume.CompletedGroups {
+		if !groupIsResumable(group) {
+			continue
+		}
+		groups[resumableGroupKey(group.WaveIndex, group.GroupName)] = group
+	}
+	return groups
+}
+
+func groupIsResumable(group CompletedGroup) bool {
+	switch group.Phase {
+	case PhaseCompleted:
+		return true
+	case PhaseFailed:
+		return group.Action == ActionRunHook
+	default:
+		return false
+	}
+}
+
+func resumableGroupKey(waveIndex int32, groupName string) string {
+	if groupName == "" {
+		return ""
+	}
+	return fmt.Sprintf("%d/%s", waveIndex, groupName)
 }
 
 func executionDetails(input Input, details map[string]any) map[string]any {

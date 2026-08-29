@@ -23,7 +23,7 @@ stays answerable to one question: what is left before v1. Items move there only 
 outside the project gates them or scope-boundaries places them beyond v1 — never merely because
 they are hard or unscheduled. Declined work is recorded where it was declined, not parked here.
 
-Last reviewed: 2026-08-24
+Last reviewed: 2026-08-29
 
 ---
 
@@ -68,9 +68,6 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
-- Read `executor_resume_states` back on startup. The rows persist now -- verified on a live cluster
-  after `F-114` -- and nothing loads them, so a manager restart mid-execution still resumes from
-  nothing. The state is there to resume from for the first time.
 
 ---
 
@@ -175,10 +172,6 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
 - Delete the one tag on the `nut-operator` package that is neither `main` nor a digest reference,
   pushed by hand on 2026-07-31. It is the only human-readable tag on a public package that the
   promote job did not put there.
-- Clean up the e2e Kind cluster when the suite fails. `test-e2e` runs `cleanup-test-e2e` as a
-  following recipe line, so a failing `go test` aborts make and leaves a multi-node cluster running
-  indefinitely. A stale one on the workstation was later consistent with the inotify exhaustion
-  `check-test-e2e-host` exists to catch, blocking an unrelated `kind create`.
 - `F-112` add upgrade coverage and a release workflow. Nothing tests that a cluster converges after
   the operator is replaced, or that CRD schemas stay compatible across versions. Both become gates
   when a v1 exists.

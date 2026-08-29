@@ -420,7 +420,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 			}
 		}
 		recordErr = errors.Join(recordErr, recordShutdownFlowDecisions(ctx, writer, flow, observedAt, configHash, triggerEvaluation))
-		recordErr = errors.Join(recordErr, r.recordShutdownFlowExecution(ctx, writer, flow, observedAt, bundle.Hash, configHash, triggerEvaluation, bundle))
+		recordErr = errors.Join(recordErr, r.recordShutdownFlowExecution(ctx, writer, store, flow, observedAt, bundle.Hash, configHash, triggerEvaluation, bundle))
 	}
 	if spoolWriter != nil {
 		r.reportAuditSpoolFallback(flow, spoolWriter.Stats(), triggerEvaluation)

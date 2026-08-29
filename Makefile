@@ -208,12 +208,17 @@ setup-test-e2e-cni: ## Install the policy-enforcing CNI the e2e cluster is creat
 	echo "Cluster '$(KIND_CLUSTER)' is up on Calico $(CALICO_VERSION) with $$actual nodes."
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
+test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	# 30m, not go test's 10m default: BeforeSuite builds five operand images, and two of
 	# them compile NUT from source (F-39). The default budget was spent on image builds
 	# before the suite reached its first assertion.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout=30m
-	$(MAKE) cleanup-test-e2e
+	@status=0; \
+	$(MAKE) --no-print-directory setup-test-e2e || status=$$?; \
+	if [ "$$status" -eq 0 ]; then \
+		KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout=30m || status=$$?; \
+	fi; \
+	$(MAKE) --no-print-directory cleanup-test-e2e || { cleanup_status=$$?; [ "$$status" -ne 0 ] || status=$$cleanup_status; }; \
+	exit $$status
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
@@ -484,6 +489,9 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+GOLANGCI_LINT_BASE_VERSIONED = $(LOCALBIN)/golangci-lint-base-$(GOLANGCI_LINT_VERSION)
+GOLANGCI_LINT_CUSTOM_CONFIG ?= .custom-gcl.yml
+GOLANGCI_LINT_CUSTOM = $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-custom
 GRYPE ?= $(LOCALBIN)/grype
 SYFT ?= $(LOCALBIN)/syft
 
@@ -560,13 +568,26 @@ $(SYFT): $(LOCALBIN)
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
-	@test -f .custom-gcl.yml && { \
-		echo "Building custom golangci-lint with plugins..." && \
-		$(GOLANGCI_LINT) custom --destination $(LOCALBIN) --name golangci-lint-custom && \
-		mv -f $(LOCALBIN)/golangci-lint-custom $(GOLANGCI_LINT); \
-	} || true
+ifneq ($(wildcard $(GOLANGCI_LINT_CUSTOM_CONFIG)),)
+$(GOLANGCI_LINT): $(GOLANGCI_LINT_CUSTOM)
+	ln -sf "$$(realpath "$(GOLANGCI_LINT_CUSTOM)")" "$(GOLANGCI_LINT)"
+else
+$(GOLANGCI_LINT): $(GOLANGCI_LINT_BASE_VERSIONED)
+	ln -sf "$$(realpath "$(GOLANGCI_LINT_BASE_VERSIONED)")" "$(GOLANGCI_LINT)"
+endif
+
+$(GOLANGCI_LINT_BASE_VERSIONED): | $(LOCALBIN)
+	@set -e; \
+	package=github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) ;\
+	echo "Downloading $${package}" ;\
+	rm -f "$(LOCALBIN)/golangci-lint" ;\
+	GOBIN="$(LOCALBIN)" go install $${package} ;\
+	mv "$(LOCALBIN)/golangci-lint" "$(GOLANGCI_LINT_BASE_VERSIONED)"
+
+$(GOLANGCI_LINT_CUSTOM): $(GOLANGCI_LINT_BASE_VERSIONED) $(GOLANGCI_LINT_CUSTOM_CONFIG)
+	@echo "Building custom golangci-lint with plugins..."
+	"$(GOLANGCI_LINT_BASE_VERSIONED)" custom --destination "$(LOCALBIN)" --name golangci-lint-custom
+	mv -f "$(LOCALBIN)/golangci-lint-custom" "$(GOLANGCI_LINT_CUSTOM)"
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

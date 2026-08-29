@@ -252,6 +252,62 @@ func TestExecutorRecordsOrderedDryRunEvidence(t *testing.T) {
 	}
 }
 
+func TestExecutorSkipsResumedTerminalGroups(t *testing.T) {
+	writer := &fakeAuditWriter{}
+	runner := &recordingActionRunner{outcome: ActionOutcome{Outcome: OutcomeSucceeded}}
+	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	executor := Executor{
+		Writer: writer,
+		Runner: runner,
+		Clock:  func() time.Time { return fixed },
+		NewID:  sequenceIDs(),
+	}
+
+	result, err := executor.Execute(context.Background(), Input{
+		ExecutionID:       "execution-resume-a",
+		ObservedAt:        fixed,
+		ShutdownFlow:      "conserve-power",
+		Mode:              ModeEnforce,
+		Approved:          true,
+		PlanConfigHash:    "plan-hash-a",
+		InputHash:         "input-hash-a",
+		TierOverrunPolicy: TierOverrunPolicyWait,
+		Waves: []Wave{
+			{Index: 0, Groups: []string{"snapshot"}},
+			{Index: 1, Groups: []string{"databases"}},
+		},
+		Groups: []Group{
+			{Name: "snapshot", Action: ActionRunHook},
+			{Name: "databases", Action: "ScaleWorkload"},
+		},
+		Resume: ResumeInput{
+			CompletedGroups: []CompletedGroup{{
+				WaveIndex: 0,
+				GroupName: "snapshot",
+				Action:    ActionRunHook,
+				Phase:     PhaseCompleted,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Phase != PhaseCompleted || result.Groups != 2 || result.ActionAttempts != 2 {
+		t.Fatalf("expected resumed execution summary to include both groups, got %#v", result)
+	}
+	if len(runner.actions) != 1 || runner.actions[0].Group.Name != "databases" {
+		t.Fatalf("expected only the unfinished group to run, got %#v", runner.actions)
+	}
+	if len(writer.groups) != 1 || writer.groups[0].GroupName != "databases" {
+		t.Fatalf("expected only unfinished group evidence to be rewritten, got %#v", writer.groups)
+	}
+	details := completedWaveDetails(writer.waves, 0)
+	resumed, ok := details["resumedGroups"].([]string)
+	if !ok || fmt.Sprint(resumed) != "[snapshot]" {
+		t.Fatalf("expected wave 0 to report resumed group evidence, got %#v", details)
+	}
+}
+
 func TestExecutorRecordsWaitTierOverrun(t *testing.T) {
 	writer := &fakeAuditWriter{}
 	current := time.Date(2026, 8, 2, 16, 0, 0, 0, time.UTC)
@@ -680,6 +736,16 @@ type fakeActionRunner struct {
 }
 
 func (r fakeActionRunner) RunAction(context.Context, Action) (ActionOutcome, error) {
+	return r.outcome, nil
+}
+
+type recordingActionRunner struct {
+	outcome ActionOutcome
+	actions []Action
+}
+
+func (r *recordingActionRunner) RunAction(_ context.Context, action Action) (ActionOutcome, error) {
+	r.actions = append(r.actions, action)
 	return r.outcome, nil
 }
 

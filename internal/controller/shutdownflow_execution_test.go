@@ -19,6 +19,9 @@ package controller
 import (
 	"reflect"
 	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
@@ -118,5 +121,56 @@ func TestDeactivateLastExecutionLeavesUnrelatedReasonsAlone(t *testing.T) {
 	}
 	if status.Reason != "ExecutionFailed" || status.Message != "wave 2 action attempt exhausted its retries" {
 		t.Errorf("deactivation rewrote an unrelated reason/message pair: %q / %q", status.Reason, status.Message)
+	}
+}
+
+// A later outage with the same flow, plan, trigger, and UPS devices needs its
+// own execution row. Otherwise the deterministic execution UUID overwrites the
+// previous episode in PostgreSQL and history says only the latest one happened.
+func TestShutdownExecutionDeduplicationKeyIncludesTheEpisodeBoundary(t *testing.T) {
+	flow := &powerv1alpha1.ShutdownFlow{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "conserve-power",
+			Generation: 7,
+		},
+		Spec: powerv1alpha1.ShutdownFlowSpec{Mode: powerv1alpha1.ShutdownFlowModeDryRun},
+	}
+	firstStart := metav1.NewTime(time.Date(2026, 8, 29, 8, 0, 0, 0, time.UTC))
+	secondStart := metav1.NewTime(firstStart.Add(20 * time.Minute))
+	evaluation := func(start metav1.Time) *powerv1alpha1.ShutdownTriggerEvaluationStatus {
+		observed := metav1.NewTime(start.Add(30 * time.Second))
+		return &powerv1alpha1.ShutdownTriggerEvaluationStatus{
+			ObservedAt:         &observed,
+			Eligible:           true,
+			SelectedUPSDevices: []string{"ups-a"},
+			Decisions: []powerv1alpha1.ShutdownTriggerDecisionStatus{{
+				TriggerID:     "trigger-000-onbattery",
+				Eligible:      true,
+				HoldStartedAt: &start,
+			}},
+		}
+	}
+
+	firstKey := shutdownExecutionDeduplicationKey(flow, evaluation(firstStart), "plan-hash-a")
+	repeatedActiveKey := shutdownExecutionDeduplicationKey(flow, evaluation(firstStart), "plan-hash-a")
+	secondKey := shutdownExecutionDeduplicationKey(flow, evaluation(secondStart), "plan-hash-a")
+
+	if firstKey == "" {
+		t.Fatal("expected a non-empty deduplication key")
+	}
+	if repeatedActiveKey != firstKey {
+		t.Fatalf("same active episode changed key: %q != %q", repeatedActiveKey, firstKey)
+	}
+	if secondKey == firstKey {
+		t.Fatal("later trigger episode reused the first episode key")
+	}
+}
+
+func TestResumeStateInt32RejectsOutOfRangeValues(t *testing.T) {
+	if _, ok := resumeStateInt32(map[string]any{"tier": int64(1) << 40}, "tier"); ok {
+		t.Fatal("expected an out-of-range resume tier to be ignored")
+	}
+	if tier, ok := resumeStateInt32(map[string]any{"tier": "3"}, "tier"); !ok || tier != 3 {
+		t.Fatalf("expected a valid string resume tier, got %d/%t", tier, ok)
 	}
 }

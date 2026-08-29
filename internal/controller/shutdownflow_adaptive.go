@@ -25,6 +25,7 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
+	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
@@ -37,12 +38,20 @@ import (
 // a constant, so a flow whose last tier is 3 does not report descending past it.
 // Tier 0 is last-ditch and excluded from flow targeting (OD-4), so the final tier
 // is never below 1 regardless of what the waves say.
-func adaptiveInputForFlow(flow *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, observation adaptive.PowerObservation) executorpkg.AdaptiveInput {
+func adaptiveInputForFlow(flow *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, observation adaptive.PowerObservation, resumeState *audit.ExecutorResumeState) executorpkg.AdaptiveInput {
 	final, start := compiledTierRange(flow.Status.CompiledWaves)
+	pointer := resumedPointerState(flow.Status.LastExecution)
+	if resumed, ok := resumedPointerStateFromAudit(resumeState); ok {
+		pointer = resumed
+	}
+	timing := resumedTimingState(flow.Status.LastExecution)
+	if resumed, ok := resumedTimingStateFromAudit(resumeState); ok {
+		timing = resumed
+	}
 	return executorpkg.AdaptiveInput{
 		Parameters:  adaptive.DefaultParameters(),
-		Pointer:     resumedPointerState(flow.Status.LastExecution),
-		Timing:      resumedTimingState(flow.Status.LastExecution),
+		Pointer:     pointer,
+		Timing:      timing,
 		Observation: observation,
 		FinalTier:   final,
 		StartTier:   start,
@@ -196,6 +205,45 @@ func resumedTimingState(status *powerv1alpha1.ShutdownExecutionStatus) adaptive.
 		return adaptive.TimingState{}
 	}
 	return adaptive.TimingState{Mode: adaptive.TimingMode(status.Adaptive.TimingMode)}
+}
+
+func resumedPointerStateFromAudit(state *audit.ExecutorResumeState) (adaptive.PointerState, bool) {
+	if state == nil || len(state.State) == 0 {
+		return adaptive.PointerState{}, false
+	}
+	started, startedOK := resumeStateBool(state.State, "pointerStarted")
+	if !startedOK {
+		return adaptive.PointerState{}, false
+	}
+	pointer := adaptive.PointerState{Started: started}
+	if tier, ok := resumeStateInt32(state.State, "tier"); ok {
+		pointer.Tier = tier
+	}
+	if deepest, ok := resumeStateInt32(state.State, "deepestTier"); ok {
+		pointer.Deepest = deepest
+	}
+	if halted, ok := resumeStateBool(state.State, "pointerHalted"); ok {
+		pointer.Halted = halted
+	}
+	return pointer, true
+}
+
+func resumedTimingStateFromAudit(state *audit.ExecutorResumeState) (adaptive.TimingState, bool) {
+	if state == nil || len(state.State) == 0 {
+		return adaptive.TimingState{}, false
+	}
+	mode, ok := resumeStateString(state.State, "timingMode")
+	if !ok {
+		return adaptive.TimingState{}, false
+	}
+	timing := adaptive.TimingState{Mode: adaptive.TimingMode(mode)}
+	if pendingMode, ok := resumeStateString(state.State, "timingPendingMode"); ok {
+		timing.PendingMode = adaptive.TimingMode(pendingMode)
+	}
+	if pending, ok := resumeStateInt64(state.State, "timingPending"); ok {
+		timing.PendingCount = int(pending)
+	}
+	return timing, true
 }
 
 // adaptiveStatusFromResult publishes the adaptive state a run ended on (EX-28).
