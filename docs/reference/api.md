@@ -55,6 +55,8 @@ from a `UPSDevice`, derived rather than declared.
 Which edge to write, and why the distinction matters, is in
 [Modeling your topology](../guides/model-your-topology.md); the full contract is in
 [the inventory provider contract](../contributing/design/inventory-provider-contract.md).
+If NetBox already owns this data, `cmd/netbox-inventory-sync` renders these same CRs from NetBox DCIM
+devices, power ports, and interfaces; see [Importing topology from NetBox](../guides/import-netbox-inventory.md).
 
 ## Capability catalog
 

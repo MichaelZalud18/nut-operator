@@ -11,20 +11,20 @@ are not reused or renumbered.
 
 ## Framing
 
-This document defines a **provider contract**, not a NetBox integration.
+This document defines a **provider contract**, not a NetBox schema transcription.
 
-Per SB-8, NetBox is a heavy design influence and a zero-weight runtime dependency. The contract is
-therefore designed against the operator's own requirements, not against NetBox's model. If it were
-designed the other way, the CRD provider would become "NetBox's model, hand-typed," every NetBox
-modeling quirk would become an operator quirk, and the zero-weight claim would quietly stop being
-true. NetBox informs the vocabulary. The contract stays the operator's.
+Per SB-8, NetBox is a heavy design influence and a zero-weight dependency for the deployed shutdown
+path. The contract is therefore designed against the operator's own requirements, not against
+NetBox's model. If it were designed the other way, the CRD provider would become "NetBox's model,
+hand-typed," every NetBox modeling quirk would become an operator quirk, and the zero-weight claim
+would quietly stop being true. NetBox informs the vocabulary. The contract stays the operator's.
 
 At minimum two providers implement it:
 
 | Provider | Status | Snapshot behavior |
 | --- | --- | --- |
 | Declarative CRD | Default | Native; always current |
-| NetBox | Optional add-on | Rendered snapshot at resolve time (IN-14) |
+| NetBox | Optional sync command | Rendered CR snapshot before planning (IN-14) |
 
 What the contract must carry is set by the planner's declared inputs: capability matching keys
 (PL-7), power domain membership (PL-6, PL-8), physical power dependencies (PL-6), node roles (PL-9),

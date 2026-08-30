@@ -30,18 +30,6 @@ ordering needs a network device to be an actuation target.
 outlet control — both already on this page. The Planning & Execution Logic entry for `PL-21` is the
 owning line; this is the Inventory-side half of the same gate.
 
-### NetBox topology provider (`SB-8`)
-
-The provider interface exists with the declarative CRD implementation behind it. NetBox is the
-second implementation.
-
-**Why it is post-v1:** `SB-8` states that the default build ships without NetBox, so no shippable
-configuration depends on this, and the work is an integration against an external system this
-project does not own. Nothing in v1 closes if it lands, and nothing in v1 is blocked while it does
-not.
-
----
-
 ## Capability Profiles
 
 ### Actuation verification lifecycle (`F-27`)

@@ -213,11 +213,11 @@ Shed-value arithmetic requires per-workload power attribution. The architecture 
 calculation separate from basic UPS threshold evaluation so ordinary shutdown safety does not
 depend on perfect power attribution.
 
-## SB-8 · NetBox is a heavy design influence and a zero-weight runtime dependency
+## SB-8 · NetBox is a heavy design influence and a zero-weight shutdown-path dependency
 
 *Components: Inventory System, Capability Profiles.*
 
-NetBox shapes the data model substantially. The default build ships without it.
+NetBox shapes the data model substantially. The deployed operator does not require it.
 
 Field ownership:
 
@@ -231,12 +231,15 @@ logic stays operator-side so it cannot drift into inventory. The merge happens i
 never in either source.
 
 Consequence: topology input is an interface with at least two implementations — declarative CRD
-as the default, NetBox as an optional provider. Capability profiles are the operator's regardless
+as the default, NetBox as an optional sync path. Capability profiles are the operator's regardless
 of which topology provider is active.
 
 The provider interface is a contract the operator owns, not a NetBox schema transcription — see
 `inventory-provider-contract.md`. Attributes cross the boundary only where a planner rule consumes
 them.
+
+The NetBox path is read-only and renders ordinary inventory CRs. NetBox is queried while preparing
+or refreshing inventory, not while responding to a power event.
 
 Profile storage is resolved: profiles are CRDs plus bundled operator data, referenced from NetBox at
 most via a custom field pointing at a profile name, never maintained in it (OD-7, closed). There is

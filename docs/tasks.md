@@ -37,6 +37,14 @@ resolver/adapter that feeds it into reconciliation. Design contract: `docs/contr
 
 None.
 
+Closed locally 2026-08-29:
+
+- Optional NetBox inventory import now renders NetBox REST `dcim.Device`, `dcim.PowerPort`, and
+  `dcim.Interface` data into the existing provider-neutral CRDs through `cmd/netbox-inventory-sync`.
+  The importer is read-only against NetBox, validates the rendered snapshot with the inventory
+  compiler before emitting YAML, supports current `Bearer` tokens and legacy `Token` auth, and is
+  covered by fake-NetBox pagination/auth/edge tests.
+
 ---
 
 ### Capability Profiles

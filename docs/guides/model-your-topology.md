@@ -59,6 +59,14 @@ add a field, name the planner rule that reads it — that is the test.
 - [Simulation scenarios](../examples/simulation/README.md) — including a multistage layout where a
   UPS feeds a PDU that feeds a rack.
 
+## Importing from NetBox
+
+If NetBox already owns the wiring record, use
+[Importing topology from NetBox](import-netbox-inventory.md) instead of hand-writing these CRs.
+The importer is read-only against NetBox and renders ordinary `UPSDevice`, `PowerInfrastructure`,
+`PowerInventoryNode`, and `PowerInventoryEdge` YAML. The operator still consumes Kubernetes
+resources during shutdown; NetBox is not queried on the failure path.
+
 ## Then
 
 [Assign shutdown tiers](assign-shutdown-tiers.md) to the workloads and nodes this topology now covers.

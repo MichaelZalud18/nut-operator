@@ -27,3 +27,6 @@ One more, needed only if it applies to you:
 - [Profiling a UPS the catalog does not cover](profile-an-unknown-ups.md) — what to do when your
   hardware matches no bundled capability profile, which for most hardware is what happens. Relevant
   between steps 1 and 2, and required before a flow will enforce.
+- [Importing topology from NetBox](import-netbox-inventory.md) — render NetBox DCIM devices,
+  power ports, and interfaces into the same inventory CRs the declarative path uses. Relevant
+  instead of hand-authoring step 2 when NetBox already owns the wiring record.
