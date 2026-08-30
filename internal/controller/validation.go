@@ -19,6 +19,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"net"
 	"path"
 	"regexp"
 	"sort"
@@ -317,13 +318,43 @@ func validateNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) validationResult 
 				"spec.images.%s.pullPolicy cannot be Always: the agent may need to start while the registry serving its image is itself being shut down", name)
 		}
 	}
-	if obj.Spec.Mode == powerv1alpha1.NodePowerAgentModeActuate &&
-		obj.Spec.Shutdown.ActuatorPolicy == powerv1alpha1.ActuatorPolicyPowerOff {
+	if nodePowerAgentActuatorPolicyRequiresApproval(obj.Spec.Shutdown.ActuatorPolicy) {
+		policy := string(obj.Spec.Shutdown.ActuatorPolicy)
+		if obj.Spec.Mode != powerv1alpha1.NodePowerAgentModeActuate {
+			return rejected("ActuationModeRequired", "%s actuation requires spec.mode Actuate", policy)
+		}
 		if obj.Spec.Shutdown.ApprovalAnnotation == "" {
-			return rejected("ApprovalAnnotationRequired", "PowerOff actuation requires spec.shutdown.approvalAnnotation")
+			return rejected("ApprovalAnnotationRequired", "%s actuation requires spec.shutdown.approvalAnnotation", policy)
 		}
 		if obj.Annotations[obj.Spec.Shutdown.ApprovalAnnotation] != "true" {
-			return rejected("ActuationNotApproved", "PowerOff actuation requires approval annotation %q=true", obj.Spec.Shutdown.ApprovalAnnotation)
+			return rejected("ActuationNotApproved", "%s actuation requires approval annotation %q=true", policy, obj.Spec.Shutdown.ApprovalAnnotation)
+		}
+	}
+	if obj.Spec.Shutdown.ActuatorPolicy == powerv1alpha1.ActuatorPolicyTalosShutdown {
+		if obj.Spec.Shutdown.Talos == nil {
+			return rejected("TalosShutdownConfigRequired", "TalosShutdown actuation requires spec.shutdown.talos")
+		}
+		talos := obj.Spec.Shutdown.Talos
+		if talos.TalosConfigSecretKeyRef.Namespace == "" ||
+			talos.TalosConfigSecretKeyRef.Name == "" ||
+			talos.TalosConfigSecretKeyRef.Key == "" {
+			return rejected("TalosConfigSecretRequired", "TalosShutdown actuation requires spec.shutdown.talos.talosConfigSecretKeyRef")
+		}
+		if len(talos.Endpoints) == 0 {
+			return rejected("TalosEndpointsRequired", "TalosShutdown actuation requires spec.shutdown.talos.endpoints")
+		}
+		for _, endpoint := range talos.Endpoints {
+			if endpoint == "" || net.ParseIP(endpoint) == nil {
+				return rejected("TalosEndpointInvalid", "TalosShutdown endpoint %q must be an IP literal", endpoint)
+			}
+		}
+		switch talos.NodeAddressSource {
+		case "", powerv1alpha1.TalosNodeAddressSourceHostIP, powerv1alpha1.TalosNodeAddressSourceNodeName:
+		default:
+			return rejected("TalosNodeAddressSourceInvalid", "unsupported TalosShutdown nodeAddressSource %q", talos.NodeAddressSource)
+		}
+		if talos.ShutdownTimeout != nil && talos.ShutdownTimeout.Duration <= 0 {
+			return rejected("TalosShutdownTimeoutInvalid", "TalosShutdown shutdownTimeout must be greater than zero")
 		}
 	}
 

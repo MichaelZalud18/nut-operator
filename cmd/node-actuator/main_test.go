@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -54,10 +55,11 @@ func TestPoweroffTakesNoConfiguration(t *testing.T) {
 	config := actuatorConfig{}
 	// 7 -> 8 for StatePath (F-64), where the watch loop records that it ran. 8 -> 9 for
 	// ShutdownFlow (F-55), the flow an accepted signal must name. 9 -> 8 again when F-75 dropped
-	// SignalPath, the singular half of a duplicate pair the actuator never read. None of them
-	// carries a poweroff mechanism, which is what this count is guarding: changing it is a
+	// SignalPath, the singular half of a duplicate pair the actuator never read. 8 -> 12 for the
+	// fixed Talos machine API path: config file, endpoint list, node target, and timeout. None of
+	// them carries a poweroff mechanism, which is what this count is guarding: changing it is a
 	// deliberate act, not a fix.
-	if reflect.TypeOf(config).NumField() != 8 {
+	if reflect.TypeOf(config).NumField() != 12 {
 		t.Fatalf("actuatorConfig gained or lost a field; confirm no poweroff mechanism became configurable: %+v", config)
 	}
 	for _, field := range []string{"PoweroffMethod", "PoweroffCommand", "PoweroffArgs"} {
@@ -65,6 +67,70 @@ func TestPoweroffTakesNoConfiguration(t *testing.T) {
 			t.Fatalf("actuatorConfig.%s is back; the poweroff mechanism must stay fixed to the syscall", field)
 		}
 	}
+}
+
+func stubTalosShutdown(t *testing.T) *[]talosShutdownRequest {
+	t.Helper()
+	var calls []talosShutdownRequest
+	previous := executeTalosShutdown
+	executeTalosShutdown = func(_ context.Context, request talosShutdownRequest) error {
+		calls = append(calls, request)
+		return nil
+	}
+	t.Cleanup(func() {
+		executeTalosShutdown = previous
+	})
+	return &calls
+}
+
+func TestTalosShutdownActuatorHonorsItsOwnModeNotTheSignal(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "talosconfig")
+	if err := os.WriteFile(configPath, []byte("context: test\n"), 0o600); err != nil {
+		t.Fatalf("write talosconfig: %v", err)
+	}
+	signal := nodeagent.SignalStatus{
+		Active: true,
+		Payload: nodeagent.ShutdownSignal{
+			ExecutionID:  "exec-1",
+			NodeName:     "node-a",
+			ShutdownFlow: "flow-a",
+		},
+	}
+	logger := log.New(io.Discard, "", 0)
+
+	for _, mode := range []string{"DryRun", "MonitorOnly", ""} {
+		t.Run("mode "+mode+" never calls Talos", func(t *testing.T) {
+			calls := stubTalosShutdown(t)
+
+			if err := talosShutdownActuator(logger, actuatorConfig{Mode: mode}, signal); err != nil {
+				t.Fatalf("expected the signal to be accepted and declined, got %v", err)
+			}
+			if len(*calls) != 0 {
+				t.Fatalf("mode %q called Talos shutdown (%d calls)", mode, len(*calls))
+			}
+		})
+	}
+
+	t.Run("mode Actuate calls Talos", func(t *testing.T) {
+		calls := stubTalosShutdown(t)
+		config := actuatorConfig{
+			Mode:                 modeActuate,
+			TalosConfigPath:      configPath,
+			TalosEndpoints:       []string{"192.0.2.10"},
+			TalosNode:            "192.0.2.21",
+			TalosShutdownTimeout: time.Second,
+		}
+
+		if err := talosShutdownActuator(logger, config, signal); err != nil {
+			t.Fatalf("expected Actuate mode to call Talos shutdown, got %v", err)
+		}
+		if len(*calls) != 1 {
+			t.Fatalf("expected exactly one Talos shutdown call, got %d", len(*calls))
+		}
+		if (*calls)[0].ConfigPath != configPath || (*calls)[0].Node != "192.0.2.21" || !(*calls)[0].Force {
+			t.Fatalf("unexpected Talos shutdown request: %#v", (*calls)[0])
+		}
+	})
 }
 
 func TestSignalPathsParsesUniquePaths(t *testing.T) {

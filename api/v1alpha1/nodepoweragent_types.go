@@ -241,7 +241,7 @@ type UpsmonConfigSpec struct {
 // which knobs to reach for during an outage. "Stub" became "Simulate" in the same pass to say what
 // the mode does rather than what the code is.
 //
-// +kubebuilder:validation:Enum=Disabled;Simulate;PowerOff
+// +kubebuilder:validation:Enum=Disabled;Simulate;PowerOff;TalosShutdown
 type ActuatorPolicy string
 
 const (
@@ -251,11 +251,13 @@ const (
 	ActuatorPolicySimulate ActuatorPolicy = "Simulate"
 	// ActuatorPolicyPowerOff halts the node with reboot(2) LINUX_REBOOT_CMD_POWER_OFF.
 	ActuatorPolicyPowerOff ActuatorPolicy = "PowerOff"
+	// ActuatorPolicyTalosShutdown asks the Talos machine API to shut the node down.
+	ActuatorPolicyTalosShutdown ActuatorPolicy = "TalosShutdown"
 )
 
 // AgentShutdownSpec configures the local shutdown handoff.
 type AgentShutdownSpec struct {
-	// actuatorPolicy chooses no actuator, a simulated one, or real host power-off.
+	// actuatorPolicy chooses no actuator, a simulated one, or real node shutdown.
 	// +kubebuilder:default=Simulate
 	// +optional
 	ActuatorPolicy ActuatorPolicy `json:"actuatorPolicy,omitempty"`
@@ -277,9 +279,53 @@ type AgentShutdownSpec struct {
 	// +optional
 	RequireFreshTelemetry *bool `json:"requireFreshTelemetry,omitempty"`
 
-	// approvalAnnotation must be present on this NodePowerAgent before PowerOff is rendered.
+	// approvalAnnotation must be present on this NodePowerAgent before PowerOff or TalosShutdown is
+	// rendered.
 	// +optional
 	ApprovalAnnotation string `json:"approvalAnnotation,omitempty"`
+
+	// talos configures Talos machine API shutdown. Required when actuatorPolicy is TalosShutdown.
+	// +optional
+	Talos *TalosShutdownSpec `json:"talos,omitempty"`
+}
+
+// TalosNodeAddressSource selects the value the actuator passes to the Talos API as --nodes.
+// +kubebuilder:validation:Enum=HostIP;NodeName
+type TalosNodeAddressSource string
+
+const (
+	// TalosNodeAddressSourceHostIP targets the Kubernetes node's status.hostIP.
+	TalosNodeAddressSourceHostIP TalosNodeAddressSource = "HostIP"
+	// TalosNodeAddressSourceNodeName targets the Kubernetes node name.
+	TalosNodeAddressSourceNodeName TalosNodeAddressSource = "NodeName"
+)
+
+// TalosShutdownSpec configures a Talos machine API shutdown actuator.
+type TalosShutdownSpec struct {
+	// talosConfigSecretKeyRef contains a talosconfig file whose client certificate is authorized
+	// for Talos shutdown, typically the os:operator role. The Secret must live in the rendered
+	// operand namespace so the DaemonSet can mount it without widening RBAC.
+	TalosConfigSecretKeyRef SecretKeyReference `json:"talosConfigSecretKeyRef"`
+
+	// endpoints are Talos API endpoint IP addresses, normally control-plane node addresses. They
+	// are IP literals, not DNS names, because the renderer turns them into exact NetworkPolicy
+	// ipBlock peers on TCP 50000.
+	// +kubebuilder:validation:MinItems=1
+	// +listType=atomic
+	Endpoints []string `json:"endpoints"`
+
+	// nodeAddressSource selects how the actuator identifies its local node to Talos endpoints.
+	// HostIP is the default because Talos endpoints proxy to nodes by addresses as seen by the
+	// endpoint server; NodeName is available for clusters whose Talos node names are resolvable
+	// there.
+	// +kubebuilder:validation:Enum=HostIP;NodeName
+	// +kubebuilder:default=HostIP
+	// +optional
+	NodeAddressSource TalosNodeAddressSource `json:"nodeAddressSource,omitempty"`
+
+	// shutdownTimeout bounds the Talos API call made after a valid shutdown signal is accepted.
+	// +optional
+	ShutdownTimeout *metav1.Duration `json:"shutdownTimeout,omitempty"`
 }
 
 // NodePowerAgentPhase summarizes agent fleet readiness.

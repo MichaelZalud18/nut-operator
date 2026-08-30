@@ -71,12 +71,13 @@ reports something, the operator reads NUT's report.
 
 ## Startup
 
-**NS-4 · A failed driver does not take `upsd` down.** The entrypoint runs `upsdrvctl start` and
-continues even when it fails, then `exec`s `upsd`. A device with bad credentials or an unreachable
-endpoint leaves the other devices queryable, and credentials can be corrected without a restart.
+**NS-4 · Drivers are not part of `upsd` startup.** The entrypoint validates mounted configuration
+and `exec`s `upsd`; driver processes are owned by the `driver-supervisor` sidecar. A device with bad
+credentials or an unreachable endpoint leaves the server process alive, so credentials can be
+corrected through the reload path instead of by restarting `upsd`.
 
-The readiness probe is what makes this safe to do: a partial start surfaces as an unready pod
-carrying working devices, rather than as a crash loop that takes the working ones down too.
+The readiness probe is what makes this safe to do: a server with no responsive driver reports
+NotReady, while a mixed server can still publish the devices whose drivers are connected.
 
 **NS-5 · `upsd` runs foregrounded *and* writes a PID file.** The entrypoint ends with
 `exec upsd -FF`.
@@ -132,15 +133,14 @@ the service*.
 
 ## Driver supervision
 
-**NS-6 · A sidecar restarts drivers that stop answering.** `upsdrvctl start` runs once in the
-entrypoint. A driver that dies afterwards leaves `upsd` alive, so the container is never restarted,
-readiness fails correctly, and the pod leaves the Service endpoints — and stays out of them
-indefinitely, with every agent monitoring it in `DEADTIME`. Readiness reports the fault accurately
-and nothing acts on it. The `driver-watchdog` container is what acts on it.
+**NS-6 · A sidecar supervises one foreground worker per driver.** A driver that dies leaves `upsd`
+alive, so the server container is not restarted. Readiness reports the fault accurately, but
+readiness is a signal, not an actor. The `driver-supervisor` sidecar owns the action.
 
-It runs the operand image, shares `/run/nut` and `/etc/nut` with `upsd`, and every 30 seconds asks
-`upsdrvctl status` which drivers are not responding, restarting each one with
-`upsdrvctl start <ups>`.
+It runs the operand image, shares `/run/nut` and `/etc/nut` with `upsd`, enumerates configured
+devices with `upsdrvctl list`, and starts each one as its own `upsdrvctl -FF start <ups>` worker.
+If a worker exits, only that UPS is restarted. A bad driver definition therefore does not tear down
+the healthy workers beside it.
 
 ### Why a sidecar rather than a container per driver
 
@@ -152,46 +152,41 @@ It was declined because it makes the container list a function of the device set
 a `UPSDevice` would change the pod's containers, which is a pod recreate — dropping every `upsmon`
 session and NUT's login accounting, which is the damage `F-15` and `F-16` exist to prevent and which
 the reload path in `F-48` is being built to eliminate. One supervisor for all drivers keeps the
-pod's shape independent of how many devices a server serves.
+pod's shape independent of how many devices a server serves, while one foreground worker per UPS
+keeps failure isolation close to the upstream service-instance design.
 
 A liveness probe was the other candidate and is worse on both counts: it restarts `upsd` along with
 the drivers, and it cannot fire at all while any one driver still answers — which is the common
 case, since a server with four devices losing one still reports ready.
 
-### What the watchdog relies on, and how it is known
+### What the supervisor relies on, and how it is known
 
 Each of these was established by running the operand image, because each one decides part of the
 implementation:
 
-- A driver killed outright reports `RUNNING` as `N/A` and `S_RESPONSIVE` as `NOT_RESPONSIVE`, and
-  leaves its PID file behind.
-- `upsdrvctl start <ups>` recovers from exactly that state on its own: it detects the stale PID
-  file, terminates the phantom, starts a fresh driver, and rewrites the PID file. No stop-then-start
-  pair is needed, and adding one would open a window where the driver is deliberately down.
-- `upsdrvctl start <ups>` against a **healthy** driver terminates and replaces it. A restart is
-  therefore not free, and a single transient reading must not trigger one — so a device seen as
-  non-responsive is re-checked before the watchdog acts.
-- `upsdrvctl status` prints a version banner above the header, on stdout. This is why the selector
-  matches the `NOT_RESPONSIVE` token rather than selecting rows that fail to say `RESPONSIVE`: the
-  first implementation did the latter, read the banner as a device named `Network`, and tried to
-  start it on every pass. The driver still recovered, so nothing failed — the watchdog simply did
-  useless work forever, which is the failure mode `F-46` and `NS-2` describe from the other
-  direction.
+- `upsdrvctl -FF start <ups>` keeps a single driver's worker in the foreground and writes the PID
+  file NUT's own tooling expects.
+- `upsdrvctl -FF start` with no UPS name is the wrong bundle shape for this operand: if any
+  configured driver fails, the foreground controller exits the whole bundle and stops the healthy
+  workers too.
+- Running one foreground worker per UPS isolates the failure. A missing `dummy-ups` definition exits
+  that worker, while a neighboring `dummy-ups` worker stays `RESPONSIVE`.
+- `upsdrvctl list` returns exit 1 with "no UPS definitions found in ups.conf" for an empty
+  selection. That is an idle state for this operator, not a crash condition.
 
 The container carries no probes. A readiness probe would gate the pod's endpoint membership on the
 supervisor rather than on the server, and a liveness probe would let a supervisor restart take the
 server down with it. Keeping them apart is the reason it is a separate container.
 
-The interval is taken at the top of the loop rather than the bottom, so the first pass happens after
-a full interval instead of immediately. Both containers start together, and a check at t=0 races the
-entrypoint's own `upsdrvctl start` — the drivers are legitimately not yet responsive, the confirming
-re-check agrees with the first, and the watchdog restarts a driver that was seconds from healthy.
+The supervisor starts immediately because it owns driver startup; there is no entrypoint-start race
+left. The loop interval is now only the retry cadence for exited workers and projected-volume
+configuration changes.
 
 ## Configuration changes
 
 **NS-8 · Adding a device reloads `upsd`; changing where it listens replaces the pod.** The
 pod-template annotation carries a digest of only the configuration `upsd` cannot adopt at runtime.
-Everything else reaches a running server through `upsd -c reload`, issued by the watchdog when it
+Everything else reaches a running server through `upsd -c reload`, issued by the supervisor when it
 notices the files changed.
 
 The split follows what `upsd` actually does, established by running it:
@@ -233,31 +228,10 @@ drivers `upsd` never reaped (`F-76`).
 
 ### What the container boundary changes
 
-The watchdog and `upsd` share `/run/nut` but not a PID namespace, and that asymmetry decides two
-things. Both were confirmed by running the two containers against a shared volume rather than
-reasoned about.
-
-**`RUNNING` is namespace-local; `S_RESPONSIVE` is not.** Asked from the watchdog, `upsdrvctl status`
-reports `RUNNING` as `N/A` for a perfectly healthy driver, because the PID from the PID file does
-not resolve in the watchdog's namespace. `S_RESPONSIVE` stays accurate, because it comes from
-probing the driver's socket and the socket is shared.
-
-`NS-1` already declines to consult `RUNNING`, on the grounds that a driver can be running and not
-answering. From the sidecar the argument is stronger and no longer optional: a watchdog keyed on
-`RUNNING` would find every driver stopped on every pass and restart all of them, forever. The
-correct field is correct for two independent reasons.
-
-**A restarted driver lives in the watchdog's container.** `upsdrvctl start` spawns the driver where
-it runs, so a driver the watchdog recovers is a child of the watchdog rather than of the entrypoint.
-Telemetry is unaffected — NUT drivers and `upsd` communicate over the Unix socket in `/run/nut`,
-which both containers mount, and `upsc` against `upsd` returns the device's status normally
-afterwards.
-
-The stale PID file that the recovered driver leaves behind is safe to act on across the boundary.
-`upsdrvctl` announces "Terminating other driver!" when it finds one, but it verifies the process
-before signalling: a PID file pointing at an unrelated process in the watchdog's namespace leaves
-that process alive. This was tested directly, by pointing a driver's PID file at an innocent
-`sleep` and confirming it survived.
+The supervisor and `upsd` share `/run/nut`, so drivers and server communicate over the Unix sockets
+NUT already uses. They also share the pod process namespace because `upsd -c reload` needs to signal
+the running server across the container boundary. Driver workers are children of the supervisor
+sidecar, which is deliberate: that is the container whose only job is driver process ownership.
 
 ## The admission surface and the image agree
 

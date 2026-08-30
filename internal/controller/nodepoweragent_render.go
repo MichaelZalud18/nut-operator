@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -58,6 +59,9 @@ const (
 	nodePowerAgentDefaultPriorityClassName          = "system-node-critical"
 	nodePowerAgentDefaultTerminationGracePeriodSecs = 60
 	upsmonConfigFile                                = "upsmon.conf"
+	nodePowerAgentTalosAPIPort                      = 50000
+	nodePowerAgentTalosConfigDirectory              = "/var/run/secrets/talos.dev"
+	nodePowerAgentTalosConfigPath                   = nodePowerAgentTalosConfigDirectory + "/config"
 
 	// nodePowerAgentServerCAFile is the key in the agent's rendered Secret holding the
 	// concatenated CA bundle for every NUTServer this agent monitors.
@@ -128,6 +132,18 @@ type agentTLSPosture struct {
 
 func (p agentTLSPosture) enabled() bool {
 	return p.ForceSSL || p.CertVerify || len(p.CABundle) > 0
+}
+
+type nodePowerAgentTalosConfig struct {
+	ConfigSecretName  string
+	ConfigSecretKey   string
+	Endpoints         []string
+	NodeAddressSource powerv1alpha1.TalosNodeAddressSource
+	ShutdownTimeout   string
+}
+
+func (c *nodePowerAgentTalosConfig) enabled() bool {
+	return c != nil
 }
 
 // deriveAgentTLSPosture folds the monitored servers' TLS modes into one upsmon configuration.
@@ -217,6 +233,11 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 	if err != nil {
 		return renderedNodePowerAgent{}, err
 	}
+	talosConfig, talosEgressRules, err := r.resolveNodePowerAgentTalosConfig(ctx, agent, namespace)
+	if err != nil {
+		return renderedNodePowerAgent{}, err
+	}
+	egressRules = append(egressRules, talosEgressRules...)
 
 	tlsPosture := deriveAgentTLSPosture(targets)
 	configData := renderNodePowerAgentConfig()
@@ -262,6 +283,7 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		SignalSecretName:   signalSecret.Name,
 		SelectedUPSDevices: nodePowerAgentSelectedUPSDevices(targets),
 		MountServerCA:      len(tlsPosture.CABundle) > 0,
+		Talos:              talosConfig,
 	})
 	if err != nil {
 		return renderedNodePowerAgent{}, err
@@ -360,25 +382,39 @@ func nodePowerAgentActuatorPolicy(agent *powerv1alpha1.NodePowerAgent) powerv1al
 }
 
 func validateNodePowerAgentRenderSafety(agent *powerv1alpha1.NodePowerAgent) error {
-	if nodePowerAgentActuatorPolicy(agent) != powerv1alpha1.ActuatorPolicyPowerOff {
+	policy := nodePowerAgentActuatorPolicy(agent)
+	if !nodePowerAgentActuatorPolicyRequiresApproval(policy) {
 		return nil
 	}
 	if nodePowerAgentMode(agent) != powerv1alpha1.NodePowerAgentModeActuate {
-		return fmt.Errorf("PowerOff actuator rendering requires spec.mode Actuate")
+		return fmt.Errorf("%s actuator rendering requires spec.mode Actuate", policy)
 	}
 	approvalAnnotation := agent.Spec.Shutdown.ApprovalAnnotation
 	if approvalAnnotation == "" {
-		return fmt.Errorf("PowerOff actuator rendering requires spec.shutdown.approvalAnnotation")
+		return fmt.Errorf("%s actuator rendering requires spec.shutdown.approvalAnnotation", policy)
 	}
 	if agent.Annotations[approvalAnnotation] != "true" {
-		return fmt.Errorf("PowerOff actuator rendering requires approval annotation %q=true", approvalAnnotation)
+		return fmt.Errorf("%s actuator rendering requires approval annotation %q=true", policy, approvalAnnotation)
 	}
 	return nil
+}
+
+func nodePowerAgentActuatorPolicyRequiresApproval(policy powerv1alpha1.ActuatorPolicy) bool {
+	switch policy {
+	case powerv1alpha1.ActuatorPolicyPowerOff, powerv1alpha1.ActuatorPolicyTalosShutdown:
+		return true
+	default:
+		return false
+	}
 }
 
 func nodePowerAgentRequiresHostPoweroff(agent *powerv1alpha1.NodePowerAgent) bool {
 	return nodePowerAgentMode(agent) == powerv1alpha1.NodePowerAgentModeActuate &&
 		nodePowerAgentActuatorPolicy(agent) == powerv1alpha1.ActuatorPolicyPowerOff
+}
+
+func nodePowerAgentUsesTalosAPI(agent *powerv1alpha1.NodePowerAgent) bool {
+	return nodePowerAgentActuatorPolicy(agent) == powerv1alpha1.ActuatorPolicyTalosShutdown
 }
 
 func nodePowerAgentUpsmonImage(agent *powerv1alpha1.NodePowerAgent, cluster *powerv1alpha1.PowerManagementCluster) (string, corev1.PullPolicy, error) {
@@ -493,6 +529,95 @@ func (r *NodePowerAgentReconciler) resolveAgentMonitorTargets(ctx context.Contex
 		return targets[i].UPSName < targets[j].UPSName
 	})
 	return targets, egressRules, nil
+}
+
+func (r *NodePowerAgentReconciler) resolveNodePowerAgentTalosConfig(ctx context.Context, agent *powerv1alpha1.NodePowerAgent, namespace string) (*nodePowerAgentTalosConfig, []networkingv1.NetworkPolicyEgressRule, error) {
+	if !nodePowerAgentUsesTalosAPI(agent) {
+		return nil, nil, nil
+	}
+	talos := agent.Spec.Shutdown.Talos
+	if talos == nil {
+		return nil, nil, fmt.Errorf("TalosShutdown actuator rendering requires spec.shutdown.talos")
+	}
+	ref := talos.TalosConfigSecretKeyRef
+	if ref.Namespace != namespace {
+		return nil, nil, fmt.Errorf("TalosShutdown talosconfig Secret must be in operand namespace %q, got %q", namespace, ref.Namespace)
+	}
+
+	var secret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, &secret); err != nil {
+		return nil, nil, fmt.Errorf("get talosconfig Secret %s/%s for NodePowerAgent %q: %w", ref.Namespace, ref.Name, agent.Name, err)
+	}
+	if len(secret.Data[ref.Key]) == 0 {
+		return nil, nil, fmt.Errorf("talosconfig Secret %s/%s for NodePowerAgent %q requires a non-empty data[%q]", ref.Namespace, ref.Name, agent.Name, ref.Key)
+	}
+
+	endpoints, egressRule, err := nodePowerAgentTalosEgressRule(talos.Endpoints)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(endpoints) == 0 {
+		return nil, nil, fmt.Errorf("TalosShutdown actuator rendering requires at least one spec.shutdown.talos.endpoints entry")
+	}
+
+	nodeAddressSource := talos.NodeAddressSource
+	if nodeAddressSource == "" {
+		nodeAddressSource = powerv1alpha1.TalosNodeAddressSourceHostIP
+	}
+	return &nodePowerAgentTalosConfig{
+		ConfigSecretName:  ref.Name,
+		ConfigSecretKey:   ref.Key,
+		Endpoints:         endpoints,
+		NodeAddressSource: nodeAddressSource,
+		ShutdownTimeout:   durationString(talos.ShutdownTimeout, "30s"),
+	}, []networkingv1.NetworkPolicyEgressRule{egressRule}, nil
+}
+
+func nodePowerAgentTalosEgressRule(endpoints []string) ([]string, networkingv1.NetworkPolicyEgressRule, error) {
+	resolved := make([]string, 0, len(endpoints))
+	peers := make([]networkingv1.NetworkPolicyPeer, 0, len(endpoints))
+	seen := map[string]struct{}{}
+	for _, endpoint := range endpoints {
+		if _, duplicate := seen[endpoint]; duplicate {
+			continue
+		}
+		seen[endpoint] = struct{}{}
+
+		cidr, err := talosEndpointCIDR(endpoint)
+		if err != nil {
+			return nil, networkingv1.NetworkPolicyEgressRule{}, err
+		}
+		resolved = append(resolved, endpoint)
+		peers = append(peers, networkingv1.NetworkPolicyPeer{
+			IPBlock: &networkingv1.IPBlock{CIDR: cidr},
+		})
+	}
+	sort.Strings(resolved)
+	sort.Slice(peers, func(i, j int) bool {
+		return peers[i].IPBlock.CIDR < peers[j].IPBlock.CIDR
+	})
+
+	return resolved, networkingv1.NetworkPolicyEgressRule{
+		To: peers,
+		Ports: []networkingv1.NetworkPolicyPort{
+			{
+				Protocol: ptrProtocol(corev1.ProtocolTCP),
+				Port:     ptrIntOrStringFromInt32(nodePowerAgentTalosAPIPort),
+			},
+		},
+	}, nil
+}
+
+func talosEndpointCIDR(endpoint string) (string, error) {
+	ip := net.ParseIP(endpoint)
+	if ip == nil {
+		return "", fmt.Errorf("TalosShutdown endpoint %q must be an IP literal so the generated NetworkPolicy can allow only that Talos API endpoint", endpoint)
+	}
+	bits := 32
+	if ip.To4() == nil {
+		bits = 128
+	}
+	return (&net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}).String(), nil
 }
 
 func (r *NodePowerAgentReconciler) monitorPassword(ctx context.Context, server *powerv1alpha1.NUTServer, namespace string) (string, error) {
@@ -921,6 +1046,7 @@ type nodePowerAgentDaemonSetSpec struct {
 	SignalSecretName   string
 	SelectedUPSDevices []string
 	MountServerCA      bool
+	Talos              *nodePowerAgentTalosConfig
 }
 
 // shutdownFlowHoldingRollouts names a ShutdownFlow whose execution episode is currently live, if any.
@@ -1194,48 +1320,45 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				},
 			)
 		}
+		if spec.Talos.enabled() {
+			daemonSet.Spec.Template.Spec.Volumes = append(daemonSet.Spec.Template.Spec.Volumes, corev1.Volume{
+				Name: "talosconfig",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName:  spec.Talos.ConfigSecretName,
+						DefaultMode: ptrInt32(0440),
+						Items: []corev1.KeyToPath{
+							{Key: spec.Talos.ConfigSecretKey, Path: "config"},
+						},
+					},
+				},
+			})
+		}
 		if spec.ActuatorImage != "" {
+			actuatorVolumeMounts := []corev1.VolumeMount{
+				{Name: "power-agent-signals", MountPath: nodePowerAgentProjectedSignalDirectory, ReadOnly: true},
+				{Name: "power-agent-actuator-state", MountPath: nodePowerAgentActuatorStateDirectory},
+			}
+			if spec.Talos.enabled() {
+				actuatorVolumeMounts = append(actuatorVolumeMounts, corev1.VolumeMount{
+					Name:      "talosconfig",
+					MountPath: nodePowerAgentTalosConfigDirectory,
+					ReadOnly:  true,
+				})
+			}
 			daemonSet.Spec.Template.Spec.Containers = append(daemonSet.Spec.Template.Spec.Containers, corev1.Container{
 				Name:            "actuator",
 				Image:           spec.ActuatorImage,
 				ImagePullPolicy: spec.ActuatorPullPolicy,
 				Resources:       agent.Spec.Resources.Actuator,
-				Env: []corev1.EnvVar{
-					{Name: "POWER_AGENT_MODE", Value: string(nodePowerAgentMode(agent))},
-					{Name: "POWER_ACTUATOR_POLICY", Value: string(nodePowerAgentActuatorPolicy(agent))},
-					{
-						Name: "POWER_NODE_NAME",
-						ValueFrom: &corev1.EnvVarSource{
-							FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"},
-						},
-					},
-					// The projected Secret, and nothing else (F-57, OD-37). The local tmpfs path the
-					// upsmon container writes through SHUTDOWNCMD used to lead this list, which made
-					// the network-facing container able to halt the host by writing one file. It is
-					// gone from both variables rather than reordered: the operator path is the only
-					// path with authority, so a second entry here is not a fallback, it is the
-					// bypass.
-
-					{Name: "POWER_SIGNAL_PATHS", Value: nodePowerAgentProjectedSignalPath},
-					{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
-					{Name: "POWER_ACTUATOR_STATE_PATH", Value: nodePowerAgentActuatorStatePath},
-					// Only when the agent declares a flow (F-55). nodePowerAgentShutdownFlowName
-					// falls back to "upsmon-local" for the upsmon container, which is a name for
-					// the locked-down local path rather than a flow anything issues signals under
-					// -- rendering it here would make the actuator compare against a value the
-					// executor can never send and reject every release.
-					{Name: "POWER_SHUTDOWN_FLOW", Value: nodePowerAgentDeclaredShutdownFlow(agent)},
-				},
+				Env:             nodePowerAgentActuatorEnv(agent, spec.Talos),
 				SecurityContext: actuatorContainerSecurityContext(hostPoweroff),
 				ReadinessProbe:  actuatorReadinessProbe(),
 				// power-agent-run is deliberately absent. The actuator no longer reads the local
 				// signal, and a volume it does not read is a volume it cannot be tricked through --
 				// stronger than mounting the shared tmpfs read-only, which would have left the read
 				// path open while closing a write path that was never the threat.
-				VolumeMounts: []corev1.VolumeMount{
-					{Name: "power-agent-signals", MountPath: nodePowerAgentProjectedSignalDirectory, ReadOnly: true},
-					{Name: "power-agent-actuator-state", MountPath: nodePowerAgentActuatorStateDirectory},
-				},
+				VolumeMounts: actuatorVolumeMounts,
 			})
 		}
 		return controllerutil.SetControllerReference(agent, daemonSet, r.Scheme)
@@ -1429,6 +1552,51 @@ func actuatorReadinessProbe() *corev1.Probe {
 		TimeoutSeconds:      5,
 		FailureThreshold:    3,
 	}
+}
+
+func nodePowerAgentActuatorEnv(agent *powerv1alpha1.NodePowerAgent, talos *nodePowerAgentTalosConfig) []corev1.EnvVar {
+	env := []corev1.EnvVar{
+		{Name: "POWER_AGENT_MODE", Value: string(nodePowerAgentMode(agent))},
+		{Name: "POWER_ACTUATOR_POLICY", Value: string(nodePowerAgentActuatorPolicy(agent))},
+		{
+			Name: "POWER_NODE_NAME",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"},
+			},
+		},
+		// The projected Secret, and nothing else (F-57, OD-37). The local tmpfs path the upsmon
+		// container writes through SHUTDOWNCMD used to lead this list, which made the
+		// network-facing container able to halt the host by writing one file. It is gone from both
+		// variables rather than reordered: the operator path is the only path with authority, so a
+		// second entry here is not a fallback, it is the bypass.
+		{Name: "POWER_SIGNAL_PATHS", Value: nodePowerAgentProjectedSignalPath},
+		{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
+		{Name: "POWER_ACTUATOR_STATE_PATH", Value: nodePowerAgentActuatorStatePath},
+		// Only when the agent declares a flow (F-55). nodePowerAgentShutdownFlowName falls back to
+		// "upsmon-local" for the upsmon container, which is a name for the locked-down local path
+		// rather than a flow anything issues signals under -- rendering it here would make the
+		// actuator compare against a value the executor can never send and reject every release.
+		{Name: "POWER_SHUTDOWN_FLOW", Value: nodePowerAgentDeclaredShutdownFlow(agent)},
+	}
+	if !talos.enabled() {
+		return env
+	}
+
+	nodeFieldPath := "status.hostIP"
+	if talos.NodeAddressSource == powerv1alpha1.TalosNodeAddressSourceNodeName {
+		nodeFieldPath = "spec.nodeName"
+	}
+	return append(env,
+		corev1.EnvVar{Name: "POWER_TALOS_CONFIG", Value: nodePowerAgentTalosConfigPath},
+		corev1.EnvVar{Name: "POWER_TALOS_ENDPOINTS", Value: strings.Join(talos.Endpoints, ",")},
+		corev1.EnvVar{
+			Name: "POWER_TALOS_NODE",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: nodeFieldPath},
+			},
+		},
+		corev1.EnvVar{Name: "POWER_TALOS_SHUTDOWN_TIMEOUT", Value: talos.ShutdownTimeout},
+	)
 }
 
 func nodePowerAgentSignalEnv(agent *powerv1alpha1.NodePowerAgent, configHash string, selectedUPSDevices []string) []corev1.EnvVar {

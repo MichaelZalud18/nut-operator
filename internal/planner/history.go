@@ -190,13 +190,21 @@ func observedPlanDuration(waves []Wave, estimates []GroupEstimate) (time.Duratio
 	return total, true
 }
 
-// HistoryObservation is the runtime figure a feasibility comparison is made against.
+// HistoryObservation is the power-side evidence a feasibility comparison is made against.
 //
-// Its own type rather than a bare pointer so the absent case is explicit at every
-// call site: unknown runtime is a distinct answer from "zero seconds remaining",
-// and PL-32 requires it never be read as the good case.
+// Its own type rather than a bare pointer so the absent case is explicit at every call site:
+// unknown runtime is a distinct answer from "zero seconds remaining", and PL-32 requires it never
+// be read as the good case. The charge/load fields are evidence beside the comparison, not a
+// second estimate: they come from the same public UPSDevice status fields as trigger evaluation and
+// do not introduce site-local metrics into the planner.
 type HistoryObservation struct {
 	// RuntimeSeconds is the shortest runtime across the selected devices, or nil when
 	// no device reported one that may be trusted (CR-4).
 	RuntimeSeconds *int64
+	// ChargePercent is the lowest charge reported across the selected devices, or nil when the
+	// aggregate would be incomplete.
+	ChargePercent *int32
+	// LoadPercent is the highest load reported across the selected devices, or nil when the
+	// aggregate would be incomplete.
+	LoadPercent *int32
 }

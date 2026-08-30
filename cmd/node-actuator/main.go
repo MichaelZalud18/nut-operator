@@ -24,9 +24,10 @@ var version = "dev"
 // PID/dbus access. Fewer privileges and no configurable command is the better trade for the one
 // operation whose blast radius is the whole machine.
 const (
-	policyDisabled = "Disabled"
-	policySimulate = "Simulate"
-	policyPowerOff = "PowerOff"
+	policyDisabled      = "Disabled"
+	policySimulate      = "Simulate"
+	policyPowerOff      = "PowerOff"
+	policyTalosShutdown = "TalosShutdown"
 
 	// modeActuate is the only agent mode under which a node may be halted. It is read from this
 	// process's environment and never from a signal file (F-56).
@@ -67,7 +68,7 @@ func main() {
 	mode := config.Mode
 	policy := config.Policy
 
-	logger.Printf("starting mode=%s policy=%s node=%s signalPaths=%s signalTTL=%s poweroff=reboot-syscall(POWER_OFF)", config.Mode, config.Policy, config.NodeName, strings.Join(config.SignalPaths, ","), config.SignalTTL)
+	logger.Printf("starting mode=%s policy=%s mechanism=%s node=%s signalPaths=%s signalTTL=%s", config.Mode, config.Policy, actuatorMechanism(config.Policy), config.NodeName, strings.Join(config.SignalPaths, ","), config.SignalTTL)
 
 	switch policy {
 	case policyDisabled, "":
@@ -91,6 +92,18 @@ func main() {
 		}
 		armed.pass(gateCapabilityPermitted, "CAP_SYS_BOOT is in the permitted set; actuation armed")
 		watchSignals(logger, config, powerOffActuator)
+	case policyTalosShutdown:
+		if mode != modeActuate {
+			block(logger, "TalosShutdown requires POWER_AGENT_MODE=Actuate")
+		}
+		armed := newGateTrace(logger, config.NodeName, "")
+		if err := verifyTalosShutdownAvailable(config); err != nil {
+			armed.fail(gateTalosCredential, err.Error())
+			logger.Printf("refusing to arm TalosShutdown actuation: %v", err)
+			os.Exit(78)
+		}
+		armed.pass(gateTalosCredential, "talosconfig is readable and Talos API target configuration is present")
+		watchSignals(logger, config, talosShutdownActuator)
 	default:
 		logger.Printf("unknown actuator policy %q", policy)
 		os.Exit(64)
@@ -115,6 +128,14 @@ type actuatorConfig struct {
 	// StatePath is where the watch loop records each completed pass, and the only thing the
 	// readiness probe can observe about it (F-64).
 	StatePath string
+	// TalosConfigPath is the mounted talosconfig path used only by the TalosShutdown policy.
+	TalosConfigPath string
+	// TalosEndpoints are Talos API endpoints used only by the TalosShutdown policy.
+	TalosEndpoints []string
+	// TalosNode is the node target passed to the Talos API.
+	TalosNode string
+	// TalosShutdownTimeout bounds the Talos API call after a valid signal is accepted.
+	TalosShutdownTimeout time.Duration
 }
 
 // loadActuatorConfig reads the actuator's configuration from the environment.
@@ -135,6 +156,13 @@ func loadActuatorConfig() actuatorConfig {
 		Interval:     parseDuration(env("POWER_ACTUATOR_INTERVAL", "5s"), 5*time.Second),
 		ShutdownFlow: env("POWER_SHUTDOWN_FLOW", ""),
 		StatePath:    env("POWER_ACTUATOR_STATE_PATH", "/run/actuator/state.json"),
+		TalosConfigPath: env(
+			"POWER_TALOS_CONFIG",
+			"/var/run/secrets/talos.dev/config",
+		),
+		TalosEndpoints:       valueList(env("POWER_TALOS_ENDPOINTS", "")),
+		TalosNode:            env("POWER_TALOS_NODE", ""),
+		TalosShutdownTimeout: parseDuration(env("POWER_TALOS_SHUTDOWN_TIMEOUT", "30s"), 30*time.Second),
 	}
 }
 
@@ -202,6 +230,41 @@ func signalPaths(value, fallback string) []string {
 		return []string{fallback}
 	}
 	return out
+}
+
+func valueList(value string) []string {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\t' || r == ' '
+	})
+	out := make([]string, 0, len(fields))
+	seen := map[string]struct{}{}
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		if _, exists := seen[field]; exists {
+			continue
+		}
+		seen[field] = struct{}{}
+		out = append(out, field)
+	}
+	return out
+}
+
+func actuatorMechanism(policy string) string {
+	switch policy {
+	case policyPowerOff:
+		return "reboot-syscall(POWER_OFF)"
+	case policyTalosShutdown:
+		return "talos-machine-api(Shutdown)"
+	case policySimulate:
+		return "simulate"
+	case policyDisabled, "":
+		return "disabled"
+	default:
+		return "unknown"
+	}
 }
 
 func block(logger *log.Logger, reason string) {
@@ -356,6 +419,20 @@ func powerOffActuator(logger *log.Logger, config actuatorConfig, status nodeagen
 	trace.pass(gateModeAuthorized, "POWER_AGENT_MODE="+modeActuate+" from this process's own environment")
 	logger.Printf("poweroff actuator executing poweroff executionID=%s node=%s flow=%s", status.Payload.ExecutionID, status.Payload.NodeName, status.Payload.ShutdownFlow)
 	return runPoweroff(logger, status.Payload)
+}
+
+func talosShutdownActuator(logger *log.Logger, config actuatorConfig, status nodeagent.SignalStatus) error {
+	trace := newGateTrace(logger, status.Payload.NodeName, status.Payload.ExecutionID)
+	if config.Mode != modeActuate {
+		trace.fail(gateModeAuthorized, "POWER_AGENT_MODE is "+config.Mode+"; only "+modeActuate+" may halt a node")
+		logger.Printf("refusing Talos shutdown in mode=%s: only %s may halt a node, executionID=%s node=%s",
+			config.Mode, modeActuate, status.Payload.ExecutionID, status.Payload.NodeName)
+		return nil
+	}
+	trace.pass(gateModeAuthorized, "POWER_AGENT_MODE="+modeActuate+" from this process's own environment")
+	logger.Printf("talos actuator executing shutdown executionID=%s node=%s talosNode=%s flow=%s",
+		status.Payload.ExecutionID, status.Payload.NodeName, config.TalosNode, status.Payload.ShutdownFlow)
+	return runTalosShutdown(logger, config, status.Payload)
 }
 
 // syncTimeout bounds the flush.

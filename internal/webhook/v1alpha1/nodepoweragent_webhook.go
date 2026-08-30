@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"net"
 	"path"
 	"time"
 
@@ -117,6 +118,9 @@ func defaultNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) {
 	}
 	if obj.Spec.Shutdown.RequireFreshTelemetry == nil {
 		obj.Spec.Shutdown.RequireFreshTelemetry = ptrBool(true)
+	}
+	if obj.Spec.Shutdown.Talos != nil && obj.Spec.Shutdown.Talos.NodeAddressSource == "" {
+		obj.Spec.Shutdown.Talos.NodeAddressSource = powerv1alpha1.TalosNodeAddressSourceHostIP
 	}
 	defaultNodePowerAgentPlacement(obj)
 	defaultNodePowerAgentResources(obj)
@@ -241,20 +245,25 @@ func validateAgentShutdown(pathField *field.Path, obj *powerv1alpha1.NodePowerAg
 	shutdown := obj.Spec.Shutdown
 	switch shutdown.ActuatorPolicy {
 	case "", powerv1alpha1.ActuatorPolicyDisabled, powerv1alpha1.ActuatorPolicySimulate:
-	case powerv1alpha1.ActuatorPolicyPowerOff:
+	case powerv1alpha1.ActuatorPolicyPowerOff, powerv1alpha1.ActuatorPolicyTalosShutdown:
+		policy := string(shutdown.ActuatorPolicy)
 		if obj.Spec.Mode != powerv1alpha1.NodePowerAgentModeActuate {
-			errs = append(errs, field.Invalid(pathField.Child("actuatorPolicy"), shutdown.ActuatorPolicy, "PowerOff requires spec.mode Actuate"))
+			errs = append(errs, field.Invalid(pathField.Child("actuatorPolicy"), shutdown.ActuatorPolicy, policy+" requires spec.mode Actuate"))
 		}
 		if shutdown.ApprovalAnnotation == "" {
-			errs = append(errs, field.Required(pathField.Child("approvalAnnotation"), "required for PowerOff actuation"))
+			errs = append(errs, field.Required(pathField.Child("approvalAnnotation"), "required for "+policy+" actuation"))
 		} else if obj.Annotations[shutdown.ApprovalAnnotation] != "true" {
-			errs = append(errs, field.Invalid(field.NewPath("metadata").Child("annotations").Key(shutdown.ApprovalAnnotation), obj.Annotations[shutdown.ApprovalAnnotation], "must be set to \"true\" for PowerOff actuation"))
+			errs = append(errs, field.Invalid(field.NewPath("metadata").Child("annotations").Key(shutdown.ApprovalAnnotation), obj.Annotations[shutdown.ApprovalAnnotation], "must be set to \"true\" for "+policy+" actuation"))
+		}
+		if shutdown.ActuatorPolicy == powerv1alpha1.ActuatorPolicyTalosShutdown {
+			errs = append(errs, validateTalosShutdown(pathField.Child("talos"), shutdown.Talos)...)
 		}
 	default:
 		errs = append(errs, field.NotSupported(pathField.Child("actuatorPolicy"), shutdown.ActuatorPolicy, []string{
 			string(powerv1alpha1.ActuatorPolicyDisabled),
 			string(powerv1alpha1.ActuatorPolicySimulate),
 			string(powerv1alpha1.ActuatorPolicyPowerOff),
+			string(powerv1alpha1.ActuatorPolicyTalosShutdown),
 		}))
 	}
 	if shutdown.SignalPath != "" {
@@ -278,5 +287,40 @@ func validateAgentShutdown(pathField *field.Path, obj *powerv1alpha1.NodePowerAg
 			fmt.Sprintf("must be at least %s: projected Secret delivery was measured at ~44s and kubelet sync period plus cache TTL push the worst case higher, so a shorter TTL rejects signals that arrived correctly", minimumSignalTTL)))
 	}
 	errs = append(errs, validateAnnotationKey(pathField.Child("approvalAnnotation"), shutdown.ApprovalAnnotation)...)
+	return errs
+}
+
+func validateTalosShutdown(pathField *field.Path, talos *powerv1alpha1.TalosShutdownSpec) field.ErrorList {
+	if talos == nil {
+		return field.ErrorList{field.Required(pathField, "required when actuatorPolicy is TalosShutdown")}
+	}
+	var errs field.ErrorList
+	errs = append(errs, validateSecretKeyReference(pathField.Child("talosConfigSecretKeyRef"), talos.TalosConfigSecretKeyRef)...)
+	if len(talos.Endpoints) == 0 {
+		errs = append(errs, field.Required(pathField.Child("endpoints"), "requires at least one Talos API endpoint IP"))
+	}
+	for i, endpoint := range talos.Endpoints {
+		endpointPath := pathField.Child("endpoints").Index(i)
+		if endpoint == "" {
+			errs = append(errs, field.Required(endpointPath, "requires a Talos API endpoint IP"))
+			continue
+		}
+		if containsControlCharacter(endpoint) {
+			errs = append(errs, field.Invalid(endpointPath, endpoint, "must not contain control characters"))
+			continue
+		}
+		if net.ParseIP(endpoint) == nil {
+			errs = append(errs, field.Invalid(endpointPath, endpoint, "must be an IP literal so the generated NetworkPolicy can allow only that Talos API endpoint"))
+		}
+	}
+	switch talos.NodeAddressSource {
+	case "", powerv1alpha1.TalosNodeAddressSourceHostIP, powerv1alpha1.TalosNodeAddressSourceNodeName:
+	default:
+		errs = append(errs, field.NotSupported(pathField.Child("nodeAddressSource"), talos.NodeAddressSource, []string{
+			string(powerv1alpha1.TalosNodeAddressSourceHostIP),
+			string(powerv1alpha1.TalosNodeAddressSourceNodeName),
+		}))
+	}
+	errs = append(errs, validatePositiveDuration(pathField.Child("shutdownTimeout"), talos.ShutdownTimeout)...)
 	return errs
 }

@@ -64,10 +64,16 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   a closure: confirming the reserve still needs a real outage. Both halves of that evidence now
   exist: the actuator's own precise measurement, which dies with the node, and the operator-side
   `nutoperator_halt_duration_seconds` reconstruction, which is coarser and survives it.
-- Feed node metrics into the estimates alongside execution history — draw and capacity readings
-  sharpen the runtime side of the comparison the same way observed durations sharpen the plan side.
 - `PL-21` communication-path edges stay unwired until a network device can be an actuation target
   (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
+
+Closed locally 2026-08-29:
+
+- Generic UPS telemetry now feeds the runtime side of `ShutdownFlow.status.planFeasibility` from
+  public `UPSDevice.status` fields, not from site-local metrics. The status publishes trusted
+  shortest runtime, lowest selected-device charge, highest selected-device load, and the observed
+  versus declared execution-history provenance. The UPSDevice watch predicate now admits
+  `loadPercent` changes while still dropping pure poll timestamp/raw-status churn.
 
 ---
 
@@ -78,19 +84,12 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
-- Settle how UPS drivers get started and supervised, starting with the start method. `upsdrvctl
-  start` is the suspect, not just the watchdog around it: it backgrounds the driver, hands ownership
-  to a PID file, and on every subsequent call detects the file and terminates whatever it points at
-  ("Duplicate driver instance detected ... Terminating other driver!"). That is the mechanism behind
-  every restart in the `F-97` startup burst, and it is worth establishing whether the burst survives
-  at all once the driver is started foregrounded -- test that before designing anything around it.
-  NUT 2.8 drivers take `-F`/`-FF` to stay foregrounded and answer `-c exit` "so an external caller
-  like the systemd or SMF frameworks would start another copy", so a driver can be a supervised
-  process rather than a start-once one, and the kubelet can do what the sidecar is polling for. The
-  sidecar's own record argues for this: eight of the ten restarts it performed on a live cluster were
-  not corroborated by `upsd`, which held a working session across all of them. What has to be settled
-  before any container-per-driver shape is `F-48`, which forbids making the container list a function
-  of the device set. Evidence is in the 2026-08-24 correction in `operator-maturity-benchmarks.md`.
+- Settle how UPS drivers behave under the new foreground supervisor in a real cluster. Local image
+  probes now rule out the bad design: one `upsdrvctl -FF start` bundle for all drivers exits the
+  whole bundle when one configured driver fails. The rendered operand instead keeps a stable
+  `driver-supervisor` sidecar and starts one foreground `upsdrvctl -FF start <ups>` worker per
+  configured UPS, matching NUT's service-instance model while preserving `F-48` reload semantics.
+  Remaining proof is runtime evidence from Kubernetes rather than more process-model design.
 - `F-97` find out why the driver stops answering new probes in the minutes after a pod start. The
   recovery half is done and now measured: a killed driver is back in 9.75s against a 30s budget
   (`test/e2e/driver_recovery_test.go`). The question changed shape on 2026-08-24 — the exit rate is a
@@ -108,11 +107,20 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 (`NA-n`). Audits: `docs/contributing/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`,
 `F-33`–`F-36`, `F-54`–`F-92`, `OD-37`) and `operator-maturity-benchmarks.md` (`F-94`).
 
-- Add Talos support to the actuator. The halt path is a single fixed mechanism -- `reboot(2)` with
-  `LINUX_REBOOT_CMD_POWER_OFF`, `CAP_SYS_BOOT`, host PID namespace -- and Talos manages shutdown
-  through its own machine API instead. Establish what Talos actually needs and what credential it
-  needs it under.
-- Find a way to add boundaries around the actuator.
+No open v1 DaemonSet tasks remain.
+
+Closed locally 2026-08-29:
+
+- Talos actuator support is implemented as a separate `TalosShutdown` policy, not as a hidden variant
+  of `PowerOff`. It uses the Talos machine API through a mounted talosconfig Secret, targets the
+  local node explicitly, and force-shutdowns because the operator has already handled the Kubernetes
+  drain/ordering decision.
+- The actuator boundary is now policy-specific. Linux `PowerOff` is still the only shape that renders
+  `hostPID` and `CAP_SYS_BOOT`; `TalosShutdown` keeps the restricted container profile, no host
+  namespace, no Linux capabilities, no Kubernetes service-account token, one read-only talosconfig
+  Secret, and egress only to configured Talos API endpoint IPs on TCP 50000. No new OD was opened:
+  `NA-1`/`OD-37` already settled the halt authorization path, and `NA-11` records the Talos-specific
+  boundary.
 
 ---
 
@@ -208,15 +216,21 @@ None.
   and network-only defaults.
 - Public-readiness scans show no private hostnames, private addresses, credentials, or site-specific
   topology.
+- ASH grype low finding `GO-2026-5932` is tracked and triaged: `golang.org/x/crypto v0.55.0`
+  currently has no available module update from `go list -m -u`, and `go list -deps ./...` does
+  not import the affected `golang.org/x/crypto/openpgp` package. The OpenPGP package in the current
+  dependency graph is `github.com/ProtonMail/go-crypto/openpgp`; recheck before v1 or when
+  `golang.org/x/crypto` publishes a newer release.
 - Alpha deployments run in dry-run by default and expose compiled plans, telemetry status, audit
   records, and approval-gate state before any host action is possible.
 - Day-to-day operation works with CRDs, GitOps, `kubectl`, Events, logs, and audit records; no
   embedded dashboard is required for v1.
 - A dry-run runs against real UPS hardware in a real cluster, not against `kind` and `dummy-ups`.
   Not reachable yet, and not expected to be until the sections above close.
-- One node halted through `make verify-actuation`. Distinct from the dry-run gate above, not a
-  replacement for it: a dry-run never renders the actuate configuration, so that gate can pass
-  without `hostPID`, the file capability, or the host PID namespace ever having been exercised on a
-  real kubelet.
+- One node halted through a real actuator policy. `PowerOff` uses `make verify-actuation`; Talos
+  clusters need the equivalent `TalosShutdown` proof against a sacrificial node. Distinct from the
+  dry-run gate above, not a replacement for it: a dry-run never renders the actuate configuration,
+  so that gate can pass without the selected shutdown boundary ever having been exercised on a real
+  kubelet.
 - **Open:** whether a live plug-pull is also a v1 gate, or whether the dry-run above is the bar.
   Undecided in either direction — do not assume one while planning against it.

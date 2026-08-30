@@ -1308,6 +1308,12 @@ spec:
                   (OD-12, EX-32). It warns; it never blocks. The flow author holds the risk, and this
                   operator owes them the numbers rather than a decision made on their behalf.
                 properties:
+                  chargePercent:
+                    description: |-
+                      chargePercent is the lowest reported charge across the selected UPS devices, when all selected
+                      devices are reporting a charge value.
+                    format: int32
+                    type: integer
                   declaredGroups:
                     format: int32
                     type: integer
@@ -1317,6 +1323,12 @@ spec:
                       Unknown runtime yields false, matching PL-32: missing data never produces an
                       optimistic verdict.
                     type: boolean
+                  loadPercent:
+                    description: |-
+                      loadPercent is the highest reported load across the selected UPS devices, when all selected
+                      devices are reporting a load value.
+                    format: int32
+                    type: integer
                   message:
                     description: message states the comparison in the form an operator
                       reads first.

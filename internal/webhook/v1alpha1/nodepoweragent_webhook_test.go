@@ -82,6 +82,14 @@ var _ = Describe("NodePowerAgent Webhook", func() {
 			Expect(obj.Spec.Resources.Upsmon.Limits).To(HaveKeyWithValue(corev1.ResourceCPU, resource.MustParse("100m")))
 			Expect(obj.Spec.Resources.Upsmon.Limits).To(HaveKeyWithValue(corev1.ResourceMemory, resource.MustParse("64Mi")))
 		})
+
+		It("Should default Talos node addressing to host IP", func() {
+			obj.Spec.Shutdown.Talos = &powerv1alpha1.TalosShutdownSpec{}
+
+			Expect(defaulter.Default(ctx, obj)).To(Succeed())
+
+			Expect(obj.Spec.Shutdown.Talos.NodeAddressSource).To(Equal(powerv1alpha1.TalosNodeAddressSourceHostIP))
+		})
 	})
 
 	Context("When creating or updating NodePowerAgent under Validating Webhook", func() {
@@ -133,6 +141,44 @@ var _ = Describe("NodePowerAgent Webhook", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		It("Should reject Talos shutdown without Talos configuration", func() {
+			obj.Annotations = map[string]string{"power.zalud.io/approved-for-actuation": "true"}
+			obj.Spec = validNodePowerAgentSpec()
+			obj.Spec.Mode = powerv1alpha1.NodePowerAgentModeActuate
+			obj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicyTalosShutdown
+			obj.Spec.Shutdown.ApprovalAnnotation = "power.zalud.io/approved-for-actuation"
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.shutdown.talos"))
+		})
+
+		It("Should reject Talos shutdown endpoints that cannot be rendered into NetworkPolicy", func() {
+			obj.Annotations = map[string]string{"power.zalud.io/approved-for-actuation": "true"}
+			obj.Spec = validNodePowerAgentSpec()
+			obj.Spec.Mode = powerv1alpha1.NodePowerAgentModeActuate
+			obj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicyTalosShutdown
+			obj.Spec.Shutdown.ApprovalAnnotation = "power.zalud.io/approved-for-actuation"
+			obj.Spec.Shutdown.Talos = validTalosShutdownSpec()
+			obj.Spec.Shutdown.Talos.Endpoints = []string{"talos-control-plane.example.test"}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("must be an IP literal"))
+		})
+
+		It("Should admit Talos shutdown only when explicitly approved and bounded", func() {
+			obj.Annotations = map[string]string{"power.zalud.io/approved-for-actuation": "true"}
+			obj.Spec = validNodePowerAgentSpec()
+			obj.Spec.Mode = powerv1alpha1.NodePowerAgentModeActuate
+			obj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicyTalosShutdown
+			obj.Spec.Shutdown.ApprovalAnnotation = "power.zalud.io/approved-for-actuation"
+			obj.Spec.Shutdown.Talos = validTalosShutdownSpec()
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
 		It("Should reject a reserved namespace as the operand namespace", func() {
 			obj.Spec = validNodePowerAgentSpec()
 			obj.Spec.Namespace = "kube-system"
@@ -154,5 +200,16 @@ func validNodePowerAgentSpec() powerv1alpha1.NodePowerAgentSpec {
 			SignalPath:            "/run/power-agent/shutdown.json",
 			RequireFreshTelemetry: ptrBool(true),
 		},
+	}
+}
+
+func validTalosShutdownSpec() *powerv1alpha1.TalosShutdownSpec {
+	return &powerv1alpha1.TalosShutdownSpec{
+		TalosConfigSecretKeyRef: powerv1alpha1.SecretKeyReference{
+			Namespace: "power-system",
+			Name:      "talosconfig",
+			Key:       "config",
+		},
+		Endpoints: []string{"192.0.2.10"},
 	}
 }

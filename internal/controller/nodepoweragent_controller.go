@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -303,6 +304,8 @@ func (r *NodePowerAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// wait it would lose is exactly the one that matters: a node rebooting after power returns,
 		// racing the TTL of the signal that took it down.
 		Watches(&powerv1alpha1.ShutdownFlow{}, handler.EnqueueRequestsFromMapFunc(r.enqueueAllNodePowerAgents)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.nodePowerAgentRequestsForSecret),
+			builder.WithPredicates(secretDataChangedPredicate())).
 		Owns(&corev1.Secret{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&networkingv1.NetworkPolicy{}).

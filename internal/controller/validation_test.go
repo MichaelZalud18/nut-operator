@@ -19,6 +19,9 @@ package controller
 import (
 	"strings"
 	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
@@ -332,6 +335,83 @@ func TestValidateUPSDeviceRejectsUpstreamNUTSecretAuthWithoutSecret(t *testing.T
 	}
 	if result.reason != "UpstreamNUTAuthSecretRequired" {
 		t.Fatalf("expected UpstreamNUTAuthSecretRequired, got %q", result.reason)
+	}
+}
+
+func TestValidateNodePowerAgentRejectsTalosEndpointThatCannotBeRenderedIntoNetworkPolicy(t *testing.T) {
+	agent := validTalosNodePowerAgent()
+	agent.Spec.Shutdown.Talos.Endpoints = []string{"talos.example.net"}
+
+	result := validateNodePowerAgent(agent)
+	if result.accepted {
+		t.Fatal("expected DNS Talos endpoint to be rejected")
+	}
+	if result.reason != "TalosEndpointInvalid" {
+		t.Fatalf("expected TalosEndpointInvalid, got %q", result.reason)
+	}
+}
+
+func TestValidateNodePowerAgentRejectsActuationPolicyOutsideActuateMode(t *testing.T) {
+	agent := validTalosNodePowerAgent()
+	agent.Spec.Mode = powerv1alpha1.NodePowerAgentModeDryRun
+
+	result := validateNodePowerAgent(agent)
+	if result.accepted {
+		t.Fatal("expected real actuator policy outside Actuate mode to be rejected")
+	}
+	if result.reason != "ActuationModeRequired" {
+		t.Fatalf("expected ActuationModeRequired, got %q", result.reason)
+	}
+}
+
+func TestValidateNodePowerAgentRejectsInvalidTalosNodeAddressSource(t *testing.T) {
+	agent := validTalosNodePowerAgent()
+	agent.Spec.Shutdown.Talos.NodeAddressSource = powerv1alpha1.TalosNodeAddressSource("Hostname")
+
+	result := validateNodePowerAgent(agent)
+	if result.accepted {
+		t.Fatal("expected invalid Talos nodeAddressSource to be rejected")
+	}
+	if result.reason != "TalosNodeAddressSourceInvalid" {
+		t.Fatalf("expected TalosNodeAddressSourceInvalid, got %q", result.reason)
+	}
+}
+
+func TestValidateNodePowerAgentRejectsInvalidTalosShutdownTimeout(t *testing.T) {
+	agent := validTalosNodePowerAgent()
+	agent.Spec.Shutdown.Talos.ShutdownTimeout = &metav1.Duration{Duration: -time.Second}
+
+	result := validateNodePowerAgent(agent)
+	if result.accepted {
+		t.Fatal("expected negative Talos shutdown timeout to be rejected")
+	}
+	if result.reason != "TalosShutdownTimeoutInvalid" {
+		t.Fatalf("expected TalosShutdownTimeoutInvalid, got %q", result.reason)
+	}
+}
+
+func validTalosNodePowerAgent() *powerv1alpha1.NodePowerAgent {
+	return &powerv1alpha1.NodePowerAgent{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "talos-agent",
+			Annotations: map[string]string{"power.zalud.io/approved": "true"},
+		},
+		Spec: powerv1alpha1.NodePowerAgentSpec{
+			NUTServerRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-a"}},
+			Mode:          powerv1alpha1.NodePowerAgentModeActuate,
+			Shutdown: powerv1alpha1.AgentShutdownSpec{
+				ActuatorPolicy:     powerv1alpha1.ActuatorPolicyTalosShutdown,
+				ApprovalAnnotation: "power.zalud.io/approved",
+				Talos: &powerv1alpha1.TalosShutdownSpec{
+					TalosConfigSecretKeyRef: powerv1alpha1.SecretKeyReference{
+						Namespace: "power-system",
+						Name:      "talosconfig",
+						Key:       "config",
+					},
+					Endpoints: []string{"192.0.2.10"},
+				},
+			},
+		},
 	}
 }
 

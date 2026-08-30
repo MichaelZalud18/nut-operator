@@ -79,7 +79,7 @@ func resolveFlowHistory(ctx context.Context, store audit.Store, flow *powerv1alp
 	return planner.HistoryInputs{GroupDurations: durations}
 }
 
-// planFeasibilityStatus compares the plan estimate against observed runtime (OD-12).
+// planFeasibilityStatus compares the plan estimate against selected UPS telemetry (OD-12).
 //
 // Warns, never blocks. The flow author holds the risk; this operator holds the
 // numbers and owes them a clear statement of both. Truncating the plan or refusing
@@ -95,6 +95,14 @@ func planFeasibilityStatus(estimated *time.Duration, observation planner.History
 		ObservedGroups: int32(confidence.ObservedGroups),
 		DeclaredGroups: int32(confidence.DeclaredGroups),
 		ThinGroups:     append([]string(nil), confidence.ThinGroups...),
+	}
+	if observation.ChargePercent != nil {
+		charge := *observation.ChargePercent
+		status.ChargePercent = &charge
+	}
+	if observation.LoadPercent != nil {
+		load := *observation.LoadPercent
+		status.LoadPercent = &load
 	}
 
 	if observation.RuntimeSeconds == nil {
@@ -158,22 +166,19 @@ func bestPlanEstimate(observed, declared *metav1.Duration) *time.Duration {
 	return nil
 }
 
-// flowRuntimeObservation reads the runtime figure the warning is compared against.
+// flowRuntimeObservation reads the UPS telemetry the warning is compared against.
 //
 // Reuses the same device read and the same reductions the executor uses at wave
-// boundaries, so the number in the warning is the number the flow would actually
-// act on. Trust is gated by CR-4: a device reporting a fixed firmware estimate
-// contributes nothing, because a constant cannot say whether this plan fits. An
-// untrusted or unreadable figure leaves the runtime unknown, and PL-32 makes
-// unknown a non-fit rather than a pass.
+// boundaries, so the runtime in the warning is the runtime the flow would actually act on. Trust is
+// gated by CR-4: a device reporting a fixed firmware estimate contributes no runtime, because a
+// constant cannot say whether this plan fits. Charge and load are still published as generic public
+// UPS telemetry when every selected device reports them; they are not site-local metrics and they
+// do not change the plan hash.
 func (r *ShutdownFlowReconciler) flowRuntimeObservation(ctx context.Context, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, bundle resolver.StructuralBundle) planner.HistoryObservation {
 	if evaluation == nil || len(evaluation.SelectedUPSDevices) == 0 {
 		return planner.HistoryObservation{}
 	}
 	trusted := runtimeIsTrustedForFlow(bundle.CapabilityMatches, evaluation.SelectedUPSDevices)
-	if !trusted {
-		return planner.HistoryObservation{}
-	}
 
 	devices := make([]powerv1alpha1.UPSDevice, 0, len(evaluation.SelectedUPSDevices))
 	for _, name := range evaluation.SelectedUPSDevices {
@@ -187,5 +192,48 @@ func (r *ShutdownFlowReconciler) flowRuntimeObservation(ctx context.Context, eva
 	}
 
 	observation := powerObservationFromDevices(devices, trusted)
-	return planner.HistoryObservation{RuntimeSeconds: observation.RuntimeSeconds}
+	history := planner.HistoryObservation{}
+	if trusted {
+		history.RuntimeSeconds = observation.RuntimeSeconds
+	}
+
+	chargeKnown := true
+	loadKnown := true
+	for _, device := range devices {
+		if !devicePhaseReportsPower(device.Status.Phase) {
+			chargeKnown = false
+			loadKnown = false
+			continue
+		}
+		if device.Status.BatteryChargePercent == nil {
+			chargeKnown = false
+		} else if history.ChargePercent == nil || *device.Status.BatteryChargePercent < *history.ChargePercent {
+			charge := *device.Status.BatteryChargePercent
+			history.ChargePercent = &charge
+		}
+		if device.Status.LoadPercent == nil {
+			loadKnown = false
+		} else if history.LoadPercent == nil || *device.Status.LoadPercent > *history.LoadPercent {
+			load := *device.Status.LoadPercent
+			history.LoadPercent = &load
+		}
+	}
+	if !chargeKnown {
+		history.ChargePercent = nil
+	}
+	if !loadKnown {
+		history.LoadPercent = nil
+	}
+	return history
+}
+
+func devicePhaseReportsPower(phase powerv1alpha1.UPSDevicePhase) bool {
+	switch phase {
+	case powerv1alpha1.UPSDevicePhaseOnline,
+		powerv1alpha1.UPSDevicePhaseOnBattery,
+		powerv1alpha1.UPSDevicePhaseLowBattery:
+		return true
+	default:
+		return false
+	}
 }

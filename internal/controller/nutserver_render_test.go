@@ -573,7 +573,7 @@ func (p fakeUpstreamNUTProber) Probe(context.Context, upstreamNUTProbeTarget) up
 	return p.result
 }
 
-// upsd ran with no requests or limits while the watchdog sidecar beside it declared 10m/32Mi. An
+// upsd ran with no requests or limits while the sidecar beside it declared resources. An
 // unrequested container is in the first eviction class under node pressure, which is the state a
 // rack losing power produces -- so the one container that has to report the outage was the one
 // most likely to be evicted during it.
@@ -591,7 +591,7 @@ func TestUpsdContainerIsSizedWhenSpecResourcesSaysNothing(t *testing.T) {
 		t.Fatalf("upsd container has no limits: %+v", resources)
 	}
 
-	// Requests equal limits so the pod stays Guaranteed. The watchdog is sized the same way for
+	// Requests equal limits so the pod stays Guaranteed. The supervisor is sized the same way for
 	// the same reason, and a mismatch on either container drops the whole pod to Burstable.
 	if !resources.Requests[corev1.ResourceCPU].Equal(resources.Limits[corev1.ResourceCPU]) {
 		t.Errorf("upsd CPU request and limit differ, so the pod is not Guaranteed: %+v", resources)

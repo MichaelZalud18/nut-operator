@@ -103,8 +103,10 @@ rendered only when actuation is configured.
 - **`upsmon`** — unprivileged NUT client, read-only root filesystem, no capabilities, no Kubernetes
   API token, and a packaged `power-signal-writer` used by NUT `SHUTDOWNCMD`.
 - **`actuator`** — omitted entirely in `MonitorOnly`, and `Simulate` by default elsewhere. In approved
-  actuation mode it watches the executor-projected Secret path and performs the host shutdown without
-  NUT credentials or policy authority.
+  actuation mode it watches the executor-projected Secret path and performs the configured host
+  shutdown path without NUT credentials, Kubernetes API credentials, or policy authority. Linux
+  `PowerOff` uses `reboot(2)` with the narrow host privileges it needs; `TalosShutdown` uses a
+  projected talosconfig and Talos API egress instead.
 
 The signal is structured content carrying execution ID, node name, timestamp, reason, UPS identity,
 flow identity, and plan hash. The actuator rejects stale, malformed, or wrong-node signals.

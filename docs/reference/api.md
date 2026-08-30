@@ -84,6 +84,13 @@ declares whether the fleet is monitoring, dry-running, or allowed to actuate. It
 `MonitorOnly`, `DryRun`, `Actuate` — are one half of the two-gate safety model; see
 [Enabling actuation](../guides/enable-actuation.md).
 
+`spec.shutdown.actuatorPolicy` is `Disabled`, `Simulate`, `PowerOff`, or `TalosShutdown`. `PowerOff`
+uses the Linux `reboot(2)` poweroff syscall and renders `hostPID` plus `CAP_SYS_BOOT` only after
+explicit approval. `TalosShutdown` uses the Talos machine API instead and requires
+`spec.shutdown.talos.talosConfigSecretKeyRef` plus `spec.shutdown.talos.endpoints`. Those endpoints
+are Talos API endpoint IP addresses, normally control-plane addresses, and are rendered into the
+agent `NetworkPolicy` as TCP 50000 `ipBlock` peers.
+
 ## Shutdown policy
 
 **`ShutdownFlow`** — the ordered policy layer, and the object you spend the most time authoring. Its

@@ -134,8 +134,9 @@ it is called out rather than left to be discovered.
 In order, and not before a dry run has been reviewed:
 
 1. Confirm compiled plans and `status.planFeasibility` look right in `DryRun`.
-2. Move `NodePowerAgent.spec.shutdown.actuatorPolicy` from `Simulate` to `PowerOff` — this is the
-   step that gives a node the ability to halt, and it needs `CAP_SYS_BOOT` and `hostPID` to be
-   admissible (see [node-agent-operand.md](../../contributing/design/node-agent-operand.md)).
+2. Move `NodePowerAgent.spec.shutdown.actuatorPolicy` from `Simulate` to a real actuator policy.
+   Linux nodes use `PowerOff`, which needs `CAP_SYS_BOOT` and `hostPID` to be admissible. Talos
+   nodes use `TalosShutdown`, which needs a talosconfig Secret and Talos API endpoint egress instead
+   (see [node-agent-operand.md](../../contributing/design/node-agent-operand.md)).
 3. Move the flow's `mode` from `DryRun` to `Enforce`. `safety.requireManualApproval` is on, so an
    enforce-mode run still waits for the approval annotation.

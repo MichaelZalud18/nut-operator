@@ -50,8 +50,8 @@ The moving parts, and why each one is separate from the others:
   - **`upsmon`** is a NUT client. It holds NUT credentials, reaches `upsd` over TCP 3493, and has no
     host privileges and no way to stop a machine.
   - **The actuator** holds no NUT credentials and no Kubernetes token, and runs no network listener.
-    It watches one read-only projected Secret and, if a valid signal appears there, flushes the
-    filesystems and powers the host off.
+    It watches one read-only projected Secret and, if a valid signal appears there, performs the
+    configured actuation path: Linux `reboot(2)` power-off, or Talos machine API shutdown.
 - **PostgreSQL (CloudNativePG or external).** Holds the durable record: execution history, audit
   rows, and observed durations that sharpen future estimates.
 
@@ -93,7 +93,9 @@ Two ways to connect:
   embedded NUT server. The operand relays from it instead of driving the device directly.
 
 **Clusters.** Any conformant Kubernetes cluster. Nothing assumes a distribution, a cloud, or a CNI.
-Node actuation needs a Linux host, since powering off is the `reboot(2)` syscall.
+Linux node actuation uses `reboot(2)`. Talos Linux node actuation is first-class because it has a
+separate machine API boundary: the actuator uses a mounted talosconfig and egress only to configured
+Talos API endpoints.
 
 **Networking.** Agents reach `upsd` on TCP 3493; the operator reaches the Kubernetes API and
 PostgreSQL. `NUTServer` is not exposed outside the cluster by default, operands are compatible with
@@ -123,14 +125,15 @@ switches and routers as actuation targets, and USB or serial UPS attachment.
 Real host shutdown is not the default, and reaching it takes four separate, reviewable steps.
 
 `NodePowerAgent` ships as `mode: DryRun` with `shutdown.actuatorPolicy: Simulate`. Rendering
-`PowerOff` needs `spec.mode: Actuate` **and** an approval annotation on that exact resource.
+`PowerOff` or `TalosShutdown` needs `spec.mode: Actuate` **and** an approval annotation on that exact resource.
 `ShutdownFlow` follows the same pattern for `mode: Enforce`. Both approvals are re-checked when the
 flow fires rather than when it was deployed, and absence of either drops to dry-run instead of
 proceeding.
 
 The node agent's two containers split credentials from privilege: `upsmon` holds NUT credentials and
 cannot stop a machine; the actuator can stop a machine and holds no NUT credentials, no Kubernetes
-token, and no network listener.
+token, and no network listener. The Talos policy mounts only the configured talosconfig Secret and
+opens only the generated Talos API egress rule.
 
 **One path authorizes a halt.** NUT's own local `SHUTDOWNCMD` path keeps its writer, its
 format, and its file, and holds no authority — the shared tmpfs is not mounted into the actuator, so

@@ -1292,15 +1292,17 @@ spec:
                   actuatorPolicy:
                     default: Simulate
                     description: actuatorPolicy chooses no actuator, a simulated one,
-                      or real host power-off.
+                      or real node shutdown.
                     enum:
                     - Disabled
                     - Simulate
                     - PowerOff
+                    - TalosShutdown
                     type: string
                   approvalAnnotation:
-                    description: approvalAnnotation must be present on this NodePowerAgent
-                      before PowerOff is rendered.
+                    description: |-
+                      approvalAnnotation must be present on this NodePowerAgent before PowerOff or TalosShutdown is
+                      rendered.
                     type: string
                   requireFreshTelemetry:
                     default: true
@@ -1319,6 +1321,62 @@ spec:
                     description: signalTTL rejects stale signal files older than this
                       duration.
                     type: string
+                  talos:
+                    description: talos configures Talos machine API shutdown. Required
+                      when actuatorPolicy is TalosShutdown.
+                    properties:
+                      endpoints:
+                        description: |-
+                          endpoints are Talos API endpoint IP addresses, normally control-plane node addresses. They
+                          are IP literals, not DNS names, because the renderer turns them into exact NetworkPolicy
+                          ipBlock peers on TCP 50000.
+                        items:
+                          type: string
+                        minItems: 1
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      nodeAddressSource:
+                        default: HostIP
+                        description: |-
+                          nodeAddressSource selects how the actuator identifies its local node to Talos endpoints.
+                          HostIP is the default because Talos endpoints proxy to nodes by addresses as seen by the
+                          endpoint server; NodeName is available for clusters whose Talos node names are resolvable
+                          there.
+                        enum:
+                        - HostIP
+                        - NodeName
+                        type: string
+                      shutdownTimeout:
+                        description: shutdownTimeout bounds the Talos API call made
+                          after a valid shutdown signal is accepted.
+                        type: string
+                      talosConfigSecretKeyRef:
+                        description: |-
+                          talosConfigSecretKeyRef contains a talosconfig file whose client certificate is authorized
+                          for Talos shutdown, typically the os:operator role. The Secret must live in the rendered
+                          operand namespace so the DaemonSet can mount it without widening RBAC.
+                        properties:
+                          key:
+                            description: key is the data key inside the Secret.
+                            minLength: 1
+                            type: string
+                          name:
+                            description: name is the Secret name.
+                            minLength: 1
+                            type: string
+                          namespace:
+                            description: namespace is the Secret namespace.
+                            minLength: 1
+                            type: string
+                        required:
+                        - key
+                        - name
+                        - namespace
+                        type: object
+                    required:
+                    - endpoints
+                    - talosConfigSecretKeyRef
+                    type: object
                 type: object
               shutdownFlowRef:
                 description: shutdownFlowRef references the flow compiled into this

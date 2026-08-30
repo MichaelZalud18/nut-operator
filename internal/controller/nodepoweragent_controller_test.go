@@ -555,6 +555,104 @@ var _ = Describe("NodePowerAgent Controller", func() {
 			}
 		})
 
+		It("renders approved Talos shutdown without host poweroff privileges", func() {
+			talosSecret := &corev1.Secret{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "talosconfig"}, talosSecret)
+			if err == nil {
+				talosSecret.Data = map[string][]byte{"config": []byte("context: test\n")}
+				Expect(k8sClient.Update(ctx, talosSecret)).To(Succeed())
+			} else if errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: namespace,
+						Name:      "talosconfig",
+					},
+					Type: corev1.SecretTypeOpaque,
+					Data: map[string][]byte{
+						"config": []byte("context: test\n"),
+					},
+				})).To(Succeed())
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			resource := &powerv1alpha1.NodePowerAgent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Annotations = map[string]string{"power.zalud.io/approved-for-actuation": "true"}
+			resource.Spec.Mode = powerv1alpha1.NodePowerAgentModeActuate
+			resource.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicyTalosShutdown
+			resource.Spec.Shutdown.ApprovalAnnotation = "power.zalud.io/approved-for-actuation"
+			resource.Spec.Shutdown.Talos = &powerv1alpha1.TalosShutdownSpec{
+				TalosConfigSecretKeyRef: powerv1alpha1.SecretKeyReference{
+					Namespace: namespace,
+					Name:      "talosconfig",
+					Key:       "config",
+				},
+				Endpoints: []string{"192.0.2.10"},
+			}
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+			controllerReconciler := &NodePowerAgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			daemonSet := &appsv1.DaemonSet{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, daemonSet)).To(Succeed())
+			Expect(daemonSet.Spec.Template.Spec.HostPID).To(BeFalse())
+			Expect(daemonSet.Spec.Template.Spec.AutomountServiceAccountToken).NotTo(BeNil())
+			Expect(*daemonSet.Spec.Template.Spec.AutomountServiceAccountToken).To(BeFalse())
+			Expect(daemonSet.Spec.Template.Spec.Containers).To(HaveLen(2))
+
+			actuator := daemonSet.Spec.Template.Spec.Containers[1]
+			Expect(actuator.Name).To(Equal("actuator"))
+			Expect(actuator.SecurityContext).NotTo(BeNil())
+			Expect(*actuator.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(*actuator.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
+			Expect(actuator.SecurityContext.Capabilities.Drop).To(ContainElement(corev1.Capability("ALL")))
+			Expect(actuator.SecurityContext.Capabilities.Add).To(BeEmpty())
+			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_AGENT_MODE", Value: "Actuate"}))
+			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_ACTUATOR_POLICY", Value: "TalosShutdown"}))
+			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_TALOS_CONFIG", Value: "/var/run/secrets/talos.dev/config"}))
+			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{Name: "POWER_TALOS_ENDPOINTS", Value: "192.0.2.10"}))
+			Expect(actuator.Env).To(ContainElement(corev1.EnvVar{
+				Name: "POWER_TALOS_NODE",
+				ValueFrom: &corev1.EnvVarSource{
+					FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "status.hostIP"},
+				},
+			}))
+			for _, variable := range actuator.Env {
+				Expect(variable.Name).NotTo(HavePrefix("POWER_POWEROFF_"))
+			}
+			Expect(actuator.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name:      "talosconfig",
+				MountPath: "/var/run/secrets/talos.dev",
+				ReadOnly:  true,
+			}))
+			for _, mount := range actuator.VolumeMounts {
+				Expect(mount.Name).NotTo(Equal("power-agent-run"))
+			}
+			Expect(daemonSet.Spec.Template.Spec.Volumes).To(ContainElement(WithTransform(func(volume corev1.Volume) string {
+				return volume.Name
+			}, Equal("talosconfig"))))
+
+			networkPolicy := &networkingv1.NetworkPolicy{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-node-power-agent"}, networkPolicy)).To(Succeed())
+			Expect(networkPolicy.Spec.Egress).To(ContainElement(WithTransform(func(rule networkingv1.NetworkPolicyEgressRule) []string {
+				cidrs := make([]string, 0, len(rule.To))
+				for _, peer := range rule.To {
+					if peer.IPBlock != nil {
+						cidrs = append(cidrs, peer.IPBlock.CIDR)
+					}
+				}
+				return cidrs
+			}, ContainElement("192.0.2.10/32"))))
+		})
+
 		It("reconciles via a real running manager and reacts to a labeled Pod through the dedicated watch (F-32)", func() {
 			By("starting a real manager with SetupWithManager, exactly as cmd/main.go does")
 			mgr, err := ctrl.NewManager(cfg, ctrl.Options{

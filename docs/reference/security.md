@@ -23,7 +23,7 @@ The host-action boundary is intentionally narrow.
 
 The NUT server and client containers use network UPS protocols only. They do not need broad Linux capabilities, host devices, host namespaces, or Kubernetes API tokens.
 
-The actuator container owns host interaction only when approved actuation is enabled. It has no NUT credentials, no flow logic, and no broad policy authority. Its job is to validate the signal and execute the approved local action.
+The actuator container owns host interaction only when approved actuation is enabled. It has no NUT credentials, no flow logic, no Kubernetes service-account token, and no broad policy authority. Its job is to validate the signal and execute the approved local action.
 
 One signal path is authorized, and it is the executor-projected Secret, mounted read-only. The shared `power-agent-run` tmpfs that `upsmon` writes its `SHUTDOWNCMD` handoff into is **not mounted into the actuator at all**. That is deliberately stronger than mounting it read-only: the halt comes from the actuator *reading* a path, so restricting writes would have closed a threat nobody posed while leaving the read open. A volume the container does not mount is a volume it cannot be tricked through. The actuator's default signal path is derived from `POWER_NODE_NAME` rather than fixed, so a failed environment injection leaves it watching nothing; the previous default was the local tmpfs path, which meant the same failure silently repointed it at the one path this decision declines to trust. The Secret always carries a `delivery-channel` marker key, because an empty Secret projects identically to a missing one and without a key that is always present there is no way to tell "no flow is running" from "this channel does not exist".
 
@@ -39,6 +39,13 @@ pod's `RuntimeDefault` seccomp profile with no override. An earlier revision set
 does not — with the capability held the syscall reaches the kernel's handler, and without it the
 refusal is on the capability. `CAP_SYS_BOOT` is the gate, so `Unconfined` bought nothing while
 removing every other syscall filter from the one container that can halt the machine.
+
+Approved `TalosShutdown` rendering uses the Talos machine API instead of the Linux poweroff syscall.
+It keeps `hostPID: false`, adds no Linux capabilities, and keeps the same restricted actuator
+container profile as simulation. The only extra credential is the configured talosconfig Secret,
+mounted read-only from the operand namespace; use a Talos client certificate with `os:operator`
+rather than `os:admin` where possible. The only extra network path is generated egress to the
+configured Talos API endpoint IPs on TCP 50000.
 
 ## Admission webhook certificate
 
@@ -133,7 +140,9 @@ restricts it to exactly what that policy lists. Shipping a partial one would bre
 cluster to half-fix the default-deny ones.
 
 What the agent needs is already handled. `NodePowerAgent` renders its own `Egress` policy naming the
-`upsd` pods it monitors plus DNS, so the agent-to-`NUTServer` edge requires nothing from you.
+`upsd` pods it monitors plus DNS. When `TalosShutdown` is enabled it also renders egress to the
+configured Talos API endpoint IPs on TCP 50000, so those endpoint values are IP literals rather than
+DNS names.
 
 Edges the manager needs:
 
@@ -156,6 +165,7 @@ externally exposed by default.
 - Existing Secrets are supported for organizations with external secret management.
 - SNMP credentials and PostgreSQL DSNs must always come from Secrets.
 - Upstream NUT relay credentials use Secret-projected `nutauth.conf` files; unauthenticated appliances must explicitly use `auth.mode: None`.
+- Talos shutdown uses a Secret-projected talosconfig; the expected Talos role is `os:operator`.
 - Generated credentials must be rotatable without recreating API objects.
 
 ## TLS

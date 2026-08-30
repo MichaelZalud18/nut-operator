@@ -29,14 +29,10 @@ fi
 
 mkdir -p /run/nut
 
-# A driver that fails to start (bad/missing credentials, unreachable UPS, etc.) must not take
-# upsd down with it. upsd should come up regardless so devices that did register stay queryable,
-# and so credentials can be wired in / corrected without restarting the server. The readiness
-# probe reads `upsdrvctl status` and already reports "not ready" correctly when no driver is
-# responsive, so a partial start surfaces as an unready pod rather than a crash loop.
-if ! upsdrvctl start; then
-  echo "one or more NUT drivers failed to start; continuing so upsd still serves any devices that did register" >&2
-fi
+# Driver processes are owned by the `driver-supervisor` sidecar. Keeping `upsd` focused on the
+# protocol server matters: a bad driver config or unreachable UPS should not decide whether the
+# server process exists, and the supervisor can restart one foreground driver worker without taking
+# the others or `upsd` down with it.
 
 # -FF, not -D (F-47). All three of -D, -F and -FF keep upsd in the foreground, which is what a
 # container needs, but they are not interchangeable:

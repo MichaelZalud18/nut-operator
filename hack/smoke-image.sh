@@ -36,6 +36,46 @@ case "$kind" in
       done
     '
 
+    # The Kubernetes operand supervises one foreground upsdrvctl worker per configured UPS inside
+    # a stable sidecar. This mirrors NUT's service-instance model without making the pod's
+    # container list depend on the UPSDevice set. The important failure mode is mixed health: one
+    # bad driver definition must not kill a healthy foreground worker beside it.
+    driver_config="$(mktemp -d)"
+    trap 'rm -rf "$driver_config"' EXIT
+    printf '[good]\n  driver = dummy-ups\n  port = good.dev\n\n[bad]\n  driver = dummy-ups\n  port = missing.dev\n' > "$driver_config/ups.conf"
+    printf 'ups.status: OL\nbattery.runtime: 3600\nbattery.charge: 100\nups.load: 10\n' > "$driver_config/good.dev"
+    chmod 0755 "$driver_config"
+    chmod 0644 "$driver_config"/*
+
+    "$container_tool" run --rm -v "$driver_config:/etc/nut:ro" --entrypoint /bin/sh "$image" -ec '
+      set +e
+      NUT_QUIET_INIT_BANNER=true upsdrvctl -FF start good &
+      good_pid=$!
+      sleep 1
+      NUT_QUIET_INIT_BANNER=true upsdrvctl -FF start bad >/tmp/bad-driver.log 2>&1 &
+      bad_pid=$!
+      sleep 2
+      NUT_QUIET_INIT_BANNER=true upsdrvctl status | awk '\''$1 == "good" {
+        for (i = 1; i <= NF; i++) if ($i == "RESPONSIVE") found = 1
+      } END { exit !found }'\''
+      healthy_rc=$?
+      kill "$good_pid" 2>/dev/null || true
+      wait "$good_pid" 2>/dev/null || true
+      wait "$bad_pid" 2>/dev/null
+      bad_rc=$?
+      if [ "$healthy_rc" -ne 0 ]; then
+        echo "nut-server smoke: a bad driver definition stopped a healthy foreground worker" >&2
+        exit 1
+      fi
+      if [ "$bad_rc" -eq 0 ]; then
+        echo "nut-server smoke: bad dummy-ups definition unexpectedly succeeded" >&2
+        cat /tmp/bad-driver.log >&2
+        exit 1
+      fi
+    '
+    rm -rf "$driver_config"
+    trap - EXIT
+
     # F-47: the entrypoint must leave a PID file behind, not merely stay in the foreground.
     #
     # upsd has three flags that all foreground it -- -D (raise debugging level, foreground as a
@@ -55,10 +95,8 @@ case "$kind" in
     chmod 0755 "$smoke_config"
     chmod 0644 "$smoke_config"/*
 
-    # The driver has no device to talk to and will fail to start. That is deliberate: the
-    # entrypoint is supposed to continue past it (NS-4), so this also proves upsd comes up on a
-    # partial start rather than only on a clean one.
-    #
+    # Driver processes are owned by the driver-supervisor sidecar, so this entrypoint check proves
+    # only that upsd itself stays foregrounded and writes the PID file the reload path needs.
     # Deliberately not --rm: if the container dies the failure path below needs its logs, and --rm
     # would take them with it.
     smoke_container="$("$container_tool" run -d -v "$smoke_config:/etc/nut:ro" "$image")"

@@ -1482,3 +1482,43 @@ extending the hold to cover creation fails the missing-DaemonSet test, and treat
 record as live fails the settled-flow tests.
 
 This closes `F-72` as well, whose remaining half this was.
+
+## Talos shutdown and actuator boundary, 2026-08-29
+
+The open DaemonSet task split into two parts: Talos needed a shutdown mechanism that was not the
+Linux `reboot(2)` syscall, and the actuator needed clearer boundaries around whichever mechanism was
+selected.
+
+Closed as a new actuator policy, not as a broader `PowerOff`. `TalosShutdown` uses the Talos
+machine API with `WithConfigFromFile`, configured endpoints, an explicit node target, and
+`WithShutdownForce(true)`. Force is deliberate here: the operator has already made the drain and
+ordering decision before it writes the node signal, and Talos may otherwise try to re-consult a
+Kubernetes API that is inside the outage path. The startup check proves the talosconfig path is
+readable and that endpoint/node configuration exists; the actual API call remains the live hardware
+boundary and cannot be proven without Talos infrastructure.
+
+The credential is a Secret-projected talosconfig in the operand namespace. Use a Talos certificate
+with `os:operator` rather than `os:admin` where possible: Talos documents `os:operator` as carrying
+reboot/shutdown authority without all-method access. The controller validates that the Secret exists
+and that the named key is non-empty before rendering the DaemonSet, then watches that Secret for
+create/delete/data changes because it is user-supplied and carries no owner reference back to the
+agent.
+
+The egress boundary is intentionally narrower than Talos itself permits. Talos endpoints may be DNS
+names to a normal client, but Kubernetes `NetworkPolicy` cannot portably express FQDN egress. The
+CRD therefore accepts endpoint IP literals only and renders them into `ipBlock` peers on TCP 50000,
+the Talos API port. The accepted cost is that an operator using DNS or a load balancer name must
+publish its backing endpoint IPs in the `NodePowerAgent` spec for v1.
+
+Rendered boundary:
+
+- `PowerOff`: `hostPID: true`, actuator adds only `CAP_SYS_BOOT`, permitted-only file capability,
+  no Kubernetes token, projected signal Secret only.
+- `TalosShutdown`: `hostPID: false`, no added Linux capabilities, restricted actuator security
+  context, no Kubernetes token, projected signal Secret, talosconfig Secret, and Talos API egress.
+
+Local evidence: `TestTalosShutdownActuatorHonorsItsOwnModeNotTheSignal`,
+`TestNodePowerAgentRequestsForSecretFollowsTalosConfigReference`, and
+the envtest spec "renders approved Talos shutdown without host poweroff privileges" passed with the
+focused `go test ./cmd/node-actuator ./internal/controller ./internal/webhook/v1alpha1` run after
+CRD regeneration.

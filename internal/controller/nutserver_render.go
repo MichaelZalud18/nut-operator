@@ -57,40 +57,17 @@ const (
 	// name rather than by index because the pod now holds more than one container.
 	nutServerUpsdContainerName = "upsd"
 
-	// driverWatchdogContainerName supervises the drivers upsdrvctl starts once and never revisits
-	// (F-49). It is a sidecar rather than a container per driver so that the container list stays
-	// independent of the device set: making it a function of the devices would turn adding or
-	// removing a UPSDevice into a pod recreate, which is the outcome F-48 exists to eliminate.
-	driverWatchdogContainerName = "driver-watchdog"
+	// driverSupervisorContainerName owns NUT driver processes (F-49). It is a sidecar rather than
+	// one container per driver so that adding or removing a UPSDevice does not force a pod recreate
+	// and drop every existing upsmon session (F-48), but inside that stable sidecar each configured
+	// UPS still gets its own foreground upsdrvctl worker. That mirrors NUT's service-instance model
+	// without pretending Kubernetes can add containers to a running pod.
+	driverSupervisorContainerName = "driver-supervisor"
 
-	// driverWatchdogIntervalSeconds is bounded by upsmon's DEADTIME, not by a preference about churn
-	// (F-97).
-	//
-	// It used to be 30, chosen to avoid restarting healthy drivers. That reasoning rested on a
-	// misreading: the driver was believed to be alive and merely quiet during a timed block, so the
-	// watchdog looked like the thing causing harm. It is not. The driver process exits -- `RUNNING`
-	// and `S_PID` both go to `N/A`, and the constant `PF_PID` that suggested otherwise is a stale
-	// PID file the dead driver left behind. The watchdog is the only thing that brings it back.
-	//
-	// That inverts the cost of waiting. While the watchdog sleeps, every upsmon is accumulating
-	// silence toward its own DEADTIME, and when it expires each one declares "too few UPS(es) are
-	// healthy" and runs SHUTDOWNCMD. A recovery slower than DEADTIME does not merely delay
-	// telemetry; it converts a driver exit into a cluster-wide shutdown signal (F-105).
-	//
-	// DEADTIME defaults to 45s and is settable per agent, so this leaves room for a considerably
-	// shorter one: detection is one to two intervals, the confirmation adds
-	// driverWatchdogConfirmDelaySeconds, and `upsdrvctl start` takes a second or two -- well inside
-	// even a 30s DEADTIME. The churn this used to guard against is handled by confirming the reading
-	// instead of by waiting.
-	driverWatchdogIntervalSeconds = 5
-
-	// driverWatchdogConfirmDelaySeconds separates the two non-responsive readings.
-	//
-	// The confirmation used to be two `upsdrvctl status` calls back to back, which is two reads of
-	// the same instant and cannot distinguish a transient miss from a dead driver -- it only ever
-	// agreed with itself. Putting a gap between them makes it an actual second opinion, which is
-	// what lets the interval come down without trading recovery speed for spurious restarts.
-	driverWatchdogConfirmDelaySeconds = 2
+	// driverSupervisorIntervalSeconds is bounded by upsmon's DEADTIME, not by preference. A driver
+	// worker that exits leaves only its UPS unavailable, and each pass restarts exited workers while
+	// preserving the healthy ones.
+	driverSupervisorIntervalSeconds = 5
 
 	// NUT TLS paths inside the upsd operand. The kubernetes.io/tls Secret is projected read-only
 	// at nutServerCertificateMountPath; the init container concatenates it into a single PEM on a
@@ -855,100 +832,197 @@ func upsdReadinessProbeScript() string {
 		`awk '{for (i = 1; i <= NF; i++) if ($i == "RESPONSIVE") { found = 1; exit } } END { exit !found }'`
 }
 
-// driverWatchdogScript restarts drivers that have stopped answering (F-49).
+// driverSupervisorScript keeps one foreground upsdrvctl worker per configured UPS (F-49).
 //
-// upsdrvctl start runs once at startup and nothing retries. A driver that dies later leaves upsd
-// alive, so the container is never restarted; readiness then fails correctly and pulls the pod from
-// the Service endpoints, where it stays indefinitely with every agent in DEADTIME. Readiness
-// reports the fault accurately and nothing acts on it. This is what acts on it.
+// Upstream NUT's durable service model is one driver instance per service unit. The Kubernetes
+// equivalent would be one container per driver, but Kubernetes cannot add or remove containers on
+// a live pod, so tying the container list to UPSDevice selection would undo the reload path F-48
+// exists to preserve. This sidecar keeps the pod shape stable and puts the service-instance split
+// one layer down: each UPS gets its own `upsdrvctl -FF start <ups>` worker.
 //
-// Three behaviors verified by running the operand image rather than assumed, because each one
-// decides part of the script:
-//
-//   - After `kill -9` on a driver, `upsdrvctl status` reports RUNNING=N/A and
-//     S_RESPONSIVE=NOT_RESPONSIVE, and the stale PID file is left behind.
-//   - `upsdrvctl start <ups>` recovers from exactly that state on its own: it detects the stale PID
-//     file, terminates the phantom, and starts a fresh driver, exiting 0. No stop-then-start dance
-//     is needed, and adding one would introduce a window where the driver is deliberately down.
-//   - `upsdrvctl start <ups>` against a *healthy* driver terminates and replaces it. That is why
-//     the non-responsive reading is confirmed with a second probe, taken after a delay, before
-//     acting: a transient miss would otherwise cost a working driver a restart, and this loop runs
-//     unattended forever.
-//
-// The RESPONSIVE match is field-exact for the same reason upsdReadinessProbeScript's is --
-// NOT_RESPONSIVE contains RESPONSIVE as a substring, so a substring test would find every dead
-// driver healthy and the watchdog would never do anything. The header row is skipped by name
-// rather than by line number, since its own token is S_RESPONSIVE and matching it would try to
-// start a device called UPSNAME.
-func driverWatchdogScript() string {
+// The per-device split is not just neatness. Running `upsdrvctl -FF start` for "all" drivers exits
+// the whole foreground bundle when any configured driver fails, taking healthy driver workers with
+// it. Starting each named UPS separately isolates bad credentials or an unreachable endpoint to
+// that device while still using NUT's own foreground process path instead of PID-file polling.
+func driverSupervisorScript() string {
 	return `set -u
-notResponsive() {
-  upsdrvctl status 2>/dev/null | ` + driverWatchdogNonResponsiveSelector() + `
-}
-configDigest() {
-  cat /etc/nut/ups.conf /etc/nut/upsd.users 2>/dev/null | md5sum | cut -d' ' -f1
-}
-lastDigest="$(configDigest)"
-while true; do
-  # The interval is taken at the top of the loop, not the bottom, so the first pass happens after a
-  # full interval rather than immediately. The watchdog container and the upsd container start
-  # together, and checking straight away races the entrypoint's own driver start: the drivers are
-  # legitimately not responsive yet, both the check and its confirmation agree on that, and the
-  # watchdog restarts a driver that was seconds from being healthy. Observed, not hypothesized.
-  sleep ` + strconv.Itoa(driverWatchdogIntervalSeconds) + `
+state_dir=/run/nut/driver-supervisor
+mkdir -p "$state_dir"
 
-  currentDigest="$(configDigest)"
-  if [ "$currentDigest" != "$lastDigest" ]; then
-    echo "driver-watchdog: reloadable configuration changed, reloading upsd"
-    if upsd -c reload; then
-      lastDigest="$currentDigest"
-    else
-      echo "driver-watchdog: upsd reload failed, will retry"
+driverPidFile() {
+  printf '%s/%s.pid\n' "$state_dir" "$1"
+}
+
+driverExitFile() {
+  printf '%s/%s.exit\n' "$state_dir" "$1"
+}
+
+configDigest() {
+  cat "$@" 2>/dev/null | md5sum | cut -d' ' -f1
+}
+
+configuredDrivers() {
+  list_error="$state_dir/list.err"
+  output="$(NUT_QUIET_INIT_BANNER=true upsdrvctl list 2>"$list_error")"
+  rc="$?"
+  if [ "$rc" -eq 0 ]; then
+    printf '%s\n' "$output"
+    return 0
+  fi
+  if grep -q "no UPS definitions found" "$list_error"; then
+    return 0
+  fi
+  echo "driver-supervisor: cannot list drivers from /etc/nut/ups.conf; keeping existing workers" >&2
+  cat "$list_error" >&2
+  return 1
+}
+
+driverRunning() {
+  ups="$1"
+  pid_file="$(driverPidFile "$ups")"
+  exit_file="$(driverExitFile "$ups")"
+  if [ ! -s "$pid_file" ] || [ -e "$exit_file" ]; then
+    return 1
+  fi
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+reapDriver() {
+  ups="$1"
+  pid_file="$(driverPidFile "$ups")"
+  exit_file="$(driverExitFile "$ups")"
+  if [ -s "$pid_file" ]; then
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [ -n "$pid" ]; then
+      wait "$pid" 2>/dev/null || true
     fi
   fi
-  for ups in $(notResponsive); do
-    sleep ` + strconv.Itoa(driverWatchdogConfirmDelaySeconds) + `
-    if notResponsive | grep -qx "$ups"; then
-      echo "driver-watchdog: $ups is not responsive, restarting its driver"
-      upsdrvctl start "$ups" || echo "driver-watchdog: restart of $ups failed, will retry"
-    fi
-  done
-done`
+  rm -f "$pid_file" "$exit_file"
 }
 
-// driverWatchdogNonResponsiveSelector prints the name of every device whose driver is not
-// answering. It is split out from the loop so it can be run against captured `upsdrvctl status`
-// output in a test, because every way this can be wrong is silent.
-//
-// It selects rows that state NOT_RESPONSIVE rather than rows that fail to state RESPONSIVE, and
-// the difference is not stylistic. `upsdrvctl status` prints a version banner to stdout above the
-// header -- "Network UPS Tools upsdrvctl - UPS driver controller 2.8.5 release" -- and a selector
-// keyed on the absence of RESPONSIVE reads that line as a device named "Network" and tries to
-// start it on every tick. That was the first implementation, and it took running the watchdog
-// against the operand image to see it: the driver still recovered, so every test passed while the
-// loop spent each pass failing to start a device that does not exist.
-//
-// Matching on the positive token also handles the header for free, since its own token is
-// S_RESPONSIVE, and it cannot invent a device name out of prose the way absence-matching can.
-//
-// The match is field-exact for the reason NS-2 gives in reverse: NOT_RESPONSIVE contains
-// RESPONSIVE, so anything less than whole-field comparison confuses the two states in one
-// direction or the other.
-func driverWatchdogNonResponsiveSelector() string {
-	return `awk '{
-    for (i = 1; i <= NF; i++) if ($i == "NOT_RESPONSIVE") { print $1; next }
-  }'`
+startDriver() {
+  ups="$1"
+  pid_file="$(driverPidFile "$ups")"
+  exit_file="$(driverExitFile "$ups")"
+  rm -f "$exit_file"
+  echo "driver-supervisor: starting $ups"
+  (
+    trap 'if [ -n "${driver_child:-}" ]; then kill "$driver_child" 2>/dev/null || true; wait "$driver_child" 2>/dev/null || true; fi; exit 0' INT TERM
+    NUT_QUIET_INIT_BANNER=true upsdrvctl -FF start "$ups" &
+    driver_child="$!"
+    wait "$driver_child"
+    rc="$?"
+    echo "$rc" > "$exit_file"
+    exit "$rc"
+  ) &
+  echo "$!" > "$pid_file"
+}
+
+stopDriver() {
+  ups="$1"
+  pid_file="$(driverPidFile "$ups")"
+  if [ -s "$pid_file" ]; then
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      echo "driver-supervisor: stopping $ups"
+      kill -TERM "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$pid_file" "$(driverExitFile "$ups")"
+  NUT_QUIET_INIT_BANNER=true upsdrvctl stop "$ups" >/dev/null 2>&1 || true
+}
+
+stopAllDrivers() {
+  for pid_file in "$state_dir"/*.pid; do
+    [ -e "$pid_file" ] || continue
+    ups="${pid_file##*/}"
+    ups="${ups%.pid}"
+    stopDriver "$ups"
+  done
+}
+
+driverInList() {
+  printf '%s\n' "$2" | grep -qx "$1"
+}
+
+reconcileDrivers() {
+  restart_all="$1"
+  configured="$(configuredDrivers)" || return 1
+  if [ "$restart_all" = "true" ]; then
+    stopAllDrivers
+  fi
+  for pid_file in "$state_dir"/*.pid; do
+    [ -e "$pid_file" ] || continue
+    ups="${pid_file##*/}"
+    ups="${ups%.pid}"
+    if ! driverInList "$ups" "$configured"; then
+      stopDriver "$ups"
+    fi
+  done
+  for ups in $configured; do
+    if driverRunning "$ups"; then
+      continue
+    fi
+    if [ -s "$(driverPidFile "$ups")" ]; then
+      if [ -s "$(driverExitFile "$ups")" ]; then
+        rc="$(cat "$(driverExitFile "$ups")" 2>/dev/null || true)"
+        echo "driver-supervisor: $ups exited with status ${rc:-unknown}; restarting"
+      else
+        echo "driver-supervisor: $ups is not running; restarting"
+      fi
+      reapDriver "$ups"
+    fi
+    startDriver "$ups"
+  done
+}
+
+trap 'stopAllDrivers; exit 0' INT TERM
+
+rm -f "$state_dir"/*.pid "$state_dir"/*.exit 2>/dev/null || true
+last_server_digest="$(configDigest /etc/nut/ups.conf /etc/nut/upsd.users)"
+last_driver_digest="$(configDigest /etc/nut/ups.conf)"
+reconcileDrivers false || true
+
+while true; do
+  sleep ` + strconv.Itoa(driverSupervisorIntervalSeconds) + `
+
+  server_reload_ok=true
+  current_server_digest="$(configDigest /etc/nut/ups.conf /etc/nut/upsd.users)"
+  if [ "$current_server_digest" != "$last_server_digest" ]; then
+    echo "driver-supervisor: reloadable server configuration changed, reloading upsd"
+    if upsd -c reload; then
+      last_server_digest="$current_server_digest"
+    else
+      server_reload_ok=false
+      echo "driver-supervisor: upsd reload failed, will retry"
+    fi
+  fi
+
+  current_driver_digest="$(configDigest /etc/nut/ups.conf)"
+  if [ "$current_driver_digest" != "$last_driver_digest" ]; then
+    echo "driver-supervisor: driver configuration changed, restarting managed drivers"
+    if [ "$server_reload_ok" = "true" ] && reconcileDrivers true; then
+      last_driver_digest="$current_driver_digest"
+    else
+      echo "driver-supervisor: driver configuration reconcile failed, will retry"
+    fi
+  else
+    reconcileDrivers false || true
+  fi
+done`
 }
 
 // upsdResources returns what the upsd container asks for, defaulting it when spec.resources says
 // nothing.
 //
-// The container ran unbounded while the 10m/32Mi sidecar beside it was sized, which is the
+// The container ran unbounded while the sidecar beside it was sized, which is the
 // backwards half of the pair: upsd is the process that must survive a power event, and an
 // unrequested container is the first thing the kubelet evicts under node pressure -- exactly the
 // condition a rack losing power tends to produce.
 //
-// Requests equal limits for the same reason they do on the watchdog: the pod is Guaranteed, so it
+// Requests equal limits for the same reason they do on the supervisor: the pod is Guaranteed, so it
 // sits in the last eviction class rather than the first.
 //
 // spec.resources is honoured verbatim the moment it declares anything at all. Filling in
@@ -962,10 +1036,9 @@ func upsdResources(server *powerv1alpha1.NUTServer) corev1.ResourceRequirements 
 	return defaultUpsdResources()
 }
 
-// defaultUpsdResources sizes upsd plus its drivers. upsd itself is a small single-threaded server;
-// the variable part is one driver process per device, each a few MB of RSS polling on an interval.
-// 128Mi leaves room for a double-digit device count without putting an OOM kill on the path that
-// has to report the outage.
+// defaultUpsdResources sizes the protocol server. The driver workers live in the supervisor
+// sidecar, but keeping the old upsd default avoids turning a process-model fix into an accidental
+// memory downsize on the server that agents monitor during an outage.
 func defaultUpsdResources() corev1.ResourceRequirements {
 	requests := corev1.ResourceList{
 		corev1.ResourceCPU:    resource.MustParse("50m"),
@@ -978,25 +1051,24 @@ func defaultUpsdResources() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
 }
 
-// driverWatchdogResources sizes the sidecar without spending the user's budget on it.
+// driverSupervisorResources sizes the driver sidecar without spending the user's upsd budget on it.
 //
 // spec.resources describes upsd. Reusing it here would silently double whatever the user declared
 // for the server, which is the kind of surprise that shows up as an unschedulable pod on a full
-// node rather than as an error. The watchdog is a shell loop that execs upsdrvctl twice a minute,
-// so its footprint is a property of this implementation rather than a decision the user should be
-// asked to make.
+// node rather than as an error. The supervisor owns the variable-cost process set -- one NUT driver
+// worker per configured UPS -- so it gets its own conservative default.
 //
 // Requests equal limits deliberately. Without them the sidecar would drag a pod whose upsd is
 // Guaranteed down to Burstable, changing the eviction ordering of the server on the observability
 // path for every agent -- an operand-shape change nobody asked for.
-func driverWatchdogResources() corev1.ResourceRequirements {
+func driverSupervisorResources() corev1.ResourceRequirements {
 	requests := corev1.ResourceList{
-		corev1.ResourceCPU:    resource.MustParse("10m"),
-		corev1.ResourceMemory: resource.MustParse("32Mi"),
+		corev1.ResourceCPU:    resource.MustParse("50m"),
+		corev1.ResourceMemory: resource.MustParse("128Mi"),
 	}
 	limits := corev1.ResourceList{
-		corev1.ResourceCPU:    resource.MustParse("10m"),
-		corev1.ResourceMemory: resource.MustParse("32Mi"),
+		corev1.ResourceCPU:    resource.MustParse("50m"),
+		corev1.ResourceMemory: resource.MustParse("128Mi"),
 	}
 	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
 }
@@ -1242,7 +1314,7 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				Type: corev1.SeccompProfileTypeRuntimeDefault,
 			},
 		}
-		// F-48: the watchdog signals upsd with `upsd -c reload`, and signalling across the
+		// F-48: the supervisor signals upsd with `upsd -c reload`, and signalling across the
 		// container boundary needs a shared PID namespace. Without it upsd is PID 1 in its own
 		// container, so the PID file reads "1" and upsd refuses it -- "Ignoring invalid pid number
 		// 1". The reload is not merely blocked but blocked in a way that resembles success, since
@@ -1336,17 +1408,17 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				},
 			},
 			{
-				// The watchdog runs the same image and reaches the drivers the same way upsd does:
-				// through /run/nut, which holds the driver sockets and PID files, and /etc/nut,
-				// which is where upsdrvctl reads the device list from. It needs no privilege upsd
-				// does not already have, and it carries no probes -- a restart of the supervisor
-				// must never take the server down with it, which is the whole reason it is a
-				// separate container.
-				Name:            driverWatchdogContainerName,
+				// The driver supervisor runs the same image and reaches the drivers the same way
+				// upsd does: through /run/nut, which holds sockets, state, and PID files, and
+				// /etc/nut, which is where upsdrvctl reads the device list from. It needs no
+				// privilege upsd does not already have, and it carries no probes -- a restart of
+				// driver supervision must never take the server down with it, which is the whole
+				// reason it is a separate container.
+				Name:            driverSupervisorContainerName,
 				Image:           image,
 				ImagePullPolicy: pullPolicy,
-				Command:         []string{"sh", "-c", driverWatchdogScript()},
-				Resources:       driverWatchdogResources(),
+				Command:         []string{"sh", "-c", driverSupervisorScript()},
+				Resources:       driverSupervisorResources(),
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: ptrBool(false),
 					ReadOnlyRootFilesystem:   ptrBool(true),
@@ -1518,7 +1590,7 @@ func applyNUTServerTLSOperand(deployment *appsv1.Deployment, server *powerv1alph
 //
 // These mounts carry the certificate and CA material upsd negotiates TLS with, and they were
 // indexed as Containers[0] while upsd was the only container. Now that the pod also runs the F-49
-// watchdog, position is no longer a safe way to name the one container that serves the protocol:
+// supervisor, position is no longer a safe way to name the one container that serves the protocol:
 // reordering the slice would mount the CA into the sidecar and leave upsd serving plaintext while
 // reporting TLS Required, which is F-37 and F-39 arriving a third time by a different route.
 func nutServerUpsdContainer(podSpec *corev1.PodSpec) *corev1.Container {

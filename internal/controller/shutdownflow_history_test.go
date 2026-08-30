@@ -22,13 +22,27 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
+	"github.com/MichaelZalud18/nut-operator/internal/capability"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
+	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
 func historyRuntime(seconds int64) planner.HistoryObservation {
 	return planner.HistoryObservation{RuntimeSeconds: &seconds}
+}
+
+func historyPowerTelemetry(runtime int64, charge, load int32) planner.HistoryObservation {
+	return planner.HistoryObservation{
+		RuntimeSeconds: &runtime,
+		ChargePercent:  &charge,
+		LoadPercent:    &load,
+	}
 }
 
 // OD-12: the plan is never blocked or truncated. A plan that does not fit still runs, and the
@@ -81,6 +95,107 @@ func TestAFittingPlanStillPublishesTheComparison(t *testing.T) {
 	}
 	if status.PlanSeconds != 240 || *status.RuntimeSeconds != 1200 {
 		t.Fatalf("status = %#v, want both numbers published", status)
+	}
+}
+
+// The "metrics" feeding the runtime side are the operator's generic UPS telemetry fields, not
+// private Prometheus queries or site-local node metrics.
+func TestPlanFeasibilityPublishesGenericPowerTelemetry(t *testing.T) {
+	estimated := 4 * time.Minute
+	status := planFeasibilityStatus(&estimated, historyPowerTelemetry(1200, 42, 73), planner.EstimateConfidence{})
+
+	if status.ChargePercent == nil || *status.ChargePercent != 42 {
+		t.Fatalf("charge = %#v, want generic UPS charge telemetry", status.ChargePercent)
+	}
+	if status.LoadPercent == nil || *status.LoadPercent != 73 {
+		t.Fatalf("load = %#v, want generic UPS load telemetry", status.LoadPercent)
+	}
+}
+
+func TestFlowRuntimeObservationAggregatesSelectedUPSDeviceTelemetry(t *testing.T) {
+	runtimeA := int64(900)
+	runtimeB := int64(1200)
+	chargeA := int32(42)
+	chargeB := int32(61)
+	loadA := int32(28)
+	loadB := int32(73)
+	reconciler := shutdownFlowReconcilerWithUPSDevices(t,
+		upsDeviceTelemetry("ups-a", powerv1alpha1.UPSDevicePhaseOnBattery, runtimeA, chargeA, loadA),
+		upsDeviceTelemetry("ups-b", powerv1alpha1.UPSDevicePhaseOnline, runtimeB, chargeB, loadB),
+	)
+
+	observation := reconciler.flowRuntimeObservation(context.Background(),
+		&powerv1alpha1.ShutdownTriggerEvaluationStatus{SelectedUPSDevices: []string{"ups-a", "ups-b"}},
+		resolver.StructuralBundle{CapabilityMatches: []capability.MatchResult{
+			dynamicRuntimeMatch("ups-a"),
+			dynamicRuntimeMatch("ups-b"),
+		}})
+
+	if observation.RuntimeSeconds == nil || *observation.RuntimeSeconds != runtimeA {
+		t.Fatalf("runtime = %#v, want shortest selected UPS runtime", observation.RuntimeSeconds)
+	}
+	if observation.ChargePercent == nil || *observation.ChargePercent != chargeA {
+		t.Fatalf("charge = %#v, want lowest selected UPS charge", observation.ChargePercent)
+	}
+	if observation.LoadPercent == nil || *observation.LoadPercent != loadB {
+		t.Fatalf("load = %#v, want highest selected UPS load", observation.LoadPercent)
+	}
+}
+
+func TestFlowRuntimeObservationKeepsGenericTelemetryWhenRuntimeIsUntrusted(t *testing.T) {
+	runtime := int64(1200)
+	charge := int32(42)
+	load := int32(73)
+	reconciler := shutdownFlowReconcilerWithUPSDevices(t,
+		upsDeviceTelemetry("ups-a", powerv1alpha1.UPSDevicePhaseOnBattery, runtime, charge, load),
+	)
+
+	observation := reconciler.flowRuntimeObservation(context.Background(),
+		&powerv1alpha1.ShutdownTriggerEvaluationStatus{SelectedUPSDevices: []string{"ups-a"}},
+		resolver.StructuralBundle{})
+
+	if observation.RuntimeSeconds != nil {
+		t.Fatalf("runtime = %#v, want absent when capability profiles do not trust it", observation.RuntimeSeconds)
+	}
+	if observation.ChargePercent == nil || *observation.ChargePercent != charge {
+		t.Fatalf("charge = %#v, want public UPS charge telemetry still published", observation.ChargePercent)
+	}
+	if observation.LoadPercent == nil || *observation.LoadPercent != load {
+		t.Fatalf("load = %#v, want public UPS load telemetry still published", observation.LoadPercent)
+	}
+}
+
+func shutdownFlowReconcilerWithUPSDevices(t *testing.T, devices ...powerv1alpha1.UPSDevice) *ShutdownFlowReconciler {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add power API to scheme: %v", err)
+	}
+	objects := make([]runtime.Object, 0, len(devices))
+	for i := range devices {
+		objects = append(objects, &devices[i])
+	}
+	return &ShutdownFlowReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build()}
+}
+
+func upsDeviceTelemetry(name string, phase powerv1alpha1.UPSDevicePhase, runtimeSeconds int64, chargePercent, loadPercent int32) powerv1alpha1.UPSDevice {
+	return powerv1alpha1.UPSDevice{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: powerv1alpha1.UPSDeviceStatus{
+			Phase:                phase,
+			RuntimeSeconds:       &runtimeSeconds,
+			BatteryChargePercent: &chargePercent,
+			LoadPercent:          &loadPercent,
+		},
+	}
+}
+
+func dynamicRuntimeMatch(device string) capability.MatchResult {
+	return capability.MatchResult{
+		DeviceID:           device,
+		TelemetryVariables: []string{"battery.runtime"},
+		RuntimeEstimate:    capability.RuntimeEstimateDynamic,
 	}
 }
 

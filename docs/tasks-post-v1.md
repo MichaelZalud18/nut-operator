@@ -15,7 +15,7 @@ are not reasons — those stay in `tasks.md` as open v1 work. The two qualifying
 - **Upstream**, where the capability does not exist yet in software this project consumes. No amount
   of work here closes it.
 
-Last reviewed: 2026-08-14
+Last reviewed: 2026-08-29
 
 ---
 
@@ -156,6 +156,22 @@ natural translation layer for an older or non-conforming upstream: the operator 
 Nothing about this is designed yet. It is recorded because the alternative — widening the operand
 images or the driver allowlist to accommodate old versions — would undo `OD-32` and `RB-2`, and
 that trade should be made deliberately rather than discovered.
+
+### Bottlerocket actuator policy review
+
+Bottlerocket is the next plausible operating system after Talos for first-class node actuation. It is
+API-driven, so it might support a narrower public FOSS integration than generic Linux `PowerOff`.
+
+**Why it is post-v1:** the boundary is different enough that it should not be added by analogy.
+Bottlerocket's host API is reached over a local Unix socket with SELinux labeling and host mounts, and
+the documented host action is reboot. That is not the same contract as a UPS-triggered halt, and it
+would require a separate security proof, Pod Security story, and validation procedure before becoming
+an API enum.
+
+This follows `NA-12`: named operating-system policies exist only when they provide a distinct,
+documented, supportable safety boundary. Flatcar, Fedora CoreOS, RHCOS, and similar systemd-based
+container hosts remain covered by generic Linux `PowerOff` until a maintainer can point to a better
+shutdown interface and prove the narrower boundary.
 
 ---
 

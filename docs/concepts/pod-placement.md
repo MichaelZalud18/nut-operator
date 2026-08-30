@@ -90,9 +90,13 @@ with the leader-election and replica work in `docs/contributing/design/scaling-a
 
 ## Signal delivery crosses the node boundary exactly once
 
-The actuator holds no API credentials. The only thing reaching it is the
+The actuator holds no Kubernetes API credentials. The only authorization signal reaching it is the
 `<agent>-node-signals` Secret, projected by kubelet, with one `<node>.json` key per node. The
 manager writes a node's key to actuate it and deletes that key when the actuation completes, so
-absence is the record and a replacement actuator pod cannot re-read a stale instruction.
-The Secret always carries a `delivery-channel` marker, which is what keeps an empty Secret
-distinguishable from a missing one.
+absence is the record and a replacement actuator pod cannot re-read a stale instruction. The Secret
+always carries a `delivery-channel` marker, which is what keeps an empty Secret distinguishable from
+a missing one.
+
+`TalosShutdown` adds a second projected Secret for the talosconfig and a generated NetworkPolicy
+egress rule to the configured Talos API endpoint IPs. It still does not give the actuator a
+Kubernetes token, a local `upsmon` handoff mount, `hostPID`, or Linux host-power capabilities.

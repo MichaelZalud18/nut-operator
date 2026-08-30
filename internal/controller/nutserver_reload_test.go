@@ -105,55 +105,46 @@ func TestCertificateRotationForcesAPodRecreate(t *testing.T) {
 	}
 }
 
-// The watchdog is what turns a changed file into a reload, so it has to notice the change and it
+// The supervisor is what turns a changed file into a reload, so it has to notice the change and it
 // has to signal upsd. Both halves are asserted because either alone is silently useless: watching
 // without reloading does nothing, and reloading every tick would re-read config constantly and hide
 // whether detection works at all.
-func TestWatchdogReloadsOnReloadableConfigChange(t *testing.T) {
-	script := driverWatchdogScript()
+func TestDriverSupervisorReloadsOnReloadableConfigChange(t *testing.T) {
+	script := driverSupervisorScript()
 
 	if !strings.Contains(script, "upsd -c reload") {
-		t.Fatalf("watchdog must reload upsd when reloadable config changes:\n%s", script)
+		t.Fatalf("supervisor must reload upsd when reloadable config changes:\n%s", script)
 	}
 	for _, watched := range []string{"/etc/nut/ups.conf", "/etc/nut/upsd.users"} {
 		if !strings.Contains(script, watched) {
-			t.Fatalf("watchdog must watch %s for changes:\n%s", watched, script)
+			t.Fatalf("supervisor must watch %s for changes:\n%s", watched, script)
 		}
 	}
-	if !strings.Contains(script, `"$currentDigest" != "$lastDigest"`) {
-		t.Fatalf("watchdog must reload on change rather than on every tick:\n%s", script)
+	if !strings.Contains(script, `"$current_server_digest" != "$last_server_digest"`) {
+		t.Fatalf("supervisor must reload on change rather than on every tick:\n%s", script)
 	}
 }
 
-// The watchdog waits before its first pass. Starting immediately races the entrypoint's own driver
-// start -- the drivers are legitimately not responsive yet, the confirming re-check agrees, and the
-// watchdog restarts a driver that was seconds from healthy. Observed in a live run, not predicted.
-func TestWatchdogWaitsBeforeItsFirstPass(t *testing.T) {
-	script := driverWatchdogScript()
+func TestDriverSupervisorRestartsDriversWhenUPSConfChanges(t *testing.T) {
+	script := driverSupervisorScript()
 
-	loop := strings.Index(script, "while true; do")
-	sleep := strings.Index(script, "\n  sleep ")
-	check := strings.Index(script, "currentDigest=")
-	if loop < 0 || sleep < 0 || check < 0 {
-		t.Fatalf("watchdog loop is not in the expected shape:\n%s", script)
+	if !strings.Contains(script, `current_driver_digest="$(configDigest /etc/nut/ups.conf)"`) {
+		t.Fatalf("supervisor must track ups.conf separately for driver restarts:\n%s", script)
 	}
-	if loop >= sleep || sleep >= check {
-		t.Fatalf("watchdog must sleep at the top of the loop, before its first check:\n%s", script)
-	}
-	if strings.Count(script, "\n  sleep ") != 1 {
-		t.Fatalf("watchdog should wait once per pass, not twice:\n%s", script)
+	if !strings.Contains(script, "reconcileDrivers true") {
+		t.Fatalf("supervisor must restart managed drivers after a driver config change:\n%s", script)
 	}
 }
 
 // The reload only advances the recorded digest when it succeeded. Advancing it unconditionally
 // would drop the change on the floor: a failed reload would be remembered as applied, and upsd
 // would serve the old configuration until something else happened to change the files again.
-func TestWatchdogRetriesAFailedReload(t *testing.T) {
-	script := driverWatchdogScript()
+func TestDriverSupervisorRetriesAFailedReload(t *testing.T) {
+	script := driverSupervisorScript()
 
 	reload := strings.Index(script, "if upsd -c reload; then")
-	advance := strings.Index(script, `lastDigest="$currentDigest"`)
+	advance := strings.Index(script, `last_server_digest="$current_server_digest"`)
 	if reload < 0 || advance < 0 || advance < reload {
-		t.Fatalf("watchdog must record the digest only after a successful reload:\n%s", script)
+		t.Fatalf("supervisor must record the digest only after a successful reload:\n%s", script)
 	}
 }

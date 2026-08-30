@@ -19,8 +19,8 @@ what the author wants; the annotation says someone signed off.
 
 **3. `NodePowerAgent.spec.mode: Actuate`** — this agent may halt its node.
 
-**4. `spec.shutdown.actuatorPolicy: PowerOff`** plus the agent's own approval annotation — the
-actuator issues `reboot(2)` rather than recording a simulation.
+**4. `spec.shutdown.actuatorPolicy: PowerOff` or `TalosShutdown`** plus the agent's own approval
+annotation — the actuator performs real node shutdown rather than recording a simulation.
 
 Both approvals are re-checked **when the flow fires, not when it was deployed**. Revoking one
 mid-flow downgrades execution at the next wave boundary; in-flight actions in the current wave
@@ -48,9 +48,12 @@ any amount of dry-run output. The procedure is below.
 ## Proving the cluster can halt a node
 
 Everything above verifies that the operator *plans* correctly. It does not verify that this cluster
-can carry the plan out, and those are different questions: the configuration able to halt a node —
-`mode: Actuate` with `actuatorPolicy: PowerOff` — renders `hostPID`, a `CAP_SYS_BOOT` file
-capability, and a Pod Security posture that a dry-run never exercises.
+can carry the plan out, and those are different questions. Linux `PowerOff` and Talos
+`TalosShutdown` have different proof points, because they cross different boundaries.
+
+For `PowerOff`, the configuration able to halt a node — `mode: Actuate` with
+`actuatorPolicy: PowerOff` — renders `hostPID`, a `CAP_SYS_BOOT` file capability, and a Pod Security
+posture that a dry-run never exercises.
 
 Five things only a real run can establish, and the fourth cannot be checked any other way: **from a
 non-initial PID namespace, `reboot(2)` returns success and does nothing.** A node that actually goes
@@ -73,6 +76,12 @@ second channel — which isolates kubelet admission, file-capability survival, a
 namespace from planner correctness. See [Security](../reference/security.md) for the boundary this
 proves.
 
+For `TalosShutdown`, proof is the Talos API path instead: the talosconfig Secret must mount
+readably, the rendered `NetworkPolicy` must allow TCP 50000 to the configured Talos endpoint IPs,
+the certificate in that talosconfig must carry a shutdown-capable Talos role such as `os:operator`,
+and the endpoint must be able to proxy `MachineService.Shutdown` to the node target. The existing
+`make verify-actuation` helper proves the Linux syscall path only.
+
 ### Reading the gate trace
 
 The run prints the actuator's gate trace on both outcomes, streamed live because the container is
@@ -82,6 +91,9 @@ so a node that stays up names the link that broke instead of leaving you with a 
 either dark or not. `SyscallIssued` is written immediately before `reboot(2)` and cannot be written
 after it, which is what makes the host-PID-namespace case detectable at all: that line, nothing after
 it, and a node still running.
+
+Talos shutdown uses the same signal and mode gates, then `TalosCredential`, `TalosTarget`, and
+`TalosAPICall`.
 
 Real executions are also recorded on the operator, which is the side that survives them — see
 `nutoperator_halt_*` in [Metrics](../reference/metrics.md), where
@@ -97,7 +109,8 @@ can wait for one.
 1. `MonitorOnly` — telemetry only, no actuator container at all.
 2. `DryRun` + `Simulate` — the actuator accepts and records signals, touches nothing.
 3. `Enforce` on the flow, agents still simulating — workload actions become real; nodes do not stop.
-4. `Actuate` + `PowerOff` on **one** agent, verified with `make verify-actuation`.
+4. `Actuate` + one real actuator policy on **one** agent: `PowerOff` verified with
+   `make verify-actuation`, or `TalosShutdown` verified against a sacrificial Talos node.
 5. The rest of the fleet.
 
 Step 3 is the one worth lingering on. It is where drains, scale-downs, and hooks become real against

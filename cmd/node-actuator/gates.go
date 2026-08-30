@@ -53,6 +53,12 @@ const (
 	// following it, and the node still up, is the host-PID-namespace finding -- from a non-initial
 	// namespace the syscall returns success and does nothing.
 	gateSyscallIssued = "SyscallIssued"
+	// gateTalosCredential is the projected talosconfig used by TalosShutdown actuation.
+	gateTalosCredential = "TalosCredential"
+	// gateTalosTarget is the selected Talos API endpoint set and node target.
+	gateTalosTarget = "TalosTarget"
+	// gateTalosAPICall is the MachineService.Shutdown RPC issued through the Talos client.
+	gateTalosAPICall = "TalosAPICall"
 )
 
 // gateTrace writes the per-link record of one halt attempt.

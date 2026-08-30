@@ -9,8 +9,10 @@ Audience: contributors.
 `NA-n` identifiers are stable and are not reused or renumbered.
 
 This is the only component that can stop a machine. Everything below is written from that fact: the
-question is never "how does the agent shut a node down" — `reboot(2)` is one syscall — but "what
-makes this particular halt legitimate, and how does the operand know when it stops being so."
+question is less "how does the agent shut a node down" than "what makes this particular halt
+legitimate, and how does the operand know when it stops being so." Linux hosts use one syscall,
+`reboot(2)` with `LINUX_REBOOT_CMD_POWER_OFF`; Talos hosts use one Talos machine API call,
+`MachineService.Shutdown`.
 
 Findings and evidence live in [node-agent-daemonset-audit.md](../audits/node-agent-daemonset-audit.md)
 (`F-8` – `F-14`, `F-33` – `F-36`, `F-54` – `F-92`).
@@ -30,11 +32,16 @@ operator is unreachable — which is exactly when ordering matters most. Every a
 not a degraded shutdown but an uncoordinated one. The accepted cost is stated plainly: an
 undeliverable signal leaves nodes running until the UPS dies.
 
-**NA-2 · The actuator holds no API credentials.** It reads a mounted volume and calls a syscall. It
-does not watch the API, patch node objects, or hold RBAC of its own. This is what makes the operand's
-blast radius bounded by what kubelet already projects into it, and it is why signal state is carried
-in the Secret rather than in node annotations — annotations would require giving a node-local
-container the ability to write to the API.
+**NA-2 · The actuator holds no Kubernetes API credentials.** It reads a mounted volume and performs
+one fixed actuation mechanism. It does not watch the Kubernetes API, patch node objects, or hold RBAC
+of its own. This is what makes the operand's blast radius bounded by what kubelet already projects
+into it, and it is why signal state is carried in the Secret rather than in node annotations —
+annotations would require giving a node-local container the ability to write to the API.
+
+For `TalosShutdown`, kubelet also projects one talosconfig Secret into the actuator. That credential
+is not a Kubernetes credential, and it is not mounted for the Linux `PowerOff` or `Simulate` paths.
+The expected Talos role is `os:operator`: enough to call reboot/shutdown methods without handing the
+actuator the all-method `os:admin` role.
 
 ## The signal lifecycle
 
@@ -61,8 +68,9 @@ readiness instead.
 
 **NA-5 · Whether a node may halt is the actuator's own mode, and no writer can reach it.** The signal
 payload carries no `dryRun` field. `spec.shutdown.actuatorPolicy` is `Disabled` (no watch loop),
-`Simulate` (accept and record, touch nothing), or `PowerOff` (`reboot(2)` with
-`LINUX_REBOOT_CMD_POWER_OFF`), and it is read from the container's own configuration.
+`Simulate` (accept and record, touch nothing), `PowerOff` (`reboot(2)` with
+`LINUX_REBOOT_CMD_POWER_OFF`), or `TalosShutdown` (`MachineService.Shutdown` through a mounted
+talosconfig), and it is read from the container's own configuration.
 
 A dry-run flag inside the signal would mean the authority to halt a node and the instruction not to
 were travelling together in the same document, over the same path, decided by the same writer. Mode
@@ -94,6 +102,38 @@ would fail with `EPERM` at the one moment it is needed.
 **reports success** — the worst available failure, since the caller records a halt that did not
 happen. The pod runs under the `RuntimeDefault` seccomp profile regardless.
 
+**NA-11 · Talos actuation uses the machine API, not host poweroff privileges.** `TalosShutdown` is a
+separate actuator policy, because the Linux and Talos mechanisms need different boundary crossings.
+The Talos path keeps `hostPID: false`, adds no Linux capabilities, runs under the restricted actuator
+security context, and still receives no Kubernetes service-account token. Its only additional inputs
+are the read-only talosconfig Secret and `POWER_TALOS_*` environment values rendered from
+`spec.shutdown.talos`.
+
+The controller validates the talosconfig Secret/key before rendering and watches that Secret for
+create/delete/data changes, because a user-supplied Secret carries no owner reference back to the
+agent. Endpoint addresses must be IP literals, and the controller turns them into `NetworkPolicy`
+`ipBlock` peers on TCP 50000. DNS names are deliberately refused for v1: Talos clients support them,
+but Kubernetes `NetworkPolicy` cannot express a portable DNS egress boundary, so accepting names
+would make a default-deny namespace either broken or wider than the CRD says.
+
+The actuator targets the node explicitly. By default `POWER_TALOS_NODE` comes from the Kubernetes
+node's `status.hostIP`, because Talos endpoints proxy to nodes by the address as seen by the endpoint
+server. `nodeAddressSource: NodeName` is available for clusters whose Talos node names are resolvable
+from the control-plane endpoints.
+
+**NA-12 · First-class operating system policies need a distinct safety boundary.** The public support
+model is not tied to any maintainer's homelab. A Kubernetes node operating system earns a named
+actuator policy when it has a stable, documented shutdown interface that is materially safer or more
+correct than the generic Linux `PowerOff` boundary. Talos qualifies because its machine API lets the
+actuator shut down a node without host PID access or Linux shutdown capabilities.
+
+Operating systems that still reduce to a local Linux halt stay on `PowerOff`; giving them separate
+policy names would imply support differences the implementation cannot actually provide. Bottlerocket
+is the next plausible candidate, but it is not a v1 policy: its host API is local to the node, reached
+through a Unix socket with SELinux labeling and host mounts, and the available action is documented as
+reboot rather than the same clean shutdown contract this operator promises for UPS events. That design
+needs its own review before it becomes a public API enum.
+
 **NA-7 · A namespace that would reject the actuating pod is reported, never relabelled.** `hostPID`
 and non-default capabilities place the pod outside Pod Security `baseline` on their own. When the
 operand namespace's Pod Security level would reject it, that surfaces on the agent's `Degraded`
@@ -121,7 +161,8 @@ actuator rejected the payload, the capability was missing, or `reboot(2)` return
 last of those is indistinguishable from success when the container is not really in the host PID
 namespace. So each link logs itself as `halt gate=<name> result=pass|fail`:
 `CapabilityPermitted` at arm time, `SignalChannel` for the projection, then `SignalAccepted`,
-`FlowBinding`, `ModeAuthorized`, `Sync`, `CapabilityEffective`, and `SyscallIssued`.
+`FlowBinding`, `ModeAuthorized`, `Sync`, `CapabilityEffective`, and `SyscallIssued`. The Talos path
+uses the same signal and mode gates, then `TalosCredential`, `TalosTarget`, and `TalosAPICall`.
 
 This is not a log level, and there is nothing to switch on. Global verbosity would bury the trace
 under the polling loop, which deliberately says nothing on a normal tick — `SignalMissing` is the
@@ -149,9 +190,9 @@ container to terminate when the pod is replaced instead of a restart loop at the
 own flush and logs the syscall, but that log lives on a machine which halts immediately afterwards,
 so whether a collector ships it first is a race — and one that loses precisely in the slow-sync case
 the measurement exists to capture. The actuator cannot close that gap and must not try: it holds no
-API token by design (`NA-2`) and that stays. Instead the operator reconstructs the halt from two
-facts it can see on its own — it wrote the signal, and it watched the `Node` stop reporting — and
-publishes them as `nutoperator_halt_*`. Coarser, and it survives the node. See
+Kubernetes API token by design (`NA-2`) and that stays. Instead the operator reconstructs the halt
+from two facts it can see on its own — it wrote the signal, and it watched the `Node` stop reporting
+— and publishes them as `nutoperator_halt_*`. Coarser, and it survives the node. See
 [metrics.md](../../reference/metrics.md).
 
 After a manager restart or leader handoff, the operator re-seeds this in-memory watch from

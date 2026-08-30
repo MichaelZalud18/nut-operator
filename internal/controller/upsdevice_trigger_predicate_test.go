@@ -29,6 +29,7 @@ import (
 func triggerDevice() *powerv1alpha1.UPSDevice {
 	runtimeSeconds := int64(1800)
 	charge := int32(97)
+	load := int32(42)
 	polled := metav1.NewTime(time.Date(2026, 8, 9, 20, 0, 0, 0, time.UTC))
 	return &powerv1alpha1.UPSDevice{
 		ObjectMeta: metav1.ObjectMeta{Name: "rack-a", Generation: 1},
@@ -37,6 +38,7 @@ func triggerDevice() *powerv1alpha1.UPSDevice {
 			Phase:                powerv1alpha1.UPSDevicePhaseOnline,
 			RuntimeSeconds:       &runtimeSeconds,
 			BatteryChargePercent: &charge,
+			LoadPercent:          &load,
 			LastPollTime:         &polled,
 			LastStatus:           "OL",
 		},
@@ -50,11 +52,10 @@ func TestUPSDeviceWatchIgnoresATelemetryPollThatChangedNothingRelevant(t *testin
 	newDevice := triggerDevice()
 	polled := metav1.NewTime(time.Date(2026, 8, 9, 20, 0, 15, 0, time.UTC))
 	newDevice.Status.LastPollTime = &polled
-	load := int32(42)
-	newDevice.Status.LoadPercent = &load
+	newDevice.Status.LastStatus = "OL CHRG"
 
 	if upsDeviceTriggerInputsChanged(oldDevice, newDevice) {
-		t.Fatal("a poll that only refreshed lastPollTime and loadPercent must not enqueue a reconcile")
+		t.Fatal("a poll that only refreshed lastPollTime and raw status text must not enqueue a reconcile")
 	}
 }
 
@@ -66,12 +67,14 @@ func TestUPSDeviceWatchAdmitsChangesTheTriggerLogicReads(t *testing.T) {
 		"phase":         func(d *powerv1alpha1.UPSDevice) { d.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery },
 		"runtime":       func(d *powerv1alpha1.UPSDevice) { d.Status.RuntimeSeconds = &lowerRuntime },
 		"charge":        func(d *powerv1alpha1.UPSDevice) { d.Status.BatteryChargePercent = &lowerCharge },
+		"load":          func(d *powerv1alpha1.UPSDevice) { d.Status.LoadPercent = &lowerCharge },
 		"power domains": func(d *powerv1alpha1.UPSDevice) { d.Spec.PowerDomains = []string{"core", "rack-b"} },
 		"generation":    func(d *powerv1alpha1.UPSDevice) { d.Generation = 2 },
 		// Telemetry going absent has to reach the flow: PL-32 turns missing runtime into an
 		// Unknown verdict, and it can only do that if the change is delivered.
 		"runtime disappearing": func(d *powerv1alpha1.UPSDevice) { d.Status.RuntimeSeconds = nil },
 		"charge disappearing":  func(d *powerv1alpha1.UPSDevice) { d.Status.BatteryChargePercent = nil },
+		"load disappearing":    func(d *powerv1alpha1.UPSDevice) { d.Status.LoadPercent = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			oldDevice := triggerDevice()

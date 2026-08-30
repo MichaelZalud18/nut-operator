@@ -586,6 +586,16 @@ type PlanFeasibilityStatus struct {
 	// +optional
 	RuntimeSeconds *int64 `json:"runtimeSeconds,omitempty"`
 
+	// chargePercent is the lowest reported charge across the selected UPS devices, when all selected
+	// devices are reporting a charge value.
+	// +optional
+	ChargePercent *int32 `json:"chargePercent,omitempty"`
+
+	// loadPercent is the highest reported load across the selected UPS devices, when all selected
+	// devices are reporting a load value.
+	// +optional
+	LoadPercent *int32 `json:"loadPercent,omitempty"`
+
 	// fits is true only when a runtime is known and the plan estimate is within it.
 	// Unknown runtime yields false, matching PL-32: missing data never produces an
 	// optimistic verdict.
