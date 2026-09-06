@@ -75,6 +75,9 @@ func NewClient(options ClientOptions) (*Client, error) {
 	if parsed.Scheme == "" || parsed.Host == "" {
 		return nil, fmt.Errorf("netbox url must include scheme and host")
 	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("netbox url scheme must be http or https")
+	}
 
 	scheme := options.TokenScheme
 	if scheme == "" {
@@ -161,7 +164,13 @@ func list[T any](ctx context.Context, c *Client, path string, query url.Values) 
 
 	nextURL := c.endpoint(path, query)
 	var values []T
+	seenPages := map[string]struct{}{}
 	for nextURL != "" {
+		if _, seen := seenPages[nextURL]; seen {
+			return nil, fmt.Errorf("netbox pagination loop at %s", redactedURL(nextURL))
+		}
+		seenPages[nextURL] = struct{}{}
+
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
 		if err != nil {
 			return nil, err
@@ -221,7 +230,26 @@ func (c *Client) absoluteURL(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return c.baseURL.ResolveReference(parsed).String(), nil
+	resolved := c.baseURL.ResolveReference(parsed)
+	if !sameOrigin(c.baseURL, resolved) {
+		return "", fmt.Errorf("netbox pagination next URL %q does not match configured NetBox origin %q", raw, c.baseURL.Redacted())
+	}
+	return resolved.String(), nil
+}
+
+func sameOrigin(left, right *url.URL) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return strings.EqualFold(left.Scheme, right.Scheme) && strings.EqualFold(left.Host, right.Host)
+}
+
+func redactedURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	return parsed.Redacted()
 }
 
 func cloneValues(values url.Values) url.Values {

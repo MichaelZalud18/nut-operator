@@ -150,6 +150,63 @@ func TestBuildManifestWarnsForPowerEndpointOutsideImportedSet(t *testing.T) {
 	}
 }
 
+func TestFetchRejectsPaginationOutsideNetBoxOrigin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/dcim/devices/" {
+			t.Fatalf("unexpected request after cross-origin pagination URL: %s", r.URL.String())
+		}
+		writePage[Device](t, w, "https://elsewhere.example/api/dcim/devices/?offset=2", nil)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(ClientOptions{
+		URL:         server.URL,
+		Token:       "test-token",
+		TokenScheme: TokenSchemeBearer,
+		HTTPClient:  server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	_, err = client.Fetch(context.Background(), FetchOptions{})
+	if err == nil || !strings.Contains(err.Error(), "does not match configured NetBox origin") {
+		t.Fatalf("expected cross-origin pagination rejection, got %v", err)
+	}
+}
+
+func TestFetchRejectsPaginationLoops(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		writePage[Device](t, w, serverURL(r), nil)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(ClientOptions{
+		URL:        server.URL,
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	_, err = client.Fetch(context.Background(), FetchOptions{})
+	if err == nil || !strings.Contains(err.Error(), "pagination loop") {
+		t.Fatalf("expected pagination loop rejection, got %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("pagination loop should be rejected before rerequesting the same URL, got %d requests", requests)
+	}
+}
+
+func TestNewClientRejectsUnsupportedURLSchemes(t *testing.T) {
+	_, err := NewClient(ClientOptions{URL: "ssh://netbox.example.test"})
+	if err == nil || !strings.Contains(err.Error(), "scheme must be http or https") {
+		t.Fatalf("expected unsupported scheme rejection, got %v", err)
+	}
+}
+
 func fakeNetBoxServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	var server *httptest.Server
@@ -281,6 +338,10 @@ func writePage[T any](t *testing.T, w http.ResponseWriter, next string, results 
 	}); err != nil {
 		t.Fatalf("encode page: %v", err)
 	}
+}
+
+func serverURL(r *http.Request) string {
+	return "http://" + r.Host + r.URL.RequestURI()
 }
 
 func rawJSON(t *testing.T, value any) json.RawMessage {
