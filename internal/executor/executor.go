@@ -447,7 +447,8 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 
 		if tierPolicy == TierOverrunPolicyOverlap && lowerTierDue && tierWindow.EffectiveDuration > 0 {
 			runCh := make(chan waveExecutionResult, 1)
-			go func() {
+			window := tierWindow
+			go func(window tierOverrunWindow) {
 				runCh <- e.runWave(ctx, waveRunConfig{
 					Writer:        writer,
 					Input:         input,
@@ -457,12 +458,12 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 					DryRun:        dryRun,
 					TierPolicy:    tierPolicy,
 					ResumedGroups: resumedGroups,
-					Window:        tierWindow,
+					Window:        window,
 					LowerTierDue:  lowerTierDue,
 					WaveStart:     waveStart,
 					ActionContext: ctx,
 				}, wave, waveState)
-			}()
+			}(window)
 			dueAfter := tierWindow.StartedAt.Add(tierWindow.EffectiveDuration).Sub(e.now())
 			if dueAfter <= 0 {
 				pending = append(pending, runCh)
