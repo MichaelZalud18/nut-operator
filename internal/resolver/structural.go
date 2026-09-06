@@ -66,7 +66,7 @@ func ResolveStructural(inputs StructuralInputs) (StructuralBundle, []Diagnostic,
 		ClusterNodes:       normalizeClusterNodes(inputs.ClusterNodes),
 		AgentCoverage:      normalizeAgentCoverage(inputs.AgentCoverage),
 	}
-	bundle.Hash = stableHash(struct {
+	bundleHash, err := stableHash(struct {
 		SourceID          string                   `json:"sourceID,omitempty"`
 		ObservedAt        string                   `json:"observedAt,omitempty"`
 		TopologyHash      string                   `json:"topologyHash,omitempty"`
@@ -77,6 +77,15 @@ func ResolveStructural(inputs StructuralInputs) (StructuralBundle, []Diagnostic,
 		TopologyHash:      topology.Hash,
 		CapabilityMatches: bundle.CapabilityMatches,
 	})
+	if err != nil {
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity: DiagnosticError,
+			Reason:   "BundleHashEncodingFailed",
+			Message:  fmt.Sprintf("resolved structural bundle could not be hashed: %v", err),
+		})
+		return StructuralBundle{}, diagnostics, ErrRejected
+	}
+	bundle.Hash = bundleHash
 
 	return bundle, diagnostics, nil
 }
@@ -174,11 +183,17 @@ func normalizeAgentCoverage(coverage []AgentCoverage) []AgentCoverage {
 	return normalized
 }
 
-func stableHash(value any) string {
+// stableHash returns an error rather than panicking on an encoding failure. The input shapes
+// (plain strings and MatchResult slices) make json.Marshal failing here effectively unreachable
+// today, but ResolveStructural already returns an error for every other rejection, so a panic
+// mid-reconcile is a worse failure mode than a clean, diagnosable rejection for a "cannot happen"
+// that turns out to happen anyway. Mirrors the identical fix already made in internal/planner
+// (F-123).
+func stableHash(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		panic(fmt.Sprintf("resolver input could not be encoded for hashing: %v", err))
+		return "", fmt.Errorf("encode value for hashing: %w", err)
 	}
 	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }

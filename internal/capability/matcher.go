@@ -65,12 +65,22 @@ func Match(device Device, profiles []Profile) (MatchResult, []Diagnostic, error)
 	// full history (F-26).
 	resolvedQuirks, quirkDiagnostics := resolveQuirks(device, best.profile.ID, best.profile.Quirks)
 	diagnostics = append(diagnostics, quirkDiagnostics...)
+	profileHash, err := stableHash(best.profile)
+	if err != nil {
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity: DiagnosticError,
+			Reason:   "ProfileHashEncodingFailed",
+			Subject:  device.ID,
+			Message:  fmt.Sprintf("matched profile could not be hashed: %v", err),
+		})
+		return MatchResult{}, diagnostics, ErrRejected
+	}
 	result := MatchResult{
 		DeviceID:           device.ID,
 		ProfileID:          best.profile.ID,
 		ProfileVersion:     best.profile.Version,
 		ProfileSource:      best.profile.Source,
-		ProfileHash:        stableHash(best.profile),
+		ProfileHash:        profileHash,
 		Tier:               best.tier,
 		Unidentified:       best.tier == MatchTierUnidentified,
 		TelemetryVariables: append([]string(nil), best.profile.TelemetryVariables...),
@@ -473,11 +483,17 @@ func hasError(diagnostics []Diagnostic) bool {
 	return false
 }
 
-func stableHash(value any) string {
+// stableHash returns an error rather than panicking on an encoding failure. The input shapes
+// (a Profile: plain strings, string slices, and maps) make json.Marshal failing here effectively
+// unreachable today, but Match already returns an error for every other rejection and this runs
+// during telemetry/planning, so a panic mid-reconcile is a worse failure mode than a clean,
+// diagnosable rejection for a "cannot happen" that turns out to happen anyway. Mirrors the
+// identical fix already made in internal/planner (F-123).
+func stableHash(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		panic(fmt.Sprintf("capability input could not be encoded for hashing: %v", err))
+		return "", fmt.Errorf("encode value for hashing: %w", err)
 	}
 	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }

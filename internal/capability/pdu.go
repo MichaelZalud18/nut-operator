@@ -133,12 +133,22 @@ func MatchPDU(device Device, profiles []PDUProfile) (PDUMatchResult, []Diagnosti
 	resolvedQuirks, quirkDiagnostics := resolveQuirks(device, best.profile.ID, best.profile.Quirks)
 	diagnostics = append(diagnostics, quirkDiagnostics...)
 
+	profileHash, err := stableHash(best.profile)
+	if err != nil {
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity: DiagnosticError,
+			Reason:   "ProfileHashEncodingFailed",
+			Subject:  device.ID,
+			Message:  fmt.Sprintf("matched PDU profile could not be hashed: %v", err),
+		})
+		return PDUMatchResult{}, diagnostics, ErrRejected
+	}
 	return PDUMatchResult{
 		DeviceID:           device.ID,
 		ProfileID:          best.profile.ID,
 		ProfileVersion:     best.profile.Version,
 		ProfileSource:      best.profile.Source,
-		ProfileHash:        stableHash(best.profile),
+		ProfileHash:        profileHash,
 		Tier:               best.tier,
 		Unidentified:       best.tier == MatchTierUnidentified,
 		Outlets:            best.profile.Outlets,
