@@ -1467,3 +1467,56 @@ func TestFeasibilityReportsIncompleteTelemetryBeforeTheEstimateDeclaration(t *te
 		t.Fatalf("reason = %q, want TelemetryIncomplete", plan.Feasibility.Reason)
 	}
 }
+
+// The guard in compileGroups exists for a state validateStructuralInputs is supposed to make
+// impossible, so the only honest way to test it is to hand compileGroups that state directly (F-117).
+// Going through Compile would exercise DependencyCycle and never reach the guard, which is exactly
+// why the hang sat there unnoticed: every path a test could reach it by was already closed upstream.
+func TestCompileGroupsReportsGroupsItCannotSchedule(t *testing.T) {
+	groups := []Group{
+		{Name: "alpha", Timeout: Duration{Duration: time.Minute}},
+		{Name: "beta", Timeout: Duration{Duration: time.Minute}},
+	}
+	// A two-group cycle, built by hand rather than by buildGroupGraph, because buildGroupGraph is
+	// fed by inputs that are validated first.
+	graph := Graph{
+		Vertices: []GraphVertex{{ID: "alpha", Kind: "Group"}, {ID: "beta", Kind: "Group"}},
+		Edges: []GraphEdge{
+			{ID: "alpha->beta", From: "alpha", To: "beta", Relation: "Before"},
+			{ID: "beta->alpha", From: "beta", To: "alpha", Relation: "Before"},
+		},
+	}
+
+	steps, waves, duration, stalled := compileGroups(groups, graph)
+
+	if len(stalled) != 2 || stalled[0] != "alpha" || stalled[1] != "beta" {
+		t.Fatalf("expected both groups reported as unschedulable in sorted order, got %v", stalled)
+	}
+	if steps != nil || waves != nil || duration != 0 {
+		t.Fatalf("expected no partial plan alongside a stall, got steps=%v waves=%v duration=%v",
+			steps, waves, duration)
+	}
+}
+
+func TestCompileGroupsSchedulesEveryGroupWhenTheGraphIsAcyclic(t *testing.T) {
+	groups := []Group{
+		{Name: "alpha", Timeout: Duration{Duration: time.Minute}},
+		{Name: "beta", Timeout: Duration{Duration: 2 * time.Minute}},
+	}
+	graph := Graph{
+		Vertices: []GraphVertex{{ID: "alpha", Kind: "Group"}, {ID: "beta", Kind: "Group"}},
+		Edges:    []GraphEdge{{ID: "alpha->beta", From: "alpha", To: "beta", Relation: "Before"}},
+	}
+
+	steps, waves, duration, stalled := compileGroups(groups, graph)
+
+	if len(stalled) != 0 {
+		t.Fatalf("expected no stalled groups on an acyclic graph, got %v", stalled)
+	}
+	if len(waves) != 2 || len(steps) != 2 {
+		t.Fatalf("expected two waves of one group each, got %d waves and %d steps", len(waves), len(steps))
+	}
+	if duration != 3*time.Minute {
+		t.Fatalf("expected the two wave timeouts to sum, got %s", duration)
+	}
+}

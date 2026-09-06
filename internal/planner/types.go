@@ -18,7 +18,10 @@ limitations under the License.
 // ordered waves. It performs no I/O and owns no Kubernetes client.
 package planner
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // StructuralInputs are the inputs that define the shape and identity of a plan.
 // Telemetry must not be added here; plan identity is computed from this bundle
@@ -221,6 +224,13 @@ type Target struct {
 // Duration wraps time.Duration with stable JSON encoding.
 type Duration struct {
 	time.Duration `json:"-"`
+}
+
+// MarshalJSON renders Duration using time.Duration's own string form (e.g. "1h30m0s")
+// rather than the default numeric nanosecond encoding, so hashes and published
+// artifacts stay human-legible.
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.String())
 }
 
 // Plan is the deterministic compiler output.

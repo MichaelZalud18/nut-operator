@@ -34,11 +34,10 @@ const (
 // HistoryInputs carries observed durations into compilation (EX-32).
 //
 // An input rather than a lookup the compiler performs. PL-27 requires identical
-// structural input to produce a byte-identical plan, which a compiler reaching out
-// to a database cannot promise — two compiles a second apart would differ because a
-// row landed between them. Resolving history to a value first keeps the compile
-// pure and makes the history part of what the plan hash covers, so a plan whose
-// estimates moved is a different plan and says so.
+// structural input to keep the same structural plan identity, which a compiler
+// reaching out to a database cannot promise — two compiles a second apart could
+// differ because a row landed between them. Resolving history before compile keeps
+// the function pure while leaving observed estimates outside the plan hash.
 type HistoryInputs struct {
 	// GroupDurations holds observed samples keyed by group name, newest first.
 	GroupDurations map[string][]time.Duration `json:"groupDurations,omitempty"`

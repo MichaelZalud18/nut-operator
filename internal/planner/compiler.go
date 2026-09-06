@@ -22,7 +22,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
@@ -53,7 +55,14 @@ func Compile(structural StructuralInputs, telemetry TelemetryInputs) (Plan, []Di
 // (EX-32). Compile is this with no history, which is what a cluster that has never
 // run a flow legitimately has.
 func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, history HistoryInputs) (Plan, []Diagnostic, error) {
-	normalized := normalizeStructuralInputs(structural)
+	normalized, err := normalizeStructuralInputs(structural)
+	if err != nil {
+		return Plan{}, []Diagnostic{{
+			Severity: DiagnosticError,
+			Reason:   "TriggerEncodingFailed",
+			Message:  fmt.Sprintf("triggers could not be hashed for deterministic ordering: %v", err),
+		}}, ErrRejected
+	}
 	scoped, scopeDiagnostics := scopeStructuralInputs(normalized)
 	diagnostics := validateStructuralInputs(scoped)
 	diagnostics = append(diagnostics, scopeDiagnostics...)
@@ -64,7 +73,23 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 	var plan Plan
 	if len(scoped.Groups) > 0 {
 		plan.Graph = buildGroupGraph(scoped.Groups, scoped.TierPolicy, scoped.GroupNodes)
-		steps, waves, duration := compileGroups(scoped.Groups, plan.Graph)
+		steps, waves, duration, stalled := compileGroups(scoped.Groups, plan.Graph)
+		// Rejected rather than published half-descended. A plan missing the groups that could not be
+		// scheduled would still compile, still hash, and still look like a plan -- and the groups it
+		// dropped are the ones nothing would then shut down.
+		if len(stalled) > 0 {
+			diagnostics = append(diagnostics, Diagnostic{
+				Severity: DiagnosticError,
+				Reason:   "PlanNotSchedulable",
+				Subject:  strings.Join(stalled, ","),
+				Message: fmt.Sprintf(
+					"shutdown groups %s never became schedulable, so wave descent could not finish; "+
+						"this is a planner defect rather than a flow error, because a dependency cycle is "+
+						"rejected as DependencyCycle before this point",
+					strings.Join(stalled, ", ")),
+			})
+			return Plan{}, diagnostics, ErrRejected
+		}
 		plan.Steps = steps
 		plan.Waves = waves
 		plan.StartupWaves = advisoryStartupWaves(waves)
@@ -94,8 +119,16 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 	plan.Explanations = graphExplanations(plan.Graph, len(plan.Waves), len(plan.StartupWaves))
 	plan.Diagrams = renderDiagramExports(plan.Graph)
 	plan.Feasibility = advisoryFeasibility(telemetry, scoped.DeviceCapabilities)
-	plan.StructuralHash = stableHash(scoped)
-	plan.Hash = stableHash(struct {
+	plan.StructuralHash, err = stableHash(scoped)
+	if err != nil {
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity: DiagnosticError,
+			Reason:   "PlanHashEncodingFailed",
+			Message:  fmt.Sprintf("plan structural hash could not be computed: %v", err),
+		})
+		return Plan{}, diagnostics, ErrRejected
+	}
+	plan.Hash, err = stableHash(struct {
 		StructuralHash string         `json:"structuralHash"`
 		Steps          []CompiledStep `json:"steps,omitempty"`
 		Waves          []Wave         `json:"waves,omitempty"`
@@ -110,6 +143,14 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 		Graph:          plan.Graph,
 		Duration:       plan.EstimatedDuration,
 	})
+	if err != nil {
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity: DiagnosticError,
+			Reason:   "PlanHashEncodingFailed",
+			Message:  fmt.Sprintf("plan hash could not be computed: %v", err),
+		})
+		return Plan{}, diagnostics, ErrRejected
+	}
 
 	return plan, diagnostics, nil
 }
@@ -141,6 +182,9 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 	}
 
 	stepIDs := map[string]struct{}{}
+	// reportedStepIDs guards against F-121: a third or later occurrence of the same id must not
+	// emit another diagnostic on top of the one already raised for the second.
+	reportedStepIDs := map[string]struct{}{}
 	for _, step := range input.Steps {
 		if step.ID == "" {
 			diagnostics = append(diagnostics, Diagnostic{
@@ -151,17 +195,21 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 			continue
 		}
 		if _, exists := stepIDs[step.ID]; exists {
-			diagnostics = append(diagnostics, Diagnostic{
-				Severity: DiagnosticError,
-				Reason:   "DuplicateStepID",
-				Subject:  step.ID,
-				Message:  fmt.Sprintf("shutdown step id %q is duplicated", step.ID),
-			})
+			if _, alreadyReported := reportedStepIDs[step.ID]; !alreadyReported {
+				diagnostics = append(diagnostics, Diagnostic{
+					Severity: DiagnosticError,
+					Reason:   "DuplicateStepID",
+					Subject:  step.ID,
+					Message:  fmt.Sprintf("shutdown step id %q is duplicated", step.ID),
+				})
+				reportedStepIDs[step.ID] = struct{}{}
+			}
 		}
 		stepIDs[step.ID] = struct{}{}
 	}
 
 	groupNames := map[string]struct{}{}
+	reportedGroupNames := map[string]struct{}{}
 	for _, group := range input.Groups {
 		if group.Name == "" {
 			diagnostics = append(diagnostics, Diagnostic{
@@ -172,12 +220,15 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 			continue
 		}
 		if _, exists := groupNames[group.Name]; exists {
-			diagnostics = append(diagnostics, Diagnostic{
-				Severity: DiagnosticError,
-				Reason:   "DuplicateGroupName",
-				Subject:  group.Name,
-				Message:  fmt.Sprintf("shutdown group name %q is duplicated", group.Name),
-			})
+			if _, alreadyReported := reportedGroupNames[group.Name]; !alreadyReported {
+				diagnostics = append(diagnostics, Diagnostic{
+					Severity: DiagnosticError,
+					Reason:   "DuplicateGroupName",
+					Subject:  group.Name,
+					Message:  fmt.Sprintf("shutdown group name %q is duplicated", group.Name),
+				})
+				reportedGroupNames[group.Name] = struct{}{}
+			}
 		}
 		groupNames[group.Name] = struct{}{}
 	}
@@ -185,7 +236,12 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 	diagnostics = append(diagnostics, reportDefaultedShutdownTiers(input)...)
 	diagnostics = append(diagnostics, validateTierInversion(input)...)
 	for _, group := range input.Groups {
-		for _, dependency := range append(append([]string{}, group.Requires...), append(group.Before, group.After...)...) {
+		// F-119: slices.Concat always allocates its own backing array, unlike
+		// append(group.Before, group.After...), which can write into group.Before's backing
+		// array in place when it has spare capacity -- harmless with today's callers, which
+		// happen to hand it exactly-sized slices, but not a guarantee this expression's own
+		// signature makes.
+		for _, dependency := range slices.Concat(group.Requires, group.Before, group.After) {
 			if _, exists := groupNames[dependency]; !exists {
 				diagnostics = append(diagnostics, Diagnostic{
 					Severity: DiagnosticError,
@@ -207,7 +263,21 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 	return diagnostics
 }
 
-func compileGroups(groups []Group, graph Graph) ([]CompiledStep, []Wave, time.Duration) {
+// compileGroups descends the group graph into waves, and reports the groups it could not schedule
+// rather than spinning on them (F-117).
+//
+// The last return is empty on success and holds every group still waiting when the descent stopped
+// making progress. That can only happen if the graph has a cycle, which validateStructuralInputs
+// already rejects with DependencyCycle from this same buildGroupGraph output -- so reaching it means
+// the two disagreed, which is a defect in this package and not a mistake by a flow author.
+//
+// It is guarded anyway because of where the loop runs. This is a reconcile path during a power
+// event, and the failure without a guard is not a wrong plan but no plan at all: the loop finds
+// nothing at indegree zero, deletes nothing, and spins forever holding the worker. A hung reconcile
+// reports nothing, times out nothing, and looks identical to a cluster that is simply slow -- at the
+// moment when the operator has minutes of battery to work with. Two lines convert that into a
+// diagnostic naming the groups involved.
+func compileGroups(groups []Group, graph Graph) ([]CompiledStep, []Wave, time.Duration, []string) {
 	byName := map[string]Group{}
 	indegree := map[string]int{}
 	edges := graphSuccessors(graph)
@@ -243,6 +313,17 @@ func compileGroups(groups []Group, graph Graph) ([]CompiledStep, []Wave, time.Du
 		sort.Slice(waveGroups, func(i, j int) bool {
 			return waveGroups[i].Name < waveGroups[j].Name
 		})
+
+		// Nothing schedulable while groups remain: the next pass would examine the same indegrees and
+		// reach the same conclusion, so this is the loop's only exit that is not progress.
+		if len(waveGroups) == 0 {
+			stalled := make([]string, 0, len(indegree))
+			for name := range indegree {
+				stalled = append(stalled, name)
+			}
+			sort.Strings(stalled)
+			return nil, nil, 0, stalled
+		}
 
 		var waveDuration time.Duration
 		for _, group := range waveGroups {
@@ -284,7 +365,7 @@ func compileGroups(groups []Group, graph Graph) ([]CompiledStep, []Wave, time.Du
 		}
 	}
 
-	return steps, waves, cumulative
+	return steps, waves, cumulative, nil
 }
 
 func compileSteps(steps []Step) ([]CompiledStep, time.Duration) {
@@ -417,7 +498,7 @@ func firstStaticRuntimeEstimate(devices []DeviceCapability) (string, bool) {
 	return "", false
 }
 
-func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
+func normalizeStructuralInputs(input StructuralInputs) (StructuralInputs, error) {
 	normalized := StructuralInputs{
 		SourceID:          input.SourceID,
 		ObservedAt:        input.ObservedAt,
@@ -494,9 +575,11 @@ func normalizeStructuralInputs(input StructuralInputs) StructuralInputs {
 		normalized.Steps[i].HookRef = copyHookReference(normalized.Steps[i].HookRef)
 		normalized.Steps[i].Params = copyStringMap(normalized.Steps[i].Params)
 	}
-	sortTriggers(normalized.Triggers)
+	if err := sortTriggers(normalized.Triggers); err != nil {
+		return StructuralInputs{}, err
+	}
 	sortGroups(normalized.Groups)
-	return normalized
+	return normalized, nil
 }
 
 func copyHookReference(input *HookReference) *HookReference {
@@ -518,11 +601,30 @@ func copyStringMap(input map[string]string) map[string]string {
 	return output
 }
 
-func sortTriggers(triggers []Trigger) {
-	sort.SliceStable(triggers, func(i, j int) bool {
-		left, right := stableHash(triggers[i]), stableHash(triggers[j])
-		return left < right
+// sortTriggers orders triggers deterministically by content hash. Each trigger's hash is computed
+// once, up front, and carried alongside it through the sort (F-118) rather than recomputed inside
+// the comparator on every call sort.SliceStable makes -- a hidden O(n log n) JSON-marshal-and-hash
+// cost at every call site, for work with only n distinct answers.
+func sortTriggers(triggers []Trigger) error {
+	type hashedTrigger struct {
+		trigger Trigger
+		hash    string
+	}
+	decorated := make([]hashedTrigger, len(triggers))
+	for i, trigger := range triggers {
+		hash, err := stableHash(trigger)
+		if err != nil {
+			return fmt.Errorf("hash trigger %d for deterministic ordering: %w", i, err)
+		}
+		decorated[i] = hashedTrigger{trigger: trigger, hash: hash}
+	}
+	sort.SliceStable(decorated, func(i, j int) bool {
+		return decorated[i].hash < decorated[j].hash
 	})
+	for i, d := range decorated {
+		triggers[i] = d.trigger
+	}
+	return nil
 }
 
 func sortGroups(groups []Group) {
@@ -540,15 +642,17 @@ func hasError(diagnostics []Diagnostic) bool {
 	return false
 }
 
-func stableHash(value any) string {
+// stableHash returns an error rather than panicking on an encoding failure (F-123). The input
+// shapes make json.Marshal failing here effectively unreachable today -- everything hashed is
+// plain structural data, no channels, funcs, or cycles -- but Compile already returns an error
+// for every other rejection, this runs during power-event planning, and a panic mid-reconcile is
+// a worse failure mode than a clean, diagnosable rejection for a "cannot happen" that turns out
+// to happen anyway.
+func stableHash(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		panic(fmt.Sprintf("planner input could not be encoded for hashing: %v", err))
+		return "", fmt.Errorf("encode value for hashing: %w", err)
 	}
 	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
-}
-
-func (d Duration) MarshalJSON() ([]byte, error) {
-	return json.Marshal(d.String())
+	return hex.EncodeToString(sum[:]), nil
 }
