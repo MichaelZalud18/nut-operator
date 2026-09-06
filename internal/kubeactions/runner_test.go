@@ -430,6 +430,82 @@ func TestRunnerDeliversHTTPShutdownHookCloudEvent(t *testing.T) {
 	}
 }
 
+func TestRunnerDoesNotFollowHTTPShutdownHookRedirects(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := powerv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme returned error: %v", err)
+	}
+	hookURL := "https://hooks.example.test/hooks/flush"
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if requests > 1 {
+			t.Fatalf("HTTP hook followed redirect to %s", req.URL.String())
+		}
+		if req.URL.String() != hookURL {
+			t.Fatalf("request URL = %s, want %s", req.URL.String(), hookURL)
+		}
+		return &http.Response{
+			StatusCode: http.StatusTemporaryRedirect,
+			Body:       io.NopCloser(strings.NewReader("redirect")),
+			Header:     http.Header{"Location": []string{"https://elsewhere.example.test/hooks/flush"}},
+			Request:    req,
+		}, nil
+	})}
+
+	endpoint := powerv1alpha1.PowerHookEndpointAllowlistEntry{Scheme: "https", Host: "hooks.example.test", PathPrefix: "/hooks"}
+	runner := Runner{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			&powerv1alpha1.ShutdownFlow{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-flow"},
+				Spec: powerv1alpha1.ShutdownFlowSpec{
+					ManagementClusterRef: &powerv1alpha1.ObjectNameReference{Name: "production"},
+				},
+			},
+			&powerv1alpha1.PowerManagementCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "production"},
+				Spec: powerv1alpha1.PowerManagementClusterSpec{
+					Storage: powerv1alpha1.PowerStorageSpec{Mode: powerv1alpha1.PowerStorageDisabled},
+					Hooks:   powerv1alpha1.PowerHookPolicySpec{AllowedEndpoints: []powerv1alpha1.PowerHookEndpointAllowlistEntry{endpoint}},
+				},
+			},
+			&powerv1alpha1.ShutdownHook{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "storage", Name: "flush"},
+				Spec: powerv1alpha1.ShutdownHookSpec{
+					Invocation: powerv1alpha1.ShutdownHookInvocationSpec{
+						Transport: powerv1alpha1.ShutdownHookTransportHTTP,
+						HTTP:      &powerv1alpha1.ShutdownHookHTTPSpec{URL: hookURL},
+					},
+				},
+			},
+		).Build(),
+		HTTPClient: httpClient,
+	}
+
+	outcome, err := runner.RunAction(context.Background(), executor.Action{
+		ShutdownFlow:   "test-flow",
+		ExecutionID:    "execution-a",
+		PlanConfigHash: "hash-a",
+		Group: executor.Group{
+			Name:   "storage",
+			Action: ActionRunHook,
+			HookRef: &executor.HookReference{
+				Namespace: "storage",
+				Name:      "flush",
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "status 307") {
+		t.Fatalf("expected redirect status to block hook delivery, got outcome %#v error %v", outcome, err)
+	}
+	if outcome.Outcome != executor.OutcomeBlocked {
+		t.Fatalf("expected blocked outcome, got %#v", outcome)
+	}
+	if requests != 1 {
+		t.Fatalf("expected exactly one hook request, got %d", requests)
+	}
+}
+
 func TestRunnerSimulatesHTTPShutdownHookWithoutDryRunInvocation(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := powerv1alpha1.AddToScheme(scheme); err != nil {

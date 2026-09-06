@@ -655,7 +655,7 @@ func (r Runner) runHTTPHook(ctx context.Context, action executor.Action, hook *p
 		return blocked(err), err
 	}
 
-	response, err := r.httpClient().Do(req)
+	response, err := hookDeliveryClient(r.httpClient()).Do(req)
 	if err != nil {
 		return blocked(err), fmt.Errorf("deliver ShutdownHook %s/%s to %s: %w", hook.Namespace, hook.Name, invocation.HTTP.URL, err)
 	}
@@ -849,6 +849,17 @@ func (r Runner) httpClient() *http.Client {
 		return r.HTTPClient
 	}
 	return http.DefaultClient
+}
+
+func hookDeliveryClient(base *http.Client) *http.Client {
+	if base == nil {
+		base = http.DefaultClient
+	}
+	copied := *base
+	copied.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &copied
 }
 
 // HookURLAllowed reports whether a hook URL is permitted by the cluster allowlist (HK-9).
