@@ -111,6 +111,13 @@ func CompileFlowWithHistoryAndHooks(obj *powerv1alpha1.ShutdownFlow, bundle reso
 	inputs.HookDigests = append([]planner.HookDigest(nil), hookDigests...)
 	inputs.GroupNodes = PlannerGroupNodes(obj, bundle)
 	plan, diagnostics, err := planner.CompileWithHistory(inputs, planner.TelemetryInputs{}, history)
+	// F-120: the planner's own ShutdownTierZeroTargeted diagnostic only ever sees the resolved
+	// int32 a group carries by the time it reaches Compile, so it cannot say whether a human
+	// wrote spec.shutdownTier: 0 or whether central tier policy assigned it. Rule and label
+	// matching is adapter-only knowledge -- PlannerShutdownTier resolves it right here -- so the
+	// adapter is where this context has to be attached rather than threaded into planner inputs
+	// the planner has no other reason to know about.
+	diagnostics = append(diagnostics, TierPolicyDiagnostics(obj.Spec.Groups, tierPolicy)...)
 	if err != nil {
 		// Rejection diagnostics still travel: the reason a plan did not compile is
 		// the most useful thing the planner produced.
@@ -325,6 +332,62 @@ func matchingNodeNames(target powerv1alpha1.ShutdownStepTarget, nodes []resolver
 		}
 	}
 	return matched
+}
+
+// TierPolicyDiagnostics reports, for each group whose effective shutdown tier resolves to 0
+// through central tier policy rather than its own spec.shutdownTier, which rule or label produced
+// it (F-120). The planner's own ShutdownTierZeroTargeted diagnostic (validateGroupShutdownTiers)
+// only ever sees the resolved int32 by the time it reaches Compile, so it cannot distinguish "the
+// author wrote tier 0 on this group" from "a selector rule or label assigned it" -- and the two
+// point a reader at different places to fix it. This does not replace that diagnostic; it adds the
+// context only the adapter has, alongside it.
+func TierPolicyDiagnostics(groups []powerv1alpha1.ShutdownGroup, policy powerv1alpha1.PowerShutdownTierPolicySpec) []planner.Diagnostic {
+	var diagnostics []planner.Diagnostic
+	for _, group := range groups {
+		if group.ShutdownTier != nil {
+			// Explicit: the planner's own diagnostic already points at the right place.
+			continue
+		}
+		if rule := matchingTierSelectorRule(group.Target, policy); rule != nil {
+			if rule.Tier == 0 {
+				diagnostics = append(diagnostics, tierZeroFromPolicyDiagnostic(group.Name, tierSelectorRuleLabel(*rule)))
+			}
+			continue
+		}
+		labelKey := effectiveShutdownTierLabelKey(policy)
+		for _, selector := range []*metav1.LabelSelector{
+			group.Target.NodeSelector,
+			group.Target.NamespaceSelector,
+			group.Target.WorkloadSelector,
+		} {
+			if tier := shutdownTierFromSelector(selector, labelKey); tier != nil {
+				if *tier == 0 {
+					diagnostics = append(diagnostics, tierZeroFromPolicyDiagnostic(group.Name,
+						fmt.Sprintf("its own %q label", labelKey)))
+				}
+				break
+			}
+		}
+	}
+	return diagnostics
+}
+
+func tierZeroFromPolicyDiagnostic(groupName, source string) planner.Diagnostic {
+	return planner.Diagnostic{
+		Severity: planner.DiagnosticError,
+		Reason:   "ShutdownTierZeroFromPolicy",
+		Subject:  groupName,
+		Message: fmt.Sprintf(
+			"shutdown group %q targets tier 0 because %s assigned it, not the group's own spec.shutdownTier",
+			groupName, source),
+	}
+}
+
+func tierSelectorRuleLabel(rule powerv1alpha1.PowerShutdownTierSelectorRule) string {
+	if rule.Name != "" {
+		return fmt.Sprintf("central tier selector rule %q", rule.Name)
+	}
+	return fmt.Sprintf("an unnamed central tier selector rule (subject %s)", rule.Subject)
 }
 
 // PlannerShutdownTier resolves a group's explicit tier or numeric tier label.
@@ -543,13 +606,25 @@ func shutdownTierFromSelector(selector *metav1.LabelSelector, labelKey string) *
 }
 
 func shutdownTierFromSelectorRules(target powerv1alpha1.ShutdownStepTarget, policy powerv1alpha1.PowerShutdownTierPolicySpec) *int32 {
+	rule := matchingTierSelectorRule(target, policy)
+	if rule == nil {
+		return nil
+	}
+	tier := rule.Tier
+	return &tier
+}
+
+// matchingTierSelectorRule returns the first central tier policy rule that matches target, or nil.
+// Shared by shutdownTierFromSelectorRules (which only needs the resolved tier) and
+// TierPolicyDiagnostics (F-120, which also needs the rule's own identity to attribute a tier-0
+// diagnostic to it) so the two cannot silently diverge on which rule "matches first".
+func matchingTierSelectorRule(target powerv1alpha1.ShutdownStepTarget, policy powerv1alpha1.PowerShutdownTierPolicySpec) *powerv1alpha1.PowerShutdownTierSelectorRule {
 	for _, rule := range policy.SelectorRules {
 		if !tierRuleSubjectCanMatchTarget(rule.Subject, target) {
 			continue
 		}
 		if tierRuleMatchesTarget(rule, target) {
-			tier := rule.Tier
-			return &tier
+			return &rule
 		}
 	}
 	return nil
