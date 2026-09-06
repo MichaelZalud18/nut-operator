@@ -88,6 +88,8 @@ var _ = Describe("Manager", Ordered, func() {
 		)
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to patch controller-manager imagePullPolicy for Kind")
+
+		waitForPowerManagementClusterAdmissionReady()
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
@@ -286,31 +288,14 @@ spec:
 				controllerPodName = name
 			}, 2*time.Minute, time.Second).Should(Succeed())
 
+			waitForPowerManagementClusterAdmissionReady()
+
 			By("mutating the existing resource after replacement")
 			cmd = exec.Command("kubectl", "patch", "powermanagementcluster", clusterName,
 				"--type=merge", "-p", `{"spec":{"hooks":{"defaultTimeout":"11s"}}}`)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to patch the upgrade fixture")
 			Eventually(waitForClusterReady, 2*time.Minute, time.Second).Should(Succeed())
-
-			By("confirming admission still answers after replacement")
-			invalid := `apiVersion: power.zalud.io/v1alpha1
-kind: NUTServer
-metadata:
-  name: upgrade-admission-probe
-spec:
-  namespace: kube-system
-`
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "apply", "--dry-run=server", "-f", "-")
-				cmd.Stdin = strings.NewReader(invalid)
-				out, err := utils.Run(cmd)
-				g.Expect(err).To(HaveOccurred(), "the webhook should reject a reserved operand namespace")
-				g.Expect(out).To(ContainSubstring("spec.namespace"),
-					"expected the webhook's own validation message, not a TLS or connectivity error")
-				g.Expect(out).To(ContainSubstring("reserved"),
-					"expected the webhook's own validation message, not a TLS or connectivity error")
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 		})
 
 		It("should ensure the metrics endpoint is serving metrics", func() {
@@ -941,6 +926,8 @@ spec:
 	// they would run against whatever the last container left behind.
 	multiNodeSignalTargetingSpecs()
 	driverRecoverySpecs()
+	driverSoakSpecs()
+	podRestartSpecs()
 })
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
@@ -1016,4 +1003,29 @@ func currentControllerPodIdentity() (string, string, error) {
 		return "", "", fmt.Errorf("unexpected manager pod identity output %q", lines[0])
 	}
 	return parts[0], parts[1], nil
+}
+
+func waitForPowerManagementClusterAdmissionReady() {
+	By("waiting for PowerManagementCluster admission to answer")
+	invalid := `apiVersion: power.zalud.io/v1alpha1
+kind: PowerManagementCluster
+metadata:
+  name: admission-readiness-probe
+spec:
+  operandNamespace:
+    name: kube-system
+    create: true
+  storage:
+    mode: Disabled
+`
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "apply", "--dry-run=server", "-f", "-")
+		cmd.Stdin = strings.NewReader(invalid)
+		out, err := utils.Run(cmd)
+		g.Expect(err).To(HaveOccurred(), "the webhook should reject a reserved operand namespace")
+		g.Expect(out).To(ContainSubstring("spec.operandNamespace.name"),
+			"expected the PowerManagementCluster webhook's own validation message, not a TLS or connectivity error")
+		g.Expect(out).To(ContainSubstring("reserved"),
+			"expected the PowerManagementCluster webhook's own validation message, not a TLS or connectivity error")
+	}, 3*time.Minute, 5*time.Second).Should(Succeed())
 }

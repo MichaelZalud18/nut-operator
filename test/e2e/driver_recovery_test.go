@@ -82,80 +82,12 @@ func driverRecoverySpecs() {
 		}
 
 		BeforeAll(func() {
-			By("creating the recovery namespace")
-			_, err := utils.Run(exec.Command("kubectl", "create", "ns", namespace))
-			Expect(err).NotTo(HaveOccurred())
-
-			By("creating a dummy-ups-backed UPSDevice and NUTServer")
-			manifest := fmt.Sprintf(`
-apiVersion: power.zalud.io/v1alpha1
-kind: UPSDevice
-metadata:
-  name: %[3]s
-spec:
-  displayName: Driver Recovery E2E Dummy UPS
-  driver: dummy-ups
----
-apiVersion: power.zalud.io/v1alpha1
-kind: NUTServer
-metadata:
-  name: %[4]s
-spec:
-  namespace: %[1]s
-  deviceRefs:
-    - name: %[3]s
-  image:
-    repository: %[2]s
-    tag: %[5]s
-    pullPolicy: IfNotPresent
-  auth:
-    mode: OperatorManaged
-  tls:
-    mode: Disabled
-`, namespace, nutServerRepository, upsName, serverName, operandImageTag)
-
-			applyFixture := func(g Gomega) {
-				applyCmd := exec.Command("kubectl", "apply", "-f", "-")
-				applyCmd.Stdin = strings.NewReader(manifest)
-				_, applyErr := utils.Run(applyCmd)
-				g.Expect(applyErr).NotTo(HaveOccurred())
-			}
-			Eventually(applyFixture, 2*time.Minute, 5*time.Second).Should(Succeed())
-
-			By("waiting for the NUT server pod to be Ready")
-			Eventually(func(g Gomega) {
-				out, getErr := utils.Run(exec.Command("kubectl", "-n", namespace, "get", "pods",
-					"-l", podSelector,
-					"-o", `jsonpath={range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}`))
-				g.Expect(getErr).NotTo(HaveOccurred())
-
-				readyPod := ""
-				for _, line := range utils.GetNonEmptyLines(out) {
-					fields := strings.Fields(line)
-					if len(fields) >= 2 && fields[1] == "True" {
-						readyPod = fields[0]
-						break
-					}
-				}
-				g.Expect(readyPod).NotTo(BeEmpty(), "no Ready pod matched %s; observed pods: %q", podSelector, out)
-				serverPod = readyPod
-			}, 4*time.Minute, 5*time.Second).Should(Succeed(), "the NUT server never became Ready")
+			applyDummyUPSFixture(namespace, serverName, upsName, "Driver Recovery E2E Dummy UPS")
+			serverPod = waitForNUTServerPodReady(namespace, podSelector)
 		})
 
 		AfterAll(func() {
-			if CurrentSpecReport().Failed() {
-				By("dumping the recovery namespace before tearing it down")
-				utils.DumpNamespaceDiagnostics(namespace)
-			}
-
-			By("removing the recovery namespace and its cluster-scoped fixture")
-			for _, args := range [][]string{
-				{"delete", "nutserver", serverName, "--ignore-not-found=true"},
-				{"delete", "upsdevice", upsName, "--ignore-not-found=true"},
-				{"delete", "ns", namespace, "--ignore-not-found=true", "--wait=false"},
-			} {
-				_, _ = utils.Run(exec.Command("kubectl", args...))
-			}
+			teardownDummyUPSFixture(namespace, serverName, upsName)
 		})
 
 		It("brings a killed driver back well inside DEADTIME", func() {
