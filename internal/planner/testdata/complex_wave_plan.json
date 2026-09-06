@@ -1,0 +1,415 @@
+{
+  "structural": {
+    "sourceID": "shutdownflows.power.zalud.io/fixture-complex",
+    "observedAt": "2026-08-30T09:00:00Z",
+    "resolvedInputHash": "inventory-fixture-v1",
+    "tierPolicy": {
+      "definitions": [
+        {
+          "tier": 4,
+          "name": "shed"
+        },
+        {
+          "tier": 3,
+          "name": "stateful"
+        },
+        {
+          "tier": 2,
+          "name": "drain"
+        },
+        {
+          "tier": 1,
+          "name": "node-poweroff"
+        }
+      ]
+    },
+    "triggers": [
+      {
+        "type": "RuntimeBelow",
+        "powerDomains": [
+          "rack-a"
+        ],
+        "runtimeBelowSeconds": 1200
+      }
+    ],
+    "deviceCapabilities": [
+      {
+        "deviceID": "ups-a",
+        "profileID": "snmp-dynamic",
+        "telemetryVariables": [
+          "battery.runtime",
+          "battery.charge",
+          "ups.status"
+        ],
+        "runtimeEstimate": "Dynamic"
+      },
+      {
+        "deviceID": "ups-b",
+        "profileID": "snmp-dynamic",
+        "telemetryVariables": [
+          "battery.runtime",
+          "battery.charge",
+          "ups.status"
+        ],
+        "runtimeEstimate": "Dynamic"
+      }
+    ],
+    "powerDomains": [
+      {
+        "name": "rack-a",
+        "upsDevices": [
+          "ups-a"
+        ],
+        "members": [
+          "ups-a",
+          "switch-a",
+          "node-a",
+          "node-b"
+        ],
+        "nodes": [
+          "node-a",
+          "node-b"
+        ],
+        "infrastructure": [
+          "switch-a"
+        ]
+      },
+      {
+        "name": "rack-b",
+        "upsDevices": [
+          "ups-b"
+        ],
+        "members": [
+          "ups-b",
+          "switch-b",
+          "node-c"
+        ],
+        "nodes": [
+          "node-c"
+        ],
+        "infrastructure": [
+          "switch-b"
+        ]
+      }
+    ],
+    "groups": [
+      {
+        "name": "app-drain",
+        "action": "ScaleWorkload",
+        "before": [
+          "database-drain"
+        ],
+        "shutdownTier": 4,
+        "timeout": "2m",
+        "target": {
+          "namespaceSelector": true
+        }
+      },
+      {
+        "name": "batch-drain",
+        "action": "ScaleWorkload",
+        "shutdownTier": 4,
+        "timeout": "1m30s",
+        "target": {
+          "workloadSelector": true
+        }
+      },
+      {
+        "name": "database-drain",
+        "action": "ScaleWorkload",
+        "shutdownTier": 3,
+        "timeout": "4m",
+        "target": {
+          "workloadSelector": true
+        }
+      },
+      {
+        "name": "node-drain",
+        "action": "DrainNodes",
+        "after": [
+          "database-drain"
+        ],
+        "shutdownTier": 2,
+        "timeout": "3m",
+        "target": {
+          "nodeSelector": true
+        }
+      },
+      {
+        "name": "node-poweroff",
+        "action": "AgentShutdown",
+        "shutdownTier": 1,
+        "timeout": "1m",
+        "target": {
+          "agentRefCount": 1
+        }
+      },
+      {
+        "name": "notify",
+        "action": "Notify",
+        "shutdownTier": 4,
+        "timeout": "30s"
+      },
+      {
+        "name": "rack-b-drain",
+        "action": "DrainNodes",
+        "shutdownTier": 4,
+        "timeout": "90s",
+        "target": {
+          "nodeSelector": true
+        }
+      }
+    ],
+    "groupNodes": [
+      {
+        "group": "app-drain",
+        "acts": [
+          "node-a",
+          "node-b"
+        ]
+      },
+      {
+        "group": "batch-drain",
+        "acts": [
+          "node-b"
+        ]
+      },
+      {
+        "group": "database-drain",
+        "acts": [
+          "node-a"
+        ]
+      },
+      {
+        "group": "node-drain",
+        "acts": [
+          "node-a",
+          "node-b"
+        ]
+      },
+      {
+        "group": "node-poweroff",
+        "releases": [
+          "node-a",
+          "node-b"
+        ]
+      },
+      {
+        "group": "rack-b-drain",
+        "acts": [
+          "node-c"
+        ]
+      }
+    ],
+    "nodeTiers": [
+      {
+        "name": "node-a",
+        "tier": 1
+      },
+      {
+        "name": "node-b",
+        "tier": 1
+      },
+      {
+        "name": "node-c",
+        "tier": 1
+      }
+    ]
+  },
+  "telemetry": {
+    "powerDomains": [
+      {
+        "domain": "rack-a",
+        "observedAt": "2026-08-30T09:00:00Z",
+        "runtimeRemainingSeconds": 1200,
+        "chargePercent": 92,
+        "onBattery": true
+      }
+    ]
+  },
+  "history": {
+    "groupDurations": {
+      "app-drain": [
+        "2m30s",
+        "2m"
+      ],
+      "batch-drain": [
+        "1m10s"
+      ],
+      "database-drain": [
+        "5m"
+      ],
+      "node-drain": [
+        "2m45s"
+      ],
+      "node-poweroff": [
+        "45s"
+      ],
+      "rack-b-drain": [
+        "10m"
+      ]
+    }
+  },
+  "want": {
+    "waves": [
+      {
+        "groups": [
+          "app-drain",
+          "batch-drain",
+          "notify"
+        ],
+        "shutdownTier": 4,
+        "duration": "2m",
+        "cumulativeDuration": "2m"
+      },
+      {
+        "groups": [
+          "database-drain"
+        ],
+        "shutdownTier": 3,
+        "duration": "4m",
+        "cumulativeDuration": "6m"
+      },
+      {
+        "groups": [
+          "node-drain"
+        ],
+        "shutdownTier": 2,
+        "duration": "3m",
+        "cumulativeDuration": "9m"
+      },
+      {
+        "groups": [
+          "node-poweroff"
+        ],
+        "shutdownTier": 1,
+        "duration": "1m",
+        "cumulativeDuration": "10m"
+      }
+    ],
+    "startupWaves": [
+      {
+        "groups": [
+          "node-poweroff"
+        ],
+        "shutdownTier": 1,
+        "duration": "1m",
+        "cumulativeDuration": "1m"
+      },
+      {
+        "groups": [
+          "node-drain"
+        ],
+        "shutdownTier": 2,
+        "duration": "3m",
+        "cumulativeDuration": "4m"
+      },
+      {
+        "groups": [
+          "database-drain"
+        ],
+        "shutdownTier": 3,
+        "duration": "4m",
+        "cumulativeDuration": "8m"
+      },
+      {
+        "groups": [
+          "app-drain",
+          "batch-drain",
+          "notify"
+        ],
+        "shutdownTier": 4,
+        "duration": "2m",
+        "cumulativeDuration": "10m"
+      }
+    ],
+    "estimatedDuration": "10m",
+    "observedDuration": "11m",
+    "feasibility": {
+      "verdict": "OK",
+      "reason": "TelemetryPresent"
+    },
+    "diagnostics": [
+      "PowerDomainScopeApplied"
+    ],
+    "edges": [
+      {
+        "from": "app-drain",
+        "to": "database-drain",
+        "relation": "Before",
+        "provenance": "Declared"
+      },
+      {
+        "from": "batch-drain",
+        "to": "database-drain",
+        "relation": "ShutdownTier",
+        "provenance": "Derived"
+      },
+      {
+        "from": "database-drain",
+        "to": "node-drain",
+        "relation": "After",
+        "provenance": "Declared"
+      },
+      {
+        "from": "node-drain",
+        "to": "node-poweroff",
+        "relation": "ShutdownTier",
+        "provenance": "Derived"
+      },
+      {
+        "from": "database-drain",
+        "to": "node-poweroff",
+        "relation": "NodeClearance",
+        "provenance": "Derived"
+      }
+    ],
+    "groupEstimates": [
+      {
+        "group": "app-drain",
+        "duration": "2m30s",
+        "source": "Observed",
+        "samples": 2,
+        "declared": "2m"
+      },
+      {
+        "group": "batch-drain",
+        "duration": "1m10s",
+        "source": "Observed",
+        "samples": 1,
+        "declared": "1m30s"
+      },
+      {
+        "group": "database-drain",
+        "duration": "5m",
+        "source": "Observed",
+        "samples": 1,
+        "declared": "4m"
+      },
+      {
+        "group": "node-drain",
+        "duration": "2m45s",
+        "source": "Observed",
+        "samples": 1,
+        "declared": "3m"
+      },
+      {
+        "group": "node-poweroff",
+        "duration": "45s",
+        "source": "Observed",
+        "samples": 1,
+        "declared": "1m"
+      },
+      {
+        "group": "notify",
+        "duration": "30s",
+        "source": "Declared",
+        "samples": 0,
+        "declared": "30s"
+      }
+    ],
+    "absentSteps": [
+      "rack-b-drain"
+    ]
+  }
+}
