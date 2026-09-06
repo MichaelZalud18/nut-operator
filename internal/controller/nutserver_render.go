@@ -844,6 +844,19 @@ func upsdReadinessProbeScript() string {
 // the whole foreground bundle when any configured driver fails, taking healthy driver workers with
 // it. Starting each named UPS separately isolates bad credentials or an unreachable endpoint to
 // that device while still using NUT's own foreground process path instead of PID-file polling.
+//
+// reconcileDrivers used to take a restart-everything flag, and on any ups.conf change it stopped
+// every currently-tracked driver before starting the newly-configured set fresh -- so adding one UPS
+// restarted every other driver on the server too (F-124), a smaller-scope reappearance of exactly
+// the blast radius the per-device split above exists to remove, just triggered by a config edit
+// instead of a crash.
+//
+// It now restarts a driver only when its own configuration content actually changed, tracked as a
+// digest per device (deviceConfigDigest) rather than one digest for the whole file. A device whose
+// section in ups.conf is untouched keeps its running process and its PID across an unrelated add or
+// remove. A device whose own options *do* change is still caught: driverRunning alone would never
+// notice a config edit to an already-running driver, which is why membership (configuredDrivers)
+// and content (deviceConfigDigest) are two separate checks rather than one.
 func driverSupervisorScript() string {
 	return `set -u
 state_dir=/run/nut/driver-supervisor
@@ -855,6 +868,19 @@ driverPidFile() {
 
 driverExitFile() {
   printf '%s/%s.exit\n' "$state_dir" "$1"
+}
+
+driverDigestFile() {
+  printf '%s/%s.digest\n' "$state_dir" "$1"
+}
+
+deviceConfigDigest() {
+  ups="$1"
+  awk -v name="$ups" '
+    $0 == "[" name "]" { insection = 1; next }
+    /^\[/ { insection = 0 }
+    insection { print }
+  ' /etc/nut/ups.conf 2>/dev/null | md5sum | cut -d' ' -f1
 }
 
 configDigest() {
@@ -948,24 +974,31 @@ driverInList() {
 }
 
 reconcileDrivers() {
-  restart_all="$1"
   configured="$(configuredDrivers)" || return 1
-  if [ "$restart_all" = "true" ]; then
-    stopAllDrivers
-  fi
+
   for pid_file in "$state_dir"/*.pid; do
     [ -e "$pid_file" ] || continue
     ups="${pid_file##*/}"
     ups="${ups%.pid}"
     if ! driverInList "$ups" "$configured"; then
       stopDriver "$ups"
+      rm -f "$(driverDigestFile "$ups")"
     fi
   done
+
   for ups in $configured; do
-    if driverRunning "$ups"; then
+    digest="$(deviceConfigDigest "$ups")"
+    digest_file="$(driverDigestFile "$ups")"
+    last_digest="$(cat "$digest_file" 2>/dev/null || true)"
+
+    if driverRunning "$ups" && [ "$digest" = "$last_digest" ]; then
       continue
     fi
-    if [ -s "$(driverPidFile "$ups")" ]; then
+
+    if driverRunning "$ups"; then
+      echo "driver-supervisor: $ups configuration changed; restarting"
+      stopDriver "$ups"
+    elif [ -s "$(driverPidFile "$ups")" ]; then
       if [ -s "$(driverExitFile "$ups")" ]; then
         rc="$(cat "$(driverExitFile "$ups")" 2>/dev/null || true)"
         echo "driver-supervisor: $ups exited with status ${rc:-unknown}; restarting"
@@ -974,16 +1007,18 @@ reconcileDrivers() {
       fi
       reapDriver "$ups"
     fi
+
     startDriver "$ups"
+    printf '%s\n' "$digest" > "$digest_file"
   done
 }
 
 trap 'stopAllDrivers; exit 0' INT TERM
 
-rm -f "$state_dir"/*.pid "$state_dir"/*.exit 2>/dev/null || true
+rm -f "$state_dir"/*.pid "$state_dir"/*.exit "$state_dir"/*.digest 2>/dev/null || true
 last_server_digest="$(configDigest /etc/nut/ups.conf /etc/nut/upsd.users)"
 last_driver_digest="$(configDigest /etc/nut/ups.conf)"
-reconcileDrivers false || true
+reconcileDrivers || true
 
 while true; do
   sleep ` + strconv.Itoa(driverSupervisorIntervalSeconds) + `
@@ -1002,14 +1037,14 @@ while true; do
 
   current_driver_digest="$(configDigest /etc/nut/ups.conf)"
   if [ "$current_driver_digest" != "$last_driver_digest" ]; then
-    echo "driver-supervisor: driver configuration changed, restarting managed drivers"
-    if [ "$server_reload_ok" = "true" ] && reconcileDrivers true; then
+    echo "driver-supervisor: driver configuration changed, reconciling managed drivers"
+    if [ "$server_reload_ok" = "true" ] && reconcileDrivers; then
       last_driver_digest="$current_driver_digest"
     else
       echo "driver-supervisor: driver configuration reconcile failed, will retry"
     fi
   else
-    reconcileDrivers false || true
+    reconcileDrivers || true
   fi
 done`
 }

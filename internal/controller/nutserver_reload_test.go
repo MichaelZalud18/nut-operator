@@ -131,8 +131,39 @@ func TestDriverSupervisorRestartsDriversWhenUPSConfChanges(t *testing.T) {
 	if !strings.Contains(script, `current_driver_digest="$(configDigest /etc/nut/ups.conf)"`) {
 		t.Fatalf("supervisor must track ups.conf separately for driver restarts:\n%s", script)
 	}
-	if !strings.Contains(script, "reconcileDrivers true") {
-		t.Fatalf("supervisor must restart managed drivers after a driver config change:\n%s", script)
+	if !strings.Contains(script, "driver-supervisor: driver configuration changed, reconciling managed drivers") {
+		t.Fatalf("supervisor must reconcile managed drivers after a driver config change:\n%s", script)
+	}
+}
+
+// F-124: reconcileDrivers used to take a restart-everything flag and stop every tracked driver on
+// any ups.conf change, so adding one UPS restarted every other driver on the same server too. It now
+// tracks a digest per device and restarts only the ones whose own section actually changed.
+func TestDriverSupervisorRestartsOnlyTheDriverWhoseConfigurationChanged(t *testing.T) {
+	script := driverSupervisorScript()
+
+	if strings.Contains(script, "restart_all") {
+		t.Fatalf("reconcileDrivers must not take a restart-everything flag any more (F-124):\n%s", script)
+	}
+
+	// stopAllDrivers itself is still legitimate -- used on shutdown and when a device is removed --
+	// so the thing to rule out is specifically reconcileDrivers calling it unconditionally on a
+	// config-change pass, which is what restarted every driver.
+	start := strings.Index(script, "reconcileDrivers() {")
+	if start < 0 {
+		t.Fatalf("reconcileDrivers not found in supervisor script:\n%s", script)
+	}
+	reconcile := script[start:]
+	reconcile = reconcile[:strings.Index(reconcile, "\n}\n")]
+	if strings.Contains(reconcile, "stopAllDrivers") {
+		t.Fatalf("reconcileDrivers must not call stopAllDrivers -- that restarts every driver on any change (F-124):\n%s", reconcile)
+	}
+
+	for _, want := range []string{"deviceConfigDigest", "driverDigestFile"} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("supervisor must track a per-device configuration digest (%s) so an "+
+				"unrelated driver's PID survives an add/remove:\n%s", want, script)
+		}
 	}
 }
 

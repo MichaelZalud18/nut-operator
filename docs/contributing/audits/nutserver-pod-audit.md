@@ -489,3 +489,89 @@ in `validateUPSDevice` closes admission and rendering together — covered by
 `TestRenderUPSConfRefusesDriverOverrideInDriverOptions`, and
 `TestRenderUPSConfRendersExactlyOneDriverLinePerDevice`, which pins the invariant rather than the
 rejection.
+
+## Findings — driver-supervisor component-test pass, 2026-09-03
+
+`internal/controller/nutserver_driver_supervisor_component_test.go` runs `driverSupervisorScript()`
+(`F-49`) as a real process tree — real PIDs, real crashes, real kills, fake `upsdrvctl`/`upsd` on
+`PATH` — rather than checking the rendered text for a substring, which is what every test for this
+script had done until now. `F-49`'s design comment claims the per-device split isolates a failing
+driver from healthy ones; nothing had ever run the script and watched that happen.
+
+**Closed: the process model itself.** Seven tests now exercise it directly: a permanently-crashing
+driver never disturbs a healthy one's PID or process; an exited driver is recovered without manual
+intervention; an `upsd.users`-only change reloads `upsd` and leaves every driver's PID untouched; a
+failing `upsdrvctl list` leaves running drivers alone (the behavioral form of an existing text-only
+check); and a permanently-crashing driver's restart attempts are bounded to roughly one per
+reconcile interval rather than a tight spin. All pass, hold under `-race`, and were run five times
+in a row clean. This closes the "[High] codify UPS driver foreground-supervisor tests" item from
+`docs/tasks.md`.
+
+No production code changed to make this possible. The script hardcodes `/etc/nut` and
+`/run/nut/driver-supervisor`, which a non-root test cannot write to; the test substitutes those two
+literal paths in its own copy of the rendered string before executing it, the same approach
+`nodepoweragent_probes_test.go` already uses for the upsmon probe script, and fails by name
+(`TestFakeUpsdrvctlPathSubstitutionMatchesTheRealScript`) if the production script is ever edited
+so the substitution no longer applies.
+
+**Investigated and closed, not left as a gap: "backoff stays bounded" names no real mechanism.**
+There is no attempt counter or growing delay anywhere in `driverSupervisorScript` or
+`node-agent-operand.md`. What exists is a fixed reconcile interval, and a restart is a subprocess
+fork/exec inside an already-running sidecar rather than a Kubernetes container restart — it never
+touches the container's restart count or triggers `CrashLoopBackOff`, which is the exact visibility
+`F-49`'s per-device split was built to keep out of Kubernetes. Growing the delay would also fight
+this module's purpose directly: UPS telemetry needs to recover fast after a transient fault during
+a power event, not more slowly each time one recurs. The fixed-interval bound that exists is very
+likely the right design, not an unfinished one, and the test asserts that bound rather than a
+growing one it does not have.
+
+**`F-124` · A driver-config change restarts every driver, not just the one that changed.**
+`reconcileDrivers(restart_all=true)` calls `stopAllDrivers` unconditionally whenever the `ups.conf`
+digest changes, then starts everything in the newly-configured set fresh. Adding one `UPSDevice`
+therefore restarts every other driver on the same `NUTServer` too, whether or not its own
+configuration moved.
+
+This is a smaller-scope reappearance of the exact blast-radius problem the per-device split exists
+to remove — now triggered by any add or remove rather than by a crash. `F-49`'s own reasoning is
+that isolating one driver's failure from another's health is the point; a routine device add
+currently costs every co-located device a restart it did not need. Real service managers (systemd
+among them) reconcile a changed unit set without bouncing untouched units, and nothing here
+mechanically prevents the same: `reconcileDrivers` already computes which drivers are no longer
+configured (`driverInList`) and could compute which are newly configured the same way, restarting
+only the difference and leaving everything else running.
+
+Found while writing `TestDriverSupervisorDriverConfigChangeConvergesToTheNewSet`, which asserts
+convergence to the new set rather than the narrower "existing drivers keep their PID" guarantee the
+component-test task description implied — because that narrower guarantee does not hold today. The
+test documents the behavior as it stands, so a future minimal-diff fix shows up there as an
+intentional pass rather than a silent one.
+
+**Test scaffolding added 2026-09-03.** `TestF124UnrelatedDriverRestartOnUPSConfChange`
+(`internal/controller/nutserver_driver_supervisor_component_test.go`) carried both halves as
+subtests on the same harness: a passing characterization of the defect, and a `t.Skip`'d acceptance
+criterion ready for the fix.
+
+*Closed 2026-09-03.* `reconcileDrivers` no longer takes a restart-everything flag. It now tracks a
+digest per device (`deviceConfigDigest`, hashing just that device's `[name]` section of
+`ups.conf`, `driverDigestFile` recording the digest a running driver was last started with) and
+restarts a driver only when it is no longer configured, has never been started, or its own digest
+has changed since it was started — never because an unrelated device was added or removed.
+
+The naive fix — restart only names newly present in `configuredDrivers` — would have silently
+reintroduced a different bug: a device that keeps its name but has its own options edited (a
+different `port`, a different community string) would never be noticed, because `driverInList`
+alone cannot see a content change in an already-configured name. Membership and content are
+deliberately two separate checks for exactly this reason, guarded by
+`TestDriverSupervisorRestartsADriverWhoseOwnConfigurationChanges`.
+
+The acceptance test is un-skipped and renamed
+`TestF124UnrelatedDriverKeepsItsPIDOnUPSConfChange`; the characterization subtest that stood in for
+the fix is deleted, along with `TestDriverSupervisorDriverConfigChangeConvergesToTheNewSet`, whose
+convergence-only assertion is now a strict subset of the acceptance test.
+`TestDriverSupervisorRestartsDriversWhenUPSConfChanges` (`nutserver_reload_test.go`) is updated off
+the removed `reconcileDrivers true` literal, and a new
+`TestDriverSupervisorRestartsOnlyTheDriverWhoseConfigurationChanged` asserts the flag and the
+`stopAllDrivers` call are actually gone from `reconcileDrivers`'s body, not merely renamed.
+
+All driver-supervisor and readiness-probe tests pass, hold under `-race`, and were run three times
+in a row clean; the full `internal/controller` package and `golangci-lint` are both clean.
