@@ -1384,6 +1384,19 @@ a watchdog that recovers too slowly. Related, the suite is also bounded in minut
 sustained is covered — the agent forced-shutdown loop needed hours of continuous running before it
 was visible as anything but a restart count.
 
+*Closed 2026-09-04, in three passes.* 2026-08-30 bounded one driver-outage cycle inside `DEADTIME`.
+The same-day 2026-09-04 passes below added fake-clock, Kubernetes-API-stall, and NUT-timeout fault
+injection at the component level; repeated driver-process restarts (fifteen cycles); repeated real
+**Pod** restarts (eight cycles, `--grace-period=0 --force`); and then actually ran both soak specs
+against a real, isolated Kind cluster rather than leaving them merely written — 4 of 23 specs, all
+passed, real recovery numbers (driver-process mean 5.06s, Pod mean 23.59s) in
+"Repeated Pod restarts, and the soak actually run" below. What "nothing induces a failure" no
+longer describes: a chaos-style force-delete now runs, repeatedly, against a real cluster, with an
+assertion that fails if convergence doesn't hold. What is still true and stays open under Benchmark
+4's degraded-dependency framing rather than as `F-110` work: no *sustained* multi-hour run, and no
+fault class a synthetic fixture cannot produce -- a real network partition, real etcd degradation,
+a real OOM under memory pressure.
+
 **`F-111` · Coverage is collected and thrown away.** `make test` writes `cover.out` and nothing
 reads it. No gate, no upload, no trend. The file is produced on every CI run and discarded with the
 runner.
@@ -1816,3 +1829,347 @@ reapplies CRDs and the manager deployment, forces a manager rollout, mutates the
 and waits for the replacement manager to observe the new generation. Previous-release schema
 compatibility is not meaningful until there is a previous release to install, so the remaining
 pre-v1 gate is to run and verify the first tag-promotion workflow.
+
+## Test scaffolding for `F-97`, 2026-09-03
+
+The still-open question from the 2026-08-24 correction — why a driver `upsd` is still talking to
+fails a fresh `upsdrvctl status` connection, and only in the minutes after a pod start — is real
+driver/socket behavior no fixture can manufacture, and stays open. What this pass adds is the
+testable half `docs/tasks.md` already named: the readiness probe's own behavior under exactly that
+failure shape.
+
+`upsdReadinessProbeScript()` is a separate mechanism from the driver-supervisor sidecar
+(`F-49`, tested in `nutserver_driver_supervisor_component_test.go`). The kubelet execs it directly
+against the `upsd` container on its own timer (`upsdReadinessInitialDelaySeconds` /
+`PeriodSeconds` / `FailureThreshold`) to decide whether the `NUTServer` Service routes traffic —
+independent of whatever the supervisor is doing with its own driver processes. Every existing test
+for it (`nutserver_render_test.go`, `nutserver_controller_test.go`) checks the rendered text for a
+substring; none had ever run it, which matters here specifically because the script's own comment
+names two substring traps — a version banner line and `NOT_RESPONSIVE` containing `RESPONSIVE` — that
+prose can assert about but only execution can confirm avoided.
+
+`internal/controller/nutserver_readiness_probe_component_test.go` runs the real script under `sh -c`
+against a fake `upsdrvctl status`. `TestUpsdReadinessProbeScriptClassifiesRealisticStatusOutput`
+feeds it realistic multi-device transcripts, the banner-above-header shape, and an empty/nonzero-exit
+socket-not-there case, and confirms the exit code the kubelet would actually see for the first time.
+
+Three more tests model the kubelet's own exec-probe counting rule (a single Success is Ready
+immediately; `FailureThreshold` consecutive Failures is required to go NotReady) fed by real,
+sequential runs of the script — not a running kubelet, which is the `Conditional` image/Kind tier the
+task already reserves for this:
+
+- `TestReadinessToleratesADelayedDriverStart` — the "delay readiness" scenario: NotReady while the
+  driver has not started, Ready as soon as it responds, no flap in between.
+- `TestReadinessDoesNotFlapUnderTransientProbeFailures` — the honest form of "keep an existing upsd
+  session alive while rejecting new probes": isolated single-poll misses, matching the pattern the
+  2026-08-24 correction actually measured (eight of ten restarts invisible to `upsd`), never reach
+  `FailureThreshold` in a row and never cost the pod its readiness.
+- `TestReadinessFlipsNotReadyOnlyAfterSustainedFailure` — the other half: a run of failures that does
+  reach the threshold does flip the pod NotReady, and stays there while failures continue.
+
+All ten tests pass, hold under `-race`, and were run five times in a row clean. `F-97`'s root cause
+is unchanged and still open; what changed is that the readiness gate's behavior around it is now
+observed rather than assumed.
+
+## Simulation coverage for OD-27, 2026-09-04
+
+The pure math behind the 20% reserve, the 10% minimum compression, and the "plan does not fit"
+verdict was already well covered where it lives — `internal/adaptive/timing_test.go` exercises
+`Budget()` directly, and `internal/executor/adaptive_test.go` exercises `evaluateWave` against
+hand-built `Wave` literals. Neither proves that a plan which actually went through
+`planner.Compile`, and crossed into the executor through the function production uses, behaves the
+same way. `internal/controller/adaptive_boundary_simulation_test.go` closes that gap.
+
+**The boundary is the real one.** Every test compiles a genuine three-tier plan through
+`planner.CompileWithHistory`, then sends it through `shutdownflow.APICompiledWaves` and
+`executorWavesFromFlow` — the same two functions a live reconcile calls, not a re-implementation of
+either. `executor.Group` timeouts are supplied independently from the same declared values, mirroring
+`executorGroupsFromFlow`'s own split: a compiled wave carries only its aggregate duration, never a
+per-group timeout.
+
+**The reserve and minimum compression hold against the real compiled total**, and only where the
+claim is actually true: `remainingPlanDuration` sums the waves not yet run, so it shrinks wave over
+wave, and "240s available against a 270s plan" is a fact about the *first* wave only — by the second
+wave, with 60s of a 3×60/90/120s plan already run, 240s comfortably covers what's left and clamps
+back to 1. The test asserts the reserve figure on the wave where the full plan is still ahead of it,
+and states why the other waves cannot show the same number rather than silently checking only one.
+
+**A genuine multi-reading power curve**, driven through `Executor.Observer` across all three of the
+plan's wave boundaries — comfortable, then tight, then below what even the 10% floor can rescue.
+Nothing in the existing suite does this; every prior executor test applies one static observation to
+a whole run. The infeasible final wave is checked twice: `planFits: false` and `compression` held
+exactly at `DefaultParameters().MinimumCompression` in the audit record, and `"plan does not fit"` in
+the event log text a subscriber actually reads — which needed filtering by wave index rather than
+reading the last appended record, since each wave is recorded twice (a Running-phase row carrying the
+event lines, a later Completed-phase row that does not).
+
+**Replan behavior, as this codebase actually implements it.** There is no mid-flow recompilation to
+test — the design forbids it (PL-14, PL-27) — so replanning here is EX-25/EX-26's actual mechanism: a
+second `Execute()` against the same compiled plan, whose pointer resumes from an ascended state and
+re-descends through already-visited tiers, reported as re-execution rather than new work. The
+existing coverage of this (`TestASecondDipResumesFromThePersistedDepth`) hand-builds that resume
+state as a literal; this test produces it by calling `PointerState.Ascend` on a real first
+execution's result — the same method the executor itself calls on recovery — so the "second outage"
+state comes from the model, not from a value typed into the test.
+
+**Execution-history samples were fed to the boundary to find out what happens, not to assume it.**
+The design already states the answer — history moves `Plan.GroupEstimates` and
+`Plan.ObservedDuration`, deliberately outside the plan hash, so an estimate that later moves cannot
+retroactively change plan identity — but nothing had confirmed it past the estimate itself. Seeding a
+group with a 300s observed sample against a 180s declared timeout, deliberately far apart, and
+reading the actual wave duration crossing `executorWavesFromFlow` confirms it: the estimate moves to
+300s and the wave the executor compresses against stays at the declared 180s. History informs the
+number a person reads; it does not touch the number the flow runs on.
+
+**Halt-duration samples entered as calibration evidence, not as an input to any function** —
+because there is not one. `Budget()` takes an observation and a remaining plan duration; nothing in
+this codebase accepts a measured halt duration as an input, since the reserve is a fixed fraction and
+not a value derived from any single measurement. What the test checks instead: at the Urgent runtime
+threshold — the level with the least margin to spend, and so the one most likely to expose a reserve
+that is too small — 20% reserves more than a representative synthetic sample of `sync(2)` plus
+actuator plus node-agent handoff tail latency. This is exactly the role OD-27 assigns real
+measurement: useful calibration evidence pending an actual outage, not the primary closure path. A
+future pass with real `nutoperator_halt_duration_seconds` samples should replace the synthetic set,
+not add a parallel test.
+
+All five tests pass, hold under `-race`, and were run five times in a row clean. `OD-27` stays open:
+the reserve and minimum still stand in for a tail and a floor nobody has measured against a real
+outage, and simulation was never going to be the thing that measures it.
+
+## Fault-injection and repeated-restart coverage for F-110, 2026-09-04
+
+`F-110`'s 2026-08-30 pass bounded one driver-outage cycle inside `DEADTIME`. This pass adds the four
+things that entry named as still missing and testable now — fake clocks, Kubernetes client stalls,
+NUT endpoint timeouts, and repeated restarts — plus an opt-in real-cluster soak spec for the
+remaining "multi-hour"/real-pod half. Six new test files, no production code changed.
+
+**NUT endpoint timeouts** (`internal/nut/timeout_fault_injection_test.go`). Every existing spec for
+`Client.ListVariables` controls what the fake endpoint *says*; none control whether it says anything
+at all. Three specs make an endpoint that never answers instead of one that answers wrong: a dialer
+that blocks on `ctx.Done()` rather than returning `ECONNREFUSED` (proving `c.timeout`, not the
+caller's `context.Background()`, bounds a partitioned host), a connection that accepts and reads the
+request but never writes back (proving the post-connect `SetDeadline` bounds a wedged driver), and
+200 cycles alternating success and stall (proving one timed-out connection does not slow or corrupt
+the next one, and that goroutine count stays flat across the run — a per-connection leak is exactly
+the class of bug a single-cycle test cannot see).
+
+**Fake clocks** (`internal/polling/fake_clock_soak_test.go`). `Poller` already took an injectable
+`Clock`; nothing exercised it across more than one call. A hand-advanced clock drives 500 poll
+cycles at the operator's 15s telemetry cadence — just over two simulated hours — in under a second
+of real test time, with one cycle in seven failing. Two things are checked per cycle: `ObservedAt`
+matches the clock's value for that specific cycle, not some other cycle and not wall time, and a
+failed cycle leaves nothing behind that corrupts the next successful one.
+
+**Kubernetes client stalls** are the highest-value addition, and the only one that reaches a real
+production timeout boundary rather than a test double's own. `executor.go` derives `groupCtx` from
+`context.WithTimeout(actionCtx, effectiveTimeout)` — the group's own declared `Timeout` (EX-11) — and
+that is what is supposed to keep a wedged apiserver from hanging a shutdown flow indefinitely. Two
+levels of proof:
+
+- `internal/kubeactions/apistall_fault_injection_test.go` stalls `ScaleWorkload`'s `Get` and
+  `DrainNodes`' `List` — the first real Kubernetes call each path makes — with an interceptor that
+  blocks on `ctx.Done()` rather than a bare sleep, so the proof also predicts real client-go
+  behavior rather than only this test's own patience. `RunAction` returns once a 100ms caller
+  context expires, not once the interceptor's 5s safety valve does.
+- `internal/controller/executor_apistall_integration_test.go` drives the real chain end to end: a
+  plan through `planner.Compile`, a real `kubeactions.Runner` backed by the same stalled-`Get`
+  fixture, and a real `Executor.Execute` called with `context.Background()` — deliberately no
+  external deadline, so the only thing that can end the run is the executor's own enforcement of
+  the group's declared 150ms `Timeout`. It does: the flow reports `Phase: Aborted`, the group
+  itself is recorded `Failed`/`TimedOut`, and neither of the two later waves (30s timeouts each)
+  ever runs. A wedged apiserver during a live shutdown produces a bounded, promptly-reported
+  failure, not a hang for as long as the cluster stays down.
+
+**Repeated restarts.** `nutserver_driver_supervisor_repeated_restart_test.go` extends F-124's
+single-cycle proof (add one device, check an unrelated PID survives) into fifteen repeated
+add/remove cycles against the real `driverSupervisorScript()` under fake binaries. Per-device digest
+and PID bookkeeping is exactly the kind of thing a single pass cannot show a bug in — a stray file
+left behind on removal, or a digest write racing the next reconcile pass, only accumulates or
+reproduces across many cycles. Every cycle asserts the unrelated driver's PID stayed identical and
+alive, and that the added/removed device's pid and digest files were both reclaimed, not just its
+process stopped; a final check confirms no orphaned per-device state accumulated in the state
+directory across all fifteen passes.
+
+**Optional Kind/k3s soak** (`test/e2e/soak_test.go`, gated by `NUT_OPERATOR_E2E_SOAK=true`, cycle
+count via `NUT_OPERATOR_E2E_SOAK_CYCLES`, default 10). Not run against a live cluster this pass —
+written and `go vet -tags e2e`/`golangci-lint --build-tags e2e` clean, not executed, and that
+distinction is stated rather than implied. It repeats `driverRecoverySpecs`' single outage cycle
+against a real operand image and a real kubelet, which is the one thing the component-level repeated
+restart test above cannot reach: whether a real container's PID 1, real cgroups, and a real
+kubelet's own restart accounting stay stable across many cycles, not just the shell script's own
+bookkeeping. Deliberately not wired into the default e2e run — it is many multiples of
+`driverRecoverySpecs`' own runtime by construction, and `F-77` already gates a published `:main` on
+that suite passing; adding an unconditional soak cost to that path is the wrong trade for a signal
+this project does not yet have a non-blocking place to run. `applyDummyUPSFixture`/
+`waitForNUTServerPodReady`/`teardownDummyUPSFixture` were pulled out of `driver_recovery_test.go`
+into `dummy_ups_fixture_test.go` so the two specs share one fixture implementation rather than two
+copies drifting — `golangci-lint`'s `dupl` check caught the duplication before it landed.
+
+What this pass does not cover, and F-110 should stay open for: real repeated **Pod** restarts
+(deleting the NUTServer pod itself many times and confirming the render/reconcile path converges
+every time, as opposed to the driver process inside one long-lived pod restarting many times, which
+is what both new repeated-restart specs actually exercise), and any soak run actually executed
+against a live cluster rather than only written and compiled. Both were named in the original
+finding and neither is closed by this pass.
+
+Full suite (`go build`, `go vet`, `golangci-lint`, `go test ./api/... ./cmd/... ./internal/...
+./test/utils`, plus `go vet -tags e2e` and `golangci-lint --build-tags e2e` for the two e2e-tagged
+files) is clean. The `internal/controller` package was additionally run three times over with
+`-run 'TestDriverSupervisor|TestF124'` after the new repeated-restart spec landed, since it is a
+real-process test and therefore the one most exposed to timing flakiness; all three runs passed.
+
+## Repeated Pod restarts, and the soak actually run, 2026-09-04
+
+The same-day pass above wrote `test/e2e/soak_test.go` and stated plainly that it had not been run.
+This entry closes that gap and adds the other half `F-110` named as still missing: real repeated
+**Pod** restarts, as opposed to a driver process restarting many times inside one long-lived pod.
+
+**`test/e2e/pod_restart_test.go`** (`podRestartSpecs`, same `NUT_OPERATOR_E2E_SOAK=true` gate,
+`NUT_OPERATOR_E2E_SOAK_POD_RESTART_CYCLES` default 8) force-deletes
+(`--grace-period=0 --force`) the NUTServer pod itself, repeatedly — not a process inside it. Force
+rather than graceful, deliberately: a graceful delete exercises the container's own shutdown
+machinery the way a normal rollout would, which this project already covers elsewhere; a forced
+delete is the shape a node failure or an OOM kill actually takes, and the harsher one for "does the
+rendered PodSpec converge to Ready from nothing" to fail against. Each cycle asserts exactly one
+Ready pod matches the selector afterward (catching a duplicate left behind, not just "a pod
+exists") and that the UPSDevice's `status.phase` reconverges to `Online` — telemetry actually
+resuming, not merely a container running. `dummy_ups_fixture_test.go` (the shared setup extracted
+from `driverRecoverySpecs` in the same-day pass above) is what let this spec exist without a third
+copy of the fixture boilerplate.
+
+**Both specs were then actually run**, against a fresh, isolated `nut-operator-test-e2e` Kind
+cluster (3 nodes, Calico) built and torn down for this pass — never against the pre-existing,
+unrelated `nut-od37` cluster already running on this host, which nothing here touched. Blocked
+initially on `fs.inotify.max_user_instances` (128, needs 512 for the third node's kubelet to join
+at all — Kind reports success on an undersized cluster regardless, per `F-109`), which needed a
+one-time host `sudo sysctl -w` outside this session's own privileges; recorded because the block was
+real, not a formality skipped over.
+
+Run with `go test -tags=e2e ./test/e2e/ -ginkgo.focus="Driver recovery|Pod restart stability"`
+rather than the full suite, to bound the run to what this pass was actually about (4 of 23 specs);
+`TestSuiteImageTableIsWellFormed` still ran ungated ahead of it. All four passed, real numbers, no
+mocks:
+
+| Spec | Cycles | Result |
+| --- | --- | --- |
+| Driver recovery under failure (existing, 2026-08-30) | 1 | 4.32s → this run: recovered, budget 30s |
+| Driver recovery soak | 10 | mean **5.06s**, range 4.60s–5.40s, budget 30s each |
+| Pod restart stability | 8 | mean **23.59s**, range 21.18s–27.57s, budget 2m each |
+
+Two things worth reading into those numbers rather than just the pass/fail. The soak's ten cycles
+cluster tightly around 5s with no upward drift across the run -- the shape a leak or an
+accumulating-state bug would have broken, and didn't. And the ~4.6x gap between the two means is
+the real cost this finding set out to measure: a process restart inside an already-Ready pod is
+cheap (driver-supervisor notices, `upsdrvctl start` runs, done), while a Pod's own death pays for
+rescheduling, a fresh `nut-tls-assemble` init container, two fresh containers, and a cold readiness
+probe before anything reconverges -- five times the cost for the failure mode a real node event or
+OOM kill actually produces, not the cheaper one this project had coverage for until this pass.
+
+`F-110` is now closed on the "testable now" and "optional soak" fronts both. What's left, named in
+Benchmark 4's own "degraded-dependency behavior" framing rather than as unfinished `F-110` work: a
+true multi-hour continuous run, and fault classes no synthetic fixture can produce -- a real node's
+network partition, a real etcd degradation, a real OOM under memory pressure rather than a clean
+`kill -9`/pod delete. Those are `Real-resource` by nature, the same distinction the finding drew
+for the original single-cycle driver-outage bound.
+
+## Dependency vulnerability triage, 2026-09-04
+
+A routine `make security-scan` before committing this session's other work found three actionable
+ASH grype HIGH findings, all in `go.mod`: `GHSA-vp52-pcj8-j9qc` (`google.golang.org/grpc`
+v1.82.1) and `GO-2026-6354`/`GO-2026-6355` (`golang.org/x/crypto/ssh` v0.55.0, both a DoS on a
+deadlocked SSH channel -- established and undecided, respectively). All three raw grype hits also
+showed up at paths under `bin/**` -- the gitignored local tool cache holding envtest's
+etcd/kube-apiserver binaries, this repository's own downloaded scanners, and a stale locally-built
+`manager` binary -- which is exactly what `.ash.yaml`'s existing `ignore_paths` entry exists to
+filter, and does: the aggregated report (`reports/ash.sarif`) carried only the three real `go.mod`
+hits, confirmed by diffing the raw per-scanner SARIF against it directly rather than assuming the
+suppression config was doing its job.
+
+**Cross-checked with `govulncheck` before fixing anything**, not after. `go run
+golang.org/x/vuln/cmd/govulncheck@latest -show verbose ./...` confirmed 0 findings at the symbol
+(actually-called) level for all three -- both packages arrive through `cmd/node-actuator`'s Talos
+client (`github.com/siderolabs/talos/pkg/machinery/client`), present in the build but never on a
+path this code calls. That does not change what ASH's gate does (it scores by version present, not
+reachability, which is the correct default for a dependency gate -- reachability can change on the
+next commit without a dependency bump touching anything) but it does answer "how urgent is this"
+honestly rather than by assumption.
+
+All three had fix versions available, so all three were taken: `go get
+google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 && go mod tidy`. Verified clean
+afterward, not just applied: `go build`, `go vet`, `golangci-lint`, the full non-e2e suite (`go
+test ./api/... ./cmd/... ./internal/... ./test/utils`), a second `govulncheck` pass (both findings
+gone), and a second `make security-scan` (grype back to 0 critical/high, the one already-tracked
+`GO-2026-5932` low finding unchanged, every scanner PASSED).
+
+**The cross-check also found something ASH's own scan did not.** `govulncheck` additionally
+reported `GO-2026-6094` (`github.com/google/cel-go`, a JSON private-field exposure), imported (not
+merely required) via controller-runtime's own metrics-endpoint authorization filter --
+`sigs.k8s.io/controller-runtime/pkg/metrics/filters` → `k8s.io/apiserver/pkg/authorization/cel` →
+`cel-go/cel`. Neither the first nor the second `make security-scan` run surfaced it at all: grype's
+vulnerability database does not carry this advisory as of this pass. That is the actual finding
+here, not the CVE itself -- two vulnerability databases built from different sources will disagree
+about what they know, on a timescale neither one publishes, and a single scanner's clean result is
+a claim about that scanner's database, not about the dependency tree.
+
+**Fixed the same day, on request, once it was clear what fixing it actually required.** A direct
+`go get github.com/google/cel-go@v0.30.0` failed: `k8s.io/apiserver@v0.36.0` still pinned
+`cel-go@v0.29.0`, and MVS would not move a transitive dependency past what its requirer allows.
+Taking the fix meant bumping the requirer -- the whole `k8s.io/*` API family together (`k8s.io/api`,
+`apiextensions-apiserver`, `apimachinery`, `apiserver`, `client-go` v0.36.0 → v0.37.0,
+`sigs.k8s.io/controller-runtime` v0.24.1 → v0.25.0), which raised cel-go to v0.29.2 as a byproduct,
+then `github.com/google/cel-go@v0.30.0` directly on top. The module-path rename to `cel.dev/cel-go`
+that a first look assumed was blocking this fix does not happen until some version past 0.30.0 --
+that assumption was wrong, and the correction is worth recording next to the original claim rather
+than silently editing it away. Verified clean on the bumped versions, not just built: `go vet`,
+`golangci-lint`, the full non-e2e suite including the envtest-backed `internal/controller` and
+`internal/webhook/v1alpha1` packages (against the same cached kubebuilder-assets binaries, 1.34–1.36
+-- the client-library bump needed no envtest reprovisioning), `make manifests generate` with no
+diff, a third `govulncheck` pass (`GO-2026-6094` gone, only the already-accepted, fix-unavailable
+`GO-2026-5932` left), and a third `make security-scan` (clean, every scanner PASSED).
+
+Worth carrying forward as a practice, not just a one-time check: `govulncheck` alongside `make
+security-scan`, not instead of it -- each catches what the other's database has and the other's
+doesn't, and reachability answers urgency in a way a version-only scan cannot.
+
+## F-125 · The stableHash-panics-on-marshal-failure pattern is copy-pasted six times, 2026-09-04
+
+Found while looking for a second easy fix alongside another task: `grep -rn "panic(" --include=*.go
+internal/ cmd/` (excluding tests) turned up the exact shape `F-123` fixed in `internal/planner` --
+a local `stableHash`/`hashJSON` helper that panics if `json.Marshal` fails -- copy-pasted into five
+more places: `internal/capability/matcher.go`, `internal/resolver/structural.go`,
+`internal/inventory/compiler.go`, `internal/shutdownflow/adapter.go`, and two differently-named
+instances in `internal/controller` (`stableHookSpecHash` in `shutdownflow_hooks.go`, `hashJSON` in
+`declarative_inventory_adapter.go`). Every one hashes plain structural data -- strings, string
+slices, maps, small structs -- so `json.Marshal` failing is exactly as "effectively unreachable"
+in each of them as it was in the one `F-123` already fixed, and a panic mid-reconcile is the same
+worse-than-a-clean-error failure mode in all six.
+
+**Fixed 2026-09-04 for `internal/capability` and `internal/resolver`.** Both were the cleanest
+targets: `capability.Match`, `capability.MatchPDU`, and `resolver.ResolveStructural` already
+return `(_, []Diagnostic, error)` -- the identical shape `planner.Compile` does -- so threading the
+error through was a direct copy of `F-123`'s own fix, not a new design decision. `stableHash` in
+both packages now returns `(string, error)`; a failure surfaces as a new `*HashEncodingFailed`
+diagnostic (`ProfileHashEncodingFailed` in capability, `BundleHashEncodingFailed` in resolver) and
+the existing `ErrRejected` return, matching how every other rejection in each function already
+reads. `TestStableHashReturnsErrorRatherThanPanicking` in each package proves the mechanism
+directly with a `chan int`, the same technique `F-123`'s test used, for the same reason: it is the
+only way to observe this branch at all, since every real value either package ever hashes is
+exactly the kind that cannot fail to marshal. Full suite (build, vet, lint, `go test ./api/...
+./cmd/... ./internal/... ./test/utils`) reran clean.
+
+**Not fixed this pass, tracked instead:**
+
+- `internal/inventory/compiler.go` has three call sites, not one -- inside `Compile` itself (which
+  already returns an error, like the two fixed above), but also inside `validateSnapshot` and
+  `deriveCommunicationOrders`, neither of which currently returns an error at all. Fixing this one
+  means giving two more functions a new return value, not just checking one that already exists.
+- `internal/shutdownflow/adapter.go`'s `stableHash` is called from `PlannerTierPolicy`, which
+  returns only `planner.TierPolicy` (no error) and is called by `PlannerInputsWithTierPolicy` /
+  `PlannerInputs`, in turn used by `internal/webhook/v1alpha1/shutdownflow_webhook.go` and
+  `internal/controller/validation.go` -- a wider, cross-package signature change.
+- `internal/controller`'s two instances (`stableHookSpecHash`, `hashJSON`) are both
+  package-private helpers whose caller graphs were not traced this pass.
+
+Each remaining instance is the same five-line fix once its own caller chain is worked out -- real,
+low-severity, and a reasonable next "easy fix" pass, not evidence the first two were a special
+case.

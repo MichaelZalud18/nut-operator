@@ -61,6 +61,27 @@ Recovery orchestration is out of scope for this project (OD-1, closed). External
 may subscribe to published planner artifacts, including advisory startup wave projections, but the
 operator does not execute recovery and does not own bring-up policy.
 
+### Executor restarts and idempotency
+
+The manager is expected to remain running until its shutdown orchestration finishes. An unexpected
+crash or leader change can still occur, but restart/resume continuity is outside this project's
+scope, not an implicitly deferred feature. Preserving an execution ID, recovering an exact wave or
+timing mode, and proving completed actions through durable resume evidence are not product
+requirements. Idempotency does not guarantee that an interrupted flow finishes.
+
+Repeated shutdown actions must be safe because their intended effect is idempotent (`EX-26`), not
+because the operator can prove they were delivered exactly once. Repeat safety must not depend on
+retaining the same execution ID. External hook authors/receivers own the same property for their
+effects; repeated invocation or audit records are not themselves a correctness failure.
+
+Audit history and correct in-process progress reporting remain in scope. Existing resume helpers
+and `executor_resume_states` records in the implementation do not establish a supported restart
+contract; this documentation clarification does not remove them. Approval, signal expiry, and
+node-binding checks remain required independently of idempotency.
+
+Scope clarified 2026-09-05, superseding the restart-continuity promise formerly recorded under
+`EX-14` and `OD-17`. Reviews must distinguish an unsafe repeated effect from missing resume evidence.
+
 ## SB-2 · Relationship to NUT
 
 *Components: Telemetry & Triggers, NUT Server / upsd, Capability Profiles.*

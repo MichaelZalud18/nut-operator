@@ -14,6 +14,9 @@ UPS, database, or network path is safe to ignore.
   progress records the last confirmed Kubernetes action and leaves the node release state explicit.
 - The controller uses Kubernetes leader election so one active planner/executor instance owns
   decisions during normal API-server availability.
+- The manager is expected to remain available while orchestrating shutdown. Unexpected restart
+  does not carry a resume guarantee; repeat safety comes from action idempotency, not durable resume
+  evidence. See [SB-1](scope-boundaries.md#executor-restarts-and-idempotency).
 - Node agents are passive by default. They do not invent local shutdown policy when the API server,
   NUT server, or operator is unreachable.
 - Node shutdown signals are structured, node-bound, plan-hash-bound, execution-bound, and TTL-bound.

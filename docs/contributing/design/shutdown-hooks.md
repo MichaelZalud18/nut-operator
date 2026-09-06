@@ -120,6 +120,12 @@ then records the request it *would* have sent without contacting the target syst
 backoff, DAGs, branching, artifact passing, and templating from prior results are workflow-engine
 concerns. Reaching a real engine stays fully supported — that is what HK-3 is for.
 
+`EX-26` still applies to the receiver's effects: a shutdown hook must be safe to invoke again when
+its intended effect is already applied. The author/receiver owns that idempotency; execution and
+CloudEvents IDs are correlation data, not an exactly-once guarantee across invocations. See
+[SB-1](scope-boundaries.md#executor-restarts-and-idempotency). A missing resume record is not a
+reason to add operator-side hook retries or crash-recovery orchestration.
+
 ## Decisions Closed
 
 **OD-33 · Hook waiting.** No opt-in bounded wait exists in v1alpha1. A `ShutdownHook` invocation is a

@@ -122,6 +122,21 @@ roles — control-plane, worker — never hostnames.
 
 ---
 
+## 9. Restart continuity and exactly-once shutdown
+
+**Settled by:** [SB-1's executor restart boundary](scope-boundaries.md#executor-restarts-and-idempotency)
+and `EX-26`; the old `EX-14`/`OD-17` resume promise was superseded on 2026-09-05.
+
+Actions must be safe to repeat. Reconstructing an interrupted execution, keeping its identity stable
+across a crash, and proving which actions already ran are outside project scope. Existing resume
+code or schema is not a reason to reopen that scope.
+
+**The tell:** treating a changed execution ID or missing checkpoint as a shutdown-safety finding
+without demonstrating an unsafe repeated effect. Test action idempotency, including external hook
+effects, rather than adding an exactly-once delivery or restart-recovery subsystem.
+
+---
+
 ## When something really is a new decision
 
 It is a new decision when the requirements are silent *and* two defensible answers lead to different

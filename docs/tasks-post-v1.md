@@ -2,20 +2,18 @@
 
 Work that is real and intended, but deliberately not part of v1.
 
-This file exists so [tasks.md](tasks.md) can answer exactly one question — what is left before v1 —
-without carrying items that cannot close no matter how much work is done. Everything here is
-tracked, not dropped: a decision recorded in `docs/contributing/design/scope-boundaries.md` or an upstream
-dependency outside this project is what puts an item on this page.
-
-The bar for moving something here is narrow. "Hard", "unscheduled", or "nobody has picked it up"
-are not reasons — those stay in `tasks.md` as open v1 work. The two qualifying reasons are:
+This file keeps [tasks.md](tasks.md) focused on v1. Items belong here only when a recorded scope
+decision or upstream dependency blocks them from closing before v1.
 
 - **Scope**, where `scope-boundaries.md` places the work beyond v1. Reversing that means reopening
   the decision, not quietly re-planning.
 - **Upstream**, where the capability does not exist yet in software this project consumes. No amount
   of work here closes it.
 
-Last reviewed: 2026-08-29
+Last reviewed: 2026-09-04
+
+Use the testability labels defined in [tasks.md](tasks.md): **Testable now**, **Conditional**, and
+**Real-resource**.
 
 ---
 
@@ -30,6 +28,9 @@ ordering needs a network device to be an actuation target.
 outlet control — both already on this page. The Planning & Execution Logic entry for `PL-21` is the
 owning line; this is the Inventory-side half of the same gate.
 
+Testability: **Testable now** for synthetic ordering fixtures once a network-device actuation
+interface exists; **Real-resource** only for final outlet or network-device behavior.
+
 ## Capability Profiles
 
 ### Actuation verification lifecycle (`F-27`)
@@ -41,6 +42,10 @@ result is recorded, or how it becomes a profile change
 **Why it is post-v1:** the audit's own recommended order puts `F-27` before instant-command work
 under `OD-20`, and `OD-20` is on this page. `UPSCapabilityProfile.spec.actuation.behaviors` has no
 consumer until it lands, so there is nothing in v1 for a verification lifecycle to gate.
+
+Testability: **Testable now** for the lifecycle shape with fake profile behaviors and simulated
+command results once the consumer exists; **Real-resource** for profile claims about a specific
+UPS/PDU model.
 
 ### Non-NUT power device actuation (`OD-24`)
 
@@ -56,6 +61,10 @@ control surfaces outside the NUT-network-only posture that the security narrativ
 
 Reversing this is a scope decision, not a planning one.
 
+Testability: **Testable now** for provider, rendering, approval, and fake-actuator behavior after the
+scope decision reopens; **Real-resource** for proving a specific non-NUT power device can be safely
+controlled.
+
 ### PDU outlet control (`OD-25` actuation half)
 
 The PDU capability kind and its matcher path are v1 scaffolding and are built. Actually switching
@@ -64,6 +73,9 @@ same control-surface question as `OD-24`.
 
 A profile can declare that a model has switchable outlets. Nothing acts on that declaration, and
 `UPSCapabilityProfile.spec.actuation.behaviors` has the same dead-field shape until `OD-20` lands.
+
+Testability: **Testable now** for command selection, approval gates, and fake NUT command execution
+after `OD-20`; **Real-resource** for claiming actual outlet switching against hardware.
 
 ---
 
@@ -86,6 +98,10 @@ by `OD-1`: anything touching power *return* is recovery orchestration, which is 
 scope entirely. A v2 design has to separate "stop wasting battery" from "bring things back up",
 because only the first is ours.
 
+Testability: **Testable now** for `upscmd`/`upsrw` parsing, policy gating, and command dispatch
+against fake or simulated NUT endpoints; **Real-resource** for any claim that a command safely cuts
+or restores power on a specific UPS/PDU.
+
 ### NUT forced-shutdown broadcast, FSD (`OD-19`)
 
 The decision half of this was tracked separately under Capability Profiles; both halves live here
@@ -98,6 +114,9 @@ identity, a timestamp, and a reason, and is staleness-checked on read. FSD carri
 **Why it is post-v1:** adopting FSD as an *additional* release signal would make shutdown
 observable through standard NUT tooling, which has real operational value. It is not required for
 correctness, and two release paths need a decision about which one wins before either is wired.
+
+Testability: **Testable now** for FSD signal handling, precedence, and stale/duplicate release
+behavior with simulated NUT peers; **Conditional** compatibility smoke if NUT packaging changes.
 
 ---
 
@@ -115,6 +134,10 @@ plans from inventory, which already models a node in more than one power domain 
 hardcoded values are inert while the scaffold is disabled, and become real again only if it is ever
 unlocked.
 
+Testability: **Testable now** for inventory-to-`MONITOR` rendering and multi-supply decision math;
+**Real-resource** only if local `upsmon` shutdown is re-enabled and a dual-UPS host claim must be
+proved.
+
 ### USB and serial UPS support (`OD-10`)
 
 Local USB and serial UPS connectivity is excluded from v1 by `RB-1`. Only network-reachable devices
@@ -129,6 +152,9 @@ is precisely what `RB-1` refuses.
 `SB-4` already names the shape the eventual support must take: a third container or a separate
 DaemonSet with its own isolated actuation boundary and its own security rationale. It cannot be a
 flag on the existing agent.
+
+Testability: **Testable now** for the isolated boundary, pod rendering, and admission/security
+rules once designed; **Real-resource** for USB/serial driver access and host-device behavior.
 
 ### Older NUT and UPS support via a `dummy-ups` translation layer
 
@@ -145,6 +171,9 @@ Nothing about this is designed yet. It is recorded because the alternative — w
 images or the driver allowlist to accommodate old versions — would undo `OD-32` and `RB-2`, and
 that trade should be made deliberately rather than discovered.
 
+Testability: **Testable now** with fake upstreams, old-NUT containers, or recorded NUT protocol
+traces; **Real-resource** for declaring support for a specific older UPS/NUT appliance.
+
 ### Bottlerocket actuator policy review
 
 Bottlerocket is the next plausible operating system after Talos for first-class node actuation. It is
@@ -160,6 +189,10 @@ This follows `NA-12`: named operating-system policies exist only when they provi
 documented, supportable safety boundary. Flatcar, Fedora CoreOS, RHCOS, and similar systemd-based
 container hosts remain covered by generic Linux `PowerOff` until a maintainer can point to a better
 shutdown interface and prove the narrower boundary.
+
+Testability: **Testable now** for rendering, approval gates, and a fake Bottlerocket host API;
+**Real-resource** for proving the Unix-socket, SELinux, and actual host-action boundary on a
+sacrificial Bottlerocket node.
 
 ---
 

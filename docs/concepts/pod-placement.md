@@ -88,7 +88,7 @@ replicas not co-scheduling if an HA topology is ever designed, which is a differ
 Enforcing separation is a change to the shipped manager manifest, not to the example, so it belongs
 with the leader-election and replica work in `docs/contributing/design/scaling-and-sizing.md` rather than here.
 
-## Signal delivery crosses the node boundary exactly once
+## Signal delivery uses one authorization path
 
 The actuator holds no Kubernetes API credentials. The only authorization signal reaching it is the
 `<agent>-node-signals` Secret, projected by kubelet, with one `<node>.json` key per node. The

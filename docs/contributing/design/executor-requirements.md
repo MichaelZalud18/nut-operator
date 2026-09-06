@@ -177,17 +177,11 @@ has no uncordoned node to land on. Waiting therefore aborts the flow and leaves 
 the runtime drains, which is the outcome `PL-31` and `OD-12` both refuse elsewhere. Throttling `429`s
 from API Priority and Fairness are not overridden — that is backpressure, not policy.
 
-**EX-14 · Idempotent, resumable execution.** The executor may restart mid-flow (it is itself a
-workload in a cluster that is shutting down). Execution state sufficient to resume — current wave,
-group states, enumerated instances, tier pointer, and timing mode — is persisted such that a restarted
-executor continues rather than re-running completed actions or abandoning the flow. PostgreSQL stores
-compact resume state in `executor_resume_states` and durable progress in the execution, wave, group,
-and action-attempt tables.
-
-The pointer and the timing mode are part of that state, not decoration on it. A restarted executor
-that started from a fresh pointer would re-report tiers it already descended as new work, and one that
-started from a fresh timing mode would silently relax a flow that had escalated — handing back time it
-may need and cannot get again.
+**EX-14 · Idempotent execution, without a restart-continuity guarantee.** The former requirement
+to resume at an exact persisted wave and avoid repeating completed actions was superseded on
+2026-09-05 by [SB-1](scope-boundaries.md#executor-restarts-and-idempotency). `EX-26` remains the
+action-safety contract. Existing resume readers, writers, and schema do not turn restart recovery
+or durable resume evidence into product requirements.
 
 ---
 
@@ -256,6 +250,11 @@ cordoning a cordoned node, powering off a node that is already off.
 This is a requirement on the actions, not a property that happens to hold. A non-idempotent action
 would break re-descent silently, surfacing only during a second dip in a real outage. Consequence: no
 flapping protection is needed on the descent path.
+
+This applies to the intended external effect of `RunHook` as well as stock Kubernetes actions;
+the hook author/receiver owns repeat safety. Correlation IDs and duplicate-delivery suppression
+do not substitute for that property, including when a new invocation has a different execution ID.
+Repeated audit entries or notification deliveries are permitted; repeated unsafe effects are not.
 
 **EX-27 · Ascent is bookkeeping only** (was EX-27). Moving the pointer up records that power improved.
 It triggers no actions, and therefore needs no hysteresis — moving up on a brief flicker costs
@@ -392,9 +391,10 @@ information the author is owed.
 the explicit local audit spool is the fallback for records generated while PostgreSQL is unavailable
 during execution. Replay/drain automation is a recovery-subscriber concern.
 
-**OD-17 · Executor state persistence for resume — closed.** The executor persists wave position and
-compact state in PostgreSQL `executor_resume_states`. Detailed progress remains in the execution,
-wave, group, action-attempt, node-release, and signal-handoff tables.
+**OD-17 · Executor state persistence for resume - superseded 2026-09-05.** Restart/resume continuity
+is outside project scope under [SB-1](scope-boundaries.md#executor-restarts-and-idempotency).
+The existing tables and helpers remain implementation details, not a requirement to expand or
+prove crash recovery. Durable audit history remains in scope.
 
 Bound from elsewhere: OD-12 (infeasibility policy — consumed at EX-3), OD-14 (partial-domain scope
 — determines what EX-10 executes when one domain fires).

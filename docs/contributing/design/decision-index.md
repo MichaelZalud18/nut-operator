@@ -116,7 +116,7 @@ narrative account and now uses the folded numbers.
 | OD-8 | Dissolved — lookup, not merge; residue → OD-8r | planner CR section |
 | OD-11 | Hybrid selector resolution: compile graph, enumerate at execution | planner Resolved |
 | OD-13 | Load shedding node-granular baseline | planner Resolved |
-| OD-17 | Executor mid-flow state persists to PostgreSQL execution and resume-state tables | executor EX-14 |
+| OD-17 | Superseded 2026-09-05: restart/resume continuity is out of scope; action idempotency remains required. Existing resume storage is not a product guarantee | [SB-1](scope-boundaries.md#executor-restarts-and-idempotency), EX-14, EX-26 |
 | OD-23 | Alias maps live in the profile telemetry section. Native readings outrank aliases; aliasing is one-directional and total; every applied alias is a diagnostic | capability-profiles.md |
 | OD-18 | Tier inversion blocks the node by default: an inverted node is withheld from power-off for the whole flow. `spec.groups[].tierInversionPolicy: Allow` opts a group out per workload. Migration declined as a general remedy — node-local PVCs mean there is not always anywhere to move to | Planner tier compilation (Planner design) |
 | OD-32 | NUT operand SSL backend is OpenSSL, built from source. NSS is more feature-complete for client certificates today, but has no CERTFILE and needs a cert database instead of the PEM a TLS Secret projects. Alpine's NSS build was not a considered choice: the aport requests both backends and NSS wins by precedence in configure.ac | Operand images (F-39 – F-41) |

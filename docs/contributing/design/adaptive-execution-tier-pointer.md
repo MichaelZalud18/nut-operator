@@ -159,17 +159,15 @@ explicit decision made before the outage, not during one.
 
 ## Executor state
 
-Pointer and timing mode must survive executor restart, or a restarted instance resumes at the wrong
-depth or silently reverts to `Nominal`. Bound to OD-17.
+Pointer and timing mode must stay consistent during execution. Recovering them across an executor
+restart is not required; the former OD-17 promise was superseded by
+[SB-1](scope-boundaries.md#executor-restarts-and-idempotency).
 
-Both live in `executor_resume_states`, alongside execution ID, plan config hash, current wave index,
-phase, and an open `state` payload, written through `UpsertExecutorResumeState` as an upsert keyed
-by execution. They belong in that record rather than a parallel one.
-
-Durability caveat, shared with everything on this path: if PostgreSQL is unavailable, resume state
-falls to the audit spool and returns on the first reconcile that can write again. A restart during a
-database outage therefore resumes from the last state that actually landed, not necessarily the last
-one attempted.
+The current implementation writes both to `executor_resume_states`, alongside execution ID, plan
+config hash, current wave index, phase, and an open `state` payload. `UpsertExecutorResumeState`
+upserts by execution ID. These are existing record shapes, not a supported crash-recovery contract.
+An enabled audit spool can preserve failed writes, but evidence durability does not guarantee that
+an interrupted execution will resume or complete.
 
 ## Implementation
 
@@ -188,8 +186,8 @@ Three separable pieces, deliberately not sharing mutable state:
 The pointer and the timing mode are independent, as this document requires. Splitting them at the
 file boundary with no shared state is what stops a later change from quietly coupling them.
 
-`PointerState` is persisted across executor restarts, so it can arrive from an older or partially
-written record. `normalize()` repairs a `Deepest` that was never set or has drifted above the current
+`PointerState` can be supplied from an older or partially populated record. `normalize()` repairs
+a `Deepest` that was never set or has drifted above the current
 tier, conservatively, to the current tier: a wrong value there mislabels re-execution as new work,
 which is a reporting error at exactly the moment a subscriber is trying to understand a second dip.
 
@@ -226,8 +224,8 @@ Three inputs cross the boundary:
   trigger time would defeat the point of evaluating at boundaries at all.
 - **The tier**, taken from each compiled wave's own `shutdownTier` rather than counted. Counting waves
   drifts the moment one tier spans two waves.
-- **The prior state**, loaded from the last published execution status so a restarted executor resumes
-  where it was (OD-17, EX-14).
+- **The prior state**, supplied by the caller. The existing controller can seed it from recorded
+  execution state; this does not promise exact restart continuity (EX-14).
 
 Reading power degrades rather than refuses. A `UPSDevice` that cannot be read contributes an unknown
 runtime, exactly like a stale one, and the flow continues — PL-32 keeps the reading pessimistic while

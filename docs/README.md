@@ -8,11 +8,9 @@ order out. A UPS buys minutes; spending them well means shedding what is disposa
 holds state, draining the workers, and stopping the control plane last — rather than losing every
 machine at once when the battery ends.
 
-**Most of what makes a shutdown correct is something you supply.** How the racks are actually wired,
-which workloads are disposable, what has to outlive everything else, whether a given machine may be
-powered off at all. None of that is derivable from a cluster, and a wrong answer surfaces during a
-power failure. So this documentation is weighted toward the decisions rather than the API —
-[Guides](guides/README.md) is the section to read slowly.
+**Most of what makes a shutdown correct is something you supply.** Rack wiring, workload priority,
+last-ditch workloads, and node actuation policy are operator decisions. Start with
+[Guides](guides/README.md) before enabling anything that can halt a node.
 
 ## First hour
 
@@ -34,32 +32,24 @@ behaves. Going further — actually letting it stop a machine — is
 
 ## Sections
 
-Every page states its `Components:` and its `Audience:` under the title, so who a page is for is
-visible at the point of reading rather than inferred from where it sits. The audiences are
-**evaluators** (deciding whether to use this), **operators** (running it), **integrators** (building
-against its API and metrics), and **contributors** (changing it).
+Pages declare `Components:` and `Audience:` under the title.
 
-
-**[Concepts](concepts/README.md)** — what the system is. The control plane and its two operands, how
-a power event moves through them, and where the pods land.
+**[Concepts](concepts/README.md)** — the control plane, operands, power-event path, and pod
+placement.
 
 **[Installation](installation/README.md)** — prerequisites and the install itself, the
 [webhook certificate decision](installation/webhook-certificate.md),
 [configuration](installation/configuration.md) in dependency order, and
 [upgrade and uninstall](installation/upgrade-and-uninstall.md).
 
-**[Guides](guides/README.md)** — the six judgement calls, in the order you hit them: preparing the
-hardware, modeling the topology, assigning tiers, choosing what is last-ditch, setting the
-tier-overrun policy, and enabling actuation — plus NetBox inventory import and profiling a UPS the
-catalog does not cover.
+**[Guides](guides/README.md)** — hardware prep, topology modeling, tiers, last-ditch workloads,
+tier-overrun policy, actuation, NetBox import, and unknown UPS profiling.
 
 **[Reference](reference/README.md)** — [API reference](reference/api.md),
 [glossary](reference/glossary.md), [metrics](reference/metrics.md),
 [security](reference/security.md), and [image strategy](reference/images.md).
 
-**[Examples](examples/README.md)** — [Orion cluster](examples/orion-cluster/README.md), one fully authored
-flow with every edge explicit; and [simulation scenarios](examples/simulation/README.md), tiers only,
-with the wave structure derived. Every manifest in both is schema-validated in CI.
+**[Examples](examples/README.md)** — worked and simulated manifests, schema-validated in CI.
 
 **[Troubleshooting](troubleshooting.md)** — symptoms and causes.
 

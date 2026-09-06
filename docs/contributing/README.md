@@ -12,8 +12,10 @@ requirement that settles it and the tell that you are about to re-litigate it.
 
 ## Design
 
-Written as implemented — a requirement described here is a requirement that exists. Requirement
-identifiers (`PL-n`, `EX-n`, `IN-n`, `NA-n`, …) are stable, never reused, and never renumbered.
+Design contracts and intended behavior. Known implementation gaps belong in
+[tasks.md](../tasks.md); a requirement's presence here is not evidence that its implementation has
+been verified. Requirement identifiers (`PL-n`, `EX-n`, `IN-n`, `NA-n`, …) are stable, never reused,
+and never renumbered.
 
 - [Scope boundaries](design/scope-boundaries.md) — what the project is and is not, plus the decision
   registry of record.
@@ -36,13 +38,16 @@ identifiers (`PL-n`, `EX-n`, `IN-n`, `NA-n`, …) are stable, never reused, and 
 
 ## Audits
 
-Dated findings and evidence, `F-n` identifiers. A design document states what is true; the audit
-that produced it shows the work.
+Dated findings and evidence, `F-n` identifiers. Design documents state the contract; audits record
+what was inspected or tested and where the implementation differs.
 
 - [Node agent DaemonSet](audits/node-agent-daemonset-audit.md) — the largest, covering the halt path
   end to end.
+- [Fresh repository review, 2026-09-04](audits/fresh-review-2026-09-04.md) — execution safety,
+  restart/storage behavior, protocol boundaries, and test-reliability evidence (`F-126`–`F-143`).
 - [NUT server pod](audits/nutserver-pod-audit.md), [NUT usage](audits/nut-usage-audit.md),
-  [quirks, aliasing, firmware](audits/quirks-aliasing-firmware.md).
+  [quirks, aliasing, firmware](audits/quirks-aliasing-firmware.md), and
+  [planner code quality](audits/planner-code-quality.md).
 - [Operator maturity benchmarks](audits/operator-maturity-benchmarks.md) — this project measured
   against established operators.
 - [Pre-shutdown hook transport](audits/pre-shutdown-hook-transport.md),

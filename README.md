@@ -1,20 +1,17 @@
 # nut-operator
 
 > [!WARNING]
-> **This project is not finished and is not ready to use. It is pre-v1 and under active construction.**
+> **This project is pre-v1 and under active construction.**
 >
 > Nothing here is complete until there is a tagged `v1` release. Until then, expect APIs, CRD
-> schemas, defaults, and behavior to change without migration paths, and expect gaps between what
-> the documentation describes and what is wired end to end. Do not install this expecting a
-> finished operator, and do not point it at equipment you cannot afford to have shut down
-> unexpectedly.
->
-> If you want to follow along or try pieces of it, that is welcome — just size your expectations to
-> "in-progress build", not "product".
+> schemas, defaults, and behavior to change without migration paths. Do not point it at equipment
+> you cannot afford to have shut down unexpectedly.
 
 Kubernetes-native power management built around Network UPS Tools (NUT), controller-runtime, and declarative APIs.
 
-> Disclosure: this project is mostly AI-assisted/vibe-coded. Treat the implementation as requiring normal independent review, security validation, and production qualification before relying on it for real power events.
+> Disclosure: this project is substantially AI-assisted. Treat it as requiring normal independent
+> review, security validation, and production qualification before relying on it for real power
+> events.
 
 ## What it does
 
@@ -33,6 +30,10 @@ is reviewable in Git and visible in `kubectl` long before a real outage exercise
 Two things it deliberately does **not** do. It does not bring anything back up — recovery is a
 separate control path and belongs to whatever already owns your bring-up. And it does not act on
 anything except power state; a node that needs draining for a kernel patch is somebody else's job.
+
+**Execution assumes the manager remains available through shutdown.** Actions must be safe to
+repeat; exactly-once execution and restart/resume continuity are not product guarantees. See the
+[execution scope boundary](docs/contributing/design/scope-boundaries.md#executor-restarts-and-idempotency).
 
 ## Components
 
@@ -55,10 +56,9 @@ The moving parts, and why each one is separate from the others:
 - **PostgreSQL (CloudNativePG or external).** Holds the durable record: execution history, audit
   rows, and observed durations that sharpen future estimates.
 
-The red crossed line in the diagram is the point of the whole arrangement. `upsmon` sees the power
-event first and still cannot act on it — the only path that halts a node runs through the operator,
-because only the operator knows what else is still running. The
-[security model](docs/reference/security.md) covers what that costs and why it was chosen anyway.
+The key boundary is deliberate: `upsmon` sees the power event first and still cannot halt a node.
+The halt path runs through the operator because only the operator knows what else is still running.
+The [security model](docs/reference/security.md) covers the tradeoff.
 
 ## Vocabulary
 
@@ -74,9 +74,8 @@ Four words carry most of the design, and two of them are easy to confuse:
 - **Power domain** — everything downstream of one UPS, derived by following `feeds` edges. Derived,
   never declared. A node can sit in more than one.
 
-Tiers are input; waves are output. If a document seems to use them interchangeably, the document is
-wrong. Ordering comes from tiers plus `requires`/`before`/`after` and nothing else — there is no
-third knob. Full glossary in [the glossary](docs/reference/glossary.md).
+Tiers are input; waves are output. Ordering comes from tiers plus `requires`/`before`/`after` and
+nothing else. Full glossary in [the glossary](docs/reference/glossary.md).
 
 ## What it runs against
 

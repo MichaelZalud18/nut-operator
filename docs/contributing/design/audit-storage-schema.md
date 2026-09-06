@@ -36,6 +36,10 @@ punishes hardest.
 So the split in GP-3 is not a preference: Kubernetes holds desired state and current summaries,
 PostgreSQL holds history. See `docs/contributing/design/scope-boundaries.md` for GP-3 and SB-11.
 
+That history is evidence, not a restart-recovery requirement. See
+[SB-1](scope-boundaries.md#executor-restarts-and-idempotency): repeated actions must be safe without
+durable proof of previous delivery, and an interrupted flow is not guaranteed to resume.
+
 The cost of the deviation is real and worth stating plainly. This binary is a PostgreSQL client —
 connection pool, TLS, credentials, an owned schema, versioned migrations, retention enforcement,
 failover behavior — which is application-tier machinery living inside an operator, and it is where
@@ -66,7 +70,8 @@ such as CloudNativePG: those talk to PostgreSQL as the workload they manage, not
 - `shutdownflow_action_attempts`: individual dry-run or effectful executor action outcomes.
 - `node_release_records`: executor release decisions for node shutdown handoff.
 - `node_signal_handoffs`: signal-file evidence passed to node power agents.
-- `executor_resume_states`: compact restart state for idempotent executor resume.
+- `executor_resume_states`: compact execution state used by existing resume helpers; retained
+  implementation, not a supported restart-continuity guarantee (EX-14, superseded OD-17).
 
 ### Identity
 
@@ -74,8 +79,9 @@ Every table is keyed on a `uuid`. Most are freshly generated per row; `shutdownf
 not, because an execution has to be identifiable by the trigger episode that caused it rather than
 by when it happened to be written.
 
-`execution_id` is a UUIDv5 derived from that episode's content digest, so the same episode always
-resolves to the same key and a re-record updates the row instead of adding a second one. The digest
+`execution_id` is a UUIDv5 derived from the recorded episode inputs' content digest, so identical
+inputs resolve to the same key and a re-record updates the row instead of adding a second one. This
+does not guarantee identity continuity after a crash that loses some of those inputs. The digest
 is kept beside it in `deduplication_key`, which is what ties a row back to the episode. The two are
 separate columns on purpose: the digest is 64 hex characters and cannot be a `uuid`, and the
 identity is also stamped on Kubernetes objects as the `power.zalud.io/execution` label, where 63
@@ -108,10 +114,10 @@ diagram exports, plus capability profile match rows, capability profile verifica
 decisions, and eligible dry-run execution evidence through the referenced `PowerManagementCluster`
 storage backend. Rejected `ShutdownFlow` reconciliations record a compilation row with diagnostics
 and no accepted plan hash. Executor implementations use the execution, wave, group,
-action-attempt, release, handoff, and resume-state tables to make shutdown progress auditable and
-resumable without putting PostgreSQL on the host actuation boundary. External PostgreSQL requires
-TLS by default. CNPG mode reads the generated application credential Secret and prefers the FQDN URI
-when present.
+action-attempt, release, handoff, and resume-state tables to make shutdown progress auditable
+without putting PostgreSQL on the host actuation boundary or promising restart continuity. External
+PostgreSQL requires TLS by default. CNPG mode reads the generated application credential Secret and
+prefers the FQDN URI when present.
 
 ## Shutdown-Time Spool
 
