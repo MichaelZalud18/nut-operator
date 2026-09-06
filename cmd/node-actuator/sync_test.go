@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"log"
 	"strings"
 	"testing"
@@ -128,11 +129,18 @@ func TestSyncTimeoutStillHalts(t *testing.T) {
 	previousTimeout := syncTimeout
 	raiseHaltCapability = func() error { return nil }
 	release := make(chan struct{})
+	syncStarted := make(chan struct{})
 	syncFilesystems = func() {
 		order = append(order, "sync-started")
+		close(syncStarted)
 		<-release // never returns during this test, exactly like a wedged mount
 	}
 	rebootPoweroff = func() error {
+		select {
+		case <-syncStarted:
+		case <-time.After(time.Second):
+			return errors.New("sync did not start before poweroff")
+		}
 		order = append(order, "reboot")
 		return nil
 	}

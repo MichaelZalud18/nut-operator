@@ -464,27 +464,29 @@ func runPoweroff(logger *log.Logger, payload nodeagent.ShutdownSignal) error {
 	} else {
 		started := time.Now()
 		done := make(chan struct{})
+		syncFn := syncFilesystems
+		timeout := syncTimeout
 		// Not waited on beyond the select. If Sync() is wedged on a mount this goroutine never
 		// returns, and that is fine: reboot(2) is a few lines below and takes the process with it.
 		go func() {
-			syncFilesystems()
+			syncFn()
 			close(done)
 		}()
 		// Logged before the wait, not after it. A trace that only records completed flushes cannot
 		// distinguish a sync that hung from a sync that was never reached, and those two point at
 		// different halves of the system.
-		trace.pass(gateSync, "started, bounded at "+syncTimeout.String())
+		trace.pass(gateSync, "started, bounded at "+timeout.String())
 		select {
 		case <-done:
 			trace.pass(gateSync, "completed in "+roundedDuration(time.Since(started)))
 			logger.Printf("poweroff actuator sync completed in %s executionID=%s node=%s",
 				time.Since(started).Round(time.Millisecond), payload.ExecutionID, payload.NodeName)
-		case <-time.After(syncTimeout):
+		case <-time.After(timeout):
 			// Surfaced, not swallowed. A flush that outlasts this is evidence of a sick mount, and
 			// it is evidence that would otherwise be lost with the machine.
-			trace.fail(gateSync, "did not finish within "+syncTimeout.String()+" and was cut short; halting dirty")
+			trace.fail(gateSync, "did not finish within "+timeout.String()+" and was cut short; halting dirty")
 			logger.Printf("poweroff actuator sync did NOT finish within %s and was cut short; halting with dirty pages still in cache. This usually means a hung mount (stalled NFS, dead iSCSI target, failing disk) -- check this node's mounts before returning it to service. executionID=%s node=%s",
-				syncTimeout, payload.ExecutionID, payload.NodeName)
+				timeout, payload.ExecutionID, payload.NodeName)
 		}
 	}
 	if err := raiseHaltCapability(); err != nil {
