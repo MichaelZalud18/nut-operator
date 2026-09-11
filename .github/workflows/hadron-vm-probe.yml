@@ -33,7 +33,25 @@ jobs:
       - name: Install QEMU
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils acl
+
+      # A 2026-09-11 dry run on ubuntu-latest found /dev/kvm present (CPU flags and device node
+      # both there) but not read/write accessible to the `runner` user -- a group-membership gap
+      # on this image, not a hardware or hypervisor-policy limit. The udev rule plus ACL fallback
+      # here match Kairos's own reusable-qemu-test.yaml (kairos-io/kairos), which hits the same
+      # gap on the same runner family; the ACL is a second layer in case the udev rule does not
+      # take effect cleanly on a given runner image, not a substitute for it. None of this grants
+      # anything beyond group/user access to the device node already present on the runner, so it
+      # does not change what "usable KVM" means for the probe below -- it only removes a fixable
+      # permission bug from being mistaken for infrastructure unavailability.
+      - name: Grant KVM device access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-hadron-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo setfacl -m u:"$(whoami)":rw /dev/kvm
+          ls -la /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm && echo "/dev/kvm is read/write accessible"
 
       - name: Run Hadron VM-1 feasibility probe
         run: ./hack/hadron-vm-probe.sh
