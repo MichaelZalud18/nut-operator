@@ -248,15 +248,17 @@ also an early implementation priority, not a finding that custom VM code is inhe
   must be bounded, run on failure/cancellation, and remove only resources owned by that run.
   **Testable now; Conditional:** leave Kind helpers and `make test-e2e` unchanged; explicitly
   scope the isolated VM entry point in contributor guidance when it is implemented.
-  **Upstream reuse check (high implementation priority):** evaluate [PEG](https://github.com/spectrocloud/peg)
-  using [Kairos's VM setup](https://github.com/kairos-io/kairos/blob/master/tests/tests_suite_test.go)
-  before extending custom VM lifecycle code. Check maintenance/license, dependency compatibility,
-  actual KVM use on each supported architecture, SSH authentication and listener exposure,
-  cancellation, and run-owned cleanup. Prefer a thin adapter over a second VM framework; record
-  concrete limitations if PEG cannot meet the contract, and pin the reviewed dependency if adopted.
+  **Upstream reuse check: done.** PEG evaluated and adopted via a thin adapter (`test/hadron`,
+  build-tag-gated); see `docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md` for the
+  license/maintenance/dependency/KVM/SSH-exposure/cleanup findings and how each is closed at the
+  adapter layer. Remaining for `VM-2` itself: the actual two-node topology, pinned Hadron + k3s
+  artifact, kubeconfig wiring, and the teardown/mutation-refusal safety checks below, none of which
+  are built yet.
   **High-severity safety checks:** mismatched cluster/VM identity must refuse mutation; partial
   startup and cancellation must clean up only the current run. Bind forwarded management ports to
-  loopback and prove concurrent runs cannot target or delete each other's resources.
+  loopback (done in `test/hadron`) and prove concurrent runs cannot target or delete each other's
+  resources (single-VM uniqueness proven in `test/hadron`'s tests; still needed at the two-node
+  harness level).
 - [ ] `VM-3` [High] test the shipped Linux actuator on Hadron, including missing/expired/
   wrong-node signals and absent or revoked approval. Negative cases must leave the guest running;
   the approved positive case must stop only the intended disposable VM, confirmed through the
