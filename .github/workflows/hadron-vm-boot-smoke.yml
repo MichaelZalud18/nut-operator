@@ -1,0 +1,90 @@
+name: Hadron VM Boot Smoke Test
+
+# VM-2's first live boot proof: manually triggered only. VM-1's own probe
+# (docs/contributing/audits/hadron-vm-1-feasibility-2026-09-11.md) proved this runner class can
+# host a KVM-accelerated guest at all; it deliberately never booted the actual Hadron + k3s
+# artifact or ran an install, since that is a slower, artifact-dependent question this workflow
+# exists to answer separately. Downloads a real ~400MB artifact and performs a full unattended
+# install and reboot, so this must never become a required or automatic check, and must never run
+# on every push -- see docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md for the
+# pinned artifact, checksum provenance, and cloud-config research this exercises for the first
+# time against a real guest.
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  boot:
+    permissions:
+      contents: read
+    name: Boot one Hadron guest and confirm k3s comes up
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Record free disk before installing tooling
+        run: df -h /
+
+      - name: Install QEMU and genisoimage
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils acl genisoimage
+
+      # Same fix as hadron-vm-probe.yml: /dev/kvm is present but not group/user accessible by
+      # default on this runner image. See that workflow's own comment for the full finding.
+      - name: Grant KVM device access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-hadron-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo setfacl -m u:"$(whoami)":rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm && echo "/dev/kvm is read/write accessible"
+
+      # A step-level timeout independent of the test's own -timeout: `go test -timeout` panics in
+      # a watchdog goroutine, not the test's own goroutine, so it does NOT run t.Cleanup -- a hung
+      # boot can leak the qemu child process with nothing in-process able to prevent it. This is
+      # the second, unconditional backstop for that: 1 minute above the test's own -timeout=28m,
+      # so this only fires if the test's internal timeout somehow failed to.
+      - name: Boot the pinned Hadron artifact and wait for k3s
+        timeout-minutes: 29
+        run: go test -tags=hadron,hadron_smoke ./test/hadron -run TestHadronSingleNodeBoot -v -timeout=28m
+
+      # TestHadronSingleNodeBoot deliberately does not delete machine state on failure (see its
+      # own Cleanup) -- PEG has no separate -serial target, so the guest's -nographic console
+      # ends up in this file, and it is the only record of what actually happened during install.
+      - name: Dump guest console log on failure
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for dir in /tmp/nut-operator-hadron-*; do
+            echo "::group::$dir/stdout"
+            tail -c 50000 "$dir/stdout" 2>/dev/null || echo "(no stdout captured)"
+            echo "::endgroup::"
+            echo "::group::$dir/stderr"
+            tail -c 10000 "$dir/stderr" 2>/dev/null || echo "(no stderr captured)"
+            echo "::endgroup::"
+          done
+
+      # Runs after diagnostics are captured, regardless of how the previous steps ended --
+      # including a step-timeout kill, which bypasses the test binary's own Cleanup entirely.
+      # Scoped to this job's own dedicated runner VM: GitHub gives each workflow_dispatch run an
+      # isolated runner, so this can never reach another run's process or state.
+      - name: Force-clean any leftover guest process and state
+        if: always()
+        run: |
+          sudo pkill -9 -f qemu-system-x86_64 || true
+          rm -rf /tmp/nut-operator-hadron-* || true
+
+      - name: Record free disk after the run
+        if: always()
+        run: df -h /

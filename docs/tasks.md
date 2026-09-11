@@ -280,6 +280,27 @@ also an early implementation priority, not a finding that custom VM code is inhe
   resources. Private state-directory allocation is covered by `test/hadron`; a sampled free SSH
   port is not a reservation or proof of concurrent-run isolation. Missing PID evidence fails closed;
   the future harness must separately track never-started VMs and verify target/process ownership.
+  **Cancellation cleanup: done (2026-09-11).** `go test -timeout` panics in a watchdog goroutine,
+  not the test's own, so a hung boot skips `t.Cleanup` entirely and can leak the guest process with
+  no in-process way to stop it. Fixed for the single-guest smoke test with a step-level GitHub
+  Actions timeout and an unconditional force-clean step (`hadron-vm-boot-smoke.yml`), both
+  independent of the test binary's own state, plus a documented, checked timing margin between the
+  test's internal waits and the workflow's declared timeouts (`test/hadron/smoke_test.go`).
+  **Open — not yet applicable to the single-guest smoke test, but real, specific work once the
+  two-node harness exists (do not close as N/A without building these):**
+
+  1. **Mismatched cluster/VM identity must refuse mutation.** No pre-existing cluster exists for
+     the current smoke test to target, so there is nothing to mismatch against yet. The harness
+     needs an explicit identity check (expected cluster/kubeconfig identity vs. actual, expected
+     VM/node mapping vs. actual) before any mutating action, refusing rather than proceeding on a
+     mismatch.
+  2. **Concurrent runs must not target or delete each other's resources.** Each `workflow_dispatch`
+     run of the current smoke test gets its own dedicated GitHub-hosted runner, so there is nothing
+     to collide with yet. Once the two-node harness runs multiple VMs within one job -- and once
+     more than one harness run can execute concurrently (e.g., two manually triggered runs, or a
+     future automated trigger) -- state directories, forwarded ports, and any shared identifiers
+     must be run-scoped and verified not to collide, not merely assumed unique the way a single
+     `os.MkdirTemp`/`freeport.GetFreePort()` call already is today.
 - [ ] `VM-3` [High] test the shipped Linux actuator on Hadron, including missing/expired/
   wrong-node signals and absent or revoked approval. Negative cases must leave the guest running;
   the approved positive case must stop only the intended disposable VM, confirmed through the

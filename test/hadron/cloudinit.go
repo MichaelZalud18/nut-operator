@@ -71,6 +71,11 @@ func buildNoCloudISO(dir, userData string) (string, error) {
 // scheme would make the install stanza silently target a device that does not exist. For a
 // PEG-booted single-disk machine this is "/dev/vda".
 //
+// The rendered config also adds the stage kairos.io/docs/examples/k3s-stages documents for
+// exactly this purpose: touching /tmp/k3s-ready once the provider-kairos bootstrap process
+// reports k3s ready. That gives a caller a single, unambiguous file to poll for instead of
+// guessing readiness from `kubectl get nodes` output timing.
+//
 // This is deliberately not the default behavior of NewSafeMachine: the adapter's own contract is
 // generic VM lifecycle, not an opinion about what any given guest OS should do on first boot.
 // Callers that want this wrap it to match Config.CloudConfig's func(Credentials) string shape,
@@ -88,5 +93,10 @@ users:
   passwd: %s
   groups:
   - admin
+stages:
+  'provider-kairos.bootstrap.after.k3s-ready':
+    - name: "Create /tmp/k3s-ready file"
+      commands:
+      - "touch /tmp/k3s-ready"
 `, device, creds.User, creds.Pass)
 }

@@ -24,6 +24,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // requireISOTool skips the test rather than failing it when neither genisoimage nor mkisofs is
@@ -83,10 +85,20 @@ func TestKairosAutoInstallCloudConfigEmbedsCredentialsAndDevice(t *testing.T) {
 		"enabled: true",
 		"name: hadron-test-user",
 		"passwd: hadron-test-pass",
+		"provider-kairos.bootstrap.after.k3s-ready",
+		"touch /tmp/k3s-ready",
 	} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("cloud-config missing %q:\n%s", want, cfg)
 		}
+	}
+
+	// "#cloud-config" is not YAML syntax; strip it before parsing, the same way cloud-init itself
+	// treats it as a magic marker rather than document content.
+	body := strings.TrimPrefix(cfg, "#cloud-config\n")
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
+		t.Fatalf("rendered cloud-config is not valid YAML: %v\n%s", err, cfg)
 	}
 }
 
