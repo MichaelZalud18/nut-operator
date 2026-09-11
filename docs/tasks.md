@@ -232,8 +232,9 @@ GitHub Actions integration in this development repository. Keep this separate fr
 site deployment configuration. Start with one control-plane VM and one disposable worker;
 6 GiB combined guest RAM is an initial estimate, not a measured minimum. No physical UPS is
 required. `VM-1` found GitHub-hosted runner KVM feasibility usable; see
-`docs/contributing/audits/hadron-vm-1-feasibility-2026-09-11.md`. `VM-2` through `VM-6` below
-remain planned tasks, not implemented coverage or new required CI checks.
+`docs/contributing/audits/hadron-vm-1-feasibility-2026-09-11.md`. `VM-2` has component-tested adapter
+code; the actual VM harness and `VM-3` through `VM-6` remain unfinished. Component tests do not
+constitute guest-boot or shutdown acceptance coverage.
 
 For these tasks, High denotes isolation or shutdown-evidence risk, Medium denotes feasibility or
 integration work, and Low denotes optional tooling or documentation. Evaluating upstream reuse is
@@ -252,13 +253,18 @@ also an early implementation priority, not a finding that custom VM code is inhe
   build-tag-gated); see `docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md` for the
   license/maintenance/dependency/KVM/SSH-exposure/cleanup findings and how each is closed at the
   adapter layer. Remaining for `VM-2` itself: the actual two-node topology, pinned Hadron + k3s
-  artifact, kubeconfig wiring, and the teardown/mutation-refusal safety checks below, none of which
-  are built yet.
+  artifact, kubeconfig wiring, and the multi-VM teardown/mutation-refusal safety checks below.
+  **Adapter hardening (2026-09-11):** regression tests cover process-exit confirmation independent
+  of PEG's deleted PID file [High], strict SHA-256 validation [Medium], and bounded/cancellable
+  downloads that return errors and remove partial state [Medium]. Existing unit CI runs the tagged
+  component tests without KVM; this is not the `VM-5` guest-test job. See the PEG evaluation for
+  the reproduced failures, fixes, and remaining harness boundaries.
   **High-severity safety checks:** mismatched cluster/VM identity must refuse mutation; partial
   startup and cancellation must clean up only the current run. Bind forwarded management ports to
   loopback (done in `test/hadron`) and prove concurrent runs cannot target or delete each other's
-  resources (single-VM uniqueness proven in `test/hadron`'s tests; still needed at the two-node
-  harness level).
+  resources. Private state-directory allocation is covered by `test/hadron`; a sampled free SSH
+  port is not a reservation or proof of concurrent-run isolation. Missing PID evidence fails closed;
+  the future harness must separately track never-started VMs and verify target/process ownership.
 - [ ] `VM-3` [High] test the shipped Linux actuator on Hadron, including missing/expired/
   wrong-node signals and absent or revoked approval. Negative cases must leave the guest running;
   the approved positive case must stop only the intended disposable VM, confirmed through the

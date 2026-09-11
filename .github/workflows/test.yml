@@ -64,6 +64,11 @@ jobs:
       - name: Running Tests
         run: make test ENVTEST_K8S_VERSION=${{ matrix.k8s }}
 
+      # These tagged component tests use loopback fixtures and child processes, not VMs or KVM.
+      - name: Hadron adapter regression tests
+        if: matrix.k8s == '1.36'
+        run: go test -tags=hadron ./test/hadron -race -count=1 -timeout=2m
+
       # F-111: make test has always written a coverage profile and nothing read it. The total goes
       # in the job summary so a regression is visible without downloading anything, and the profile
       # itself is kept so `go tool cover -html` can be pointed at a specific run.

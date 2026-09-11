@@ -20,21 +20,24 @@ limitations under the License.
 package hadron
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/spectrocloud/peg/pkg/machine/types"
 )
 
 // NewSafeMachine never calls Create(), so these run with no qemu binary, no /dev/kvm, and no
-// KVM feasibility at all -- they prove the configuration this package builds (and, for a URL
-// ISO, PEG's own eager download+checksum step), not that a guest actually boots. Booting is
+// KVM feasibility at all -- they prove configuration and verified artifact acquisition,
+// not that a guest actually boots. Booting is
 // VM-1's probe (already answered on GitHub-hosted runners) and the eventual two-node harness.
 
 func TestNewSafeMachineEnablesKVMAndDisablesDefaultNetworking(t *testing.T) {
@@ -82,9 +85,6 @@ func TestNewSafeMachineGeneratesFreshCredentialsEachTime(t *testing.T) {
 	if creds1.Pass == creds2.Pass {
 		t.Error("expected two calls to generate different passwords, got the same one twice")
 	}
-	if creds1.Port == creds2.Port {
-		t.Error("expected two concurrent machines to get different forwarded ports, got the same one twice")
-	}
 	if creds1.User == "kairos" || creds1.Pass == "kairos" {
 		t.Error("must never fall back to PEG upstream's static kairos/kairos default credential")
 	}
@@ -93,9 +93,12 @@ func TestNewSafeMachineGeneratesFreshCredentialsEachTime(t *testing.T) {
 	if cfg1.SSH.Pass != creds1.Pass || cfg2.SSH.Pass != creds2.Pass {
 		t.Error("the credential returned to the caller must match what was actually configured on the machine")
 	}
+	if cfg1.SSH.Port != creds1.Port || cfg2.SSH.Port != creds2.Port {
+		t.Error("the returned SSH port must match the configured forwarding port")
+	}
 }
 
-func TestNewSafeMachineLeavesStateDirToPEG(t *testing.T) {
+func TestNewSafeMachineAllocatesPrivateUniqueState(t *testing.T) {
 	m1, _, err := NewSafeMachine(Config{})
 	if err != nil {
 		t.Fatalf("NewSafeMachine (1): %v", err)
@@ -109,14 +112,17 @@ func TestNewSafeMachineLeavesStateDirToPEG(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(m2.Config().StateDir) })
 
 	if m1.Config().StateDir == "" || m2.Config().StateDir == "" {
-		t.Fatal("expected PEG to auto-assign a state directory when none is supplied")
+		t.Fatal("expected a per-machine state directory")
 	}
 	if m1.Config().StateDir == m2.Config().StateDir {
 		t.Error("expected two concurrent machines to get different state directories, got the same one twice")
 	}
 	for _, dir := range []string{m1.Config().StateDir, m2.Config().StateDir} {
-		if _, err := os.Stat(dir); err != nil {
+		info, err := os.Stat(dir)
+		if err != nil {
 			t.Errorf("state dir %s: %v", dir, err)
+		} else if info.Mode().Perm() != 0700 {
+			t.Errorf("state permissions = %o, want 0700", info.Mode().Perm())
 		}
 	}
 }
@@ -128,15 +134,60 @@ func TestNewSafeMachineRejectsUnpinnedRemoteISO(t *testing.T) {
 	}
 }
 
-// PEG's own prepare() downloads a URL ISO synchronously inside machine.New() -- not deferred to
-// Create() as a first read of the code suggested -- so this test serves a real, tiny ISO over a
-// local HTTP server rather than pointing at a fake remote host. Pointing NewSafeMachine at an
-// unreachable host during development instead surfaced a separate, real PEG bug: a failed
-// download panics (nil-dereferences resp.HTTPResponse.Status in
-// pkg/machine/internal/utils/download.go) rather than returning an error. Recorded in
-// docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md; a caller of NewSafeMachine
-// with a URL ISO must expect this and guard accordingly (pre-validate reachability, or recover()
-// at the call site) until upstream fixes it.
+func TestNewSafeMachineRejectsInvalidChecksumsBeforeDownload(t *testing.T) {
+	for _, checksum := range []string{
+		"sha512:" + strings.Repeat("0", 128),
+		"sha256:00",
+		"sha256:" + strings.Repeat("z", 64),
+		"sha256:" + strings.Repeat("0", 64) + ":extra",
+		"md5:" + strings.Repeat("0", 32),
+	} {
+		t.Run(checksum[:6], func(t *testing.T) {
+			var requests atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				_, _ = w.Write([]byte("unchecked image"))
+			}))
+			defer srv.Close()
+			m, _, err := NewSafeMachine(Config{ISO: srv.URL + "/image.iso", ISOChecksum: checksum})
+			if m != nil {
+				t.Cleanup(func() { _ = os.RemoveAll(m.Config().StateDir) })
+			}
+			if err == nil {
+				t.Error("invalid checksum accepted")
+			}
+			if requests.Load() != 0 {
+				t.Errorf("made %d requests before rejecting invalid checksum", requests.Load())
+			}
+		})
+	}
+}
+
+func TestNewSafeMachineDownloadFailureReturnsErrorWithoutLeakingState(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TMPDIR", root)
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Errorf("download failure panicked instead of returning an error: %v", recovered)
+		}
+	}()
+	_, _, err := NewSafeMachine(Config{
+		ISO: srv.URL + "/image.iso", ISOChecksum: strings.Repeat("0", 64),
+	})
+	if err == nil {
+		t.Fatal("expected a connection error")
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("failed construction leaked %d state directories", len(entries))
+	}
+}
+
 func TestNewSafeMachineAcceptsPinnedRemoteISO(t *testing.T) {
 	const isoContent = "not a real ISO, just enough bytes to exercise the download+checksum path"
 	sum := sha256.Sum256([]byte(isoContent))
@@ -155,10 +206,86 @@ func TestNewSafeMachineAcceptsPinnedRemoteISO(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(m.Config().StateDir) })
 
-	// A successful return here means prepare() already downloaded the file and verified it
-	// against the checksum above -- ISO now points at the downloaded local copy, not the URL.
-	if _, err := os.Stat(m.Config().ISO); err != nil {
-		t.Errorf("expected the ISO to have been downloaded into the state dir: %v", err)
+	data, err := os.ReadFile(m.Config().ISO)
+	if err != nil || string(data) != isoContent {
+		t.Errorf("downloaded content = %q, err = %v", data, err)
+	}
+}
+
+func TestNewSafeMachineRejectsFailedDownloadsAndRemovesPartialState(t *testing.T) {
+	for _, scenario := range []string{"http-error", "truncated", "checksum-mismatch", "untrusted-tls", "timeout"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("TMPDIR", root)
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch scenario {
+				case "http-error":
+					w.WriteHeader(http.StatusServiceUnavailable)
+				case "truncated":
+					w.Header().Set("Content-Length", "1000")
+					_, _ = w.Write([]byte("partial"))
+				case "timeout":
+					<-r.Context().Done()
+				default:
+					_, _ = w.Write([]byte("unverified"))
+				}
+			})
+			srv := httptest.NewUnstartedServer(handler)
+			if scenario == "untrusted-tls" {
+				srv.StartTLS()
+			} else {
+				srv.Start()
+			}
+			defer srv.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			m, _, err := NewSafeMachineContext(ctx, Config{
+				ISO: srv.URL + "/image.iso", ISOChecksum: strings.Repeat("0", 64),
+			})
+			if err == nil || m != nil {
+				t.Fatalf("failed artifact accepted: machine=%v, err=%v", m, err)
+			}
+			if scenario == "timeout" && !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("expected deadline error, got %v", err)
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil || len(entries) != 0 {
+				t.Errorf("partial state remains: %v, err=%v", entries, err)
+			}
+		})
+	}
+}
+
+func TestNewSafeMachineRejectsCancelledConstruction(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := NewSafeMachineContext(ctx, Config{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation, got %v", err)
+	}
+}
+
+func TestNewSafeMachineVerifiesLocalISOWhenChecksumSupplied(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fixture.iso")
+	if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte("fixture"))
+	for _, checksum := range []string{fmt.Sprintf("%x", sum), fmt.Sprintf("SHA256:%X", sum)} {
+		m, _, err := NewSafeMachine(Config{ISO: path, ISOChecksum: checksum})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(m.Config().StateDir) })
+	}
+	if _, _, err := NewSafeMachine(Config{ISO: path, ISOChecksum: strings.Repeat("0", 64)}); err == nil {
+		t.Fatal("local ISO with mismatched checksum accepted")
+	}
+}
+
+func TestNewSafeMachineRejectsUnsupportedArtifactScheme(t *testing.T) {
+	if _, _, err := NewSafeMachine(Config{ISO: "ftp://example.invalid/image.iso"}); err == nil {
+		t.Fatal("unsupported artifact scheme accepted")
 	}
 }
 
@@ -180,48 +307,5 @@ func TestRandomTokenIsURLAndShellSafe(t *testing.T) {
 		if !isLowerBase32(r) {
 			t.Fatalf("token %q contains %q, outside the lowercase-base32 alphabet -- unsafe to embed unescaped in a QEMU argument", tok, r)
 		}
-	}
-}
-
-// fakeMachine lets SafeTeardown be tested without a real PEG-managed process.
-type fakeMachine struct {
-	types.Machine // nil embed: panics if a test exercises a method this fake does not override
-	stopErr       error
-	cleanErr      error
-	aliveSequence []bool // Alive() returns these in order, then repeats the last value
-	aliveCalls    int
-}
-
-func (f *fakeMachine) Stop() error { return f.stopErr }
-
-func (f *fakeMachine) Clean() error { return f.cleanErr }
-
-func (f *fakeMachine) Alive() bool {
-	if len(f.aliveSequence) == 0 {
-		return false
-	}
-	idx := f.aliveCalls
-	if idx >= len(f.aliveSequence) {
-		idx = len(f.aliveSequence) - 1
-	}
-	f.aliveCalls++
-	return f.aliveSequence[idx]
-}
-
-func TestSafeTeardownWaitsForExitBeforeCleaning(t *testing.T) {
-	f := &fakeMachine{aliveSequence: []bool{true, true, false}}
-	if err := SafeTeardown(f, time.Second); err != nil {
-		t.Fatalf("SafeTeardown: %v", err)
-	}
-	if f.aliveCalls < 3 {
-		t.Errorf("Alive() called %d times, want at least 3 (poll until false)", f.aliveCalls)
-	}
-}
-
-func TestSafeTeardownRefusesToCleanAStillAliveProcess(t *testing.T) {
-	f := &fakeMachine{aliveSequence: []bool{true}}
-	err := SafeTeardown(f, 50*time.Millisecond)
-	if err == nil {
-		t.Fatal("expected an error when the process never reports exited, got nil")
 	}
 }

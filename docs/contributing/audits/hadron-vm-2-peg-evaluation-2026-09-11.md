@@ -78,11 +78,19 @@ isolation assumed) and verifies it against `ISOChecksum`. Pointing it at an unre
 adapter development reproduced a genuine PEG bug: `pkg/machine/internal/utils/download.go` reads
 `resp.HTTPResponse.Status` unconditionally right after issuing the request, which panics rather than
 returning an error when the request fails before an HTTP response exists (DNS failure, connection
-refused). `test/hadron/adapter_test.go` works around this by serving a real, tiny fixture over a
-local `httptest.Server` rather than depending on network reachability in tests; `NewSafeMachine`'s
-doc comment tells callers passing a URL `ISO` to pre-validate reachability or `recover()` at the call
-site until this is fixed upstream. Worth an upstream issue once `VM-2`'s harness actually depends on
-a remote artifact URL.
+refused). A successful fixture download did not cover this failure. The 2026-09-11 hardening pass
+reproduced the panic with a refused loopback connection, then removed PEG's download wrapper from
+the adapter path. It now uses the existing `grab/v3` dependency directly, checks `Response.Err()`,
+and only gives PEG a local file. `NewSafeMachineContext` supports caller cancellation, and both
+constructors impose a ten-minute download deadline. Failed construction removes its private state
+directory, including partial downloads. No caller-side reachability check or panic recovery is
+required. Severity: **Medium**, fixed at the adapter boundary; the pinned upstream bug remains.
+
+The same pass found that PEG silently skips unknown checksum algorithms. Requiring a nonempty
+string was insufficient: an unsupported algorithm or extra colon could accept unverified bytes.
+The adapter now accepts only SHA-256 (bare 64-digit hex or `sha256:<hex>`), validates it before
+network access, and configures `grab` to verify the bytes and delete mismatched downloads. Supplied
+checksums for local files are also verified. Severity: **Medium**, fixed with negative regressions.
 
 ### Cancellation and run-owned cleanup
 
@@ -94,7 +102,13 @@ work must never treat a successful `Stop()` as proof of anything the actuator di
 `Clean()` unconditionally `os.RemoveAll`s `MachineConfig.StateDir` with no check that the process has
 actually exited first. A caller that calls `Clean()` immediately after `Stop()` without confirming
 exit risks removing state (disk images, the monitor socket) out from under a process that has not
-finished tearing itself down.
+finished tearing itself down. The original adapter's `Alive()` polling did not fix this: PEG's
+`Stop()` deletes the PID file, and its subsequent `Alive()` lookup interprets the missing file as
+an exited process. Severity: **High**. The 2026-09-11 hardening pass reproduced this with a real
+child process whose PID file disappears while the process remains alive. `SafeTeardown` now retains
+an `os.Process` handle before calling `Stop()` and checks that handle until exit or deadline. A
+missing/invalid PID or failed exit check preserves state and returns an error. Never-started VMs
+need separate lifecycle tracking in the future harness; a missing PID is not evidence of exit.
 
 Collision safety between concurrent runs — unique state directories, unique forwarded ports — is
 entirely the caller's responsibility; PEG provides no run-identity concept of its own. This is
@@ -113,20 +127,26 @@ a thin wrapper around PEG's public `Machine` interface:
 2. Generate a fresh random SSH credential per run; never a static default.
 3. Set `DisableDefaultNetworking` and supply a caller-owned, loopback-bound `-nic` argument via
    `Args` instead, rather than trusting PEG's own all-interfaces default.
-4. Leave `StateDir` to PEG's own `os.MkdirTemp`-backed allocation (already unique per process)
-   rather than inventing a second naming scheme that could collide with it.
-5. Always confirm the process has actually exited (`Alive()`, bounded by a timeout) before calling
-   `Clean()`, since `Clean()` itself performs no such check.
+4. Allocate a private `os.MkdirTemp` state directory before preparing the artifact, supply it to
+   PEG, and remove it if construction fails. This also makes failed-download cleanup possible.
+5. Capture an OS process handle before `Stop()` removes the PID file; confirm exit through that
+   handle before `Clean()`. Do not use PEG's PID-file-dependent `Alive()` as exit evidence.
 6. Never treat `Stop()` succeeding as shutdown evidence — `VM-3`'s evidence-capture design already
    accounts for this.
+7. Validate SHA-256 syntax and download through `grab/v3` with a deadline and caller cancellation;
+   do not pass remote URLs to PEG's panic-prone downloader.
 
 Implemented as `test/hadron` (build-tag-gated, matching how `test/e2e` isolates its own heavier
 test-only dependencies from the default build graph): `NewSafeMachine` builds a `types.Machine`
-with all of the above applied, and `SafeTeardown` sequences `Stop()` → confirm exit → `Clean()`.
+with all of the above applied, and `SafeTeardown` captures process identity, then sequences
+`Stop()` -> confirm exit -> `Clean()`. The component suite covers refused connections, HTTP errors,
+truncated bodies, untrusted TLS, checksum failures, cancellation/deadlines, state cleanup, missing
+PID evidence, and the real PEG stop implementation against disposable child processes. No QEMU
+guest is started by these tests. The existing Tests workflow runs them with the race detector.
 Booting the actual pinned Hadron + k3s artifact, the two-node topology, and kubeconfig wiring
 remain open — this is the adapter layer `VM-2` required before any of that.
 
 Writing a second custom VM lifecycle framework instead of this would mean re-solving process
 supervision, SSH connection retry/health-check, and file transfer from scratch for no benefit over
-patching in six adapter-level responsibilities around a maintained library already used in production
+patching in these adapter-level responsibilities around a maintained library already used in production
 by the project whose artifacts this harness boots.
