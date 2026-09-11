@@ -7,7 +7,7 @@ Open work is grouped by owning component. Keep rationale in the design docs, set
 `docs/contributing/audits/`. Completed work is represented by the implemented docs/code, not repeated
 here. Work deliberately deferred beyond v1 lives in [tasks-post-v1.md](tasks-post-v1.md).
 
-Last reviewed: 2026-09-05
+Last reviewed: 2026-09-11 (Hadron VM test planning; existing audit findings last reviewed 2026-09-05).
 
 The [2026-09-04 fresh review](contributing/audits/fresh-review-2026-09-04.md) records evidence for
 `F-126` through `F-143`, including later scope corrections. Open findings are listed below; withdrawn
@@ -158,7 +158,8 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 
 Execution-side actuation safety findings are owned by Planning & Execution Logic: `F-126`
 (independent agent authorization), `F-127` (fresh release evidence), and `F-128` (quorum ordering).
-This review found no separate actuator implementation task.
+This review found no separate actuator implementation task. Additional Linux guest actuation
+coverage is tracked under `VM-3`/`VM-4` below; it does not introduce a new actuator policy.
 
 ---
 
@@ -224,6 +225,53 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   packages), and two `internal/controller` helpers (caller graph not yet traced). See
   `operator-maturity-benchmarks.md`'s 2026-09-04 pass for the full breakdown.
 
+#### Hadron VM Test Coverage
+
+Owns: portable Kairos Hadron + k3s test infrastructure, VM-boundary acceptance tests, and their
+GitHub Actions integration in this development repository. Keep this separate from Kind and
+site deployment configuration. Start with one control-plane VM and one disposable worker;
+6 GiB combined guest RAM is an initial estimate, not a measured minimum. No physical UPS is
+required. `VM-2` through `VM-6` below remain planned tasks, not implemented coverage or new
+required CI checks.
+
+- [ ] `VM-1` [Medium] establish standard GitHub-hosted Linux runner feasibility with a small,
+  manually triggered VM boot probe. The probe itself is implemented
+  (`.github/workflows/hadron-vm-probe.yml`, `hack/hadron-vm-probe.sh`); the feasibility question it
+  exists to answer is not — it has not yet been run against a real GitHub-hosted runner.
+  **Testable now; Conditional:** report unavailable infrastructure distinctly from product
+  failure, without silently passing or falling back to slow software emulation. Do not assume
+  hosted-runner support or provision a paid/self-hosted replacement without a separate decision.
+- [ ] `VM-2` [Medium] implement a reproducible two-node VM harness using established virtualization
+  tooling and declarative Kairos configuration. Pin OS/k3s artifacts, checksums, and test image
+  identities; give each run private networking, fresh credentials/storage, and an explicit
+  kubeconfig. Refuse mutations unless cluster identity and target VM/node mapping match; do not
+  change the user's default context or mount host block devices. Keep the manager, PostgreSQL,
+  and simulated UPS on the surviving node, with observation outside the target guests. Teardown
+  must be bounded, run on failure/cancellation, and remove only resources owned by that run.
+  **Testable now; Conditional:** leave Kind helpers and `make test-e2e` unchanged; explicitly
+  scope the isolated VM entry point in contributor guidance when it is implemented.
+- [ ] `VM-3` [Medium] test the shipped Linux actuator on Hadron, including missing/expired/
+  wrong-node signals and absent or revoked approval. Negative cases must leave the guest running;
+  the approved positive case must stop only the intended disposable VM, confirmed through the
+  hypervisor rather than Kubernetes `NotReady` alone. Preserve the existing security context and
+  approval gates; do not grant blanket privileges. **Testable now; Conditional:** real guest
+  OS-boundary coverage, separate from Talos API and physical-machine qualification.
+- [ ] `VM-4` [Medium] drive a simulated UPS outage through actual NUT telemetry, trigger evaluation,
+  planning, execution, draining, signal delivery, and guest power-off. Assert survivor availability,
+  current authorization/release evidence (`F-126`/`F-127`), enforced network policy, and audit results;
+  manual signal injection alone is not this end-to-end test. Add a second worker for ordered and
+  concurrent release scenarios only after measuring capacity. **Testable now; Conditional:**
+  retain logs and hypervisor evidence outside stopped guests; harness-owned reset is not operator
+  recovery, and restart/resume continuity remains outside scope (SB-1).
+- [ ] `VM-5` [Medium] integrate the proven harness as a separate, initially manually triggered
+  Actions job. Consume images built from the exact revision under test, using the existing
+  digest-based image workflow where applicable, rather than rebuilding while VMs run or pulling
+  an unrelated `main` image. After successful repeated runs, add component-based triggers for
+  actuator, planner/executor, NUT integration, policy, packaging, and harness changes. Bound job
+  time/concurrency and artifact retention, use minimal token permissions, and require no site
+  secrets or access to a persistent private environment. **Conditional:** make it a required
+  check only after runner feasibility, resource use, and test reliability are demonstrated.
+
 ---
 
 ### Telemetry & Triggers
@@ -249,7 +297,12 @@ Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`
 Owns: scaffold, docs upkeep, examples, and decision-registry maintenance — glue work not owned by one
 component.
 
-None.
+- [ ] `VM-6` [Low] prepare a public-safe Hadron test guide once the harness contract is established.
+  Separate portable test instructions from local deployment material; remove private paths,
+  hostnames, addresses, credentials, and operational history. Document measured versus estimated
+  resource needs, isolation and shutdown safeguards, Kind/Talos boundaries, and conditional CI
+  behavior. Review and scan before deciding whether to migrate the draft into contributor docs;
+  this task does not publish the draft or assert that compatibility tests have passed.
 
 ---
 
@@ -306,10 +359,13 @@ None.
   evidence for a specific environment, not the primary v1 correctness proof.
 - One node halted through a real actuator policy. Component coverage should prove approval gates,
   signal validation, stale-signal rejection, rendered security context, Linux syscall wrapper
-  behavior, and Talos client request construction. Testability: **Testable now** for those boundaries;
-  **Real-resource** for final host shutdown proof. `PowerOff` uses `make verify-actuation`; Talos
-  clusters need the equivalent `TalosShutdown` proof against a sacrificial node. Distinct from the
-  dry-run gate above, not a replacement for it: a dry-run never renders the actuate configuration.
+  behavior, and Talos client request construction. Testability: **Testable now; Conditional** for
+  Linux guest shutdown through a disposable Hadron VM (`VM-3`), with hypervisor-confirmed power-off;
+  a physical machine is not required to prove that OS boundary. Physical firmware/power behavior
+  remains **Real-resource** qualification. `make verify-actuation` exercises signal-to-halt behavior,
+  not the complete trigger/planner path (`VM-4`). Talos needs separate `TalosShutdown` proof against
+  a disposable Talos VM or sacrificial node; Hadron cannot supply it. Distinct from the dry-run gate
+  above, not a replacement for it: a dry-run never renders the actuate configuration.
 - **Open:** whether a live plug-pull is also a v1 gate. The functional path can be simulated by
   replaying Online/OnBattery/LowBattery and runtime-decay traces through the trigger, planner, and
   executor. A physical plug-pull is **Real-resource** evidence only if the v1 gate is explicitly set

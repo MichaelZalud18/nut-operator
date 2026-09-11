@@ -1,0 +1,43 @@
+name: Hadron VM Probe
+
+# VM-1: a manually triggered feasibility check, not a required or automatic gate. It only asks
+# whether a standard GitHub-hosted Linux runner can host a real KVM-accelerated guest at all --
+# GitHub's own runner-image reference does not commit to nested-virtualization support for
+# standard Linux runners, so this has to be measured rather than assumed (docs/tasks.md, Hadron
+# VM Test Coverage). Nothing here builds, pins, or boots the actual Hadron + k3s artifact; that
+# starts at VM-2, and only once this probe has run clean.
+#
+# No push/pull_request trigger on purpose: this must never become a required check, and must
+# never silently start provisioning anything, before runner feasibility is actually demonstrated.
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  probe:
+    permissions:
+      contents: read
+    name: KVM feasibility probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Record free disk before installing probe tooling
+        run: df -h /
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+
+      - name: Run Hadron VM-1 feasibility probe
+        run: ./hack/hadron-vm-probe.sh
+
+      - name: Record free disk after probe
+        if: always()
+        run: df -h /
