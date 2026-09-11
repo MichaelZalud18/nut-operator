@@ -29,9 +29,9 @@ set -euo pipefail
 REPORT_MARKER="HADRON_PROBE_RESULT"
 BOOT_TIMEOUT_SECS="${BOOT_TIMEOUT_SECS:-30}"
 SERIAL_LOG="$(mktemp)"
-TIME_LOG="$(mktemp)"
+QEMU_STDERR_LOG="$(mktemp)"
 KERNEL_TMP=""
-trap 'rm -f "$SERIAL_LOG" "$TIME_LOG" "$KERNEL_TMP"' EXIT
+trap 'rm -f "$SERIAL_LOG" "$QEMU_STDERR_LOG" "$KERNEL_TMP"' EXIT
 
 log() { printf '%s\n' "$*" >&2; }
 
@@ -105,11 +105,12 @@ start_time=$(date +%s.%N)
 # `-accel kvm` (no `:tcg` fallback list) makes QEMU refuse to start rather than quietly switching
 # to software emulation if KVM turns out not to be usable despite the static checks above. There
 # is no rootfs, so the guest is expected to panic looking for init -- the boot marker on the
-# serial console is the proof point, not a completed boot. `/usr/bin/time -v` wraps the process
-# because the guest itself never boots far enough to have its own memory ceiling worth measuring;
-# QEMU's own RSS while doing KVM-accelerated execution is the number of interest.
-set +e
-/usr/bin/time -v qemu-system-x86_64 \
+# serial console is the proof point, not a completed boot, and this script kills QEMU as soon as
+# it sees that marker rather than waiting for a boot that will never complete. That rules out
+# `/usr/bin/time -v`'s own report as the source of peak memory: it only writes its stats after its
+# child exits on its own, and this script does not let that happen. Instead, peak_kb is read
+# straight from the kernel's own tracking (/proc/<pid>/status VmHWM) while QEMU is still running.
+qemu-system-x86_64 \
   -accel kvm \
   -m 512M \
   -nographic \
@@ -117,11 +118,14 @@ set +e
   -kernel "$KERNEL" \
   -append "console=ttyS0 panic=-1" \
   -serial file:"$SERIAL_LOG" \
-  2>"$TIME_LOG" &
+  2>"$QEMU_STDERR_LOG" &
 qemu_pid=$!
 
 booted=0
+peak_kb="unknown"
 for _ in $(seq 1 "$BOOT_TIMEOUT_SECS"); do
+  hwm=$(awk '/VmHWM/{print $2}' "/proc/$qemu_pid/status" 2>/dev/null || true)
+  [ -n "$hwm" ] && peak_kb="$hwm"
   if grep -q 'Linux version' "$SERIAL_LOG" 2>/dev/null; then
     booted=1
     break
@@ -133,17 +137,15 @@ for _ in $(seq 1 "$BOOT_TIMEOUT_SECS"); do
 done
 
 kill "$qemu_pid" 2>/dev/null || true
-wait "$qemu_pid" 2>/dev/null
-set -e
+wait "$qemu_pid" 2>/dev/null || true
 
 end_time=$(date +%s.%N)
 boot_seconds=$(awk -v a="$start_time" -v b="$end_time" 'BEGIN { printf "%.1f", b - a }')
-peak_kb=$(grep -oP 'Maximum resident set size \(kbytes\): \K[0-9]+' "$TIME_LOG" 2>/dev/null || echo "unknown")
 
 if [ "$booted" -ne 1 ]; then
   emit_result boot-failed "qemu did not print a kernel boot marker within ${BOOT_TIMEOUT_SECS}s"
-  log "----- qemu stderr/time output -----"
-  cat "$TIME_LOG" >&2 || true
+  log "----- qemu stderr -----"
+  cat "$QEMU_STDERR_LOG" >&2 || true
   log "----- guest serial output -----"
   cat "$SERIAL_LOG" >&2 || true
   exit 1
