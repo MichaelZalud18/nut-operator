@@ -30,7 +30,8 @@ REPORT_MARKER="HADRON_PROBE_RESULT"
 BOOT_TIMEOUT_SECS="${BOOT_TIMEOUT_SECS:-30}"
 SERIAL_LOG="$(mktemp)"
 TIME_LOG="$(mktemp)"
-trap 'rm -f "$SERIAL_LOG" "$TIME_LOG"' EXIT
+KERNEL_TMP=""
+trap 'rm -f "$SERIAL_LOG" "$TIME_LOG" "$KERNEL_TMP"' EXIT
 
 log() { printf '%s\n' "$*" >&2; }
 
@@ -81,10 +82,23 @@ command -v qemu-system-x86_64 >/dev/null 2>&1 || {
 }
 
 KERNEL="/boot/vmlinuz-$(uname -r)"
-[ -r "$KERNEL" ] || {
-  emit_result boot-failed "host kernel image ${KERNEL} is not readable; nothing to boot the probe guest with"
+if [ ! -e "$KERNEL" ]; then
+  emit_result boot-failed "host kernel image ${KERNEL} does not exist; nothing to boot the probe guest with"
   exit 1
-}
+fi
+if [ ! -r "$KERNEL" ]; then
+  # Ubuntu ships /boot/vmlinuz-* root-only-readable by default (hardening against a local
+  # KASLR-offset disclosure) -- an ordinary permission default, not a KVM feasibility signal.
+  # Copy it out to a world-readable temp file via sudo rather than treating this as a boot
+  # failure; if sudo itself cannot read it, that is worth failing loudly on.
+  KERNEL_TMP="$(mktemp)"
+  if sudo cp "$KERNEL" "$KERNEL_TMP" 2>/dev/null && sudo chmod 0644 "$KERNEL_TMP"; then
+    KERNEL="$KERNEL_TMP"
+  else
+    emit_result boot-failed "host kernel image ${KERNEL} is not readable and could not be copied out via sudo"
+    exit 1
+  fi
+fi
 
 start_time=$(date +%s.%N)
 
