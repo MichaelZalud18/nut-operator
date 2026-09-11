@@ -73,7 +73,8 @@ func buildNoCloudISO(dir, userData string) (string, error) {
 //
 // This is deliberately not the default behavior of NewSafeMachine: the adapter's own contract is
 // generic VM lifecycle, not an opinion about what any given guest OS should do on first boot.
-// Callers that want this pass the result as Config.CloudConfig.
+// Callers that want this wrap it to match Config.CloudConfig's func(Credentials) string shape,
+// e.g. `func(c Credentials) string { return KairosAutoInstallCloudConfig(c, "/dev/vda") }`.
 func KairosAutoInstallCloudConfig(creds Credentials, device string) string {
 	return fmt.Sprintf(`#cloud-config
 install:

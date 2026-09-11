@@ -93,16 +93,28 @@ func TestKairosAutoInstallCloudConfigEmbedsCredentialsAndDevice(t *testing.T) {
 func TestNewSafeMachineAttachesCloudConfigAsDataSource(t *testing.T) {
 	requireISOTool(t)
 
+	// The whole reason CloudConfig is a func(Credentials) string rather than a plain string:
+	// NewSafeMachine generates Credentials internally, so a caller building a Config cannot know
+	// them in advance. Capturing what the closure was actually called with, rather than just
+	// checking a seed file exists, is what proves that plumbing works instead of merely
+	// compiling.
+	var received Credentials
 	m, creds, err := NewSafeMachine(Config{
-		CloudConfig: KairosAutoInstallCloudConfig(Credentials{User: "u", Pass: "p"}, "/dev/vda"),
+		CloudConfig: func(c Credentials) string {
+			received = c
+			return KairosAutoInstallCloudConfig(c, "/dev/vda")
+		},
 	})
 	if err != nil {
 		t.Fatalf("NewSafeMachine: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(m.Config().StateDir) })
 
-	if creds.User == "" {
+	if creds.User == "" || creds.Pass == "" {
 		t.Fatal("expected NewSafeMachine to still generate its own SSH credentials independent of CloudConfig")
+	}
+	if received != creds {
+		t.Errorf("CloudConfig was called with %+v, want the same Credentials returned to the caller (%+v)", received, creds)
 	}
 
 	ds := m.Config().DataSource

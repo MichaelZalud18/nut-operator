@@ -69,11 +69,14 @@ type Config struct {
 	// ISOChecksum pins the ISO's contents (`sha256:<hex>`, or bare hex for sha256). Required
 	// whenever ISO is a URL -- VM-2 requires pinned artifact checksums, not a fetch-and-hope.
 	ISOChecksum string
-	// CloudConfig, if set, is rendered into a cloud-init NoCloud seed ISO (volume label "cidata")
-	// and attached as PEG's DataSource. Empty means no seed is attached at all -- this package
-	// takes no position on whether a guest needs one. See KairosAutoInstallCloudConfig for a
-	// ready-made config that performs an unattended install and enables k3s.
-	CloudConfig string
+	// CloudConfig, if set, is called with this machine's freshly generated Credentials -- which
+	// do not exist yet at the time a caller builds a Config, since NewSafeMachine is what
+	// generates them -- and its result is rendered into a cloud-init NoCloud seed ISO (volume
+	// label "cidata") and attached as PEG's DataSource. Nil means no seed is attached at all --
+	// this package takes no position on whether a guest needs one.
+	// KairosAutoInstallCloudConfig matches this signature via a closure over the install device,
+	// e.g. `func(c Credentials) string { return KairosAutoInstallCloudConfig(c, "/dev/vda") }`.
+	CloudConfig func(Credentials) string
 }
 
 // Credentials is the fresh, per-run SSH login this package generates. Never reuse these across
@@ -167,8 +170,8 @@ func NewSafeMachineContext(ctx context.Context, cfg Config) (m types.Machine, cr
 	}
 
 	var dataSource string
-	if cfg.CloudConfig != "" {
-		dataSource, err = buildNoCloudISO(stateDir, cfg.CloudConfig)
+	if cfg.CloudConfig != nil {
+		dataSource, err = buildNoCloudISO(stateDir, cfg.CloudConfig(creds))
 		if err != nil {
 			return nil, Credentials{}, fmt.Errorf("building cloud-init seed: %w", err)
 		}
