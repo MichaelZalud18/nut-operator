@@ -259,6 +259,21 @@ also an early implementation priority, not a finding that custom VM code is inhe
   downloads that return errors and remove partial state [Medium]. Existing unit CI runs the tagged
   component tests without KVM; this is not the `VM-5` guest-test job. See the PEG evaluation for
   the reproduced failures, fixes, and remaining harness boundaries.
+  **Artifact and cloud-config, identified but not yet boot-verified (2026-09-11):** "Hadron" turns
+  out to name a real upstream project (`kairos-io/hadron`, a minimal from-scratch Linux distro
+  Kairos combines with a Kubernetes distro to build release artifacts), not a project codename —
+  `kairos-hadron-v0.5.1-standard-amd64-generic-v4.3.0-k3sv1.36.4+k3s1.iso`
+  (`sha256:1488c390e91128e6d8e1f6c2258c3e32881b3ff44de17a700134e2f671f3575c`, cross-checked against
+  both GitHub's asset digest and the release's own `.sha256` sidecar), whose bundled k3s version
+  matches this repo's own newest tested Kubernetes version. `test/hadron/cloudinit.go` builds a
+  cloud-init NoCloud seed ISO (`genisoimage`/`mkisofs`) carrying an unattended-install cloud-config
+  with the adapter's fresh per-run credentials and `k3s.enabled: true`, attached via PEG's
+  `DataSource`. The install device is `/dev/vda`, not the `/dev/sda` in Kairos's generic docs
+  example: PEG attaches disks as `virtio-blk-pci`, which Linux enumerates under the virtio-blk
+  naming scheme. None of this has been exercised against a real KVM boot yet — component tests
+  only prove the ISO gets built and attached, the same boundary `VM-1`'s probe drew before its own
+  first live run. A `workflow_dispatch`-only single-guest boot smoke test, following `VM-1`'s
+  pattern, is the next concrete step.
   **High-severity safety checks:** mismatched cluster/VM identity must refuse mutation; partial
   startup and cancellation must clean up only the current run. Bind forwarded management ports to
   loopback (done in `test/hadron`) and prove concurrent runs cannot target or delete each other's

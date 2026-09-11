@@ -69,6 +69,11 @@ type Config struct {
 	// ISOChecksum pins the ISO's contents (`sha256:<hex>`, or bare hex for sha256). Required
 	// whenever ISO is a URL -- VM-2 requires pinned artifact checksums, not a fetch-and-hope.
 	ISOChecksum string
+	// CloudConfig, if set, is rendered into a cloud-init NoCloud seed ISO (volume label "cidata")
+	// and attached as PEG's DataSource. Empty means no seed is attached at all -- this package
+	// takes no position on whether a guest needs one. See KairosAutoInstallCloudConfig for a
+	// ready-made config that performs an unattended install and enables k3s.
+	CloudConfig string
 }
 
 // Credentials is the fresh, per-run SSH login this package generates. Never reuse these across
@@ -161,6 +166,14 @@ func NewSafeMachineContext(ctx context.Context, cfg Config) (m types.Machine, cr
 		return nil, Credentials{}, err
 	}
 
+	var dataSource string
+	if cfg.CloudConfig != "" {
+		dataSource, err = buildNoCloudISO(stateDir, cfg.CloudConfig)
+		if err != nil {
+			return nil, Credentials{}, fmt.Errorf("building cloud-init seed: %w", err)
+		}
+	}
+
 	opts := []types.MachineOption{
 		types.QEMUEngine,
 		types.WithStateDir(stateDir),
@@ -184,6 +197,9 @@ func NewSafeMachineContext(ctx context.Context, cfg Config) (m types.Machine, cr
 	}
 	if cfg.ISO != "" {
 		opts = append(opts, types.WithISO(cfg.ISO), types.WithISOChecksum(cfg.ISOChecksum))
+	}
+	if dataSource != "" {
+		opts = append(opts, types.WithDataSource(dataSource))
 	}
 
 	m, err = machine.New(opts...)

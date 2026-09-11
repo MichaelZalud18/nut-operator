@@ -150,3 +150,44 @@ Writing a second custom VM lifecycle framework instead of this would mean re-sol
 supervision, SSH connection retry/health-check, and file transfer from scratch for no benefit over
 patching in these adapter-level responsibilities around a maintained library already used in production
 by the project whose artifacts this harness boots.
+
+## Artifact and cloud-config research (2026-09-11, not yet boot-verified)
+
+Checking the actual Kairos release assets rather than assuming "Hadron" was this project's own
+codename found it names a real upstream project: [`kairos-io/hadron`](https://github.com/kairos-io/hadron),
+described as "a minimal, from-scratch Linux distro using vanilla components, engineered for
+trusted and flexible boot environments." Kairos's build tooling combines that base distro with a
+Kubernetes distro (k3s or k0s) to produce release artifacts named
+`kairos-hadron-<hadron-version>-<arch>-<board>-<kairos-version>-<k8s-distro><k8s-version>.iso`.
+The one pinned here, `kairos-hadron-v0.5.1-standard-amd64-generic-v4.3.0-k3sv1.36.4+k3s1.iso`,
+comes from `kairos-io/kairos` release `v4.3.0`. Checksum
+`sha256:1488c390e91128e6d8e1f6c2258c3e32881b3ff44de17a700134e2f671f3575c`, cross-checked against
+both GitHub's own asset digest metadata and the release's separately published `.sha256` sidecar
+file — two independent sources agreeing, not a single fetch taken on faith. Its bundled k3s
+(1.36.4) matches `k8s: ["1.34", "1.35", "1.36"]` in `.github/workflows/test.yml`'s own matrix, the
+newest version this repo already tests against.
+
+Kairos's unattended-install cloud-config schema (`install:` with `device`/`reboot`/`auto`, `k3s:
+enabled: true`, a `users:` entry) is documented; the generic docs example uses `/dev/sda` for
+`install.device`. That is wrong for a PEG-booted guest: `qemu.go`'s `genDrives` attaches user
+disks as `virtio-blk-pci`, which Linux enumerates under the virtio-blk naming scheme
+(`/dev/vda`, ...), not the SCSI/SATA scheme `/dev/sda` implies. Passing the doc's example device
+verbatim would have targeted a device that does not exist, only discoverable after a real,
+multi-minute install-and-reboot cycle failed against a downloaded artifact -- exactly the kind of
+mistake worth catching by reading PEG's actual drive-attachment code instead of copying a generic
+example.
+
+`test/hadron/cloudinit.go` implements this: `buildNoCloudISO` shells out to
+`genisoimage`/`mkisofs` (the same tool cloud-init's own `cloud-localds` wraps) to build a
+volume-labeled `cidata` seed ISO, and `KairosAutoInstallCloudConfig` renders the install/k3s/users
+YAML using the adapter's own freshly generated credentials -- never a static default, consistent
+with every other credential in this package. `Config.CloudConfig`, when set, attaches the result
+through PEG's existing `DataSource` field. This is opt-in, not automatic: the adapter's own
+contract is generic VM lifecycle, not an opinion about what a given guest should do on first boot.
+
+None of this has booted a real guest yet. Component tests (`cloudinit_test.go`) only prove the
+seed ISO is built and attached with the right content -- the same boundary `VM-1`'s own probe drew
+before its first live run found two runner-image defaults (`/dev/kvm` permissions,
+`/boot/vmlinuz-*` readability) that no amount of static analysis would have surfaced. A
+`workflow_dispatch`-only single-guest boot smoke test, following `VM-1`'s exact pattern, is the
+next concrete step before attempting the two-node topology.
