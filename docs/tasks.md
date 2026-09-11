@@ -7,7 +7,7 @@ Open work is grouped by owning component. Keep rationale in the design docs, set
 `docs/contributing/audits/`. Completed work is represented by the implemented docs/code, not repeated
 here. Work deliberately deferred beyond v1 lives in [tasks-post-v1.md](tasks-post-v1.md).
 
-Last reviewed: 2026-09-11 (Hadron VM test planning; existing audit findings last reviewed 2026-09-05).
+Last reviewed: 2026-09-11 (Hadron upstream-tooling checks and priorities; existing audit findings last reviewed 2026-09-05).
 
 The [2026-09-04 fresh review](contributing/audits/fresh-review-2026-09-04.md) records evidence for
 `F-126` through `F-143`, including later scope corrections. Open findings are listed below; withdrawn
@@ -231,17 +231,15 @@ Owns: portable Kairos Hadron + k3s test infrastructure, VM-boundary acceptance t
 GitHub Actions integration in this development repository. Keep this separate from Kind and
 site deployment configuration. Start with one control-plane VM and one disposable worker;
 6 GiB combined guest RAM is an initial estimate, not a measured minimum. No physical UPS is
-required. `VM-2` through `VM-6` below remain planned tasks, not implemented coverage or new
-required CI checks.
+required. `VM-1` found GitHub-hosted runner KVM feasibility usable; see
+`docs/contributing/audits/hadron-vm-1-feasibility-2026-09-11.md`. `VM-2` through `VM-6` below
+remain planned tasks, not implemented coverage or new required CI checks.
 
-- [ ] `VM-1` [Medium] establish standard GitHub-hosted Linux runner feasibility with a small,
-  manually triggered VM boot probe. The probe itself is implemented
-  (`.github/workflows/hadron-vm-probe.yml`, `hack/hadron-vm-probe.sh`); the feasibility question it
-  exists to answer is not — it has not yet been run against a real GitHub-hosted runner.
-  **Testable now; Conditional:** report unavailable infrastructure distinctly from product
-  failure, without silently passing or falling back to slow software emulation. Do not assume
-  hosted-runner support or provision a paid/self-hosted replacement without a separate decision.
-- [ ] `VM-2` [Medium] implement a reproducible two-node VM harness using established virtualization
+For these tasks, High denotes isolation or shutdown-evidence risk, Medium denotes feasibility or
+integration work, and Low denotes optional tooling or documentation. Evaluating upstream reuse is
+also an early implementation priority, not a finding that custom VM code is inherently unsafe.
+
+- [ ] `VM-2` [High] implement a reproducible two-node VM harness using established virtualization
   tooling and declarative Kairos configuration. Pin OS/k3s artifacts, checksums, and test image
   identities; give each run private networking, fresh credentials/storage, and an explicit
   kubeconfig. Refuse mutations unless cluster identity and target VM/node mapping match; do not
@@ -250,12 +248,27 @@ required CI checks.
   must be bounded, run on failure/cancellation, and remove only resources owned by that run.
   **Testable now; Conditional:** leave Kind helpers and `make test-e2e` unchanged; explicitly
   scope the isolated VM entry point in contributor guidance when it is implemented.
-- [ ] `VM-3` [Medium] test the shipped Linux actuator on Hadron, including missing/expired/
+  **Upstream reuse check (high implementation priority):** evaluate [PEG](https://github.com/spectrocloud/peg)
+  using [Kairos's VM setup](https://github.com/kairos-io/kairos/blob/master/tests/tests_suite_test.go)
+  before extending custom VM lifecycle code. Check maintenance/license, dependency compatibility,
+  actual KVM use on each supported architecture, SSH authentication and listener exposure,
+  cancellation, and run-owned cleanup. Prefer a thin adapter over a second VM framework; record
+  concrete limitations if PEG cannot meet the contract, and pin the reviewed dependency if adopted.
+  **High-severity safety checks:** mismatched cluster/VM identity must refuse mutation; partial
+  startup and cancellation must clean up only the current run. Bind forwarded management ports to
+  loopback and prove concurrent runs cannot target or delete each other's resources.
+- [ ] `VM-3` [High] test the shipped Linux actuator on Hadron, including missing/expired/
   wrong-node signals and absent or revoked approval. Negative cases must leave the guest running;
   the approved positive case must stop only the intended disposable VM, confirmed through the
   hypervisor rather than Kubernetes `NotReady` alone. Preserve the existing security context and
   approval gates; do not grant blanket privileges. **Testable now; Conditional:** real guest
   OS-boundary coverage, separate from Talos API and physical-machine qualification.
+  **High-severity evidence check:** distinguish guest-initiated shutdown from QEMU crash, forced
+  termination, lost SSH, or timeout. Capture the shutdown cause and process outcome outside the
+  guest before teardown; process disappearance alone is insufficient. PEG's `Stop()` is host-driven
+  termination, not actuator success ([QEMU implementation](https://github.com/spectrocloud/peg/blob/d8627da0983c42bde4d5b21dee650205fd1fb3b7/pkg/machine/qemu.go)).
+  Add negative controls proving these failure modes cannot satisfy the shutdown assertion, and
+  reuse the same evidence checks in `VM-4`. A false pass would hide a broken shutdown path.
 - [ ] `VM-4` [Medium] drive a simulated UPS outage through actual NUT telemetry, trigger evaluation,
   planning, execution, draining, signal delivery, and guest power-off. Assert survivor availability,
   current authorization/release evidence (`F-126`/`F-127`), enforced network policy, and audit results;
@@ -271,6 +284,15 @@ required CI checks.
   time/concurrency and artifact retention, use minimal token permissions, and require no site
   secrets or access to a persistent private environment. **Conditional:** make it a required
   check only after runner feasibility, resource use, and test reliability are demonstrated.
+  **Upstream workflow check [Medium]:** review [Kairos's reusable QEMU workflow](https://github.com/kairos-io/kairos/blob/master/.github/workflows/reusable-qemu-test.yaml)
+  for reusable setup and diagnostics, not as a drop-in cluster action. Verify caller checkout/test
+  layout, artifact names, runner labels, and required secrets before reuse. Pin adopted actions or
+  workflows to reviewed commits; do not execute untrusted PR code with privileged tokens or secrets.
+  **Image-build check [Low]:** use pinned published artifacts when they meet the test requirements.
+  Only if customization is necessary, evaluate the [current Factory workflow](https://github.com/kairos-io/kairos/blob/master/.github/workflows/reusable-factory.yaml)
+  instead of inventing an image pipeline. The [old Factory repository](https://github.com/kairos-io/kairos-factory-action)
+  is archived and points to this replacement. Factory builds images, not test clusters; keep image
+  creation separate from VM execution and retain the existing checksum/digest requirements.
 
 ---
 
