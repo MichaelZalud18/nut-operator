@@ -244,3 +244,20 @@ k3s enablement) happens at boot time through the cloud-config `DataSource`, not 
 time. `VM-5`'s own text already said to prefer a pinned published artifact when it meets the test
 requirements before evaluating this workflow at all -- it does, so this stays unevaluated further
 unless that changes.
+
+## ClusterLink connectivity: first live attempt found a real bug (2026-09-12)
+
+`hadron-cluster-link-smoke.yml` boots two guests wired by `network.go`'s `ClusterLink`/
+`ClusterNIC` and pings between their kernel-assigned IPv6 link-local addresses, deliberately never
+running the unattended install (no k3s, no cloud-config customization needed for a pure networking
+check).
+
+| Run | Result | Finding |
+| --- | --- | --- |
+| [34714542243](https://github.com/MichaelZalud18/nut-operator/actions/runs/34714542243) | fail (~11.5m, controlled) | Both guests were booted with no `CloudConfig` at all -- deliberately, since this test needs neither install nor k3s. That also meant neither guest had any account matching the fresh `Credentials` `NewSafeMachine` generated: nothing else creates one. Every SSH attempt failed with `ssh: unable to authenticate`, not a connectivity problem. Separately, the wait itself had no bound of its own -- it fell through to the overall test deadline, so a failure that should have surfaced in well under a minute instead consumed the full ten-minute budget before being reported. |
+
+Both fixed: `MinimalSSHCloudConfig` (`cloudinit.go`) renders a cloud-config with only a `users:`
+entry -- no `install:`, no `k3s:` -- for exactly this case (a guest that only ever needs to be
+SSH-reachable in its live environment). The SSH wait now has its own three-minute
+`context.WithTimeout`, matching the single-guest smoke test's own bound, so a real failure is
+distinguishable from a timeout again. Not yet re-run live.
