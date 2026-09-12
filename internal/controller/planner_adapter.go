@@ -32,12 +32,16 @@ func compileShutdownFlow(obj *powerv1alpha1.ShutdownFlow) ([]powerv1alpha1.Compi
 // compileShutdownFlowWithHistory compiles with observed durations folded into the
 // estimates (EX-32).
 //
-// History is keyed by the plan hash already published on status, not by the hash
-// this compile is about to produce. That is deliberate and it is what keeps the
-// lookup from chasing itself: the estimate is not part of plan identity, so the
-// hash is stable across compiles, and a plan that has genuinely changed simply
-// finds no history for its new hash and falls back to declared timeouts -- which is
-// the correct answer, since the old timings measured different work.
-func compileShutdownFlowWithHistory(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, policy powerv1alpha1.PowerShutdownTierPolicySpec, history planner.HistoryInputs, hookDigests []planner.HookDigest) shutdownflowadapter.CompiledFlow {
+// Compile identity first: estimates do not contribute to the hash, so history
+// can be selected for the new target set even before status has been updated.
+func compileShutdownFlowWithHistory(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, policy powerv1alpha1.PowerShutdownTierPolicySpec, historyFor func(string) planner.HistoryInputs, hookDigests []planner.HookDigest) shutdownflowadapter.CompiledFlow {
+	compiled := shutdownflowadapter.CompileFlowWithHistoryAndHooks(obj, bundle, policy, planner.HistoryInputs{}, hookDigests)
+	if compiled.ConfigHash == "" || historyFor == nil {
+		return compiled
+	}
+	history := historyFor(compiled.ConfigHash)
+	if len(history.GroupDurations) == 0 {
+		return compiled
+	}
 	return shutdownflowadapter.CompileFlowWithHistoryAndHooks(obj, bundle, policy, history, hookDigests)
 }

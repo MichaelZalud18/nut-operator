@@ -97,6 +97,12 @@ duration, and cumulative duration. Extends the existing `status.compiledWaves`.
 plan. Required for audit correlation across restarts and for the revalidation check in PL-31. The
 actuator handoff file already carries flow identity; this is the key that makes it resolvable.
 
+Target identity includes selector contents, explicit namespaces, full workload references, and
+agent references, not just selector presence or reference counts. Set-like field ordering does
+not change identity. Compilation establishes the current structural hash before selecting
+execution history; previous status is not a compatible-history key after a target edit. Observed
+duration estimates remain outside identity, so applying matching history cannot move that hash.
+
 **PL-15** · Edge provenance. Every edge in the compiled graph is labeled authored or derived, and
 derived edges name the rule that produced them. This is what makes "why was this node in wave four"
 answerable from stored structure per SB-12 rather than from log archaeology.

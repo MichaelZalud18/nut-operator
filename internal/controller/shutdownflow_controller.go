@@ -171,10 +171,9 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	if result.accepted {
 		compileStart := time.Now()
-		// Keyed off the hash already on status: a plan whose identity has not moved finds
-		// its own history, and one that has moved finds none and keeps declared timeouts.
-		history := r.flowExecutionHistory(ctx, managementCluster, &flow, flow.Status.ConfigHash)
-		compiledFlow := compileShutdownFlowWithHistory(&flow, bundle, shutdownFlowTierPolicy(managementCluster), history, hookDigests)
+		compiledFlow := compileShutdownFlowWithHistory(&flow, bundle, shutdownFlowTierPolicy(managementCluster), func(hash string) planner.HistoryInputs {
+			return r.flowExecutionHistory(ctx, managementCluster, &flow, hash)
+		}, hookDigests)
 		compiled = compiledFlow.Steps
 		compiledWaves = compiledFlow.Waves
 		estimatedDuration = compiledFlow.EstimatedDuration

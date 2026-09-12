@@ -103,11 +103,6 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   Wait currently sleeps before its group timeout is created, and a one-hour Wait group can compile
   to a zero-second estimate. **Testable now:** injected-clock timeout/compression tests for groups and
   linear steps through the real planner-to-executor adapter, in dry-run and enforce modes.
-- [ ] `F-136` [Medium] bind plan identity to actual selectors and reference identities, then query
-  history using the newly compiled hash. Changing a workload selector from one application to
-  another currently leaves the hash unchanged, and history is initially read using the previous
-  status hash. **Testable now:** selector/ref mutation matrices, canonical reorder stability, and
-  rejection of history belonging to the previous target set.
 - [ ] `F-142` [Medium] honor the accepted abort-policy and `continueOnError` fields, or explicitly
   reject unsupported settings before v1. They currently do not reach execution, so a failure always
   stops the tail, including requested abort notifications. **Testable now:** failure-policy matrices

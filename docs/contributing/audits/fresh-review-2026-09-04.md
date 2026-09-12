@@ -183,6 +183,34 @@ a spec edit, but structural plan identity and compatible-history selection do no
 ordering as well as changed selectors/ref names, and reject old-target history on the first reconcile
 after a structural edit.
 
+### F-136 Resolution (2026-09-12)
+
+The API adapter now carries a canonical target digest into the planner's target summary.
+It binds node, namespace, and workload selectors (including expression operators/values),
+node selector requirements, namespace names, every workload-reference identity field, and
+agent names. Set-like ordering is normalized on a deep copy; caller-owned slices/maps are
+unchanged. Both group and linear-step compilation use the same conversion.
+
+Controller compilation establishes the current plan hash before looking up observed durations.
+It then applies only the history requested with that hash. Empty history preserves declared
+estimates, rejected plans skip the lookup, and applying observed durations leaves identity
+unchanged. The old status hash is no longer used to select compilation history.
+
+The regression first reproduced 24 target-identity collisions across groups and linear steps.
+Race-enabled planner/adapter suites pass, including reorder stability and input immutability.
+Controller regression coverage exercises stale status after a selector edit, old-target history
+isolation, matching new history, declared fallback, and rejected-plan lookup suppression.
+This coverage tests the production compile/history callback boundary without a live PostgreSQL
+instance. Existing plans acquire a new hash once under the corrected identity and therefore
+start with declared estimates until compatible new history is recorded.
+
+Validation: `go test -race` passed for `internal/resolver`, `internal/planner`,
+`internal/shutdownflow`, and the complete `internal/controller` suite (including envtest).
+The first controller run caught a lifecycle assertion expecting only the execution store close;
+it now also accounts for the first-reconcile history lookup's handle. The rerun passed.
+`make lint` reported zero issues, `git diff --check` passed, and an independent read-only review
+found no concrete issues. F-136 is closed.
+
 ## F-137: Zero-Length Action History
 
 **Medium.** [executeGroup](../../../internal/executor/executor.go#L923) sets `completedAt` equal to

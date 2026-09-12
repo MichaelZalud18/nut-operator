@@ -37,6 +37,71 @@ func historyRuntime(seconds int64) planner.HistoryObservation {
 	return planner.HistoryObservation{RuntimeSeconds: &seconds}
 }
 
+func TestCompileHistoryUsesNewIdentityBeforeStatusUpdate(t *testing.T) {
+	flow := &powerv1alpha1.ShutdownFlow{
+		ObjectMeta: metav1.ObjectMeta{Name: "history-identity"},
+		Spec: powerv1alpha1.ShutdownFlowSpec{
+			Triggers: []powerv1alpha1.ShutdownTrigger{{Type: powerv1alpha1.ShutdownTriggerOnBattery}},
+			Groups: []powerv1alpha1.ShutdownGroup{{Name: "work", Action: powerv1alpha1.ShutdownStepScaleWorkload,
+				Timeout: &metav1.Duration{Duration: time.Minute},
+				Target:  powerv1alpha1.ShutdownStepTarget{WorkloadSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}}},
+			}},
+		},
+	}
+	bundle := resolver.StructuralBundle{}
+	policy := powerv1alpha1.PowerShutdownTierPolicySpec{}
+	initial := compileShutdownFlowWithHistory(flow, bundle, policy, nil, nil)
+	if initial.ConfigHash == "" {
+		t.Fatalf("initial plan rejected: %v", initial.Diagnostics)
+	}
+	flow.Status.ConfigHash = initial.ConfigHash
+	flow.Spec.Groups[0].Target.WorkloadSelector.MatchLabels["app"] = "database"
+	newPlan := compileShutdownFlowWithHistory(flow, bundle, policy, nil, nil)
+	if newPlan.ConfigHash == initial.ConfigHash || newPlan.ConfigHash == "" {
+		t.Fatal("target edit must produce a new valid identity")
+	}
+	for _, hasNewHistory := range []bool{false, true} {
+		calls := 0
+		compiled := compileShutdownFlowWithHistory(flow, bundle, policy, func(hash string) planner.HistoryInputs {
+			calls++
+			if hash != newPlan.ConfigHash {
+				t.Errorf("history requested for %q, want new hash %q", hash, newPlan.ConfigHash)
+			}
+			if hash == initial.ConfigHash {
+				return planner.HistoryInputs{GroupDurations: map[string][]time.Duration{"work": {59 * time.Minute}}}
+			}
+			if hasNewHistory {
+				return planner.HistoryInputs{GroupDurations: map[string][]time.Duration{"work": {7 * time.Second}}}
+			}
+			return planner.HistoryInputs{}
+		}, nil)
+		if calls != 1 || compiled.ConfigHash != newPlan.ConfigHash {
+			t.Fatalf("lookup count/hash changed: calls=%d hash=%s", calls, compiled.ConfigHash)
+		}
+		if len(compiled.GroupEstimates) != 1 {
+			t.Fatalf("missing estimates: %#v", compiled)
+		}
+		want := time.Minute
+		if hasNewHistory {
+			want = 7 * time.Second
+		}
+		if compiled.GroupEstimates[0].Duration.Duration != want {
+			t.Fatalf("duration = %v, want %v", compiled.GroupEstimates[0].Duration, want)
+		}
+		if flow.Status.ConfigHash != initial.ConfigHash {
+			t.Fatal("compile mutated existing status")
+		}
+	}
+	flow.Spec.Triggers = nil
+	rejected := compileShutdownFlowWithHistory(flow, bundle, policy, func(string) planner.HistoryInputs {
+		t.Fatal("rejected plan must not query history")
+		return planner.HistoryInputs{}
+	}, nil)
+	if rejected.ConfigHash != "" {
+		t.Fatal("invalid plan accepted")
+	}
+}
+
 func historyPowerTelemetry(runtime int64, charge, load int32) planner.HistoryObservation {
 	return planner.HistoryObservation{
 		RuntimeSeconds: &runtime,

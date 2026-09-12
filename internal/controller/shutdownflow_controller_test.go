@@ -1299,7 +1299,8 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(store.shutdownFlowExecutions).To(BeEmpty())
 			Expect(store.actionAttempts).To(BeEmpty())
-			Expect(store.closeCalls).To(Equal(1))
+			// Current-plan history lookup and execution each close their store handle.
+			Expect(store.closeCalls).To(Equal(2))
 
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
 			Expect(resource.Status.LastExecution).NotTo(BeNil())

@@ -213,12 +213,15 @@ type HookDigest struct {
 
 // Target is a compact planner-side target summary input.
 type Target struct {
-	NodeSelector      bool `json:"nodeSelector,omitempty"`
-	NamespaceSelector bool `json:"namespaceSelector,omitempty"`
-	WorkloadSelector  bool `json:"workloadSelector,omitempty"`
-	NamespaceCount    int  `json:"namespaceCount,omitempty"`
-	WorkloadRefCount  int  `json:"workloadRefCount,omitempty"`
-	AgentRefCount     int  `json:"agentRefCount,omitempty"`
+	// IdentityHash binds the adapter's canonical selectors and object references
+	// without importing Kubernetes target types into the pure planner.
+	IdentityHash      string `json:"identityHash,omitempty"`
+	NodeSelector      bool   `json:"nodeSelector,omitempty"`
+	NamespaceSelector bool   `json:"namespaceSelector,omitempty"`
+	WorkloadSelector  bool   `json:"workloadSelector,omitempty"`
+	NamespaceCount    int    `json:"namespaceCount,omitempty"`
+	WorkloadRefCount  int    `json:"workloadRefCount,omitempty"`
+	AgentRefCount     int    `json:"agentRefCount,omitempty"`
 }
 
 // Duration wraps time.Duration with stable JSON encoding.

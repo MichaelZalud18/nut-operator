@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -422,6 +423,7 @@ func PlannerDuration(duration *metav1.Duration) planner.Duration {
 // PlannerTarget converts API target selectors into the planner's compact target summary.
 func PlannerTarget(target powerv1alpha1.ShutdownStepTarget) planner.Target {
 	return planner.Target{
+		IdentityHash:      targetIdentityHash(target),
 		NodeSelector:      target.NodeSelector != nil || len(target.NodeSelectorRequirements) > 0,
 		NamespaceSelector: target.NamespaceSelector != nil,
 		WorkloadSelector:  target.WorkloadSelector != nil,
@@ -429,6 +431,57 @@ func PlannerTarget(target powerv1alpha1.ShutdownStepTarget) planner.Target {
 		WorkloadRefCount:  len(target.WorkloadRefs),
 		AgentRefCount:     len(target.AgentRefs),
 	}
+}
+
+// Preserve selector presence (nil and an empty selector are distinct), but not
+// the order of set-like fields. DeepCopy keeps normalization off the API object.
+func targetIdentityHash(target powerv1alpha1.ShutdownStepTarget) string {
+	canonical := target.DeepCopy()
+	for _, selector := range []*metav1.LabelSelector{canonical.NodeSelector, canonical.NamespaceSelector, canonical.WorkloadSelector} {
+		if selector == nil {
+			continue
+		}
+		for i := range selector.MatchExpressions {
+			slices.Sort(selector.MatchExpressions[i].Values)
+		}
+	}
+	for i := range canonical.NodeSelectorRequirements {
+		slices.Sort(canonical.NodeSelectorRequirements[i].Values)
+	}
+	return stableHash(struct {
+		Node, Namespace, Workload                   any
+		Requirements, Namespaces, Workloads, Agents []string
+	}{
+		Node:         selectorIdentity(canonical.NodeSelector),
+		Namespace:    selectorIdentity(canonical.NamespaceSelector),
+		Workload:     selectorIdentity(canonical.WorkloadSelector),
+		Requirements: identitySet(canonical.NodeSelectorRequirements),
+		Namespaces:   identitySet(canonical.Namespaces),
+		Workloads:    identitySet(canonical.WorkloadRefs),
+		Agents:       identitySet(canonical.AgentRefs),
+	})
+}
+
+func selectorIdentity(selector *metav1.LabelSelector) any {
+	if selector == nil {
+		return nil
+	}
+	return struct {
+		Labels      map[string]string
+		Expressions []string
+	}{selector.MatchLabels, identitySet(selector.MatchExpressions)}
+}
+
+func identitySet[T any](values []T) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	hashes := make([]string, len(values))
+	for i, value := range values {
+		hashes[i] = stableHash(value)
+	}
+	slices.Sort(hashes)
+	return hashes
 }
 
 // APICompiledSteps converts planner steps into the ShutdownFlow status shape.
