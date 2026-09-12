@@ -98,7 +98,10 @@ read the wall clock.
 
 A trigger is eligible when at least one selected UPS satisfies the trigger condition and its optional
 hold duration has elapsed. `upsDeviceRefs` and `powerDomains` narrow selection; an empty selector
-means all supplied UPS states. Domain selection uses the resolver-derived `feeds` closure when the
+means all supplied UPS states. Each device must satisfy its own hold before entering the selected
+UPS set, even when another device already makes the trigger eligible. Pending matches retain hold
+state and `Matched` status, but do not appear in the decision's or evaluation's selected UPS set.
+Domain selection uses the resolver-derived `feeds` closure when the
 controller has resolved topology, not the authored `UPSDevice.spec.powerDomains` root labels. The
 authored labels are only a fallback for pure package callers without resolver context.
 

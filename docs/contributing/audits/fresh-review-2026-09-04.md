@@ -309,3 +309,20 @@ Both findings were reproduced with permanent regression tests before applying fi
 Validation: race-enabled NetBox and CLI suites, focused renderer/credential tests, and package
 lint. No deployment, physical UPS, or live NetBox service was used. This closes these two
 configuration/transport boundaries only, not the other shutdown-safety findings in this audit.
+
+## F-137 and F-140 Closure (2026-09-12)
+
+- **F-137 [Medium]: closed.** Group/action completion is sampled after the action or wait returns,
+  before audit writes. Injected-clock regressions reproduce the old zero-duration records and
+  verify elapsed durations for success, failure, deadline expiry, dry-run waits, and interrupted
+  waits. A successful execution's recorded interval is fed into `CompileWithHistory`, producing
+  the expected nonzero estimate. This is an in-memory audit-record-to-planner test, not a live
+  PostgreSQL replay. Wait deadline placement itself remains F-138.
+- **F-140 [Medium]: closed.** Each UPS enters a trigger's selected set only after its own hold
+  expires. Pending conditions still retain hold state and matched status. Regressions cover
+  staggered transitions, exact hold boundaries, reset/re-entry, and independent immediate triggers.
+  A controller test verifies derived domain membership and eligible-only selection in both the
+  overall and per-trigger status. This does not close F-129's separate execution-scoping defect.
+
+Validation: race-enabled trigger/executor suites, focused controller boundary tests, and package
+lint. No infrastructure, physical UPS, or Hadron changes were required.

@@ -107,3 +107,23 @@ func TestTriggerUPSStatesFallBackToSpecDomainsWithoutDerivedTopology(t *testing.
 		t.Fatalf("expected authored domain fallback, got %#v", states[0].PowerDomains)
 	}
 }
+
+func TestTriggerHeldSelectionSurvivesStatusConversion(t *testing.T) {
+	now := time.Date(2026, 9, 12, 0, 1, 0, 0, time.UTC)
+	devices := []powerv1alpha1.UPSDevice{
+		{ObjectMeta: metav1.ObjectMeta{Name: "ups-a"}, Status: powerv1alpha1.UPSDeviceStatus{Phase: powerv1alpha1.UPSDevicePhaseOnBattery}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "ups-b"}, Status: powerv1alpha1.UPSDeviceStatus{Phase: powerv1alpha1.UPSDevicePhaseOnBattery}},
+	}
+	bundle := resolver.StructuralBundle{Topology: inventory.Topology{Domains: []inventory.PowerDomain{
+		{Name: "domain-a", UPSDevices: []string{"ups-a"}}, {Name: "domain-b", UPSDevices: []string{"ups-b"}},
+	}}}
+	got := triggerpkg.Evaluate(triggerpkg.Inputs{
+		ObservedAt: now, Triggers: []triggerpkg.Trigger{{ID: "held", Type: triggerpkg.TypeOnBattery, For: time.Minute, PowerDomains: []string{"domain-a", "domain-b"}}},
+		UPSStates: triggerUPSStatesFromDevices(devices, bundle),
+		Holds:     []triggerpkg.HoldState{{TriggerID: "held", UPSDevice: "ups-a", StartedAt: now.Add(-time.Minute)}},
+	})
+	status := triggerEvaluationStatus(got, powerv1alpha1.ShutdownFlowModeDryRun, "test-plan")
+	if !status.Eligible || !slices.Equal(status.SelectedUPSDevices, []string{"ups-a"}) || !slices.Equal(status.Decisions[0].SelectedUPSDevices, []string{"ups-a"}) {
+		t.Fatalf("pending domain leaked into eligible status: %#v", status)
+	}
+}

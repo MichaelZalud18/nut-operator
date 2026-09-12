@@ -7,7 +7,7 @@ Open work is grouped by owning component. Keep rationale in the design docs, set
 `docs/contributing/audits/`. Completed work is represented by the implemented docs/code, not repeated
 here. Work deliberately deferred beyond v1 lives in [tasks-post-v1.md](tasks-post-v1.md).
 
-Last reviewed: 2026-09-12 (F-133 and F-135 fixed and regression-tested; other audit findings retain their recorded review dates).
+Last reviewed: 2026-09-12 (F-133, F-135, F-137, and F-140 fixed and regression-tested; other audit findings retain their recorded review dates).
 
 The [2026-09-04 fresh review](contributing/audits/fresh-review-2026-09-04.md) records evidence for
 `F-126` through `F-143`, including later scope corrections. Open findings are listed below; withdrawn
@@ -177,10 +177,6 @@ spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
   the shutdown window. **Testable now:** unavailable/stalled backend at trigger time and mid-execution,
   with spool replay when storage returns; preserve approval gates and report evidence failures
   separately from action outcomes. Durable resume evidence is not an execution requirement (SB-1).
-- [ ] `F-137` [Medium] record actual group/action completion timestamps. `completedAt` is initialized
-  from `startedAt` and never advanced, so measured action durations are zero and cannot train runtime
-  estimates. **Testable now:** injected-clock actions and waits, timeout/failure cases, and an
-  audit-history-to-planner round trip with nonzero measured durations.
 - [ ] `F-139` [Medium] derive node-release and handoff audit outcomes from actual per-node Secret
   write results. A failed handoff currently records `Accepted=true` and `Released=true` when the
   precomputed checks passed. **Testable now:** failed first write, partial multi-node success, and
@@ -373,10 +369,6 @@ Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`
   the server is configured as TLS Required. **Testable now:** protocol fixtures for STARTTLS,
   configured CA/server-identity verification, required-mode downgrade refusal, explicit disabled
   mode, and bounded handshake failure. **Conditional:** compatibility against the shipped NUT image.
-- [ ] `F-140` [Medium] select only UPS devices whose own trigger hold has elapsed. When one device
-  satisfies a shared trigger's hold, the evaluator currently selects other matching devices whose
-  holds have just started. **Testable now:** staggered device transitions, hold resets, and domain
-  selection driven by the resulting eligible-device set.
 
 ---
 

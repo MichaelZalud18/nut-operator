@@ -166,7 +166,6 @@ func evaluateTrigger(observedAt time.Time, trigger Trigger, states []UPSState, h
 
 	var diagnostics []Diagnostic
 	var nextHolds []HoldState
-	var matched []string
 	var earliestHold *time.Time
 	var earliestEligible *time.Time
 	for _, state := range candidates {
@@ -175,7 +174,7 @@ func evaluateTrigger(observedAt time.Time, trigger Trigger, states []UPSState, h
 		if !matches {
 			continue
 		}
-		matched = append(matched, state.UPSDevice)
+		decision.Matched = true
 		startedAt := observedAt
 		if existing, ok := holds[holdKey(trigger.ID, state.UPSDevice)]; ok {
 			startedAt = existing.StartedAt.UTC()
@@ -196,12 +195,11 @@ func evaluateTrigger(observedAt time.Time, trigger Trigger, states []UPSState, h
 		}
 		if trigger.For <= 0 || !observedAt.Before(eligibleAt) {
 			decision.Eligible = true
+			decision.SelectedUPSDevices = append(decision.SelectedUPSDevices, state.UPSDevice)
 		}
 	}
 
-	sort.Strings(matched)
-	decision.SelectedUPSDevices = matched
-	decision.Matched = len(matched) > 0
+	sort.Strings(decision.SelectedUPSDevices)
 	decision.HoldStartedAt = earliestHold
 	decision.EligibleAt = earliestEligible
 	switch {

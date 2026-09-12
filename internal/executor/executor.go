@@ -921,7 +921,6 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 	effectiveWait := adaptive.ScaleDuration(group.WaitDuration, waveState.Budget)
 
 	startedAt := e.now()
-	completedAt := startedAt
 	outcome := ActionOutcome{
 		Outcome: OutcomeSimulated,
 		Details: map[string]any{"dryRun": true},
@@ -1015,6 +1014,7 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 	if actionErr != nil {
 		phase = PhaseFailed
 	}
+	completedAt := e.now()
 	recordErr := writer.RecordShutdownFlowExecutionGroup(recordCtx, audit.ShutdownFlowExecutionGroup{
 		GroupRecordID:   e.newID(),
 		ExecutionID:     executionID,
