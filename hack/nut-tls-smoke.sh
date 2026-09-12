@@ -110,41 +110,44 @@ chmod -R 0755 "${WORKDIR}/nut/ca-dir"
 
 "${CONTAINER_TOOL}" network create "${NETWORK_NAME}" >/dev/null
 
-echo "==> starting server ${SERVER_IMAGE}"
-"${CONTAINER_TOOL}" run -d --name "${SERVER_NAME}" \
-  --network "${NETWORK_NAME}" --network-alias "${SERVER_ALIAS}" \
-  -p 127.0.0.1::3493 \
-  -v "${WORKDIR}/nut/ups.conf:/etc/nut/ups.conf:ro" \
-  -v "${WORKDIR}/nut/upsd.conf:/etc/nut/upsd.conf:ro" \
-  -v "${WORKDIR}/nut/upsd.users:/etc/nut/upsd.users:ro" \
-  -v "${WORKDIR}/nut/smoke.dev:/etc/nut/smoke.dev:ro" \
-  -v "${WORKDIR}/nut/combined.pem:/etc/nut/tls/combined.pem:ro" \
-  "${SERVER_IMAGE}" >/dev/null
+start_server() {
+  echo "==> starting server ${SERVER_IMAGE}"
+  "${CONTAINER_TOOL}" run -d --name "${SERVER_NAME}" \
+    --network "${NETWORK_NAME}" --network-alias "${SERVER_ALIAS}" \
+    -p 127.0.0.1::3493 \
+    -v "${WORKDIR}/nut/ups.conf:/etc/nut/ups.conf:ro" \
+    -v "${WORKDIR}/nut/upsd.conf:/etc/nut/upsd.conf:ro" \
+    -v "${WORKDIR}/nut/upsd.users:/etc/nut/upsd.users:ro" \
+    -v "${WORKDIR}/nut/smoke.dev:/etc/nut/smoke.dev:ro" \
+    -v "${WORKDIR}/nut/combined.pem:/etc/nut/tls/combined.pem:ro" \
+    "${SERVER_IMAGE}" >/dev/null
 
-PORT="$("${CONTAINER_TOOL}" port "${SERVER_NAME}" 3493/tcp | head -1 | sed 's/.*://')"
-if [[ -z "${PORT}" ]]; then
-  echo "FAIL: could not determine the published port" >&2
-  "${CONTAINER_TOOL}" logs "${SERVER_NAME}" >&2
-  exit 1
-fi
-
-for _ in $(seq 1 30); do
-  if "${CONTAINER_TOOL}" logs "${SERVER_NAME}" 2>&1 | grep -q "listening on"; then
-    break
+  PORT="$("${CONTAINER_TOOL}" port "${SERVER_NAME}" 3493/tcp | head -1 | sed 's/.*://')"
+  if [[ -z "${PORT}" ]]; then
+    echo "FAIL: could not determine the published port" >&2
+    "${CONTAINER_TOOL}" logs "${SERVER_NAME}" >&2
+    exit 1
   fi
-  sleep 1
-done
 
-# The exact symptom of F-39. upsd logs this and keeps serving plaintext, so it has
-# to be a hard failure rather than something a reader might scroll past.
-if "${CONTAINER_TOOL}" logs "${SERVER_NAME}" 2>&1 | grep -q "invalid directive"; then
-  echo "FAIL: upsd rejected a directive the operator renders" >&2
-  "${CONTAINER_TOOL}" logs "${SERVER_NAME}" 2>&1 | grep "invalid directive" >&2
-  exit 1
-fi
+  for _ in $(seq 1 30); do
+    if "${CONTAINER_TOOL}" logs "${SERVER_NAME}" 2>&1 | grep -q "listening on"; then
+      break
+    fi
+    sleep 1
+  done
 
-echo "==> probing the NUT protocol on 127.0.0.1:${PORT}"
-CA_FILE="${WORKDIR}/ca.crt" PROBE_PORT="${PORT}" SERVER_ALIAS="${SERVER_ALIAS}" python3 - <<'PROBE'
+  # The exact symptom of F-39. upsd logs this and keeps serving plaintext, so it has
+  # to be a hard failure rather than something a reader might scroll past.
+  if "${CONTAINER_TOOL}" logs "${SERVER_NAME}" 2>&1 | grep -q "invalid directive"; then
+    echo "FAIL: upsd rejected a directive the operator renders" >&2
+    "${CONTAINER_TOOL}" logs "${SERVER_NAME}" 2>&1 | grep "invalid directive" >&2
+    exit 1
+  fi
+}
+
+probe_server() {
+  echo "==> probing the NUT protocol on 127.0.0.1:${PORT}"
+  CA_FILE="${WORKDIR}/ca.crt" EXPECTED_CERT="$1" PROBE_PORT="${PORT}" SERVER_ALIAS="${SERVER_ALIAS}" python3 - <<'PROBE'
 import os
 import socket
 import ssl
@@ -174,6 +177,13 @@ except ssl.SSLError as err:
     sys.exit(1)
 
 print(f"    handshake completed: {tls.version()} {tls.cipher()[0]}")
+with open(os.environ["EXPECTED_CERT"], encoding="ascii") as certificate:
+    expected = ssl.PEM_cert_to_DER_cert(certificate.read())
+if tls.getpeercert(binary_form=True) != expected:
+    print("FAIL: server presented a different leaf certificate", file=sys.stderr)
+    tls.close()
+    sys.exit(42)
+print("    server presented the expected leaf certificate")
 if tls.version() in ("SSLv3", "TLSv1", "TLSv1.1"):
     print(f"FAIL: DISABLE_WEAK_SSL did not take effect: {tls.version()}", file=sys.stderr)
     sys.exit(1)
@@ -195,9 +205,41 @@ print("    LIST UPS succeeded inside the TLS session")
 tls.sendall(b"LOGOUT\n")
 tls.close()
 PROBE
+}
+
+start_server
+probe_server "${WORKDIR}/tls.crt"
+
+echo "==> rotating the leaf certificate and replacing the server container"
+cp "${WORKDIR}/tls.crt" "${WORKDIR}/original.crt"
+openssl req -newkey rsa:2048 -nodes \
+  -subj "/CN=${SERVER_ALIAS}" \
+  -keyout "${WORKDIR}/tls.key" -out "${WORKDIR}/tls.csr" >/dev/null 2>&1
+openssl x509 -req -in "${WORKDIR}/tls.csr" \
+  -CA "${WORKDIR}/ca.crt" -CAkey "${WORKDIR}/ca.key" -CAserial "${WORKDIR}/ca.srl" \
+  -days 1 -extfile "${WORKDIR}/ext.cnf" \
+  -out "${WORKDIR}/tls.crt" >/dev/null 2>&1
+
+# Kubernetes rolls the pod when the material digest changes; upsd does not need to
+# reload the existing process. Recreate the container and its read-only PEM mount.
+"${CONTAINER_TOOL}" rm -f "${SERVER_NAME}" >/dev/null
+cat "${WORKDIR}/tls.crt" "${WORKDIR}/tls.key" > "${WORKDIR}/nut/combined.pem"
+start_server
+probe_server "${WORKDIR}/tls.crt"
+
+# Both leaves have the same CA and identity. Trust validation alone would accept
+# stale material; prove that the exact-certificate assertion rejects the old leaf.
+stale_status=0
+probe_server "${WORKDIR}/original.crt" >"${WORKDIR}/stale-probe.log" 2>&1 || stale_status=$?
+if [[ "${stale_status}" -ne 42 ]]; then
+  echo "FAIL: stale-certificate control did not fail at the leaf comparison" >&2
+  cat "${WORKDIR}/stale-probe.log" >&2
+  exit 1
+fi
+echo "    stale-certificate negative control rejected the old leaf"
 
 if [[ -z "${AGENT_IMAGE}" ]]; then
-  echo "PASS: ${SERVER_IMAGE} serves NUT over TLS (agent image not supplied)"
+  echo "PASS: ${SERVER_IMAGE} serves the rotated NUT TLS certificate (agent image not supplied)"
   exit 0
 fi
 
@@ -239,4 +281,4 @@ if ! grep -qi "Certificate verification (by client) is enabled, and apparently s
 fi
 echo "    upsmon connected over SSL and verified the server certificate"
 
-echo "PASS: ${SERVER_IMAGE} and ${AGENT_IMAGE} speak NUT over verified TLS"
+echo "PASS: ${SERVER_IMAGE} and ${AGENT_IMAGE} speak NUT over verified TLS after certificate rotation"

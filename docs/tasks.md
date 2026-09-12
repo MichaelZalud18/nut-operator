@@ -153,12 +153,6 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
   NUT packaging, supervision, probes, or fixtures change. The 2026-08-24 isolated fixture did not
   reproduce the failure; that leaves the reproducer incomplete, not dependent on physical UPS
   hardware. Real USB/SNMP device behavior remains a separate hardware-compatibility boundary.
-- [ ] `F-141` [Medium] verify that the shipped NUT image serves the new certificate after rotation
-  triggers a rollout. **Controller fix done (2026-09-12):** TLS Secret references now enqueue their
-  NUTServers; component tests cover certificate/CA references, namespace isolation, and deduplication.
-  An isolated envtest informer run verified rotation changes the material digest, deletion fails
-  material validation, and recreation recovers. **Conditional remaining:** image-level served-certificate
-  verification; no physical UPS required. Evidence: `fresh-review-2026-09-04.md` in the audit directory.
 
 ---
 

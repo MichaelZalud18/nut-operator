@@ -341,6 +341,26 @@ mapper/predicate into a probe reconciler using the real material validation/dige
 rotation changed the digest, deletion failed validation, and recreation restored the rotated digest.
 This test does not start the full NUTServer reconciler or an operand pod.
 
-Controller tests and lint passed. The remaining F-141 acceptance item is an image-level check of
-the certificate actually served after rollout; it remains in the task tracker rather than being
-claimed from a digest change alone.
+Controller tests and lint passed. The image-level acceptance check was completed separately below.
+
+## F-141 Image Verification (2026-09-12)
+
+`hack/nut-tls-smoke.sh` now checks the exact DER leaf certificate served by the real `upsd`
+binary, in addition to CA trust, hostname verification, STARTTLS, and a NUT request over TLS.
+It generates a second leaf/key under the same CA and hostname, replaces the server container
+with the new combined PEM mounted read-only, and repeats the checks. A negative control pins
+the old leaf against the replacement server and must fail specifically at the certificate
+comparison, not from a connection or trust failure. This prevents a same-CA stale certificate
+from satisfying the rotation assertion. The real `upsmon` client then connects with certificate
+verification and forced TLS enabled.
+
+Both server-only and server-plus-agent paths passed locally using ARM64 images freshly built
+from the current Dockerfiles. `bash -n` and `git diff --check` passed. The existing Images
+workflow already invokes this smoke script, so rotation follows the same conditional image
+test lane without adding another workflow or rebuilding a cluster.
+
+F-141 is closed through complementary layers: the controller/envtest checks above cover Secret
+notification and material digest changes; the image test covers the new process serving the
+new certificate. Container replacement models the operand side of a rollout. This is not a
+single Kubernetes end-to-end test of Secret mutation through Deployment rollout, nor a claim
+of in-process certificate reload or uninterrupted client reconnection.
