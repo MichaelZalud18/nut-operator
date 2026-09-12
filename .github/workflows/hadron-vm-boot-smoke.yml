@@ -62,18 +62,31 @@ jobs:
       # TestHadronSingleNodeBoot deliberately does not delete machine state on failure (see its
       # own Cleanup) -- PEG has no separate -serial target, so the guest's -nographic console
       # ends up in this file, and it is the only record of what actually happened during install.
+      #
+      # A `tail -c 50000` in-log dump was tried first and found unusable: a serial getty
+      # repeatedly redrawing its login prompt after boot completes can fill that whole budget by
+      # itself, crowding out the cloud-init/k3s startup lines that actually matter, which appear
+      # earlier. Grepping across the full file for the lines that matter, plus uploading the
+      # complete file as an artifact, replaces guessing at a tail size that happens to be enough.
       - name: Dump guest console log on failure
         if: failure()
         run: |
           shopt -s nullglob
           for dir in /tmp/nut-operator-hadron-*; do
-            echo "::group::$dir/stdout"
-            tail -c 50000 "$dir/stdout" 2>/dev/null || echo "(no stdout captured)"
-            echo "::endgroup::"
-            echo "::group::$dir/stderr"
-            tail -c 10000 "$dir/stderr" 2>/dev/null || echo "(no stderr captured)"
+            echo "::group::$dir/stdout -- cloud-init/k3s/stage/error lines"
+            grep -iE 'cloud-init|k3s|provider-kairos|stage|error|fail|panic' "$dir/stdout" 2>/dev/null \
+              || echo "(no matching lines, or nothing captured)"
             echo "::endgroup::"
           done
+
+      - name: Upload full guest console log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hadron-boot-smoke-console
+          path: /tmp/nut-operator-hadron-*/std*
+          if-no-files-found: warn
+          retention-days: 14
 
       # Runs after diagnostics are captured, regardless of how the previous steps ended --
       # including a step-timeout kill, which bypasses the test binary's own Cleanup entirely.

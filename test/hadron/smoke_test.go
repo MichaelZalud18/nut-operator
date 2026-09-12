@@ -49,12 +49,15 @@ const (
 // topology, second node, and kubeconfig wiring remain VM-2's open work.
 //
 // Timing budget, kept deliberately under the workflow's own limits with margin: NewSafeMachine
-// caps download+construction at 10 minutes internally; the two waitFor calls below add up to 12
-// more; worst case ~22 minutes against the workflow's `go test -timeout=28m` and its 29-minute
-// step timeout. `go test -timeout` panics in a watchdog goroutine, not this test's own, so it
-// does not run t.Cleanup -- staying comfortably under it in the ordinary case is what lets the
-// controlled failure path below (which does clean up) run instead of an uncontrolled kill.
-// Widening either wait here without checking this arithmetic reopens that gap.
+// caps download+construction at 10 minutes internally; the two waitFor calls below add up to 13
+// more (rebalanced 2026-09-12 after a real run: SSH answered in under a minute against a 6-minute
+// budget, while k3s readiness used its full 6 minutes without succeeding -- trimmed the former,
+// gave the latter more room to find out whether it needed more time or was actually stuck);
+// worst case ~23 minutes against the workflow's `go test -timeout=28m` and its 29-minute step
+// timeout. `go test -timeout` panics in a watchdog goroutine, not this test's own, so it does not
+// run t.Cleanup -- staying comfortably under it in the ordinary case is what lets the controlled
+// failure path below (which does clean up) run instead of an uncontrolled kill. Widening either
+// wait here without checking this arithmetic reopens that gap.
 func TestHadronSingleNodeBoot(t *testing.T) {
 	m, creds, err := NewSafeMachine(Config{
 		Memory:      "4096",
@@ -91,7 +94,7 @@ func TestHadronSingleNodeBoot(t *testing.T) {
 	}
 
 	t.Logf("waiting for SSH on 127.0.0.1:%s as %s", creds.Port, creds.User)
-	waitFor(t, 6*time.Minute, "SSH", func() error {
+	waitFor(t, 3*time.Minute, "SSH", func() error {
 		_, err := m.Command("true")
 		return err
 	})
@@ -100,7 +103,7 @@ func TestHadronSingleNodeBoot(t *testing.T) {
 	// boot, which is why this is a second, independent wait rather than assumed to follow
 	// immediately once SSH answers on the live/installer environment.
 	t.Log("waiting for the provider-kairos k3s-ready stage to run")
-	waitFor(t, 6*time.Minute, "k3s readiness", func() error {
+	waitFor(t, 10*time.Minute, "k3s readiness", func() error {
 		_, err := m.Command("test -f /tmp/k3s-ready")
 		return err
 	})
