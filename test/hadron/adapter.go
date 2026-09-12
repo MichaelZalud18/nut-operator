@@ -77,6 +77,10 @@ type Config struct {
 	// KairosAutoInstallCloudConfig matches this signature via a closure over the install device,
 	// e.g. `func(c Credentials) string { return KairosAutoInstallCloudConfig(c, "/dev/vda") }`.
 	CloudConfig func(Credentials) string
+	// ClusterNIC, if set, attaches this guest to a private two-node link built by NewClusterLink
+	// -- one side Server, the other Client on the same Link. Nil means this guest has no path to
+	// any other guest at all, which is PEG's own default.
+	ClusterNIC *ClusterNIC
 }
 
 // Credentials is the fresh, per-run SSH login this package generates. Never reuse these across
@@ -203,6 +207,9 @@ func NewSafeMachineContext(ctx context.Context, cfg Config) (m types.Machine, cr
 	}
 	if dataSource != "" {
 		opts = append(opts, types.WithDataSource(dataSource))
+	}
+	if cfg.ClusterNIC != nil {
+		opts = append(opts, cfg.ClusterNIC.option())
 	}
 
 	m, err = machine.New(opts...)

@@ -271,6 +271,24 @@ also an early implementation priority, not a finding that custom VM code is inhe
   readiness is polled via `kubectl` directly, not that stage's marker file. This proves one
   disposable guest boots and reaches a working k3s node; the two-node topology, kubeconfig wiring,
   and multi-VM safety checks below remain open.
+  **Inter-guest networking, component-tested but not yet boot-verified (2026-09-12):** the single
+  verified boot above proves one guest works in isolation, not that two can talk to each other --
+  PEG's own networking (already replaced once, for the management NIC) gives each guest an
+  isolated user-mode NAT stack with no path to any other guest, which is the actual precondition
+  for a k3s agent ever joining a k3s server. `test/hadron/network.go` adds `ClusterLink` /
+  `ClusterNIC`: a private, host-only virtio-net segment between exactly two guests over a raw QEMU
+  socket netdev on `127.0.0.1` (`listen=`/`connect=`, not a bridge or tap device, so no elevated
+  runner privileges are needed). Point-to-point rather than multicast, deliberately: this only
+  ever needs to serve the "one control-plane VM and one disposable worker" scope stated above, and
+  a point-to-point TCP-backed socket is less likely to hit CI-runner-specific multicast/IGMP
+  restrictions than `-netdev socket,mcast=...` would. Each side gets its own fresh, randomly
+  generated locally-administered MAC (`RandomClusterMAC`, `52:54:00:` OUI) — the two peers only
+  need to differ from each other, since the segment reaches nothing else, but this still never
+  reuses a static value, consistent with every other credential in this package. Component tests
+  cover role/port/MAC wiring and rejection of invalid MACs or an unconstructed `Link`; none of it
+  has been exercised against two real, network-connected guests yet. The raw L2 segment also
+  carries no DHCP of its own — each guest still needs an address on it via some other mechanism
+  (a cloud-config `network-config` stanza, most likely), which is not built yet either.
   **High-severity safety checks:** mismatched cluster/VM identity must refuse mutation; partial
   startup and cancellation must clean up only the current run. Bind forwarded management ports to
   loopback (done in `test/hadron`) and prove concurrent runs cannot target or delete each other's
