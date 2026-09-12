@@ -177,11 +177,11 @@ func boolPointerValue(value *bool) bool {
 	return value != nil && *value
 }
 
-func hashJSON(value any) string {
+func hashJSON(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		panic(fmt.Sprintf("controller value could not be encoded for hashing: %v", err))
+		return "", fmt.Errorf("controller value could not be encoded for hashing: %w", err)
 	}
 	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }

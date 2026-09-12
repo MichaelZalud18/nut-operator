@@ -2194,3 +2194,23 @@ remain accepted. Race-enabled inventory, resolver, and shutdown-flow adapter sui
 
 The adapter and two controller helpers remain open under F-125; this pass changes no execution,
 approval, or Hadron behavior.
+
+### F-125 Controller Follow-up, 2026-09-12
+
+Both controller hash helpers now return errors, sharing the existing JSON/SHA-256 implementation.
+UPS and PDU profile reconciliation converts a hash failure into `ProfileHashEncodingFailed`,
+clears the published hash, and sets Error/not-ready/degraded status. Hook digest assembly returns
+a wrapped error naming the hook and discards any previously assembled digests. Delivery-time
+advisory hook policy, approval checks, and Hadron code are unchanged.
+
+Focused regressions reproduced both original panics. The profile helper is tested with an
+unsupported type because current converted profile fields are JSON-safe. The hook regression
+uses malformed in-memory `RawExtension` data, including through an intercepted client read after
+one valid hook. This does not claim Kubernetes admission accepts malformed JSON. Compatibility
+tests check successful UPS, PDU, and hook digests against the prior JSON/SHA-256 encoding.
+
+Only `internal/shutdownflow/adapter.go` remains under F-125.
+
+Validation: the full controller suite passed with race detection and envtest (69.6 seconds).
+The strengthened two-hook failure regression also passed separately with race detection.
+`make lint` reported zero issues and `git diff --check` passed.

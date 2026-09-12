@@ -18,9 +18,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -53,10 +50,14 @@ func (r *ShutdownFlowReconciler) shutdownFlowHookDigests(ctx context.Context, fl
 			return nil, nil, fmt.Errorf("get ShutdownHook %s/%s: %w", ref.Namespace, ref.Name, err)
 		}
 		diagnostics = append(diagnostics, disallowedHookEndpointDiagnostics(&hook, ref, cluster)...)
+		hash, err := stableHookSpecHash(hook.Spec)
+		if err != nil {
+			return nil, diagnostics, fmt.Errorf("hash ShutdownHook %s/%s: %w", ref.Namespace, ref.Name, err)
+		}
 		digests = append(digests, planner.HookDigest{
 			Namespace: ref.Namespace,
 			Name:      ref.Name,
-			Hash:      stableHookSpecHash(hook.Spec),
+			Hash:      hash,
 		})
 	}
 	return digests, diagnostics, nil
@@ -159,13 +160,8 @@ func shutdownFlowHookRefs(flow *powerv1alpha1.ShutdownFlow) []powerv1alpha1.Name
 	return refs
 }
 
-func stableHookSpecHash(spec powerv1alpha1.ShutdownHookSpec) string {
-	encoded, err := json.Marshal(spec)
-	if err != nil {
-		panic(fmt.Sprintf("ShutdownHook spec could not be encoded for hashing: %v", err))
-	}
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
+func stableHookSpecHash(spec powerv1alpha1.ShutdownHookSpec) (string, error) {
+	return hashJSON(spec)
 }
 
 func (r *ShutdownFlowReconciler) shutdownHookTimeout(ctx context.Context, ref *powerv1alpha1.NamespacedNameReference, cluster *powerv1alpha1.PowerManagementCluster, dryRun bool) (time.Duration, error) {

@@ -219,12 +219,12 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   resource. True previous-release schema compatibility starts after there is a previous released API
   to install.
 - `F-125` [Low] finish the `stableHash`-panics-on-marshal-failure sweep. Remaining:
-  `internal/shutdownflow/adapter.go` (its caller crosses into the webhook and controller
-  packages), and two `internal/controller` helpers (caller graph not yet traced).
-  Capability/resolver were fixed 2026-09-04; inventory now propagates hash errors and uses
-  comparable edge keys for deduplication (2026-09-12), with failure and hash-compatibility
-  regression tests. Current inventory fields
-  are JSON-safe; this is defensive hardening, not a demonstrated malformed-input crash.
+  `internal/shutdownflow/adapter.go` (its callers cross into the webhook and controller
+  packages, including tier-policy and target-identity hashing).
+  Capability/resolver were fixed 2026-09-04; inventory and both controller helpers were fixed
+  2026-09-12. Regression coverage checks returned encoding errors and hash compatibility;
+  hook digest assembly returns contextual errors without partial results. This remains defensive
+  hardening, not a demonstrated admission bypass or API-triggerable crash.
   See `operator-maturity-benchmarks.md`'s F-125 evidence.
 
 #### Hadron VM Test Coverage

@@ -60,10 +60,18 @@ func (r *PDUCapabilityProfileReconciler) Reconcile(ctx context.Context, req ctrl
 	base := profile.DeepCopy()
 
 	result := validatePDUCapabilityProfile(&profile)
+	var profileHash string
+	if result.accepted {
+		var err error
+		profileHash, err = hashJSON(pduCapabilityProfileFromCRD(&profile))
+		if err != nil {
+			result = rejected("ProfileHashEncodingFailed", "%v", err)
+		}
+	}
 	profile.Status.ObservedGeneration = profile.Generation
 	if result.accepted {
 		profile.Status.Phase = powerv1alpha1.PDUCapabilityProfilePhaseAccepted
-		profile.Status.ProfileHash = hashJSON(pduCapabilityProfileFromCRD(&profile))
+		profile.Status.ProfileHash = profileHash
 	} else {
 		profile.Status.Phase = powerv1alpha1.PDUCapabilityProfilePhaseError
 		profile.Status.ProfileHash = ""

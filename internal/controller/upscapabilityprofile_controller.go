@@ -52,10 +52,18 @@ func (r *UPSCapabilityProfileReconciler) Reconcile(ctx context.Context, req ctrl
 	base := profile.DeepCopy()
 
 	result := validateUPSCapabilityProfile(&profile)
+	var profileHash string
+	if result.accepted {
+		var err error
+		profileHash, err = hashJSON(capabilityProfileFromUPSCapabilityProfile(&profile))
+		if err != nil {
+			result = rejected("ProfileHashEncodingFailed", "%v", err)
+		}
+	}
 	profile.Status.ObservedGeneration = profile.Generation
 	if result.accepted {
 		profile.Status.Phase = powerv1alpha1.UPSCapabilityProfilePhaseAccepted
-		profile.Status.ProfileHash = hashJSON(capabilityProfileFromUPSCapabilityProfile(&profile))
+		profile.Status.ProfileHash = profileHash
 	} else {
 		profile.Status.Phase = powerv1alpha1.UPSCapabilityProfilePhaseError
 		profile.Status.ProfileHash = ""
