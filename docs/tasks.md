@@ -318,14 +318,19 @@ also an early implementation priority, not a finding that custom VM code is inhe
   apparently-documented Kairos cloud-config feature that silently did not fire (the `k3s-ready`
   stage, above) — writing speculative network-config YAML now, with no way to verify it live, risks
   repeating that. Left open rather than guessed at.
-  **Host-side kube API access, component-tested (2026-09-12):** `Config.ForwardKubeAPI` forwards a
+  **Host-side kube API access: verified live (2026-09-12).** `Config.ForwardKubeAPI` forwards a
   second loopback-bound port to the guest's k3s API server (`Credentials.KubeAPIPort`), and
   `test/hadron/kubeconfig.go`'s `Kubeconfig` fetches the guest's own k3s-generated kubeconfig over
   SSH and rewrites only its server URL's port to match — not the host, which VM-2's own successful
   live run already proved is `127.0.0.1` by default, so the certificate's Subject Alternative Name
   check (which only inspects the host/IP, never the port) needs no changes. Needed regardless of
   whether the eventual harness ends up single- or two-node: something outside any guest needs API
-  access either way. Not yet exercised against a real guest.
+  access either way.
+  [Run 34712598425](https://github.com/MichaelZalud18/nut-operator/actions/runs/34712598425)
+  fetched the kubeconfig, built a real `client-go` clientset from it, and listed nodes through the
+  forwarded port from outside the guest entirely — passed on the first attempt, no iteration
+  needed. This is the actual "kubeconfig wiring" `VM-2`'s own text names as open work, not a proxy
+  for it.
   **High-severity safety checks:** mismatched cluster/VM identity must refuse mutation; partial
   startup and cancellation must clean up only the current run. Bind forwarded management ports to
   loopback (done in `test/hadron`) and prove concurrent runs cannot target or delete each other's

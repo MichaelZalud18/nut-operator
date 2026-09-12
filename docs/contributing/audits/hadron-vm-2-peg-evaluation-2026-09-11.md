@@ -197,6 +197,7 @@ first three found one real, distinct gap; the fourth passed.
 | [34671188060](https://github.com/MichaelZalud18/nut-operator/actions/runs/34671188060) | fail (~11.5m) | KVM fix worked; new gap found via a full, unfiltered console dump (a `tail -c 50000` in-log dump was tried first and found to get crowded out by a repeating serial getty prompt) — one clean reboot from the live installer into the installed `COS_ACTIVE` disk, console then quiet, but SSH commands kept succeeding the whole 10-minute wait (a working connection running a real command, not a connection failure), consistent with a normally-booted guest. The `/tmp/k3s-ready` marker just never appeared. |
 | [34672025391](https://github.com/MichaelZalud18/nut-operator/actions/runs/34672025391) | fail (~11.5m) | Added live diagnostic snapshots (`systemctl status k3s`, its journal) every ~60s instead of guessing at a bigger timeout. All nine snapshots showed `k3s.service` active and CoreDNS/Traefik/metrics-server genuinely Ready within ~40s of the service starting — k3s itself was never the problem. The `provider-kairos.bootstrap.after.k3s-ready` cloud-config stage (kairos.io/docs/examples/k3s-stages) simply never fires on this Kairos version. |
 | [34705344528](https://github.com/MichaelZalud18/nut-operator/actions/runs/34705344528) | **pass (103.83s)** | Readiness switched to polling `sudo k3s kubectl get nodes -o json` directly and parsing the real `NodeReady` condition (`hasReadyNode`, `readiness.go`) instead of the broken marker file. SSH reachable in ~35s; a genuinely Ready node (`kairos-2990`) confirmed within ~65s more. |
+| [34712598425](https://github.com/MichaelZalud18/nut-operator/actions/runs/34712598425) | **pass (111.55s)** | First live exercise of `Config.ForwardKubeAPI`/`Kubeconfig` (kubeconfig.go): fetched the guest's kubeconfig, built a real `client-go` clientset from it, and listed nodes through the forwarded API port from outside the guest entirely. Passed on the first attempt -- no iteration needed, unlike every prior new mechanism this evaluation exercised for the first time. |
 
 Also hardened along the way, verified by dedicated component tests rather than only by the live
 runs: `guestCommand` (`command.go`) bounds the entire SSH exchange by context, since PEG's own
@@ -207,10 +208,10 @@ PID-reuse race a blanket `pkill -f qemu-system-x86_64` was exposed to; and `work
 parses the actual workflow YAML to regression-test its own safety invariants (every step bounded,
 cleanup unconditional, cleanup precedes artifact upload, state removal gated on cleanup success).
 
-This proves one disposable Hadron guest boots unattended and reaches a genuinely Ready k3s node on
-a standard GitHub-hosted runner. It does not prove the two-node topology, kubeconfig wiring,
-concurrent-run isolation, or any shutdown/actuation behavior -- those remain `VM-2`'s open work and
-`VM-3`/`VM-4`.
+This proves one disposable Hadron guest boots unattended, reaches a genuinely Ready k3s node, and
+is reachable via its kubeconfig from outside the guest, all on a standard GitHub-hosted runner. It
+does not prove the two-node topology, guest-to-guest connectivity, concurrent-run isolation, or any
+shutdown/actuation behavior -- those remain `VM-2`'s open work and `VM-3`/`VM-4`.
 
 ## VM-5's upstream reuse checks (2026-09-12)
 
