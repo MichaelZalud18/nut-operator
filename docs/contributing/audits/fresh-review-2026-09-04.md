@@ -326,3 +326,21 @@ configuration/transport boundaries only, not the other shutdown-safety findings 
 
 Validation: race-enabled trigger/executor suites, focused controller boundary tests, and package
 lint. No infrastructure, physical UPS, or Hadron changes were required.
+
+## F-141 Controller Fix (2026-09-12)
+
+The Secret mapper now follows NUTServer certificate, server-CA, and client-CA references as well
+as selected device credentials. References match both namespace and name, and each server is queued
+once even when multiple paths match. TLS notification does not depend on finding credential-using
+devices. The existing data-change predicate continues to suppress metadata-only updates.
+
+The new regression failed before the fix for all three TLS reference types. Race-enabled tests now
+cover rotation, deletion, recreation, same-name Secrets in other namespaces, and overlapping TLS/
+credential references. An isolated envtest API server and Secret informer also drove the production
+mapper/predicate into a probe reconciler using the real material validation/digest functions:
+rotation changed the digest, deletion failed validation, and recreation restored the rotated digest.
+This test does not start the full NUTServer reconciler or an operand pod.
+
+Controller tests and lint passed. The remaining F-141 acceptance item is an image-level check of
+the certificate actually served after rollout; it remains in the task tracker rather than being
+claimed from a digest change alone.

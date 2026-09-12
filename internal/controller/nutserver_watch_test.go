@@ -316,6 +316,63 @@ func TestNUTServerRequestsForSecretIgnoresASameNamedSecretElsewhere(t *testing.T
 	}
 }
 
+func TestTLSSecretEventsEnqueueReferencingNUTServers(t *testing.T) {
+	for _, field := range []string{"server-certificate", "server-ca", "client-ca"} {
+		t.Run(field, func(t *testing.T) {
+			secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "tls-material", Namespace: "power-system"}, Data: map[string][]byte{"tls.crt": []byte("old")}}
+			server := tlsEnabledNUTServer()
+			ref := &powerv1alpha1.NamespacedNameReference{Name: secret.Name, Namespace: secret.Namespace}
+			switch field {
+			case "server-certificate":
+				server.Spec.TLS.ServerCertificateRef = ref
+			case "server-ca":
+				server.Spec.TLS.ServerCARef = ref
+			case "client-ca":
+				server.Spec.TLS.ClientCARef = ref
+			}
+			unrelated := watchTestServer("unrelated", powerv1alpha1.NUTServerSpec{})
+			r := &NUTServerReconciler{Client: fake.NewClientBuilder().WithScheme(nutServerWatchScheme(t)).WithObjects(server, unrelated).Build()}
+			queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
+			defer queue.ShutDown()
+			h := handler.EnqueueRequestsFromMapFunc(r.nutServerRequestsForSecret)
+			p := secretDataChangedPredicate()
+			rotated := secret.DeepCopy()
+			rotated.Data["tls.crt"] = []byte("new")
+			update := event.UpdateEvent{ObjectOld: secret, ObjectNew: rotated}
+			if !p.Update(update) {
+				t.Fatal("rotation was filtered")
+			}
+			h.Update(context.Background(), update, queue)
+			assertSameServers(t, drainQueue(t, queue), []string{server.Name})
+			deleted := event.DeleteEvent{Object: rotated}
+			if !p.Delete(deleted) {
+				t.Fatal("deletion was filtered")
+			}
+			h.Delete(context.Background(), deleted, queue)
+			assertSameServers(t, drainQueue(t, queue), []string{server.Name})
+			created := event.CreateEvent{Object: rotated}
+			if !p.Create(created) {
+				t.Fatal("recreation was filtered")
+			}
+			h.Create(context.Background(), created, queue)
+			assertSameServers(t, drainQueue(t, queue), []string{server.Name})
+			elsewhere := secret.DeepCopy()
+			elsewhere.Namespace = "other"
+			assertSameServers(t, r.nutServerRequestsForSecret(context.Background(), elsewhere), nil)
+		})
+	}
+}
+
+func TestTLSAndCredentialReferenceEnqueuesOnce(t *testing.T) {
+	server := tlsEnabledNUTServer()
+	device := watchTestDevice("ups", nil)
+	device.Spec.CredentialSecretRef = server.Spec.TLS.ServerCertificateRef.DeepCopy()
+	server.Spec.DeviceRefs = []powerv1alpha1.ObjectNameReference{{Name: device.Name}}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: device.Spec.CredentialSecretRef.Name, Namespace: device.Spec.CredentialSecretRef.Namespace}}
+	r := &NUTServerReconciler{Client: fake.NewClientBuilder().WithScheme(nutServerWatchScheme(t)).WithObjects(server, device).Build()}
+	assertSameServers(t, r.nutServerRequestsForSecret(context.Background(), secret), []string{server.Name})
+}
+
 // An unparseable selector is already a reconcile error the server reports on its own status.
 // Treating it as a wildcard here would turn one bad selector into a reconcile of every server on
 // every device event.

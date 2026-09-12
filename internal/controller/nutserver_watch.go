@@ -124,8 +124,8 @@ func (r *NUTServerReconciler) nutServerRequestsForUPSDevice(ctx context.Context,
 	return requests
 }
 
-// nutServerRequestsForSecret enqueues the NUTServers whose selected devices name
-// this Secret as their credential source (F-43).
+// nutServerRequestsForSecret enqueues NUTServers referencing TLS material directly
+// or selecting devices that use this Secret for credentials (F-43, F-141).
 //
 // Owns(&corev1.Secret{}) covers only Secrets carrying an owner reference back to
 // the NUTServer. A user-supplied credentialSecretRef target has none, so without
@@ -146,7 +146,7 @@ func (r *NUTServerReconciler) nutServerRequestsForSecret(ctx context.Context, ob
 	var devices powerv1alpha1.UPSDeviceList
 	if err := r.List(ctx, &devices); err != nil {
 		log.Error(err, "Failed to list UPSDevice resources after Secret change", "secret", secret.Name, "namespace", secret.Namespace)
-		return nil
+		// A device-list failure must not suppress independent TLS-reference notifications.
 	}
 
 	referencing := make([]powerv1alpha1.UPSDevice, 0, len(devices.Items))
@@ -155,10 +155,36 @@ func (r *NUTServerReconciler) nutServerRequestsForSecret(ctx context.Context, ob
 			referencing = append(referencing, device)
 		}
 	}
-	if len(referencing) == 0 {
+	var servers powerv1alpha1.NUTServerList
+	if err := r.List(ctx, &servers); err != nil {
+		log.Error(err, "Failed to list NUTServer resources after Secret change", "secret", secret.Name, "namespace", secret.Namespace)
 		return nil
 	}
-	return r.nutServersSelectingAny(ctx, referencing)
+	var requests []reconcile.Request
+	for _, server := range servers.Items {
+		matched := nutServerUsesTLSSecret(&server, secret)
+		for i := range referencing {
+			if matched {
+				break
+			}
+			matched = nutServerWatchesDevice(&server, &referencing[i])
+		}
+		if matched {
+			requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: server.Name}})
+		}
+	}
+	return requests
+}
+
+func nutServerUsesTLSSecret(server *powerv1alpha1.NUTServer, secret *corev1.Secret) bool {
+	for _, ref := range []*powerv1alpha1.NamespacedNameReference{
+		server.Spec.TLS.ServerCertificateRef, server.Spec.TLS.ServerCARef, server.Spec.TLS.ClientCARef,
+	} {
+		if ref != nil && ref.Name == secret.Name && ref.Namespace == secret.Namespace {
+			return true
+		}
+	}
+	return false
 }
 
 // nutServerRequestsForConfigMap enqueues the NUTServers whose selected devices name this ConfigMap
