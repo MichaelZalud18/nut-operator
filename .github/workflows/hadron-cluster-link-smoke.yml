@@ -6,7 +6,10 @@ name: Hadron Cluster Link Smoke Test
 # argument construction only. This workflow boots two live-installer guests (no unattended install,
 # no k3s -- deliberately isolating this one new, risky mechanism from everything the single-guest
 # boot-smoke workflow already proved) wired by that link, and pings between their kernel-assigned
-# IPv6 link-local addresses, which need no cloud-config or guest addressing story at all. See
+# IPv6 link-local addresses, which need no guest addressing story at all. Each guest still gets a
+# minimal cloud-config (MinimalSSHCloudConfig, no install:/k3s:) purely to create the SSH login
+# NewSafeMachine's generated Credentials expect -- a first live run found nothing else creates
+# that account, so genisoimage is required here even though the guests never install. See
 # docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md for why guest static addressing
 # on this link is deliberately not attempted yet.
 on:
@@ -39,11 +42,14 @@ jobs:
         timeout-minutes: 1
         run: df -h /
 
-      - name: Install QEMU
+      # genisoimage is required now: MinimalSSHCloudConfig means both guests get a real
+      # cloud-init NoCloud seed ISO built (buildNoCloudISO), unlike this workflow's first
+      # version, which had no CloudConfig at all and so never needed it.
+      - name: Install QEMU and genisoimage
         timeout-minutes: 5
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils acl
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils acl genisoimage
 
       # Same fix as hadron-vm-probe.yml: /dev/kvm is present but not group/user accessible by
       # default on this runner image. See that workflow's own comment for the full finding.
