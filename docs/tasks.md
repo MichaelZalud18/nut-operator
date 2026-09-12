@@ -310,13 +310,16 @@ also an early implementation priority, not a finding that custom VM code is inhe
   k3s, isolating exactly this one new mechanism from everything the single-guest workflow already
   proved. `TestSmokeWorkflowsReserveCleanupBudget` (`workflow_test.go`) now checks both smoke
   workflows, not just the first, and caught this new one's own step-timeout-vs-job-timeout budget
-  being wrong before any live run. First live attempt
-  ([34714542243](https://github.com/MichaelZalud18/nut-operator/actions/runs/34714542243)) found a
-  second real bug: booting with no `CloudConfig` at all (since this test needs neither install nor
-  k3s) also meant no guest account existed matching the fresh generated `Credentials`, so every SSH
-  attempt failed authentication, not connectivity — fixed with `MinimalSSHCloudConfig` (a
-  users-only cloud-config, no `install:`/`k3s:`). Not yet re-run. The raw L2 segment also carries
-  no DHCP of its own — each guest still needs an address on it via some other mechanism.
+  being wrong before any live run. Two live attempts so far, each finding one real, distinct gap:
+  [34714542243](https://github.com/MichaelZalud18/nut-operator/actions/runs/34714542243) found no
+  guest account existed matching the fresh generated `Credentials` (this test's deliberate lack of
+  `CloudConfig` meant nothing created one) — fixed with `MinimalSSHCloudConfig` (a users-only
+  cloud-config, no `install:`/`k3s:`);
+  [34715782711](https://github.com/MichaelZalud18/nut-operator/actions/runs/34715782711) then found
+  that fix introduced a new dependency (`genisoimage`, for the seed ISO) the workflow's own install
+  step never picked up, since its first version had no `CloudConfig` at all — fixed. Not yet
+  re-run. The raw L2 segment also carries no DHCP of its own — each guest still needs an address on
+  it via some other mechanism.
   Checked, not assumed: Kairos's own reference docs do not show a clear, reliable static-network
   cloud-config mechanism, and this project already has one direct cautionary tale about trusting an
   apparently-documented Kairos cloud-config feature that silently did not fire (the `k3s-ready`

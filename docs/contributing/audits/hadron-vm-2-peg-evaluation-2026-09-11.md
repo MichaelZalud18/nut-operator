@@ -255,9 +255,9 @@ check).
 | Run | Result | Finding |
 | --- | --- | --- |
 | [34714542243](https://github.com/MichaelZalud18/nut-operator/actions/runs/34714542243) | fail (~11.5m, controlled) | Both guests were booted with no `CloudConfig` at all -- deliberately, since this test needs neither install nor k3s. That also meant neither guest had any account matching the fresh `Credentials` `NewSafeMachine` generated: nothing else creates one. Every SSH attempt failed with `ssh: unable to authenticate`, not a connectivity problem. Separately, the wait itself had no bound of its own -- it fell through to the overall test deadline, so a failure that should have surfaced in well under a minute instead consumed the full ten-minute budget before being reported. |
+| [34715782711](https://github.com/MichaelZalud18/nut-operator/actions/runs/34715782711) | fail (~1.5m) | Fixed the SSH login, introduced a new dependency in the same change: `MinimalSSHCloudConfig` means both guests now get a real cloud-init seed ISO built (`buildNoCloudISO`), which needs `genisoimage`/`mkisofs` -- present in `hadron-vm-boot-smoke.yml`'s own install step, never added to this workflow's, since its first version had no `CloudConfig` at all and never needed it. `NewSafeMachine` failed immediately with "neither genisoimage nor mkisofs found on PATH." The fast, controlled failure (1.5m, not a timeout) is itself the payoff of the previous run's bounded-wait fix -- this surfaced immediately instead of only after minutes of waiting. |
 
-Both fixed: `MinimalSSHCloudConfig` (`cloudinit.go`) renders a cloud-config with only a `users:`
-entry -- no `install:`, no `k3s:` -- for exactly this case (a guest that only ever needs to be
-SSH-reachable in its live environment). The SSH wait now has its own three-minute
-`context.WithTimeout`, matching the single-guest smoke test's own bound, so a real failure is
-distinguishable from a timeout again. Not yet re-run live.
+Fixed: added `genisoimage` to the workflow's install step. `TestSmokeWorkflowsReserveCleanupBudget`
+does not catch a missing package this way (it only checks the YAML's own timeout/cleanup shape),
+which is itself worth noting as a real limit on what a static workflow check can catch. Not yet
+re-run live.
