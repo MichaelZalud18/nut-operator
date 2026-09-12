@@ -292,8 +292,20 @@ also an early implementation priority, not a finding that custom VM code is inhe
   reuses a static value, consistent with every other credential in this package. Component tests
   cover role/port/MAC wiring and rejection of invalid MACs or an unconstructed `Link`; none of it
   has been exercised against two real, network-connected guests yet. The raw L2 segment also
-  carries no DHCP of its own — each guest still needs an address on it via some other mechanism
-  (a cloud-config `network-config` stanza, most likely), which is not built yet either.
+  carries no DHCP of its own — each guest still needs an address on it via some other mechanism.
+  Checked, not assumed: Kairos's own reference docs do not show a clear, reliable static-network
+  cloud-config mechanism, and this project already has one direct cautionary tale about trusting an
+  apparently-documented Kairos cloud-config feature that silently did not fire (the `k3s-ready`
+  stage, above) — writing speculative network-config YAML now, with no way to verify it live, risks
+  repeating that. Left open rather than guessed at.
+  **Host-side kube API access, component-tested (2026-09-12):** `Config.ForwardKubeAPI` forwards a
+  second loopback-bound port to the guest's k3s API server (`Credentials.KubeAPIPort`), and
+  `test/hadron/kubeconfig.go`'s `Kubeconfig` fetches the guest's own k3s-generated kubeconfig over
+  SSH and rewrites only its server URL's port to match — not the host, which VM-2's own successful
+  live run already proved is `127.0.0.1` by default, so the certificate's Subject Alternative Name
+  check (which only inspects the host/IP, never the port) needs no changes. Needed regardless of
+  whether the eventual harness ends up single- or two-node: something outside any guest needs API
+  access either way. Not yet exercised against a real guest.
   **High-severity safety checks:** mismatched cluster/VM identity must refuse mutation; partial
   startup and cancellation must clean up only the current run. Bind forwarded management ports to
   loopback (done in `test/hadron`) and prove concurrent runs cannot target or delete each other's
@@ -355,15 +367,21 @@ also an early implementation priority, not a finding that custom VM code is inhe
   time/concurrency and artifact retention, use minimal token permissions, and require no site
   secrets or access to a persistent private environment. **Conditional:** make it a required
   check only after runner feasibility, resource use, and test reliability are demonstrated.
-  **Upstream workflow check [Medium]:** review [Kairos's reusable QEMU workflow](https://github.com/kairos-io/kairos/blob/master/.github/workflows/reusable-qemu-test.yaml)
-  for reusable setup and diagnostics, not as a drop-in cluster action. Verify caller checkout/test
-  layout, artifact names, runner labels, and required secrets before reuse. Pin adopted actions or
-  workflows to reviewed commits; do not execute untrusted PR code with privileged tokens or secrets.
-  **Image-build check [Low]:** use pinned published artifacts when they meet the test requirements.
-  Only if customization is necessary, evaluate the [current Factory workflow](https://github.com/kairos-io/kairos/blob/master/.github/workflows/reusable-factory.yaml)
-  instead of inventing an image pipeline. The [old Factory repository](https://github.com/kairos-io/kairos-factory-action)
-  is archived and points to this replacement. Factory builds images, not test clusters; keep image
-  creation separate from VM execution and retain the existing checksum/digest requirements.
+  **Upstream workflow check: done (2026-09-12), not reusable.** Kairos's own
+  [reusable QEMU workflow](https://github.com/kairos-io/kairos/blob/master/.github/workflows/reusable-qemu-test.yaml)
+  needs `QUAY_USERNAME`/`QUAY_PASSWORD` registry secrets this project has no reason to hold, and
+  runs on self-hosted `fast`-labeled runners for nearly every test -- the opposite of what `VM-1`
+  proved usable (standard GitHub-hosted `ubuntu-latest`). Its diagnostic patterns are still worth
+  knowing: the same KVM ACL+udev fix this project found independently, and a libvirt-bridge
+  (`virbr0`) approach to VM-to-VM networking, an alternative to `network.go`'s own point-to-point
+  `ClusterLink` worth revisiting only if that turns out not to work live or a future harness needs
+  more than two nodes. See `docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md`.
+  **Image-build check: done (2026-09-12), not needed.** The pinned Hadron artifact already meets
+  every `VM-2` requirement, and all customization so far (credentials, install target, k3s
+  enablement) happens at boot time through the cloud-config `DataSource`, not at image-build time
+  -- exactly the "pinned published artifact" case this check's own text says to prefer. Kairos's
+  [Factory workflow](https://github.com/kairos-io/kairos/blob/master/.github/workflows/reusable-factory.yaml)
+  stays unevaluated further unless that changes.
 
 ---
 

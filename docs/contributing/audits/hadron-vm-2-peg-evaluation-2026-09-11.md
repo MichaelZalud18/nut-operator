@@ -211,3 +211,35 @@ This proves one disposable Hadron guest boots unattended and reaches a genuinely
 a standard GitHub-hosted runner. It does not prove the two-node topology, kubeconfig wiring,
 concurrent-run isolation, or any shutdown/actuation behavior -- those remain `VM-2`'s open work and
 `VM-3`/`VM-4`.
+
+## VM-5's upstream reuse checks (2026-09-12)
+
+`VM-5`'s own text calls for two checks before wiring the harness into CI: whether Kairos's
+reusable QEMU workflow is worth reusing for setup/diagnostics, and whether its Factory workflow is
+worth adopting for image builds. Read both, not summaries of their READMEs.
+
+**Reusable QEMU workflow
+([reusable-qemu-test.yaml](https://github.com/kairos-io/kairos/blob/master/.github/workflows/reusable-qemu-test.yaml)):
+not directly reusable, and the check found concrete reasons why, not just caution.** It requires
+`QUAY_USERNAME`/`QUAY_PASSWORD` secrets (registry credentials for temp CI images this project has
+no reason to manage) and runs on a `fast`-labeled self-hosted runner for every test except one --
+infrastructure this project does not have, and the opposite of what `VM-1` specifically proved
+usable (standard GitHub-hosted `ubuntu-latest`). Its diagnostic *patterns* are worth knowing,
+independent of reusing the workflow itself: the KVM ACL+udev fix this project already found
+independently, OVMF firmware auto-detection for SecureBoot testing (not needed here), and --
+notably -- its `USE_BRIDGE_NETWORK` path sets up a real libvirt bridge (`virbr0`) for VM-to-VM
+communication, a heavier-privilege, N-VM-capable alternative to this project's own point-to-point
+`ClusterLink`/`ClusterNIC` (`network.go`), worth revisiting only if the socket-netdev approach
+turns out not to work live, or if a future harness ever needs more than two nodes.
+
+**Factory workflow
+([reusable-factory.yaml](https://github.com/kairos-io/kairos/blob/master/.github/workflows/reusable-factory.yaml)):
+not needed at all, not just not adopted.** It builds custom Kairos images from a Dockerfile and
+pushes them to a caller-specified registry -- real capability, usable by an external caller with
+their own registry credentials, but built for a use case this project doesn't have. The pinned
+`kairos-hadron-v0.5.1-standard-amd64-generic-v4.3.0-k3sv1.36.4+k3s1.iso` artifact already meets
+every requirement `VM-2` has, and all customization needed so far (credentials, install target,
+k3s enablement) happens at boot time through the cloud-config `DataSource`, not at image-build
+time. `VM-5`'s own text already said to prefer a pinned published artifact when it meets the test
+requirements before evaluating this workflow at all -- it does, so this stays unevaluated further
+unless that changes.
