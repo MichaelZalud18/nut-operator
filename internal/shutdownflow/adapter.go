@@ -41,7 +41,11 @@ func Compile(obj *powerv1alpha1.ShutdownFlow) ([]powerv1alpha1.CompiledShutdownS
 
 // CompileArtifact returns the Kubernetes status-shaped view of a ShutdownFlow plan and its published artifact.
 func CompileArtifact(obj *powerv1alpha1.ShutdownFlow) ([]powerv1alpha1.CompiledShutdownStep, []powerv1alpha1.CompiledShutdownWave, *metav1.Duration, string, *powerv1alpha1.PublishedPlannerArtifactStatus) {
-	plan, _, err := planner.Compile(PlannerInputs(obj), planner.TelemetryInputs{})
+	inputs, err := PlannerInputs(obj)
+	if err != nil {
+		return nil, nil, nil, "", nil
+	}
+	plan, _, err := planner.Compile(inputs, planner.TelemetryInputs{})
 	if err != nil {
 		return nil, nil, nil, "", nil
 	}
@@ -108,7 +112,15 @@ func CompileFlowWithHistory(obj *powerv1alpha1.ShutdownFlow, bundle resolver.Str
 // CompileFlowWithHistoryAndHooks compiles with observed durations and resolved
 // hook identity folded into the structural plan hash.
 func CompileFlowWithHistoryAndHooks(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec, history planner.HistoryInputs, hookDigests []planner.HookDigest) CompiledFlow {
-	inputs := resolver.AttachResolvedInputHash(PlannerInputsWithTierPolicy(obj, tierPolicy), bundle)
+	inputs, err := PlannerInputsWithTierPolicy(obj, tierPolicy)
+	if err != nil {
+		return CompiledFlow{Diagnostics: []planner.Diagnostic{{
+			Severity: planner.DiagnosticError,
+			Reason:   "InputHashEncodingFailed",
+			Message:  err.Error(),
+		}}}
+	}
+	inputs = resolver.AttachResolvedInputHash(inputs, bundle)
 	inputs.HookDigests = append([]planner.HookDigest(nil), hookDigests...)
 	inputs.GroupNodes = PlannerGroupNodes(obj, bundle)
 	plan, diagnostics, err := planner.CompileWithHistory(inputs, planner.TelemetryInputs{}, history)
@@ -158,13 +170,16 @@ func APIBlockedNodeReleases(blocked []planner.BlockedNode) []powerv1alpha1.Block
 }
 
 // PlannerInputs converts the Kubernetes API object into pure planner inputs.
-func PlannerInputs(obj *powerv1alpha1.ShutdownFlow) planner.StructuralInputs {
+func PlannerInputs(obj *powerv1alpha1.ShutdownFlow) (planner.StructuralInputs, error) {
 	return PlannerInputsWithTierPolicy(obj, powerv1alpha1.PowerShutdownTierPolicySpec{})
 }
 
 // PlannerInputsWithTierPolicy converts the Kubernetes API object into pure planner inputs with central tier policy.
-func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec) planner.StructuralInputs {
-	plannerTierPolicy := PlannerTierPolicy(tierPolicy)
+func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec) (planner.StructuralInputs, error) {
+	plannerTierPolicy, err := PlannerTierPolicy(tierPolicy)
+	if err != nil {
+		return planner.StructuralInputs{}, err
+	}
 	inputs := planner.StructuralInputs{
 		SourceID:          fmt.Sprintf("%s/ShutdownFlow/%s", powerv1alpha1.GroupVersion.String(), obj.Name),
 		TierPolicy:        plannerTierPolicy,
@@ -187,12 +202,16 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 		})
 	}
 	for _, group := range obj.Spec.Groups {
+		target, err := PlannerTarget(group.Target)
+		if err != nil {
+			return planner.StructuralInputs{}, fmt.Errorf("hash group %q target: %w", group.Name, err)
+		}
 		inputs.Groups = append(inputs.Groups, planner.Group{
 			Name:         group.Name,
 			Description:  group.Description,
 			Action:       string(group.Action),
 			HookRef:      PlannerHookReference(group.HookRef),
-			Target:       PlannerTarget(group.Target),
+			Target:       target,
 			Requires:     append([]string(nil), group.Requires...),
 			Before:       append([]string(nil), group.Before...),
 			After:        append([]string(nil), group.After...),
@@ -204,11 +223,15 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 		})
 	}
 	for _, step := range obj.Spec.Steps {
+		target, err := PlannerTarget(step.Target)
+		if err != nil {
+			return planner.StructuralInputs{}, fmt.Errorf("hash step %q target: %w", step.ID, err)
+		}
 		inputs.Steps = append(inputs.Steps, planner.Step{
 			ID:              step.ID,
 			Action:          string(step.Type),
 			HookRef:         PlannerHookReference(step.HookRef),
-			Target:          PlannerTarget(step.Target),
+			Target:          target,
 			Duration:        PlannerDuration(step.Duration),
 			Timeout:         PlannerDuration(step.Timeout),
 			ContinueOnError: step.ContinueOnError != nil && *step.ContinueOnError,
@@ -216,7 +239,7 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 		})
 	}
 
-	return inputs
+	return inputs, nil
 }
 
 func effectiveTierOverrunPolicy(policy powerv1alpha1.ShutdownTierOverrunPolicy) powerv1alpha1.ShutdownTierOverrunPolicy {
@@ -238,7 +261,7 @@ func PlannerHookReference(ref *powerv1alpha1.NamespacedNameReference) *planner.H
 }
 
 // PlannerTierPolicy converts API tier policy into the pure planner shape.
-func PlannerTierPolicy(policy powerv1alpha1.PowerShutdownTierPolicySpec) planner.TierPolicy {
+func PlannerTierPolicy(policy powerv1alpha1.PowerShutdownTierPolicySpec) (planner.TierPolicy, error) {
 	converted := planner.TierPolicy{
 		LabelKey:      effectiveShutdownTierLabelKey(policy),
 		DefaultTier:   copyInt32(policy.DefaultTier),
@@ -253,14 +276,18 @@ func PlannerTierPolicy(policy powerv1alpha1.PowerShutdownTierPolicySpec) planner
 		})
 	}
 	for _, rule := range policy.SelectorRules {
+		hash, err := stableHash(rule.Selector)
+		if err != nil {
+			return planner.TierPolicy{}, fmt.Errorf("hash tier selector %q: %w", rule.Name, err)
+		}
 		converted.SelectorRules = append(converted.SelectorRules, planner.TierSelector{
 			Name:    rule.Name,
 			Subject: string(rule.Subject),
 			Tier:    rule.Tier,
-			Hash:    stableHash(rule.Selector),
+			Hash:    hash,
 		})
 	}
-	return converted
+	return converted, nil
 }
 
 // PlannerGroupNodes resolves which real cluster nodes each shutdown group
@@ -421,21 +448,25 @@ func PlannerDuration(duration *metav1.Duration) planner.Duration {
 }
 
 // PlannerTarget converts API target selectors into the planner's compact target summary.
-func PlannerTarget(target powerv1alpha1.ShutdownStepTarget) planner.Target {
+func PlannerTarget(target powerv1alpha1.ShutdownStepTarget) (planner.Target, error) {
+	hash, err := targetIdentityHash(target)
+	if err != nil {
+		return planner.Target{}, err
+	}
 	return planner.Target{
-		IdentityHash:      targetIdentityHash(target),
+		IdentityHash:      hash,
 		NodeSelector:      target.NodeSelector != nil || len(target.NodeSelectorRequirements) > 0,
 		NamespaceSelector: target.NamespaceSelector != nil,
 		WorkloadSelector:  target.WorkloadSelector != nil,
 		NamespaceCount:    len(target.Namespaces),
 		WorkloadRefCount:  len(target.WorkloadRefs),
 		AgentRefCount:     len(target.AgentRefs),
-	}
+	}, nil
 }
 
 // Preserve selector presence (nil and an empty selector are distinct), but not
 // the order of set-like fields. DeepCopy keeps normalization off the API object.
-func targetIdentityHash(target powerv1alpha1.ShutdownStepTarget) string {
+func targetIdentityHash(target powerv1alpha1.ShutdownStepTarget) (string, error) {
 	canonical := target.DeepCopy()
 	for _, selector := range []*metav1.LabelSelector{canonical.NodeSelector, canonical.NamespaceSelector, canonical.WorkloadSelector} {
 		if selector == nil {
@@ -448,40 +479,76 @@ func targetIdentityHash(target powerv1alpha1.ShutdownStepTarget) string {
 	for i := range canonical.NodeSelectorRequirements {
 		slices.Sort(canonical.NodeSelectorRequirements[i].Values)
 	}
+	node, err := selectorIdentity(canonical.NodeSelector)
+	if err != nil {
+		return "", err
+	}
+	namespace, err := selectorIdentity(canonical.NamespaceSelector)
+	if err != nil {
+		return "", err
+	}
+	workload, err := selectorIdentity(canonical.WorkloadSelector)
+	if err != nil {
+		return "", err
+	}
+	requirements, err := identitySet(canonical.NodeSelectorRequirements)
+	if err != nil {
+		return "", err
+	}
+	namespaces, err := identitySet(canonical.Namespaces)
+	if err != nil {
+		return "", err
+	}
+	workloads, err := identitySet(canonical.WorkloadRefs)
+	if err != nil {
+		return "", err
+	}
+	agents, err := identitySet(canonical.AgentRefs)
+	if err != nil {
+		return "", err
+	}
 	return stableHash(struct {
 		Node, Namespace, Workload                   any
 		Requirements, Namespaces, Workloads, Agents []string
 	}{
-		Node:         selectorIdentity(canonical.NodeSelector),
-		Namespace:    selectorIdentity(canonical.NamespaceSelector),
-		Workload:     selectorIdentity(canonical.WorkloadSelector),
-		Requirements: identitySet(canonical.NodeSelectorRequirements),
-		Namespaces:   identitySet(canonical.Namespaces),
-		Workloads:    identitySet(canonical.WorkloadRefs),
-		Agents:       identitySet(canonical.AgentRefs),
+		Node:         node,
+		Namespace:    namespace,
+		Workload:     workload,
+		Requirements: requirements,
+		Namespaces:   namespaces,
+		Workloads:    workloads,
+		Agents:       agents,
 	})
 }
 
-func selectorIdentity(selector *metav1.LabelSelector) any {
+func selectorIdentity(selector *metav1.LabelSelector) (any, error) {
 	if selector == nil {
-		return nil
+		return nil, nil
+	}
+	expressions, err := identitySet(selector.MatchExpressions)
+	if err != nil {
+		return nil, err
 	}
 	return struct {
 		Labels      map[string]string
 		Expressions []string
-	}{selector.MatchLabels, identitySet(selector.MatchExpressions)}
+	}{selector.MatchLabels, expressions}, nil
 }
 
-func identitySet[T any](values []T) []string {
+func identitySet[T any](values []T) ([]string, error) {
 	if len(values) == 0 {
-		return nil
+		return nil, nil
 	}
 	hashes := make([]string, len(values))
 	for i, value := range values {
-		hashes[i] = stableHash(value)
+		hash, err := stableHash(value)
+		if err != nil {
+			return nil, fmt.Errorf("hash identity set item %d: %w", i, err)
+		}
+		hashes[i] = hash
 	}
 	slices.Sort(hashes)
-	return hashes
+	return hashes, nil
 }
 
 // APICompiledSteps converts planner steps into the ShutdownFlow status shape.
@@ -737,11 +804,11 @@ func copyInt32(value *int32) *int32 {
 	return &copied
 }
 
-func stableHash(value any) string {
+func stableHash(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		panic(fmt.Sprintf("shutdownflow adapter value could not be encoded for hashing: %v", err))
+		return "", fmt.Errorf("shutdownflow adapter value could not be encoded for hashing: %w", err)
 	}
 	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }

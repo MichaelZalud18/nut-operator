@@ -365,7 +365,11 @@ func validateShutdownFlow(obj *powerv1alpha1.ShutdownFlow) validationResult {
 	if result := validateShutdownFlowHooks(obj); !result.accepted {
 		return result
 	}
-	_, diagnostics, err := planner.Compile(shutdownflowadapter.PlannerInputs(obj), planner.TelemetryInputs{})
+	inputs, err := shutdownflowadapter.PlannerInputs(obj)
+	if err != nil {
+		return rejected("InputHashEncodingFailed", "shutdown flow input conversion failed: %v", err)
+	}
+	_, diagnostics, err := planner.Compile(inputs, planner.TelemetryInputs{})
 	if err != nil {
 		for _, diagnostic := range diagnostics {
 			if diagnostic.Severity == planner.DiagnosticError {

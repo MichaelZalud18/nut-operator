@@ -2214,3 +2214,25 @@ Only `internal/shutdownflow/adapter.go` remains under F-125.
 Validation: the full controller suite passed with race detection and envtest (69.6 seconds).
 The strengthened two-hook failure regression also passed separately with race detection.
 `make lint` reported zero issues and `git diff --check` passed.
+
+### F-125 Adapter Follow-up, 2026-09-12
+
+The final adapter helper now returns wrapped JSON encoding errors. Tier policy, target identity,
+selector identity, and identity-set conversion propagate those errors instead of panicking or
+passing partial inputs to the planner. `CompileFlowWithHistoryAndHooks` publishes an
+`InputHashEncodingFailed` error diagnostic without a plan; the legacy artifact-only wrappers
+retain their existing empty-result failure contract. Controller validation rejects conversion
+failure, and the admission webhook reports an internal validation error.
+
+The canonical JSON shape, SHA-256 digests, set ordering, and nil-selector semantics remain
+unchanged. Regression tests verify inspectable encoding errors, discarding partial identity-set
+hashes, stable empty-set behavior, and the pre-change empty-target digest. Existing F-136 target
+identity, reorder, and immutability tests cover populated targets. API target and tier-policy
+fields remain JSON-safe, so encoding failures are tested directly at the helpers rather than
+claiming a malformed API object can currently reach these branches.
+
+A source check of the six F-125 helper locations found no remaining hash-encoding panics.
+
+F-125 closed: race-enabled adapter, controller, webhook, inventory, capability, and resolver
+suites passed, including controller/webhook envtest. `make lint` reported zero issues and
+`git diff --check` passed. No CRD, generated installer, or deployed resource changes were needed.

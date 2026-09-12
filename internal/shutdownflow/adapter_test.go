@@ -59,7 +59,10 @@ func TestPlannerInputsResolveShutdownTierFromGroupAndTargetLabel(t *testing.T) {
 		},
 	}
 
-	inputs := PlannerInputsWithTierPolicy(flow, powerv1alpha1.PowerShutdownTierPolicySpec{})
+	inputs, err := PlannerInputsWithTierPolicy(flow, powerv1alpha1.PowerShutdownTierPolicySpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	groups := map[string]powerv1alpha1.ShutdownGroup{}
 	for _, group := range flow.Spec.Groups {
 		groups[group.Name] = group
@@ -85,13 +88,19 @@ func TestPlannerInputsCarryEffectiveTierOverrunPolicy(t *testing.T) {
 		},
 	}
 
-	inputs := PlannerInputs(flow)
+	inputs, err := PlannerInputs(flow)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if inputs.TierOverrunPolicy != string(powerv1alpha1.ShutdownTierOverrunWait) {
 		t.Fatalf("expected default Wait policy in planner inputs, got %q", inputs.TierOverrunPolicy)
 	}
 
 	flow.Spec.TierOverrunPolicy = powerv1alpha1.ShutdownTierOverrunPreempt
-	inputs = PlannerInputs(flow)
+	inputs, err = PlannerInputs(flow)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if inputs.TierOverrunPolicy != string(powerv1alpha1.ShutdownTierOverrunPreempt) {
 		t.Fatalf("expected Preempt policy in planner inputs, got %q", inputs.TierOverrunPolicy)
 	}
@@ -215,7 +224,10 @@ func TestPlannerInputsResolveShutdownTierFromCentralSelectorRule(t *testing.T) {
 		}},
 	}
 
-	inputs := PlannerInputsWithTierPolicy(flow, policy)
+	inputs, err := PlannerInputsWithTierPolicy(flow, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if got := inputs.Groups[0].ShutdownTier; got == nil || *got != 2 {
 		t.Fatalf("expected selector rule tier 2, got %#v", got)

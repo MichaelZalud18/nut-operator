@@ -139,7 +139,12 @@ func validateShutdownFlowAdmission(obj *powerv1alpha1.ShutdownFlow) (admission.W
 	errs = append(errs, validateAbortPolicy(specPath.Child("abortPolicy"), obj.Spec.AbortPolicy)...)
 	errs = append(errs, validateFlowSafety(specPath.Child("safety"), obj)...)
 
-	plan, diagnostics, err := planner.Compile(shutdownflowadapter.PlannerInputs(obj), planner.TelemetryInputs{})
+	inputs, err := shutdownflowadapter.PlannerInputs(obj)
+	if err != nil {
+		errs = append(errs, field.InternalError(specPath, err))
+		return warnings, newInvalidAdmissionError("ShutdownFlow", obj, errs)
+	}
+	plan, diagnostics, err := planner.Compile(inputs, planner.TelemetryInputs{})
 	for _, diagnostic := range diagnostics {
 		if diagnostic.Severity == planner.DiagnosticWarning {
 			warnings = append(warnings, diagnostic.Message)

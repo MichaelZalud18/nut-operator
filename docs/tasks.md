@@ -218,14 +218,6 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   Local upgrade coverage now checks CRD/deployment reapply plus manager replacement over an existing
   resource. True previous-release schema compatibility starts after there is a previous released API
   to install.
-- `F-125` [Low] finish the `stableHash`-panics-on-marshal-failure sweep. Remaining:
-  `internal/shutdownflow/adapter.go` (its callers cross into the webhook and controller
-  packages, including tier-policy and target-identity hashing).
-  Capability/resolver were fixed 2026-09-04; inventory and both controller helpers were fixed
-  2026-09-12. Regression coverage checks returned encoding errors and hash compatibility;
-  hook digest assembly returns contextual errors without partial results. This remains defensive
-  hardening, not a demonstrated admission bypass or API-triggerable crash.
-  See `operator-maturity-benchmarks.md`'s F-125 evidence.
 
 #### Hadron VM Test Coverage
 
