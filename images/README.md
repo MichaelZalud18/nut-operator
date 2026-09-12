@@ -2,11 +2,14 @@
 
 This directory contains project-owned image definitions for NUT Operator.
 
-Current images:
+Image definitions:
 
 - `nut-operator`: controller-manager image built from the root `Dockerfile`.
-- `nut-server`: Network UPS Tools `upsd` plus network-capable drivers from Alpine packages.
-- `upsmon-agent`: unprivileged Network UPS Tools `upsmon` client from Alpine packages.
-- `node-actuator`: fail-closed stub actuator. It does not perform real host shutdown.
+- `nut-server`: source-built Network UPS Tools `upsd` and network-capable drivers, using OpenSSL.
+- `upsmon-agent`: source-built NUT `upsmon` client and project-owned signal/notification writers.
+- `node-actuator`: simulation, approved Linux power-off, and Talos shutdown implementations.
 
-The NUT operand images are interim project-owned development images. They use distribution packages rather than source-built, signature-verified NUT tarballs. Production release images still need pinned base digests, SBOMs, provenance attestations, signatures, and dependency vulnerability remediation.
+The Dockerfiles own source pins, signature checks, runtime dependencies, and build controls.
+See [Image Strategy](../docs/reference/images.md) for the publication and verification contract,
+and the [actuation guide](../docs/guides/enable-actuation.md) for the approval and privilege
+boundaries. The actuator is capable of real shutdown; simulation is the default, not its only mode.

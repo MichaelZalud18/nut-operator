@@ -13,7 +13,7 @@ keylessly signed with Sigstore/cosign after vulnerability scanning.
 - `upsmon-agent`: unprivileged NUT client plus the project-owned `power-signal-writer` used by the
   `NodePowerAgent` DaemonSet.
 - `node-actuator`: small host-action process. `Simulate` runs without host privileges; approved
-  real host shutdown uses the direct Linux poweroff syscall.
+  real host shutdown uses the direct Linux poweroff syscall or the Talos machine API.
 - `operator`: controller-manager image built from this repository.
 
 ## Rationale
@@ -69,10 +69,12 @@ Project-owned images are:
 - `ghcr.io/michaelzalud18/node-actuator:sha-<git-sha>`
 
 The two tags do not appear at the same time and do not mean the same thing. `sha-<git-sha>` is
-published as soon as the image builds. `main` is applied afterwards, and only to a digest the e2e
-suite and the NUT TLS smoke test have both run against — so `main` means tested, not merely built
-from the main branch. Both tags resolve to one digest: the promotion adds a tag to the existing
-manifest rather than rebuilding.
+published as soon as the image builds. `main` is applied afterwards, only after the e2e suite
+passes against the published digests and the separate NUT TLS smoke job passes. The TLS job
+builds native-architecture test images from the same checkout; it does not test the published
+multi-architecture digests. Both tags resolve to one digest: promotion adds a tag to the existing
+manifest rather than rebuilding. These checks do not establish runtime coverage of every
+published architecture.
 
 Images include OCI source, documentation, license, revision, version, creation time, and vendor labels so GHCR can associate package metadata with this repository.
 
