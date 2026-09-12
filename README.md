@@ -184,27 +184,10 @@ walkthrough, upgrade and uninstall order, and troubleshooting are in
 
 ## Development
 
-Building and deploying from a clone:
-
-```sh
-make docker-build docker-push IMG=<registry>/nut-operator:<tag>
-make install                                    # CRDs
-make deploy IMG=<registry>/nut-operator:<tag>   # controller
-make deploy-catalog                             # UPS capability profiles
-kubectl apply -k config/samples/                # example resources
-```
-
-`make deploy-catalog` applies the project-maintained capability catalog: reusable product/SKU
-profiles, not site inventory. Run it after the CRDs and controller are installed.
-
-For release bundles:
-
-```sh
-make build-installer build-catalog IMG=<registry>/nut-operator:<tag>
-```
-
-Test, lint, and security-scan commands, and what to run before opening a pull request, are in
-[CONTRIBUTING.md](CONTRIBUTING.md#development-checks).
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) for checks and contribution workflow, and
+[AGENTS.md](AGENTS.md) for AI-assisted work. The [Makefile](Makefile) owns build, generation,
+and test entry points; [installation documentation](docs/installation/README.md) owns deployment
+instructions. Building or testing locally does not imply permission to publish images or deploy.
 
 ## Documentation
 
