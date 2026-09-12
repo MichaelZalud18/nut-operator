@@ -83,8 +83,15 @@ func TestHadronClusterLinkConnectivity(t *testing.T) {
 	// calls t.Fatalf, which the testing package requires to run only on the test's own
 	// goroutine. Each goroutine here reports its own error back instead; t.Fatalf is called
 	// once, from this function's own goroutine, after both finish.
+	//
+	// An explicit deadline here, not just the shared parent ctx: a first version of this test
+	// let the SSH wait fall through to the overall test timeout with no bound of its own, so a
+	// real failure (an SSH auth error, not a timeout at all) took the full ten-minute test budget
+	// to surface instead of the few minutes SSH normally takes.
 	t.Log("waiting for SSH on both guests")
-	group, groupCtx := errgroup.WithContext(ctx)
+	sshCtx, sshCancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer sshCancel()
+	group, groupCtx := errgroup.WithContext(sshCtx)
 	for _, g := range []*bootedGuest{server, client} {
 		group.Go(func() error {
 			return pollGuest(groupCtx, 5*time.Second, time.Minute, func(ctx context.Context) error {
@@ -102,7 +109,7 @@ func TestHadronClusterLinkConnectivity(t *testing.T) {
 	_, serverIface := linkLocalAddress(ctx, t, server.creds, serverMAC)
 	t.Logf("server cluster interface: %s", serverIface)
 
-	out, err := guestCommand(ctx, server.creds, fmt.Sprintf("ping -6 -c 3 -W 5 -I %s %s", serverIface, clientAddr))
+	out, err := guestCommand(ctx, server.creds, fmt.Sprintf("sudo ping -6 -c 3 -W 5 -I %s %s", serverIface, clientAddr))
 	if err != nil {
 		t.Fatalf("ping over the cluster link failed: %v\n%s", err, out)
 	}
@@ -126,6 +133,7 @@ func bootGuest(ctx context.Context, t *testing.T, name string, nic *ClusterNIC) 
 		ISO:         hadronISOURL,
 		ISOChecksum: hadronISOChecksum,
 		ClusterNIC:  nic,
+		CloudConfig: MinimalSSHCloudConfig,
 	})
 	if err != nil {
 		t.Fatalf("NewSafeMachine (%s): %v", name, err)

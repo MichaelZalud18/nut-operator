@@ -101,3 +101,21 @@ users:
   - admin
 `, device, creds.User, creds.Pass)
 }
+
+// MinimalSSHCloudConfig renders a cloud-config that only creates a login using creds -- no
+// install stanza, no k3s. For guests that only ever need to be SSH-reachable in their live
+// installer environment and never install to disk, such as a networking-only test: attaching no
+// CloudConfig at all leaves the guest with no account matching Config's generated Credentials,
+// since nothing else creates one. Found live (2026-09-12): a guest booted with no CloudConfig
+// failed every SSH attempt with "unable to authenticate," not a connectivity problem -- the
+// generated password was configured on the host side (SSH's own client config) but never
+// delivered to anything inside the guest that could accept it.
+func MinimalSSHCloudConfig(creds Credentials) string {
+	return fmt.Sprintf(`#cloud-config
+users:
+- name: %s
+  passwd: %s
+  groups:
+  - admin
+`, creds.User, creds.Pass)
+}

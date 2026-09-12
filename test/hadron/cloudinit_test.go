@@ -100,6 +100,28 @@ func TestKairosAutoInstallCloudConfigEmbedsCredentialsAndDevice(t *testing.T) {
 	}
 }
 
+func TestMinimalSSHCloudConfigCreatesLoginWithNoInstallOrK3s(t *testing.T) {
+	creds := Credentials{User: "hadron-test-user", Pass: "hadron-test-pass"}
+	cfg := MinimalSSHCloudConfig(creds)
+
+	for _, want := range []string{"#cloud-config", "name: hadron-test-user", "passwd: hadron-test-pass"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("cloud-config missing %q:\n%s", want, cfg)
+		}
+	}
+	for _, unwanted := range []string{"install:", "k3s:"} {
+		if strings.Contains(cfg, unwanted) {
+			t.Errorf("minimal cloud-config unexpectedly contains %q:\n%s", unwanted, cfg)
+		}
+	}
+
+	body := strings.TrimPrefix(cfg, "#cloud-config\n")
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
+		t.Fatalf("rendered cloud-config is not valid YAML: %v\n%s", err, cfg)
+	}
+}
+
 func TestNewSafeMachineAttachesCloudConfigAsDataSource(t *testing.T) {
 	requireISOTool(t)
 
