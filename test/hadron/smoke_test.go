@@ -32,6 +32,10 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // Pinned in docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md: cross-checked
@@ -65,11 +69,12 @@ func TestHadronSingleNodeBoot(t *testing.T) {
 		defer deadlineCancel()
 	}
 	m, creds, err := NewSafeMachineContext(ctx, Config{
-		Memory:      "4096",
-		CPUs:        "2",
-		ISO:         hadronISOURL,
-		ISOChecksum: hadronISOChecksum,
-		CloudConfig: func(c Credentials) string { return KairosAutoInstallCloudConfig(c, "/dev/vda") },
+		Memory:         "4096",
+		CPUs:           "2",
+		ISO:            hadronISOURL,
+		ISOChecksum:    hadronISOChecksum,
+		CloudConfig:    func(c Credentials) string { return KairosAutoInstallCloudConfig(c, "/dev/vda") },
+		ForwardKubeAPI: true,
 	})
 	if err != nil {
 		t.Fatalf("NewSafeMachine: %v", err)
@@ -144,6 +149,33 @@ func TestHadronSingleNodeBoot(t *testing.T) {
 		t.Logf("diagnostic snapshot:\n%s", out)
 	})
 	t.Logf("k3s nodes:\n%s", nodesOut)
+
+	// VM-2's own text names "kubeconfig wiring" as open work, separate from booting a guest at
+	// all. This proves the actual mechanism end to end: the forwarded API port, the kubeconfig
+	// fetched and rewritten by Kubeconfig(), and a real external TLS connection through it --
+	// not just that the guest's own in-guest `sudo k3s kubectl` works, which the wait above
+	// already established and which never exercises Config.ForwardKubeAPI at all.
+	t.Log("fetching kubeconfig and connecting to the forwarded k3s API from outside the guest")
+	kubeconfig, err := Kubeconfig(ctx, creds)
+	if err != nil {
+		t.Fatalf("Kubeconfig: %v", err)
+	}
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig([]byte(kubeconfig))
+	if err != nil {
+		t.Fatalf("parsing fetched kubeconfig: %v", err)
+	}
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		t.Fatalf("building client from fetched kubeconfig: %v", err)
+	}
+	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("listing nodes through the forwarded API port: %v", err)
+	}
+	if len(nodes.Items) != 1 {
+		t.Fatalf("expected exactly one node through the forwarded API, got %d", len(nodes.Items))
+	}
+	t.Logf("reached the guest's k3s API from outside it: node %q", nodes.Items[0].Name)
 }
 
 // waitForWithDiagnostics polls with an optional diagnose callback invoked roughly every
