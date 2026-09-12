@@ -210,6 +210,35 @@ func TestRenderUPSConfMergesCredentialSecretOverDriverOptions(t *testing.T) {
 	}
 }
 
+func TestRenderUPSConfRejectsReservedCredentialSecretKeys(t *testing.T) {
+	for _, key := range []string{"driver", "port", "mode", "authconf", "repeater_disable_strict_start", "DRIVER", "Port"} {
+		t.Run(key, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := corev1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			const secretValue = "credential-value-must-not-appear"
+			secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "credentials", Namespace: "power-system"}, Data: map[string][]byte{key: []byte(secretValue)}}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+			devices := []powerv1alpha1.UPSDevice{{ObjectMeta: objectMeta("ups-1"), Spec: powerv1alpha1.UPSDeviceSpec{
+				Driver: "snmp-ups", Endpoint: &powerv1alpha1.UPSEndpointSpec{Host: "ups.example.net"},
+				CredentialSecretRef: &powerv1alpha1.NamespacedNameReference{Name: "credentials", Namespace: "power-system"},
+			}}}
+			credentials, err := resolveUPSDeviceCredentials(context.Background(), c, "power-system", devices)
+			if err != nil {
+				t.Fatal(err)
+			}
+			conf, err := renderUPSConf(devices, credentials)
+			if err == nil {
+				t.Fatal("reserved Secret key accepted")
+			}
+			if conf != "" || strings.Contains(err.Error(), secretValue) {
+				t.Fatal("credential value leaked in rejected rendering")
+			}
+		})
+	}
+}
+
 func TestRenderUPSConfSelectsSimulationSequenceOverStaticDummyFile(t *testing.T) {
 	conf, err := renderUPSConf([]powerv1alpha1.UPSDevice{
 		{

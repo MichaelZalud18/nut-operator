@@ -491,9 +491,13 @@ func renderUPSConf(devices []powerv1alpha1.UPSDevice, credentials map[string]map
 		for key, value := range device.Spec.DriverOptions {
 			options[key] = value
 		}
-		// Credential-Secret-sourced values win on key collision: they are the operator-verified
-		// source of truth for driver auth fields, whereas driverOptions is user-authored plaintext.
+		// Secrets may override authentication options, never operator-owned connection fields.
+		// Device admission cannot validate this separately mutable Secret content.
 		for key, value := range credentials[device.Name] {
+			switch strings.ToLower(key) {
+			case "driver", "port", "mode", "authconf", "repeater_disable_strict_start":
+				return "", fmt.Errorf("credential Secret for UPSDevice %q contains reserved driver option %q", device.Name, key)
+			}
 			options[key] = value
 		}
 

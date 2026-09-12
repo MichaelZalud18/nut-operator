@@ -290,3 +290,22 @@ in-process warm-up effect), and the broader `-race` sweep the review itself ran 
 internal/audit internal/controller cmd/node-actuator internal/nut internal/netbox`) stayed clean.
 This closes the test-reliability finding only; it says nothing new about production `F-124`
 behavior, which this pass did not touch.
+
+## F-133 and F-135 Closure (2026-09-12)
+
+Both findings were reproduced with permanent regression tests before applying fixes.
+
+- **F-133 [High]: closed.** The renderer rejects credential Secret keys `driver`, `port`, `mode`,
+  `authconf`, and `repeater_disable_strict_start`, including case variants. Secrets still override
+  ordinary driver authentication options. Tests resolve real Secret objects through the fake
+  Kubernetes client into rendering and assert rejection without returning configuration or
+  including credential values in errors. Existing valid credential merge tests remain passing.
+- **F-135 [Medium]: closed.** The NetBox client copies the supplied HTTP client and checks each
+  redirect against the configured origin before following it. Scheme, port, subdomain, and host
+  changes are rejected; redirect userinfo is also rejected. Same-origin redirects retain auth,
+  loops stop at ten requests, and a caller's stricter redirect policy remains effective. The
+  original HTTP client is not modified. Existing pagination and CLI coverage remains passing.
+
+Validation: race-enabled NetBox and CLI suites, focused renderer/credential tests, and package
+lint. No deployment, physical UPS, or live NetBox service was used. This closes these two
+configuration/transport boundaries only, not the other shutdown-safety findings in this audit.

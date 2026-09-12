@@ -93,6 +93,22 @@ func NewClient(options ClientOptions) (*Client, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	// Preserve caller transport, jar, timeout, and stricter redirect policies without
+	// mutating a client potentially shared with other consumers.
+	protectedClient := *httpClient
+	checkRedirect := httpClient.CheckRedirect
+	protectedClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if !sameOrigin(parsed, req.URL) || req.URL.User != nil {
+			return fmt.Errorf("netbox redirect does not match configured origin")
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("netbox stopped after 10 redirects")
+		}
+		if checkRedirect != nil {
+			return checkRedirect(req, via)
+		}
+		return nil
+	}
 	pageLimit := options.PageLimit
 	if pageLimit <= 0 {
 		pageLimit = defaultPageLimit
@@ -102,7 +118,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 		baseURL:    parsed,
 		token:      strings.TrimSpace(options.Token),
 		scheme:     scheme,
-		httpClient: httpClient,
+		httpClient: &protectedClient,
 		pageLimit:  pageLimit,
 	}, nil
 }

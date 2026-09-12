@@ -7,7 +7,7 @@ Open work is grouped by owning component. Keep rationale in the design docs, set
 `docs/contributing/audits/`. Completed work is represented by the implemented docs/code, not repeated
 here. Work deliberately deferred beyond v1 lives in [tasks-post-v1.md](tasks-post-v1.md).
 
-Last reviewed: 2026-09-11 (Hadron upstream-tooling checks and priorities; existing audit findings last reviewed 2026-09-05).
+Last reviewed: 2026-09-12 (F-133 and F-135 fixed and regression-tested; other audit findings retain their recorded review dates).
 
 The [2026-09-04 fresh review](contributing/audits/fresh-review-2026-09-04.md) records evidence for
 `F-126` through `F-143`, including later scope corrections. Open findings are listed below; withdrawn
@@ -33,10 +33,7 @@ Owns: the topology and power-domain data model — `UPSDevice`, `PowerInfrastruc
 `PowerInventoryNode`, `PowerInventoryEdge`, the `internal/inventory` compiler, and the declarative
 resolver/adapter that feeds it into reconciliation. Design contract: `docs/contributing/design/inventory-provider-contract.md` (`IN-n`).
 
-- [ ] `F-135` [Medium] enforce NetBox same-origin restrictions on HTTP redirects as well as JSON
-  pagination links. The default HTTP client forwards the token on a redirect to HTTP on the same
-  hostname at another port. **Testable now:** redirect downgrade, port/subdomain changes, redirect
-  loops, and valid same-origin pagination using a fake transport or local HTTP servers.
+None.
 
 ---
 
@@ -133,11 +130,6 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
   NUT packaging, supervision, probes, or fixtures change. The 2026-08-24 isolated fixture did not
   reproduce the failure; that leaves the reproducer incomplete, not dependent on physical UPS
   hardware. Real USB/SNMP device behavior remains a separate hardware-compatibility boundary.
-- [ ] `F-133` [High] prevent credential Secret keys from overriding reserved driver configuration.
-  The renderer merges every Secret key after validating the UPSDevice, allowing a Secret containing
-  `driver: usbhid-ups` to bypass the network/simulation driver allowlist. **Testable now:** resolve
-  actual Secret fixtures through the renderer, reject reserved keys after merge, and retain valid
-  driver-specific credentials without exposing their values in diagnostics.
 - [ ] `F-141` [Medium] enqueue NUTServers when externally managed TLS certificate Secrets rotate or
   disappear. The restart digest exists, but the Secret watch maps only device credentials, leaving
   a quiet server on its old certificate until an unrelated reconcile. **Testable now:** reference
