@@ -57,9 +57,28 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 
 - [ ] `F-126` [High] recheck flow enforcement approval at every wave and independently check agent
   actuation approval immediately before handoff. Revoking approval currently leaves later waves
-  effectful; an already-rendered actuator is not current authorization. **Testable now:** fake-client
-  revocation between waves, agent-only revocation, missing approval, and read-failure cases.
-  Real-guest cross-check once built: `VM-4` (Hadron VM Test Coverage).
+  effectful; an already-rendered actuator is not current authorization.
+  **Flow-level recheck at every wave: done (2026-09-12).** `Executor.ApprovalChecker`
+  (`internal/executor/adaptive.go`), read fresh at each wave boundary and sticky once revoked --
+  re-approving mid-flow does not resume enforcement partway through a flow already degraded to
+  dry-run, since later waves may depend on ordering or clearance decided while revoked. A failed
+  read is treated identically to an explicit revocation (PL-32), never to "still approved." Wired
+  in `internal/controller/shutdownflow_execution.go`'s `approvalChecker`, which re-fetches the flow
+  through `r.reader()` (the same `APIReader`-bypasses-cache path EX-9 already uses for node
+  clearance) rather than trusting the snapshot `Input.Approved` was derived from at execution
+  start. Verified two ways: `internal/executor/approval_test.go` (fake-client revocation between
+  waves, stickiness across a later "approved again" report, checker-error treated as revocation,
+  and the checker skipped entirely once already dry-run) and
+  `internal/controller/shutdownflow_approval_test.go` (envtest: the same checker closure re-reads
+  a real API server after `spec.mode` changes out from under the flow object it was built from,
+  and treats a missing flow as a read failure, not as approved).
+  **Still open: the agent-level handoff check.** A second, narrower check than the flow-level one
+  above -- confirming the specific agent/node release is still authorized right at the point of
+  writing its signal, not just that the whole flow was approved at the start of its wave.
+  **Testable now:** agent-only revocation and missing-approval cases, once the
+  `internal/controller`-side wiring for per-node agent approval is traced -- not assumed to be the
+  same mechanism as flow-level `spec.Mode`. Real-guest cross-check once built: `VM-4` (Hadron VM
+  Test Coverage).
 - [ ] `F-127` [High] resolve targets at wave start and refresh node clearance, readiness, and telemetry
   before each halt signal. These are currently captured before the whole execution: a newly placed
   Pod can be halted, while a node drained by an earlier wave can remain falsely blocked.
