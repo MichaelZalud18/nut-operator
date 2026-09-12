@@ -81,6 +81,11 @@ type Config struct {
 	// -- one side Server, the other Client on the same Link. Nil means this guest has no path to
 	// any other guest at all, which is PEG's own default.
 	ClusterNIC *ClusterNIC
+	// ForwardKubeAPI, if true, forwards an additional host-side loopback port to the guest's k3s
+	// API server (container port 6443), recorded as Credentials.KubeAPIPort. False means no
+	// second port is forwarded at all -- this package takes no position on whether a caller needs
+	// host-side API access, the same stance CloudConfig takes on cloud-init.
+	ForwardKubeAPI bool
 }
 
 // Credentials is the fresh, per-run SSH login this package generates. Never reuse these across
@@ -92,6 +97,10 @@ type Credentials struct {
 	Pass string
 	// Port is the host-side forwarded SSH port. It is bound to 127.0.0.1 only -- see NewSafeMachine.
 	Port string
+	// KubeAPIPort is the host-side forwarded port for the guest's k3s API server (container port
+	// 6443), set only when Config.ForwardKubeAPI is true. Empty otherwise. Also bound to
+	// 127.0.0.1 only.
+	KubeAPIPort string
 }
 
 // NewSafeMachine builds (but does not start -- call Create yourself) a PEG QEMU machine with
@@ -146,11 +155,9 @@ func NewSafeMachineContext(ctx context.Context, cfg Config) (m types.Machine, cr
 		return nil, Credentials{}, fmt.Errorf("generating credentials: %w", err)
 	}
 
-	port, err := freeport.GetFreePort()
-	if err != nil {
-		return nil, Credentials{}, fmt.Errorf("allocating SSH port: %w", err)
+	if err := allocateManagementPorts(cfg, &creds); err != nil {
+		return nil, Credentials{}, err
 	}
-	creds.Port = fmt.Sprint(port)
 
 	stateDir, err := os.MkdirTemp("", "nut-operator-hadron-")
 	if err != nil {
@@ -190,10 +197,7 @@ func NewSafeMachineContext(ctx context.Context, cfg Config) (m types.Machine, cr
 		types.WithSSHUser(creds.User),
 		types.WithSSHPass(creds.Pass),
 		types.WithSSHPort(creds.Port),
-		withArgs(
-			"-enable-kvm",
-			"-nic", fmt.Sprintf("user,hostfwd=tcp:127.0.0.1:%s-:22", creds.Port),
-		),
+		withArgs("-enable-kvm", "-nic", managementNIC(creds)),
 	}
 
 	if cfg.Memory != "" {
@@ -358,6 +362,39 @@ func withArgs(args ...string) types.MachineOption {
 		mc.Args = append(mc.Args, args...)
 		return nil
 	}
+}
+
+// allocateManagementPorts samples the host-side SSH port every machine needs, plus the k3s API
+// port when Config.ForwardKubeAPI asks for one, writing both into creds. Split out of
+// NewSafeMachineContext to keep that function's branching down to what actually varies per call.
+func allocateManagementPorts(cfg Config, creds *Credentials) error {
+	port, err := freeport.GetFreePort()
+	if err != nil {
+		return fmt.Errorf("allocating SSH port: %w", err)
+	}
+	creds.Port = fmt.Sprint(port)
+
+	if cfg.ForwardKubeAPI {
+		apiPort, err := freeport.GetFreePort()
+		if err != nil {
+			return fmt.Errorf("allocating kube API port: %w", err)
+		}
+		creds.KubeAPIPort = fmt.Sprint(apiPort)
+	}
+	return nil
+}
+
+// managementNIC builds the "-nic" value carrying the loopback-bound port forwards every machine
+// needs: SSH always, plus the k3s API port when creds.KubeAPIPort is set. QEMU's "-nic"/"-netdev
+// user" backend accepts a repeated hostfwd= key for additional port forwards on the same NIC --
+// this is the documented way to add more than one, not a separate NIC. The API forward is not yet
+// exercised against a real guest.
+func managementNIC(creds Credentials) string {
+	nic := fmt.Sprintf("user,hostfwd=tcp:127.0.0.1:%s-:22", creds.Port)
+	if creds.KubeAPIPort != "" {
+		nic += fmt.Sprintf(",hostfwd=tcp:127.0.0.1:%s-:6443", creds.KubeAPIPort)
+	}
+	return nic
 }
 
 func freshCredentials() (Credentials, error) {
