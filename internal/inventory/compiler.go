@@ -42,10 +42,18 @@ func Compile(snapshot Snapshot) (Topology, []Diagnostic, error) {
 		return Topology{}, diagnostics, ErrRejected
 	}
 
+	hash, err := stableHash(normalized)
+	if err != nil {
+		return Topology{}, diagnostics, fmt.Errorf("hash inventory snapshot: %w", err)
+	}
+	orders, err := deriveCommunicationOrders(normalized)
+	if err != nil {
+		return Topology{}, diagnostics, err
+	}
 	topology := Topology{
-		Hash:                stableHash(normalized),
+		Hash:                hash,
 		Domains:             derivePowerDomains(normalized),
-		CommunicationOrders: deriveCommunicationOrders(normalized),
+		CommunicationOrders: orders,
 		Entities:            append([]Entity(nil), normalized.Entities...),
 		Edges:               append([]Edge(nil), normalized.Edges...),
 	}
@@ -123,7 +131,12 @@ func validateSnapshot(snapshot Snapshot) []Diagnostic {
 		entities[entity.ID] = entity
 	}
 
-	seenEdges := map[string]struct{}{}
+	type edgeIdentity struct {
+		From, To string
+		Relation EdgeRelation
+		Input    string
+	}
+	seenEdges := map[edgeIdentity]struct{}{}
 	var feedEdges []Edge
 	for _, edge := range snapshot.Edges {
 		if edge.From == "" || edge.To == "" {
@@ -174,17 +187,12 @@ func validateSnapshot(snapshot Snapshot) []Diagnostic {
 				Message:  fmt.Sprintf("feeds edge %q -> %q requires an input qualifier", edge.From, edge.To),
 			})
 		}
-		key := stableHash(struct {
-			From     string       `json:"from"`
-			To       string       `json:"to"`
-			Relation EdgeRelation `json:"relation"`
-			Input    string       `json:"input,omitempty"`
-		}{
+		key := edgeIdentity{
 			From:     edge.From,
 			To:       edge.To,
 			Relation: edge.Relation,
 			Input:    edge.Input,
-		})
+		}
 		if _, exists := seenEdges[key]; exists {
 			diagnostics = append(diagnostics, Diagnostic{
 				Severity: DiagnosticError,
@@ -296,7 +304,7 @@ func derivePowerDomains(snapshot Snapshot) []PowerDomain {
 	return domains
 }
 
-func deriveCommunicationOrders(snapshot Snapshot) []DerivedEdge {
+func deriveCommunicationOrders(snapshot Snapshot) ([]DerivedEdge, error) {
 	ordersByKey := map[string]DerivedEdge{}
 	for _, edge := range snapshot.Edges {
 		if edge.Relation != EdgeRelationCarries {
@@ -308,7 +316,11 @@ func deriveCommunicationOrders(snapshot Snapshot) []DerivedEdge {
 			Reason: "CommunicationPath",
 			Source: edge.SourceID,
 		}
-		ordersByKey[stableHash(order)] = order
+		key, err := stableHash(order)
+		if err != nil {
+			return nil, fmt.Errorf("hash inventory communication order: %w", err)
+		}
+		ordersByKey[key] = order
 	}
 
 	keys := make([]string, 0, len(ordersByKey))
@@ -321,7 +333,7 @@ func deriveCommunicationOrders(snapshot Snapshot) []DerivedEdge {
 	for _, key := range keys {
 		orders = append(orders, ordersByKey[key])
 	}
-	return orders
+	return orders, nil
 }
 
 func feedsClosure(root string, feeds map[string][]Edge) []string {
@@ -502,11 +514,11 @@ func hasError(diagnostics []Diagnostic) bool {
 	return false
 }
 
-func stableHash(value any) string {
+func stableHash(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		panic(fmt.Sprintf("inventory input could not be encoded for hashing: %v", err))
+		return "", fmt.Errorf("inventory input could not be encoded for hashing: %w", err)
 	}
 	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }

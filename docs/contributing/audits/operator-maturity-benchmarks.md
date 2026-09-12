@@ -2173,3 +2173,24 @@ exactly the kind that cannot fail to marshal. Full suite (build, vet, lint, `go 
 Each remaining instance is the same five-line fix once its own caller chain is worked out -- real,
 low-severity, and a reasonable next "easy fix" pass, not evidence the first two were a special
 case.
+
+### F-125 Inventory Follow-up, 2026-09-12
+
+`internal/inventory` now returns wrapped encoding errors instead of panicking. Snapshot hashing
+and communication-order derivation propagate failure through `Compile`; edge deduplication uses
+a comparable struct key instead of unnecessary JSON hashing. Source ID remains excluded from
+edge identity, while the input qualifier remains included. Failures return an empty topology,
+preserving the original JSON/SHA-256 encoding and communication-order sorting on success. The
+exported compiler signature is unchanged.
+
+The focused regression first reproduced the old panic. Tests now verify unsupported types and
+non-finite values produce empty hashes with inspectable JSON errors, and pin the existing empty
+snapshot hash. Current inventory fields cannot trigger these encoding failures; the helper is
+tested directly rather than adding artificial failure injection to production compilation.
+Existing structural-rejection, domain, communication-order, and determinism coverage also passes.
+Edge-identity regressions confirm duplicate sources remain rejected and distinct power inputs
+remain accepted. Race-enabled inventory, resolver, and shutdown-flow adapter suites passed;
+`make lint` reported zero issues and `git diff --check` passed.
+
+The adapter and two controller helpers remain open under F-125; this pass changes no execution,
+approval, or Hadron behavior.

@@ -218,13 +218,14 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   Local upgrade coverage now checks CRD/deployment reapply plus manager replacement over an existing
   resource. True previous-release schema compatibility starts after there is a previous released API
   to install.
-- `F-125` [Low] finish the `stableHash`-panics-on-marshal-failure sweep. Fixed 2026-09-04 for
-  `internal/capability` and `internal/resolver` (both already had error-returning callers, so this
-  was a direct copy of `F-123`'s fix). Still panics in `internal/inventory` (three call sites,
-  two of which need a new error return added to their own function first),
+- `F-125` [Low] finish the `stableHash`-panics-on-marshal-failure sweep. Remaining:
   `internal/shutdownflow/adapter.go` (its caller crosses into the webhook and controller
-  packages), and two `internal/controller` helpers (caller graph not yet traced). See
-  `operator-maturity-benchmarks.md`'s 2026-09-04 pass for the full breakdown.
+  packages), and two `internal/controller` helpers (caller graph not yet traced).
+  Capability/resolver were fixed 2026-09-04; inventory now propagates hash errors and uses
+  comparable edge keys for deduplication (2026-09-12), with failure and hash-compatibility
+  regression tests. Current inventory fields
+  are JSON-safe; this is defensive hardening, not a demonstrated malformed-input crash.
+  See `operator-maturity-benchmarks.md`'s F-125 evidence.
 
 #### Hadron VM Test Coverage
 
