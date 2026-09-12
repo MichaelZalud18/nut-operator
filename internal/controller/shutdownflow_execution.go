@@ -155,6 +155,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 			runtimeIsTrustedForFlow(bundle.CapabilityMatches, executionEvaluation.SelectedUPSDevices),
 			input.Adaptive.Observation,
 		),
+		ApprovalChecker: r.approvalChecker(flow),
 	}.Execute(ctx, input)
 	executionMode := "Enforce"
 	if input.DryRun {
@@ -834,6 +835,24 @@ func (r *ShutdownFlowReconciler) reader() client.Reader {
 		return r.APIReader
 	}
 	return r.Client
+}
+
+// approvalChecker independently reconfirms flow enforcement approval at each wave boundary
+// (F-126): an already-rendered actuator is not current authorization. Re-fetches flow fresh
+// through r.reader() rather than trusting the snapshot Input.Approved was derived from at
+// execution start -- the same reason APIReader exists for EX-9's node-clearance check: a cache a
+// few seconds behind is exactly long enough to miss an operator flipping spec.mode back out of
+// Enforce mid-execution. Extracted to its own method, rather than inlined where it is used, so it
+// is testable directly against a real client without needing to race a live multi-wave execution.
+func (r *ShutdownFlowReconciler) approvalChecker(flow *powerv1alpha1.ShutdownFlow) executorpkg.ApprovalChecker {
+	key := client.ObjectKeyFromObject(flow)
+	return func(ctx context.Context) (bool, error) {
+		var current powerv1alpha1.ShutdownFlow
+		if err := r.reader().Get(ctx, key, &current); err != nil {
+			return false, err
+		}
+		return effectiveShutdownFlowMode(current.Spec.Mode) == powerv1alpha1.ShutdownFlowModeEnforce, nil
+	}
 }
 
 func podIsTerminal(pod corev1.Pod) bool {

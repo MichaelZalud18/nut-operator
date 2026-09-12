@@ -78,6 +78,11 @@ type Executor struct {
 	// Input.Adaptive.Observation for its whole duration.
 	Observer PowerObserver
 
+	// ApprovalChecker independently reconfirms flow enforcement approval at each wave boundary
+	// (F-126). Nil means Input.Approved is trusted for the whole execution, unchanged from this
+	// executor's behavior before F-126.
+	ApprovalChecker ApprovalChecker
+
 	// Sleep implements the Wait action. Nil uses a context-aware timer.
 	Sleep Sleeper
 }
@@ -377,6 +382,10 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	resumedGroups := resumableGroupSet(input.Resume)
 	var tierWindow tierOverrunWindow
 	var pending []<-chan waveExecutionResult
+	// approvalRevoked is sticky for the rest of this execution once set (F-126): re-approving
+	// mid-flow does not resume enforcement partway through a shutdown flow already degraded to
+	// dry-run, since later waves may depend on ordering or clearance decided while revoked.
+	approvalRevoked := false
 
 	waitForPending := func() (error, string, error) {
 		firstErr, failedGroup, pendingRecordErr := drainPending(pending, &result)
@@ -428,6 +437,21 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			result.RecordError = recordErr
 			return result, adaptiveErr
 		}
+
+		// F-126: an already-rendered actuator is not current authorization. Re-confirm approval
+		// fresh at this wave boundary rather than trusting the snapshot Execute started with --
+		// only while there is still enforcement to lose (dryRun already covers Mode/Approved at
+		// entry) and only while nothing has revoked it already (approvalRevoked is sticky).
+		waveDryRun := dryRun || approvalRevoked
+		if !waveDryRun && e.ApprovalChecker != nil {
+			if approved, err := e.ApprovalChecker(ctx); err != nil || !approved {
+				// PL-32: a failed read is not permission to assume the good case. Treat a
+				// checker error identically to an explicit revocation, never to "still approved."
+				approvalRevoked = true
+				waveDryRun = true
+			}
+		}
+
 		adaptiveInput.Pointer = waveState.Pointer
 		adaptiveInput.Timing = waveState.Timing
 		adaptiveInput.Observation = waveState.Observation
@@ -455,7 +479,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 					Groups:        groups,
 					ExecutionID:   executionID,
 					Mode:          mode,
-					DryRun:        dryRun,
+					DryRun:        waveDryRun,
 					TierPolicy:    tierPolicy,
 					ResumedGroups: resumedGroups,
 					Window:        window,
@@ -494,7 +518,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 				Groups:        groups,
 				ExecutionID:   executionID,
 				Mode:          mode,
-				DryRun:        dryRun,
+				DryRun:        waveDryRun,
 				TierPolicy:    tierPolicy,
 				ResumedGroups: resumedGroups,
 				Window:        tierWindow,

@@ -71,6 +71,19 @@ type AdaptiveInput struct {
 // wave and never inside one.
 type PowerObserver func(ctx context.Context) (adaptive.PowerObservation, error)
 
+// ApprovalChecker independently confirms the flow is still approved for enforcement, read fresh
+// at each wave boundary (F-126). Injected for the same reason as PowerObserver: reading live
+// approval state is I/O, and the executor's own testability depends on every impure edge being
+// replaceable.
+//
+// Nil preserves the executor's behavior from before F-126: Input.Approved, fixed for the whole
+// execution, is trusted throughout. A caller that never wires this gets no revocation detection,
+// exactly as today. A non-nil checker that returns false, or fails to read at all, degrades that
+// wave -- and every wave after it, since this executor never re-grants effect once revoked mid-flow
+// -- to dry-run. A failed read is not permission to assume the good case (PL-32): it is treated
+// identically to an explicit false, never to "still approved."
+type ApprovalChecker func(ctx context.Context) (bool, error)
+
 // Sleeper waits for a duration or returns early when the context ends.
 //
 // Injected for the same reason as the clock: a Wait action that calls time.Sleep
