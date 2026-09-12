@@ -14,33 +14,39 @@ This project is early-stage and security-sensitive. Contributions should keep th
 
 ## Development Checks
 
-Use a writable Go cache when needed:
+Use the current `Makefile` for targets and tool versions. For Go changes:
 
 ```sh
-GOCACHE=/tmp/go-build-cache make generate
-GOCACHE=/tmp/go-build-cache make manifests
-GOCACHE=/tmp/go-build-cache make test
+make lint-fix
+make test
 ```
 
-Full controller tests need Kubebuilder envtest assets:
+After changing API types or Kubebuilder markers:
 
 ```sh
-GOCACHE=/tmp/go-build-cache make setup-envtest
-GOCACHE=/tmp/go-build-cache make test
+make manifests generate
 ```
 
-Run the AWS Labs Automated Security Helper scan:
+`make test` sets up the required envtest assets. Use a writable `GOCACHE` when needed;
+do not mistake a sandbox restriction for a broken host setup.
+
+Inspect build tags and test entry points when selecting narrower checks. Component tests,
+Kind suites, and opt-in VM tests have different prerequisites and prove different things.
+Read the relevant workflow before running infrastructure tests, and use isolated resources,
+never an existing deployment by default. See
+[test domains](docs/contributing/design/test-domains.md) for what each layer actually proves,
+which files and workflows own it, and what nothing yet proves.
+
+For the AWS Labs Automated Security Helper scan, use the installation/version configuration
+in `.github/workflows/security.yml` rather than maintaining a second pin here:
 
 ```sh
-uv tool install 'git+https://github.com/awslabs/automated-security-helper.git@v3.5.8'
 make security-scan
+make security-triage
 ```
 
-The target downloads `grype` and `syft` into `bin/` from pinned, checksum-verified release archives;
-`grype` is the pipeline's dependency-vulnerability coverage. `cfn-nag`, `cdk-nag`, and `opengrep` are
-excluded by decision — no CloudFormation, no CDK, and `semgrep` already covers the same rule surface —
-so they report `SKIPPED` rather than `MISSING`; see `ASH_EXCLUDED_SCANNERS` in the `Makefile`.
-`make security-triage` names the actionable findings from the last scan.
+The `Makefile` owns scanner pins and exclusions. A skipped scanner is not a passing scan;
+`security-triage` reports findings from the last scan, not necessarily the current revision.
 
 Useful manifest checks:
 
@@ -59,8 +65,8 @@ Before opening a pull request:
 
 ## Landing Changes
 
-`main` is a protected branch and the protection applies to administrators too. Direct pushes to
-`main` are rejected — every change lands through a pull request whose checks pass:
+Review recent commits and the working tree first. `main` is a protected branch; every change
+lands through a pull request:
 
 ```sh
 git switch -c your-change
@@ -71,26 +77,23 @@ gh pr checks --watch
 gh pr merge --squash --delete-branch
 ```
 
-Five checks are required: `Unit and envtest suites`, `E2E on Kind`, `golangci-lint`,
-`ASH security scan`, and `Scan for private IP literals`. Reviews are not required, so a passing PR
-can be merged by its author.
+`.github/branch-protection.json` holds the required-check configuration — treat it as what should
+be applied, not proof of what is currently live; verify current settings on GitHub rather than
+trusting the checked-in file, and don't duplicate the specific check list here where it can drift
+out of sync. Reviews are not required, so a passing PR can be merged by its author.
 
-This exists because of `F-38`. The E2E gate had correctly caught a bug that made the operator
-crash-loop on startup, the workflow sat red for two consecutive commits, and work kept landing on
-`main` anyway because nothing enforced the result. Four green badges next to one red one read as
-flake. The test was never the problem; the missing piece was that a red gate stopped nothing.
+Check CI results against the specific revision being landed. A skipped or unrelated green job does
+not validate a change; diagnose a broken required check rather than working around it — changing
+branch protection is a separate, deliberate maintainer decision.
 
-**If CI itself is broken** and you genuinely need to land a fix that its own gate blocks, lift the
-protection deliberately and put it straight back — do not leave it off:
+**If CI itself is broken** and a fix genuinely needs to land through its own blocked gate, lift
+protection deliberately and put it straight back:
 
 ```sh
 gh api -X DELETE repos/:owner/:repo/branches/main/protection
 # land the fix
 gh api -X PUT repos/:owner/:repo/branches/main/protection --input .github/branch-protection.json
 ```
-
-`.github/branch-protection.json` holds the settings, so restoring them is a single command rather
-than a click-path someone has to remember.
 
 ## Commit Style
 
