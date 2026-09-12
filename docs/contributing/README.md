@@ -34,6 +34,8 @@ and never renumbered.
   [shutdown hooks](design/shutdown-hooks.md),
   [resiliency and partitions](design/resiliency-and-partitions.md),
   [scaling and sizing](design/scaling-and-sizing.md).
+- [Test domains](design/test-domains.md) — what each layer of testing proves, which files and
+  workflows own it, and what nothing yet proves.
 - [FAQ](design/faq.md)
 
 ## Audits
