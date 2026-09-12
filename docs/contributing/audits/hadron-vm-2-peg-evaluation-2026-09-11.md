@@ -185,9 +185,29 @@ with every other credential in this package. `Config.CloudConfig`, when set, att
 through PEG's existing `DataSource` field. This is opt-in, not automatic: the adapter's own
 contract is generic VM lifecycle, not an opinion about what a given guest should do on first boot.
 
-None of this has booted a real guest yet. Component tests (`cloudinit_test.go`) only prove the
-seed ISO is built and attached with the right content -- the same boundary `VM-1`'s own probe drew
-before its first live run found two runner-image defaults (`/dev/kvm` permissions,
-`/boot/vmlinuz-*` readability) that no amount of static analysis would have surfaced. A
-`workflow_dispatch`-only single-guest boot smoke test, following `VM-1`'s exact pattern, is the
-next concrete step before attempting the two-node topology.
+## Single-guest boot: verified live (2026-09-12)
+
+`hadron-vm-boot-smoke.yml` (`workflow_dispatch`-only, following `VM-1`'s exact pattern) exercised
+the pinned artifact and cloud-config against a real GitHub-hosted runner four times. Each of the
+first three found one real, distinct gap; the fourth passed.
+
+| Run | Result | Finding |
+| --- | --- | --- |
+| [34666294875](https://github.com/MichaelZalud18/nut-operator/actions/runs/34666294875) | fail (~7.5m) | `/dev/kvm` present but not read/write accessible to the `runner` user — the same runner-image gap `VM-1` found, needing the same udev+ACL fix here independently. |
+| [34671188060](https://github.com/MichaelZalud18/nut-operator/actions/runs/34671188060) | fail (~11.5m) | KVM fix worked; new gap found via a full, unfiltered console dump (a `tail -c 50000` in-log dump was tried first and found to get crowded out by a repeating serial getty prompt) — one clean reboot from the live installer into the installed `COS_ACTIVE` disk, console then quiet, but SSH commands kept succeeding the whole 10-minute wait (a working connection running a real command, not a connection failure), consistent with a normally-booted guest. The `/tmp/k3s-ready` marker just never appeared. |
+| [34672025391](https://github.com/MichaelZalud18/nut-operator/actions/runs/34672025391) | fail (~11.5m) | Added live diagnostic snapshots (`systemctl status k3s`, its journal) every ~60s instead of guessing at a bigger timeout. All nine snapshots showed `k3s.service` active and CoreDNS/Traefik/metrics-server genuinely Ready within ~40s of the service starting — k3s itself was never the problem. The `provider-kairos.bootstrap.after.k3s-ready` cloud-config stage (kairos.io/docs/examples/k3s-stages) simply never fires on this Kairos version. |
+| [34705344528](https://github.com/MichaelZalud18/nut-operator/actions/runs/34705344528) | **pass (103.83s)** | Readiness switched to polling `sudo k3s kubectl get nodes -o json` directly and parsing the real `NodeReady` condition (`hasReadyNode`, `readiness.go`) instead of the broken marker file. SSH reachable in ~35s; a genuinely Ready node (`kairos-2990`) confirmed within ~65s more. |
+
+Also hardened along the way, verified by dedicated component tests rather than only by the live
+runs: `guestCommand` (`command.go`) bounds the entire SSH exchange by context, since PEG's own
+`Command()` has no cancellation of its own; `SafeStop` (`adapter.go`) replaces PEG's unbounded
+`kill`-shelling `Stop()` for the test's failure path; `hadron-cleanup.py` uses
+`pidfd_open`/`pidfd_send_signal` scoped to each run's own private state root, closing the
+PID-reuse race a blanket `pkill -f qemu-system-x86_64` was exposed to; and `workflow_test.go`
+parses the actual workflow YAML to regression-test its own safety invariants (every step bounded,
+cleanup unconditional, cleanup precedes artifact upload, state removal gated on cleanup success).
+
+This proves one disposable Hadron guest boots unattended and reaches a genuinely Ready k3s node on
+a standard GitHub-hosted runner. It does not prove the two-node topology, kubeconfig wiring,
+concurrent-run isolation, or any shutdown/actuation behavior -- those remain `VM-2`'s open work and
+`VM-3`/`VM-4`.
