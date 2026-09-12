@@ -59,14 +59,18 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   actuation approval immediately before handoff. Revoking approval currently leaves later waves
   effectful; an already-rendered actuator is not current authorization. **Testable now:** fake-client
   revocation between waves, agent-only revocation, missing approval, and read-failure cases.
+  Real-guest cross-check once built: `VM-4` (Hadron VM Test Coverage).
 - [ ] `F-127` [High] resolve targets at wave start and refresh node clearance, readiness, and telemetry
   before each halt signal. These are currently captured before the whole execution: a newly placed
   Pod can be halted, while a node drained by an earlier wave can remain falsely blocked.
   **Testable now:** placement changes, drain-to-release transitions, and stale-agent simulations.
+  Real-guest cross-check once built: `VM-4` (Hadron VM Test Coverage).
 - [ ] `F-128` [High] implement the documented control-plane quorum and late-ordering checks
   (`PL-23`, `PL-24`, `EX-18`). A plan currently accepts releasing all three control-plane nodes before
   later API work. **Testable now:** synthetic HA membership, readiness loss between releases,
-  unsafe-wave rejection, and an explicitly terminal release after orchestration finishes.
+  unsafe-wave rejection, and an explicitly terminal release after orchestration finishes. Not
+  covered by `VM-4` as scoped (one control-plane guest, no quorum to test against); would need a
+  three-control-plane Hadron topology beyond `VM-2`'s current one-control-plane/one-worker scope.
 - [ ] `F-129` [High] restrict execution to actually eligible power domains. Compilation currently
   scopes against every configured trigger, so one rack's outage also executes a healthy rack's
   groups. Preserve conservative handling of mixed, unknown, and shared membership. **Testable now:**
@@ -217,8 +221,13 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
 
 Owns: portable Kairos Hadron + k3s test infrastructure, VM-boundary acceptance tests, and their
 GitHub Actions integration in this development repository. Keep this separate from Kind and
-site deployment configuration. Start with one control-plane VM and one disposable worker;
-6 GiB combined guest RAM is an initial estimate, not a measured minimum. No physical UPS is
+site deployment configuration, and keep its own scope narrow: a real guest kernel proves things a
+Kind node (a container, not a VM) cannot -- real `reboot(2)`, a capability that survived the image
+build and registry round trip, genuine host PID namespace membership, real kubelet Pod Security
+Admission -- but it does not need to, and should not try to, replicate multi-node HA, drain
+sequencing, quorum ordering, or policy-enforcement logic Kind already covers cheaply and
+repeatably against fakes. Start with one control-plane VM and one disposable worker; 6 GiB
+combined guest RAM is an initial estimate, not a measured minimum. No physical UPS is
 required. `VM-1` found GitHub-hosted runner KVM feasibility usable; see
 `docs/contributing/audits/hadron-vm-1-feasibility-2026-09-11.md`. `VM-2` has verified a real single
 Hadron guest boots to a Ready k3s node; the two-node harness, kubeconfig wiring, and `VM-3` through
