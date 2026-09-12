@@ -109,7 +109,12 @@ func TestHadronClusterLinkConnectivity(t *testing.T) {
 	_, serverIface := linkLocalAddress(ctx, t, server.creds, serverMAC)
 	t.Logf("server cluster interface: %s", serverIface)
 
-	out, err := guestCommand(ctx, server.creds, fmt.Sprintf("sudo ping -6 -c 3 -W 5 -I %s %s", serverIface, clientAddr))
+	// This live environment's ping is BusyBox (v1.37.0 in the first live run), built without the
+	// combined -4/-6 flags -- confirmed from the binary's own usage text, not assumed from
+	// BusyBox's general documentation, which describes a differently configured build and would
+	// have been the wrong thing to trust here. ping6 is BusyBox's standard alternate applet name
+	// for exactly this case; its own usage text showed the same -c/-W/-I flags used below.
+	out, err := guestCommand(ctx, server.creds, fmt.Sprintf("sudo ping6 -c 3 -W 5 -I %s %s", serverIface, clientAddr))
 	if err != nil {
 		t.Fatalf("ping over the cluster link failed: %v\n%s", err, out)
 	}
