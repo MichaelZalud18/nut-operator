@@ -27,7 +27,9 @@ package hadron
 import (
 	"context"
 	"fmt"
-	"strings"
+	"os"
+	"os/signal"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -49,18 +51,20 @@ const (
 // Not the two-node harness: this is one disposable guest, torn down at the end of the test. The
 // topology, second node, and kubeconfig wiring remain VM-2's open work.
 //
-// Timing budget, kept deliberately under the workflow's own limits with margin: NewSafeMachine
-// caps download+construction at 10 minutes internally; the two waitFor calls below add up to 13
-// more (rebalanced 2026-09-12 after a real run: SSH answered in under a minute against a 6-minute
-// budget, while k3s readiness used its full 6 minutes without succeeding -- trimmed the former,
-// gave the latter more room to find out whether it needed more time or was actually stuck);
-// worst case ~23 minutes against the workflow's `go test -timeout=28m` and its 29-minute step
-// timeout. `go test -timeout` panics in a watchdog goroutine, not this test's own, so it does not
-// run t.Cleanup -- staying comfortably under it in the ordinary case is what lets the controlled
-// failure path below (which does clean up) run instead of an uncontrolled kill. Widening either
-// wait here without checking this arithmetic reopens that gap.
+// Downloads have a ten-minute bound; SSH and readiness have separate three/ten-minute bounds.
+// Calls share a signal-aware parent deadline with one minute reserved before Go's watchdog.
+// PEG construction/startup contains calls that ignore context, so the workflow also bounds the
+// entire go invocation externally and stops owned guests independently of t.Cleanup.
 func TestHadronSingleNodeBoot(t *testing.T) {
-	m, creds, err := NewSafeMachine(Config{
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	// Leave time for cleanup before Go's watchdog bypasses t.Cleanup.
+	if deadline, ok := t.Deadline(); ok {
+		var deadlineCancel context.CancelFunc
+		ctx, deadlineCancel = context.WithDeadline(ctx, deadline.Add(-time.Minute))
+		defer deadlineCancel()
+	}
+	m, creds, err := NewSafeMachineContext(ctx, Config{
 		Memory:      "4096",
 		CPUs:        "2",
 		ISO:         hadronISOURL,
@@ -80,25 +84,29 @@ func TestHadronSingleNodeBoot(t *testing.T) {
 		// state behind for the workflow's own failure-diagnostics step to read.
 		if t.Failed() {
 			t.Logf("leaving machine state at %s for inspection (stdout/stderr hold the guest console)", m.Config().StateDir)
-			if err := m.Stop(); err != nil {
-				t.Logf("stop: %v", err)
+			if err := SafeStop(m, 30*time.Second); err != nil {
+				t.Errorf("stop: %v", err)
 			}
 			return
 		}
-		if err := SafeTeardown(m, 30*time.Second); err != nil {
-			t.Logf("teardown: %v", err)
+		if err := SafeStop(m, 30*time.Second); err != nil {
+			t.Errorf("teardown: %v", err)
+			return
+		}
+		if err := m.Clean(); err != nil {
+			t.Errorf("removing stopped machine state: %v", err)
 		}
 	})
 
-	if _, err := m.Create(context.Background()); err != nil {
+	if _, err := m.Create(ctx); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	t.Logf("waiting for SSH on 127.0.0.1:%s as %s", creds.Port, creds.User)
-	waitFor(t, 3*time.Minute, "SSH", func() error {
-		_, err := m.Command("true")
+	waitForWithDiagnostics(t, ctx, 3*time.Minute, "SSH", func(ctx context.Context) error {
+		_, err := guestCommand(ctx, creds, "true")
 		return err
-	})
+	}, nil)
 
 	// The install stanza reboots into the freshly installed disk; k3s only starts on that second
 	// boot, which is why this is a second, independent wait rather than assumed to follow
@@ -115,19 +123,19 @@ func TestHadronSingleNodeBoot(t *testing.T) {
 	// indirection entirely rather than trusting a mechanism just shown not to fire.
 	t.Log("waiting for a Ready k3s node")
 	var nodesOut string
-	waitForWithDiagnostics(t, 10*time.Minute, "k3s readiness", func() error {
-		out, err := m.Command("sudo k3s kubectl get nodes --no-headers")
+	waitForWithDiagnostics(t, ctx, 10*time.Minute, "k3s readiness", func(ctx context.Context) error {
+		out, err := guestCommand(ctx, creds, "sudo k3s kubectl get nodes --request-timeout=20s -o json")
 		if err != nil {
 			return err
 		}
 		nodesOut = out
-		if !strings.Contains(out, "Ready") {
+		if !hasReadyNode(out) {
 			return fmt.Errorf("no Ready node yet:\n%s", out)
 		}
 		return nil
-	}, func() {
-		out, err := m.Command("uptime; sudo systemctl is-system-running; echo ---k3s---; " +
-			"sudo systemctl status k3s --no-pager -l 2>&1 | head -30; echo ---k3s-journal---; " +
+	}, func(ctx context.Context) {
+		out, err := guestCommand(ctx, creds, "uptime; sudo systemctl is-system-running; echo ---k3s---; "+
+			"sudo systemctl status k3s --no-pager -l 2>&1 | head -30; echo ---k3s-journal---; "+
 			"sudo journalctl -u k3s --no-pager -n 40 2>&1")
 		if err != nil {
 			t.Logf("diagnostic snapshot command itself failed: %v\noutput so far:\n%s", err, out)
@@ -138,29 +146,15 @@ func TestHadronSingleNodeBoot(t *testing.T) {
 	t.Logf("k3s nodes:\n%s", nodesOut)
 }
 
-func waitFor(t *testing.T, timeout time.Duration, what string, check func() error) {
-	t.Helper()
-	waitForWithDiagnostics(t, timeout, what, check, nil)
-}
-
-// waitForWithDiagnostics is waitFor plus an optional diagnose callback invoked roughly every
+// waitForWithDiagnostics polls with an optional diagnose callback invoked roughly every
 // minute while still waiting, so a slow or stuck condition can be told apart from an outright
 // broken one during the run itself, not just guessed at afterward from whatever the guest's
 // console happened to still be printing by then.
-func waitForWithDiagnostics(t *testing.T, timeout time.Duration, what string, check func() error, diagnose func()) {
+func waitForWithDiagnostics(t *testing.T, parent context.Context, timeout time.Duration, what string, check func(context.Context) error, diagnose func(context.Context)) {
 	t.Helper()
-	const pollInterval = 5 * time.Second
-	const diagnoseEvery = time.Minute
-	deadline := time.Now().Add(timeout)
-	var lastErr error
-	for tick := 0; time.Now().Before(deadline); tick++ {
-		if lastErr = check(); lastErr == nil {
-			return
-		}
-		if diagnose != nil && tick > 0 && time.Duration(tick)*pollInterval%diagnoseEvery == 0 {
-			diagnose()
-		}
-		time.Sleep(pollInterval)
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	if err := pollGuest(ctx, 5*time.Second, time.Minute, check, diagnose); err != nil {
+		t.Fatalf("waiting for %s (budget %s): %v", what, timeout, err)
 	}
-	t.Fatalf("timed out after %s waiting for %s: %v", timeout, what, lastErr)
 }

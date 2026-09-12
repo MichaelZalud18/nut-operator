@@ -74,7 +74,9 @@ jobs:
       # These tagged component tests use loopback fixtures and child processes, not VMs or KVM.
       - name: Hadron adapter regression tests
         if: matrix.k8s == '1.36'
-        run: go test -tags=hadron ./test/hadron -race -count=1 -timeout=2m
+        run: |
+          go test -tags=hadron ./test/hadron -race -count=1 -timeout=2m
+          python3 -B -m unittest discover -s hack -p test_hadron_cleanup.py
 
       # F-111: make test has always written a coverage profile and nothing read it. The total goes
       # in the job summary so a regression is visible without downloading anything, and the profile

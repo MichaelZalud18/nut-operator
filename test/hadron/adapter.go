@@ -287,6 +287,25 @@ func SafeTeardown(m types.Machine, timeout time.Duration) error {
 	return errors.Join(stopErr, m.Clean())
 }
 
+// SafeStop retains diagnostic state and verifies exit through the original process handle.
+// Unlike PEG Stop, this does not spawn an unbounded external kill command or delete the PID file.
+func SafeStop(m types.Machine, timeout time.Duration) error {
+	if timeout <= 0 {
+		return fmt.Errorf("stop timeout must be positive")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	p, err := machineProcess(m)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = p.Release() }()
+	if err := p.Kill(); err != nil && !processExited(err) {
+		return err
+	}
+	return waitForProcessExit(ctx, p)
+}
+
 func machineProcess(m types.Machine) (*os.Process, error) {
 	if m == nil || m.Config().StateDir == "" {
 		return nil, fmt.Errorf("machine state directory is required")

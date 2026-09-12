@@ -280,12 +280,19 @@ also an early implementation priority, not a finding that custom VM code is inhe
   resources. Private state-directory allocation is covered by `test/hadron`; a sampled free SSH
   port is not a reservation or proof of concurrent-run isolation. Missing PID evidence fails closed;
   the future harness must separately track never-started VMs and verify target/process ownership.
-  **Cancellation cleanup: done (2026-09-11).** `go test -timeout` panics in a watchdog goroutine,
-  not the test's own, so a hung boot skips `t.Cleanup` entirely and can leak the guest process with
-  no in-process way to stop it. Fixed for the single-guest smoke test with a step-level GitHub
-  Actions timeout and an unconditional force-clean step (`hadron-vm-boot-smoke.yml`), both
-  independent of the test binary's own state, plus a documented, checked timing margin between the
-  test's internal waits and the workflow's declared timeouts (`test/hadron/smoke_test.go`).
+  **Timeout/cleanup hardening (2026-09-12): locally component-tested; live cancellation rehearsal
+  pending.** [Medium] SSH handshake, session creation, commands, polling, and diagnostics now honor
+  cancellation/deadlines. [High] The workflow reserves job-level cleanup margin, bounds compilation
+  and execution externally, and replaces broad QEMU killing with run-directory-scoped pidfd cleanup
+  before artifact upload. State deletion requires successful process cleanup. In-process failure
+  cleanup confirms exit without deleting diagnostic evidence; cleanup errors fail the smoke test.
+  [Medium] Readiness checks parse the single node's actual Ready condition rather than accepting
+  the substring in NotReady. Regression coverage includes stuck SSH phases, cancellation, workflow
+  budget/order, process ownership, repeated cleanup, and negative readiness cases.
+  **Remaining limits:** PEG startup/seed tooling is not fully context-aware; external workflow
+  deadlines remain necessary. A forcibly lost runner cannot execute cleanup; local component tests
+  do not prove hosted cancellation behavior. Full VM/node identity and port-collision guards below
+  remain open; the cleanup ownership test does not close the two-node harness acceptance criteria.
   **Open — not yet applicable to the single-guest smoke test, but real, specific work once the
   two-node harness exists (do not close as N/A without building these):**
 

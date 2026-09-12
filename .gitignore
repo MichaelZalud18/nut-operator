@@ -39,3 +39,4 @@ go.work
 # Local scratch artifacts
 tmp/
 .ash/
+__pycache__/

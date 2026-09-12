@@ -196,3 +196,25 @@ func TestSafeTeardownWaitsForExitBeforeCleaning(t *testing.T) {
 		t.Fatal("state was not cleaned after process exit")
 	}
 }
+
+func TestSafeStopPreservesEvidenceAndConfirmsExit(t *testing.T) {
+	cmd, exited := startTeardownProcess(t)
+	m := &pidDeletingMachine{stateDir: t.TempDir()}
+	pidFile := filepath.Join(m.stateDir, "pid")
+	if err := os.WriteFile(pidFile, []byte(fmt.Sprint(cmd.Process.Pid)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SafeStop(m, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	<-exited
+	if _, err := os.Stat(pidFile); err != nil {
+		t.Fatalf("lost diagnostic state: %v", err)
+	}
+	if m.stopped || m.cleaned {
+		t.Fatal("called PEG's unbounded Stop or deleted state")
+	}
+	if err := SafeStop(m, time.Second); err != nil {
+		t.Fatalf("repeat stop: %v", err)
+	}
+}
