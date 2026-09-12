@@ -227,6 +227,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
+      - name: Setup Go for the telemetry client smoke test
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
       # Native architecture only and loaded into the daemon: the test has to run the
       # images, and a multi-platform manifest list has nothing to run.
       - name: Build the NUT server image
@@ -252,6 +257,8 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Negotiate NUT over TLS
+        env:
+          NUT_TLS_GO_TEST: "1"
         run: hack/nut-tls-smoke.sh docker nut-server:tls-smoke upsmon-agent:tls-smoke
 
   # Resolves each published image to a digest the gate and the promotion can both name.

@@ -422,11 +422,7 @@ Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`
 (`internal/polling`), and trigger evaluation (`internal/trigger`). Design docs:
 `telemetry-and-triggers.md`, `resiliency-and-partitions.md`.
 
-- [ ] `F-134` [High] carry the selected NUTServer's TLS policy and trust material into authoritative
-  operator telemetry polling. The client currently opens plain TCP and sends `LIST VAR` even when
-  the server is configured as TLS Required. **Testable now:** protocol fixtures for STARTTLS,
-  configured CA/server-identity verification, required-mode downgrade refusal, explicit disabled
-  mode, and bounded handshake failure. **Conditional:** compatibility against the shipped NUT image.
+None.
 
 ---
 

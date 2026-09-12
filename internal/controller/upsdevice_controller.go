@@ -135,7 +135,12 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				resolution.Reason,
 				resolution.Message,
 			)
-			setDegradedCondition(&device.Status.Conditions, device.Generation, false, "NotDegraded", "telemetry target is not ready yet")
+			if resolution.Reason == "TelemetryTLSInvalid" {
+				reconcileResult = ctrl.Result{RequeueAfter: telemetryPollInterval(&device, true)}
+				setDegradedCondition(&device.Status.Conditions, device.Generation, true, resolution.Reason, resolution.Message)
+			} else {
+				setDegradedCondition(&device.Status.Conditions, device.Generation, false, "NotDegraded", "telemetry target is not ready yet")
+			}
 		} else {
 			pollStart := time.Now()
 			pollResult, pollErr := r.telemetryPoller().Poll(ctx, target)
@@ -284,12 +289,17 @@ func (r *UPSDeviceReconciler) resolveTelemetryTarget(ctx context.Context, device
 			continue
 		}
 		if !targetFound {
+			tlsOptions, err := r.telemetryTLS(ctx, server, endpoint.Host)
+			if err != nil {
+				return polling.Target{}, telemetryTargetResolution{Reason: "TelemetryTLSInvalid", Message: err.Error(), ServerRefs: resolution.ServerRefs}, nil
+			}
 			target = polling.Target{
 				UPSDevice: device.Name,
 				NUTServer: server.Name,
 				NUTName:   nutDeviceName(*device),
 				Host:      endpoint.Host,
 				Port:      endpoint.Port,
+				TLS:       tlsOptions,
 			}
 			targetManagementClusterName = nutServerManagementClusterName(server)
 			targetFound = true

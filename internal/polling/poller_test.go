@@ -46,6 +46,7 @@ func TestPollerPollsAndNormalizesTelemetry(t *testing.T) {
 		NUTServer: " server-a ",
 		NUTName:   " rack-a ",
 		Host:      " upsd.power-system.svc.cluster.local ",
+		TLS:       nut.TLSOptions{Mode: nut.TLSRequired, CABundle: []byte("configured-ca"), ServerName: "upsd.example"},
 	})
 	if err != nil {
 		t.Fatalf("Poll returned error: %v", err)
@@ -53,6 +54,9 @@ func TestPollerPollsAndNormalizesTelemetry(t *testing.T) {
 
 	if client.calls != 1 {
 		t.Fatalf("expected one NUT client call, got %d", client.calls)
+	}
+	if client.target.TLS.Mode != nut.TLSRequired || string(client.target.TLS.CABundle) != "configured-ca" || client.target.TLS.ServerName != "upsd.example" {
+		t.Fatalf("TLS settings lost: %#v", client.target.TLS)
 	}
 	if client.target.Host != "upsd.power-system.svc.cluster.local" || client.target.Port != nut.DefaultPort || client.target.UPSName != "rack-a" {
 		t.Fatalf("unexpected NUT client target: %#v", client.target)

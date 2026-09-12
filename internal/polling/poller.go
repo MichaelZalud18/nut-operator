@@ -46,6 +46,7 @@ type Target struct {
 	NUTName   string
 	Host      string
 	Port      int
+	TLS       nut.TLSOptions
 	// TelemetryAliases come from the device's matched capability profile and
 	// are applied during normalization, so a device reporting a non-standard
 	// variable name still produces canonical derived fields.
@@ -98,6 +99,7 @@ func (p *Poller) Poll(ctx context.Context, target Target) (Result, error) {
 		Host:    target.Host,
 		Port:    target.Port,
 		UPSName: target.NUTName,
+		TLS:     target.TLS,
 	})
 	if err != nil {
 		return Result{Target: target}, fmt.Errorf("poll NUT variables for UPSDevice %q through NUTServer %q: %w", target.UPSDevice, target.NUTServer, err)

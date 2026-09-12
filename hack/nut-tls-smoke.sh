@@ -122,6 +122,10 @@ start_server() {
     -v "${WORKDIR}/nut/combined.pem:/etc/nut/tls/combined.pem:ro" \
     "${SERVER_IMAGE}" >/dev/null
 
+  # The production pod runs drivers in a supervisor sidecar. This isolated TLS
+  # fixture needs one dummy worker; the container owns its lifetime and cleanup.
+  "${CONTAINER_TOOL}" exec -d "${SERVER_NAME}" upsdrvctl -FF start smokeups
+
   PORT="$("${CONTAINER_TOOL}" port "${SERVER_NAME}" 3493/tcp | head -1 | sed 's/.*://')"
   if [[ -z "${PORT}" ]]; then
     echo "FAIL: could not determine the published port" >&2
@@ -237,6 +241,15 @@ if [[ "${stale_status}" -ne 42 ]]; then
   exit 1
 fi
 echo "    stale-certificate negative control rejected the old leaf"
+
+if [[ "${NUT_TLS_GO_TEST:-}" == "1" ]]; then
+  echo "==> polling the rotated server through the operator's Go NUT client"
+  if ! NUT_TLS_TEST_ADDRESS="127.0.0.1:${PORT}" NUT_TLS_TEST_CA="${WORKDIR}/ca.crt" \
+    go test ./internal/nut -run '^TestClientTLSImage$' -count=1; then
+    "${CONTAINER_TOOL}" logs "${SERVER_NAME}" >&2
+    exit 1
+  fi
+fi
 
 if [[ -z "${AGENT_IMAGE}" ]]; then
   echo "PASS: ${SERVER_IMAGE} serves the rotated NUT TLS certificate (agent image not supplied)"

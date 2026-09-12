@@ -170,7 +170,22 @@ externally exposed by default.
 
 ## TLS
 
-NUT protocol TLS defaults to `Required` in the API contract. Renderers require mounted certificate material before required TLS mode is ready.
+NUT protocol TLS defaults to `Required` in the API, but serving TLS also requires
+`spec.tls.serverCertificateRef`. The existing renderer serves plaintext without that reference;
+setting the mode alone does not enable encryption. Set certificate material and `Required`
+together for a TLS-only operator polling connection.
+
+Operator telemetry polling negotiates STARTTLS for TLS-enabled NUTServers before issuing
+`LIST VAR`. It verifies the endpoint hostname against `serverCARef`, or against the declared
+public server certificate when no separate CA is supplied. It never disables certificate
+verification and never copies the private key into the polling target. Trust material is read
+again on target resolution, so Secret rotation is picked up by subsequent polls. Missing trust
+marks telemetry Unknown/not-ready and schedules a retry.
+
+`Required` refuses negotiation failure. `Opportunistic` allows plaintext only after an explicit
+NUT response that TLS is unsupported or unconfigured; certificate rejection, malformed replies,
+timeouts, and handshake failures never trigger fallback. `Disabled` sends plaintext deliberately.
+Connection, negotiation, and variable reads share the poll deadline and honor cancellation.
 
 PostgreSQL TLS is required for external PostgreSQL by default.
 

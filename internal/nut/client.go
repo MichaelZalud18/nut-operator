@@ -22,6 +22,8 @@ package nut
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -44,6 +46,23 @@ type Target struct {
 	Host    string
 	Port    int
 	UPSName string
+	TLS     TLSOptions
+}
+
+type TLSMode string
+
+const (
+	TLSDisabled      TLSMode = "Disabled"
+	TLSOpportunistic TLSMode = "Opportunistic"
+	TLSRequired      TLSMode = "Required"
+)
+
+// TLSOptions selects STARTTLS and the trust material for one endpoint.
+// An empty mode preserves plaintext clients; an empty CA bundle uses system roots.
+type TLSOptions struct {
+	Mode       TLSMode
+	CABundle   []byte
+	ServerName string
 }
 
 // ClientOptions configure a NUT protocol client.
@@ -103,18 +122,70 @@ func (c *Client) ListVariables(ctx context.Context, target Target) (map[string]s
 	defer func() {
 		_ = conn.Close()
 	}()
-	if c.timeout > 0 {
-		_ = conn.SetDeadline(time.Now().Add(c.timeout))
+	// A deadline bounds the whole poll, including dialing and TLS. Closing the raw
+	// transport also interrupts I/O when the parent is canceled before that deadline.
+	stop := context.AfterFunc(pollCtx, func() { _ = conn.Close() })
+	defer stop()
+	if deadline, ok := pollCtx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	transport, err := c.negotiateTLS(pollCtx, conn, target)
+	if err != nil {
+		return nil, err
 	}
 
-	if _, err := fmt.Fprintf(conn, "LIST VAR %s\n", target.UPSName); err != nil {
+	if _, err := fmt.Fprintf(transport, "LIST VAR %s\n", target.UPSName); err != nil {
 		return nil, fmt.Errorf("send LIST VAR for UPS %q: %w", target.UPSName, err)
 	}
-	variables, err := readListVariableResponse(conn, target.UPSName, c.maxLineBytes)
+	variables, err := readListVariableResponse(transport, target.UPSName, c.maxLineBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read LIST VAR response for UPS %q: %w", target.UPSName, err)
 	}
 	return variables, nil
+}
+
+func (c *Client) negotiateTLS(ctx context.Context, conn net.Conn, target Target) (net.Conn, error) {
+	options := target.TLS
+	switch options.Mode {
+	case "", TLSDisabled:
+		return conn, nil
+	case TLSRequired, TLSOpportunistic:
+	default:
+		return nil, fmt.Errorf("unsupported NUT TLS mode %q", options.Mode)
+	}
+	config := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: options.ServerName}
+	if config.ServerName == "" {
+		config.ServerName = target.Host
+	}
+	if len(options.CABundle) > 0 {
+		config.RootCAs = x509.NewCertPool()
+		if !config.RootCAs.AppendCertsFromPEM(options.CABundle) {
+			return nil, errors.New("NUT TLS trust bundle contains no certificates")
+		}
+	}
+	if _, err := fmt.Fprint(conn, "STARTTLS\n"); err != nil {
+		return nil, fmt.Errorf("send NUT STARTTLS: %w", err)
+	}
+	reader := bufio.NewReaderSize(conn, c.maxLineBytes)
+	line, err := reader.ReadSlice('\n')
+	if err != nil {
+		return nil, fmt.Errorf("read NUT STARTTLS response: %w", err)
+	}
+	reply := strings.TrimSuffix(strings.TrimSuffix(string(line), "\n"), "\r")
+	if reader.Buffered() != 0 {
+		return nil, errors.New("unexpected data after NUT STARTTLS response")
+	}
+	if reply != "OK STARTTLS" {
+		if options.Mode == TLSOpportunistic && (reply == "ERR FEATURE-NOT-SUPPORTED" || reply == "ERR FEATURE-NOT-CONFIGURED") {
+			return conn, nil
+		}
+		return nil, fmt.Errorf("NUT STARTTLS refused: %q", reply)
+	}
+	secure := tls.Client(conn, config)
+	if err := secure.HandshakeContext(ctx); err != nil {
+		return nil, fmt.Errorf("NUT TLS handshake: %w", err)
+	}
+	return secure, nil
 }
 
 // Address returns host:port with the default NUT port applied.

@@ -49,6 +49,7 @@ func TestClientListsVariables(t *testing.T) {
 	variables, err := client.ListVariables(context.Background(), Target{
 		Host:    "nut.example.net",
 		UPSName: "rack-a",
+		TLS:     TLSOptions{Mode: TLSDisabled},
 	})
 	if err != nil {
 		t.Fatalf("ListVariables returned error: %v", err)

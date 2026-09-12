@@ -158,6 +158,40 @@ enforcement, not observed credential disclosure. Test required-mode downgrade re
 CA and server-identity verification, explicit plaintext mode, cancellation, and handshake deadlines
 with local protocol fixtures, then verify compatibility against the shipped NUT image.
 
+### F-134 Resolution (2026-09-12)
+
+The selected NUTServer's effective TLS mode, endpoint identity, and public trust material now
+travel through `polling.Target` into the production NUT client. The client uses Go's standard
+TLS implementation, a TLS 1.2 minimum, hostname verification, and the declared CA or public
+serving certificate as its trust anchor. It issues STARTTLS before LIST VAR, refuses required-mode
+downgrades, and allows opportunistic plaintext only for the two explicit unsupported/unconfigured
+NUT replies. Invalid trust, hostname mismatch, malformed replies, and failed handshakes fail
+closed. The total poll deadline covers dialing, negotiation, and reads; cancellation closes the
+underlying transport. Capability probes share the same target resolver and inherit this behavior.
+
+Compatibility boundary: the existing renderer's no-certificate configuration remains plaintext,
+even though the API mode defaults to Required. This change does not redefine server enablement
+or upsmon's separate fleet-level policy. The security reference now spells out that certificate
+material plus Required mode are both needed to enable required-TLS operator polling.
+
+Regression fixtures cover required/opportunistic TLS, explicit disabled mode, trust/name errors,
+malformed negotiation, downgrade refusal, cancellation, and stalled-handshake deadlines. Raw
+client writes are inspected so an attempted plaintext fallback cannot pass merely because the
+server closed its connection. Controller tests cover selected-server propagation, trust rotation,
+namespace restrictions/inheritance, certificate-only anchoring, and missing trust. Trust-loading
+failure now changes previously ready telemetry to Unknown/not-ready and schedules recovery.
+
+The existing conditional image smoke lane now runs the production Go client's LIST VAR against
+the real NUT image after certificate rotation. The fixture explicitly starts one dummy driver;
+the old handshake/LIST UPS checks alone did not require a connected driver. The new test waits
+only for bounded driver-startup states, not TLS failures. The local ARM64 image run passed with
+the previously built current-Dockerfile server and upsmon images, including exact leaf checks,
+stale-leaf rejection, real Online variables over TLS, and upsmon certificate verification.
+
+Validation: the complete `internal/nut`, `internal/polling`, and `internal/controller` suites
+passed with the race detector, including controller envtest. `make lint` reported zero issues;
+the smoke script passed Bash syntax validation and the patch passed `git diff --check`.
+
 ## F-135: NetBox Redirect Credential Boundary
 
 **Medium.** [Pagination](../../../internal/netbox/client.go#L183) uses the supplied/default HTTP
