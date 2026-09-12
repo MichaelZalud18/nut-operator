@@ -102,10 +102,28 @@ func TestHadronSingleNodeBoot(t *testing.T) {
 	// The install stanza reboots into the freshly installed disk; k3s only starts on that second
 	// boot, which is why this is a second, independent wait rather than assumed to follow
 	// immediately once SSH answers on the live/installer environment.
+	//
+	// A first real run here found /tmp/k3s-ready never appearing within 10 minutes, with SSH
+	// commands succeeding the whole time (a working connection running a real command, not a
+	// connection failure) -- consistent with the guest being up and running normally, since most
+	// distros stop mirroring per-service startup to the serial console once early boot finishes,
+	// so a quiet console after that point proves nothing either way. A boolean file check alone
+	// cannot distinguish "k3s genuinely needs more than 10 minutes on 2 CPU/4GB" from "the
+	// stages hook never fired," so this now logs a real diagnostic snapshot periodically while
+	// waiting instead of guessing at a bigger number.
 	t.Log("waiting for the provider-kairos k3s-ready stage to run")
-	waitFor(t, 10*time.Minute, "k3s readiness", func() error {
+	waitForWithDiagnostics(t, 10*time.Minute, "k3s readiness", func() error {
 		_, err := m.Command("test -f /tmp/k3s-ready")
 		return err
+	}, func() {
+		out, err := m.Command("uptime; sudo systemctl is-system-running; echo ---k3s---; " +
+			"sudo systemctl status k3s --no-pager -l 2>&1 | head -30; echo ---k3s-journal---; " +
+			"sudo journalctl -u k3s --no-pager -n 40 2>&1; echo ---tmp---; ls -la /tmp")
+		if err != nil {
+			t.Logf("diagnostic snapshot command itself failed: %v\noutput so far:\n%s", err, out)
+			return
+		}
+		t.Logf("diagnostic snapshot:\n%s", out)
 	})
 
 	out, err := m.Command("sudo k3s kubectl get nodes --no-headers")
@@ -120,13 +138,27 @@ func TestHadronSingleNodeBoot(t *testing.T) {
 
 func waitFor(t *testing.T, timeout time.Duration, what string, check func() error) {
 	t.Helper()
+	waitForWithDiagnostics(t, timeout, what, check, nil)
+}
+
+// waitForWithDiagnostics is waitFor plus an optional diagnose callback invoked roughly every
+// minute while still waiting, so a slow or stuck condition can be told apart from an outright
+// broken one during the run itself, not just guessed at afterward from whatever the guest's
+// console happened to still be printing by then.
+func waitForWithDiagnostics(t *testing.T, timeout time.Duration, what string, check func() error, diagnose func()) {
+	t.Helper()
+	const pollInterval = 5 * time.Second
+	const diagnoseEvery = time.Minute
 	deadline := time.Now().Add(timeout)
 	var lastErr error
-	for time.Now().Before(deadline) {
+	for tick := 0; time.Now().Before(deadline); tick++ {
 		if lastErr = check(); lastErr == nil {
 			return
 		}
-		time.Sleep(5 * time.Second)
+		if diagnose != nil && tick > 0 && time.Duration(tick)*pollInterval%diagnoseEvery == 0 {
+			diagnose()
+		}
+		time.Sleep(pollInterval)
 	}
 	t.Fatalf("timed out after %s waiting for %s: %v", timeout, what, lastErr)
 }
