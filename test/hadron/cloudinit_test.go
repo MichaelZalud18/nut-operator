@@ -85,8 +85,6 @@ func TestKairosAutoInstallCloudConfigEmbedsCredentialsAndDevice(t *testing.T) {
 		"enabled: true",
 		"name: hadron-test-user",
 		"passwd: hadron-test-pass",
-		"provider-kairos.bootstrap.after.k3s-ready",
-		"touch /tmp/k3s-ready",
 	} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("cloud-config missing %q:\n%s", want, cfg)

@@ -71,10 +71,16 @@ func buildNoCloudISO(dir, userData string) (string, error) {
 // scheme would make the install stanza silently target a device that does not exist. For a
 // PEG-booted single-disk machine this is "/dev/vda".
 //
-// The rendered config also adds the stage kairos.io/docs/examples/k3s-stages documents for
-// exactly this purpose: touching /tmp/k3s-ready once the provider-kairos bootstrap process
-// reports k3s ready. That gives a caller a single, unambiguous file to poll for instead of
-// guessing readiness from `kubectl get nodes` output timing.
+// kairos.io/docs/examples/k3s-stages documents a `stages: 'provider-kairos.bootstrap.after.
+// k3s-ready':` hook for exactly this purpose (touching a marker file once k3s is ready), and an
+// earlier version of this function rendered it. A live run against the pinned Hadron artifact
+// (docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md, 2026-09-12) found that hook
+// never fires on this Kairos version: k3s itself came up genuinely healthy -- CoreDNS, Traefik,
+// and metrics-server all Ready within about 40 seconds of the k3s.service starting, confirmed via
+// `systemctl status k3s` and its journal -- while the marker file never appeared in ten minutes of
+// polling. Rather than carry a cloud-config feature proven not to fire on the target version,
+// this renders neither the stage nor the marker; callers poll `sudo k3s kubectl get nodes`
+// directly instead, which the same run proved is a real, working signal.
 //
 // This is deliberately not the default behavior of NewSafeMachine: the adapter's own contract is
 // generic VM lifecycle, not an opinion about what any given guest OS should do on first boot.
@@ -93,10 +99,5 @@ users:
   passwd: %s
   groups:
   - admin
-stages:
-  'provider-kairos.bootstrap.after.k3s-ready':
-    - name: "Create /tmp/k3s-ready file"
-      commands:
-      - "touch /tmp/k3s-ready"
 `, device, creds.User, creds.Pass)
 }

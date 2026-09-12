@@ -26,6 +26,7 @@ package hadron
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -103,37 +104,38 @@ func TestHadronSingleNodeBoot(t *testing.T) {
 	// boot, which is why this is a second, independent wait rather than assumed to follow
 	// immediately once SSH answers on the live/installer environment.
 	//
-	// A first real run here found /tmp/k3s-ready never appearing within 10 minutes, with SSH
-	// commands succeeding the whole time (a working connection running a real command, not a
-	// connection failure) -- consistent with the guest being up and running normally, since most
-	// distros stop mirroring per-service startup to the serial console once early boot finishes,
-	// so a quiet console after that point proves nothing either way. A boolean file check alone
-	// cannot distinguish "k3s genuinely needs more than 10 minutes on 2 CPU/4GB" from "the
-	// stages hook never fired," so this now logs a real diagnostic snapshot periodically while
-	// waiting instead of guessing at a bigger number.
-	t.Log("waiting for the provider-kairos k3s-ready stage to run")
+	// This used to poll for a /tmp/k3s-ready marker file, written by a
+	// `provider-kairos.bootstrap.after.k3s-ready` cloud-config stage (kairos.io/docs/examples/
+	// k3s-stages). A live run (docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md,
+	// 2026-09-12) found that stage never fires on this Kairos version: the diagnostic snapshots
+	// below showed k3s.service active and CoreDNS/Traefik/metrics-server all genuinely Ready
+	// within about 40 seconds, while the marker file never appeared in ten minutes of polling.
+	// The marker was the broken part, not k3s -- so this now polls `kubectl get nodes` directly,
+	// which the same run proved is a real, working readiness signal, and drops the file-based
+	// indirection entirely rather than trusting a mechanism just shown not to fire.
+	t.Log("waiting for a Ready k3s node")
+	var nodesOut string
 	waitForWithDiagnostics(t, 10*time.Minute, "k3s readiness", func() error {
-		_, err := m.Command("test -f /tmp/k3s-ready")
-		return err
+		out, err := m.Command("sudo k3s kubectl get nodes --no-headers")
+		if err != nil {
+			return err
+		}
+		nodesOut = out
+		if !strings.Contains(out, "Ready") {
+			return fmt.Errorf("no Ready node yet:\n%s", out)
+		}
+		return nil
 	}, func() {
 		out, err := m.Command("uptime; sudo systemctl is-system-running; echo ---k3s---; " +
 			"sudo systemctl status k3s --no-pager -l 2>&1 | head -30; echo ---k3s-journal---; " +
-			"sudo journalctl -u k3s --no-pager -n 40 2>&1; echo ---tmp---; ls -la /tmp")
+			"sudo journalctl -u k3s --no-pager -n 40 2>&1")
 		if err != nil {
 			t.Logf("diagnostic snapshot command itself failed: %v\noutput so far:\n%s", err, out)
 			return
 		}
 		t.Logf("diagnostic snapshot:\n%s", out)
 	})
-
-	out, err := m.Command("sudo k3s kubectl get nodes --no-headers")
-	if err != nil {
-		t.Fatalf("kubectl get nodes: %v (output: %s)", err, out)
-	}
-	t.Logf("k3s nodes:\n%s", out)
-	if !strings.Contains(out, "Ready") {
-		t.Fatalf("no Ready node in kubectl output:\n%s", out)
-	}
+	t.Logf("k3s nodes:\n%s", nodesOut)
 }
 
 func waitFor(t *testing.T, timeout time.Duration, what string, check func() error) {
