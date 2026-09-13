@@ -541,6 +541,23 @@ also an early implementation priority, not a finding that custom VM code is inhe
   concurrent release scenarios only after measuring capacity. **Testable now; Conditional:**
   retain logs and hypervisor evidence outside stopped guests; harness-owned reset is not operator
   recovery, and restart/resume continuity remains outside scope (SB-1).
+  **Checked, not assumed (2026-09-13): `test/e2e` does not already cover this end to end.** It
+  drives real telemetry transitions from a scripted `dummy-ups` fixture and separately hand-writes
+  a shutdown signal into a projected Secret to prove the actuator accepts it, but nothing there
+  creates a `ShutdownFlow`, waits for trigger evaluation, and asserts execution/drain/poweroff --
+  this is genuinely new ground, not a Hadron variant of an existing Kind test.
+  **First milestone: real operator deployment, not yet run live.**
+  `TestHadronOperatorManagerDeploys` (`test/hadron/operator_smoke_test.go`,
+  `hadron-operator-smoke.yml`) gets the real CRDs/RBAC/manager Deployment running inside a Hadron
+  guest's k3s, before wiring any CRs or the outage flow itself -- via `config/byo-cert` and
+  `hack/webhook-cert.sh` (this repo's own no-cert-manager deploy path, chosen deliberately: "this
+  operator's job is to run correctly while the cluster is losing power," per that overlay's own
+  comment, so installing cert-manager into a throwaway guest just to get a serving certificate
+  would be a second, unrelated thing to prove reliable). Full rationale and evidence table in
+  [hadron-vm-4-operator-2026-09-13.md](contributing/audits/hadron-vm-4-operator-2026-09-13.md).
+  Every CR (`NUTServer`/`UPSDevice`/`NodePowerAgent`/`ShutdownFlow`), the two-guest topology,
+  real drain/eviction against a live workload Pod, and the network-policy/audit assertions remain
+  open.
 - [ ] `VM-5` [Medium] integrate the proven harness as a separate, initially manually triggered
   Actions job. Consume images built from the exact revision under test, using the existing
   digest-based image workflow where applicable, rather than rebuilding while VMs run or pulling

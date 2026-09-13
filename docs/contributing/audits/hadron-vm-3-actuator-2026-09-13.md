@@ -87,6 +87,13 @@ VM-3's first three milestones are now closed: the real actuator arms with a real
 round trip, correctly rejects invalid signals without ever halting the guest, and correctly halts
 the guest on a real accepted signal with hypervisor-confirmed evidence.
 
+`TestHadronActuatorRejectsInvalidSignals` was later extended with the remaining
+`InspectSignal` rejection reasons a live guest can exercise -- `future` (`SignalFromFuture`),
+`malformed-timestamp` (`SignalInvalidTimestamp`), and `missing-fields`
+(`SignalMissingRequiredFields`) -- and
+[run 34776752512](https://github.com/MichaelZalud18/nut-operator/actions/runs/34776752512) passed
+all eight subtests across all three top-level tests cleanly, first attempt.
+
 ## Open, deliberately not attempted here
 
 - Remaining negative controls: missing required fields and an invalid/future timestamp. Missing-

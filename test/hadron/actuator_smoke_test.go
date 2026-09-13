@@ -646,17 +646,25 @@ func streamActuatorLog(ctx context.Context, clientset *kubernetes.Clientset, pod
 	}
 }
 
+// repoRootDir finds this checkout's own top-level directory, since a test invoked as
+// `go test ./test/hadron` runs with its working directory set to the package directory, not the
+// repo root, regardless of where `go test` itself was run from.
+func repoRootDir(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse --show-toplevel: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // buildActuatorImageTarball builds the real node-actuator image from this checkout's own
 // production Dockerfile and saves it to a local docker-save tarball, so the guest imports the
 // exact artifact this repository would ship -- not a stand-in binary or a hand-rolled security
 // context that could quietly diverge from images.yml's real build.
 func buildActuatorImageTarball(ctx context.Context, t *testing.T) (imageRef, tarPath string) {
 	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatalf("git rev-parse --show-toplevel: %v", err)
-	}
-	repoRoot := strings.TrimSpace(string(out))
+	repoRoot := repoRootDir(t)
 	tag := fmt.Sprintf("nut-operator-hadron-actuator-test:%d", time.Now().UnixNano())
 	build := exec.CommandContext(ctx, "docker", "build",
 		"-f", filepath.Join(repoRoot, "images", "node-actuator", "Dockerfile"),
