@@ -116,6 +116,62 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			cleanupShutdownFlowResolverFixture(ctx)
 		})
 
+		It("publishes the plan for eligible domains and restores the configured preflight plan", func() {
+			upsA := &powerv1alpha1.UPSDevice{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shutdownFlowTestUPSName}, upsA)).To(Succeed())
+			upsB := &powerv1alpha1.UPSDevice{ObjectMeta: metav1.ObjectMeta{Name: "scope-ups-b"}, Spec: upsA.Spec}
+			upsB.Spec.PowerDomains = []string{"rack-b"}
+			exempt := true
+			objects := []client.Object{
+				upsB,
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestNodeName, Labels: map[string]string{"scope": "a"}}},
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "scope-node-b", Labels: map[string]string{"scope": "b"}}},
+				&powerv1alpha1.PowerInventoryNode{ObjectMeta: metav1.ObjectMeta{Name: "scope-inventory-b"}, Spec: powerv1alpha1.PowerInventoryNodeSpec{NodeName: "scope-node-b", CommunicationPathExempt: &exempt}},
+				&powerv1alpha1.PowerInventoryEdge{ObjectMeta: metav1.ObjectMeta{Name: "scope-feed-b"}, Spec: powerv1alpha1.PowerInventoryEdgeSpec{
+					From:     powerv1alpha1.PowerInventoryEntityReference{Kind: powerv1alpha1.PowerInventoryEntityUPSDevice, Name: upsB.Name},
+					To:       powerv1alpha1.PowerInventoryEntityReference{Kind: powerv1alpha1.PowerInventoryEntityNode, Name: "scope-node-b"},
+					Relation: powerv1alpha1.PowerInventoryEdgeFeeds, Input: "psu-a",
+				}},
+			}
+			for _, object := range objects {
+				Expect(k8sClient.Create(ctx, object)).To(Succeed())
+				DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, object))).To(Succeed()) })
+			}
+			flow := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
+			flow.Spec.CommunicationPaths = []powerv1alpha1.FlowCommunicationPath{{Service: "OperatorAPI", Exempt: true}, {Service: "NUT", Exempt: true}}
+			flow.Spec.Triggers = append(flow.Spec.Triggers, powerv1alpha1.ShutdownTrigger{Type: powerv1alpha1.ShutdownTriggerOnBattery, PowerDomains: []string{"rack-b"}})
+			flow.Spec.Groups = nil
+			for _, rack := range []string{"a", "b"} {
+				flow.Spec.Groups = append(flow.Spec.Groups, powerv1alpha1.ShutdownGroup{Name: rack, Action: powerv1alpha1.ShutdownStepCordonNodes, Target: powerv1alpha1.ShutdownStepTarget{NodeSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"scope": rack}}}})
+			}
+			Expect(k8sClient.Update(ctx, flow)).To(Succeed())
+			r := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			for _, stage := range []string{"a", "both", "none"} {
+				for _, device := range []*powerv1alpha1.UPSDevice{upsA, upsB} {
+					Expect(k8sClient.Get(ctx, types.NamespacedName{Name: device.Name}, device)).To(Succeed())
+					device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnline
+					if stage == "both" || (stage == "a" && device.Name == upsA.Name) {
+						device.Status.Phase = powerv1alpha1.UPSDevicePhaseOnBattery
+					}
+					Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
+				}
+				_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
+				Expect(meta.FindStatusCondition(flow.Status.Conditions, powerv1alpha1.ConditionAccepted).Status).To(Equal(metav1.ConditionTrue))
+				want := 2
+				if stage == "a" {
+					want = 1
+					Expect(flow.Status.CompiledSteps[0].ID).To(Equal("a"))
+				}
+				Expect(flow.Status.CompiledSteps).To(HaveLen(want))
+				Expect(flow.Status.PublishedArtifact.Graph.Vertices).To(HaveLen(want))
+				Expect(flow.Status.TriggerEvaluation.PlanConfigHash).To(Equal(flow.Status.ConfigHash))
+				Expect(flow.Status.TriggerEvaluation.Eligible).To(Equal(stage != "none"))
+			}
+		})
+
 		It("validates service path declarations in the API schema", func() {
 			for _, paths := range [][]powerv1alpha1.FlowCommunicationPath{
 				{{Service: "Other", Exempt: true}},
@@ -691,6 +747,12 @@ var _ = Describe("ShutdownFlow Controller", func() {
 					SelectedUPSDevices: []string{shutdownFlowTestUPSName},
 				}},
 			}
+			// Seed evidence for the execution subgraph, not its configured preview.
+			bundle, _, err := resolveDeclarativeStructuralBundle(ctx, k8sClient)
+			Expect(err).NotTo(HaveOccurred())
+			executionPlan := compileShutdownFlowForEvaluation(resource, bundle, shutdownFlowTierPolicy(cluster), nil, nil, evaluation)
+			Expect(executionPlan.ConfigHash).NotTo(BeEmpty())
+			resource.Status.ConfigHash = executionPlan.ConfigHash
 			dedupeKey := shutdownExecutionDeduplicationKey(resource, evaluation, resource.Status.ConfigHash)
 			executionID := shutdownExecutionIdentity(dedupeKey)
 			currentWave := int32(0)
@@ -874,6 +936,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 					}},
 				},
 				Status: powerv1alpha1.ShutdownFlowStatus{
+					CompiledSteps: []powerv1alpha1.CompiledShutdownStep{{ID: "applications"}},
 					CompiledWaves: []powerv1alpha1.CompiledShutdownWave{{
 						Index:  0,
 						Groups: []string{"applications"},

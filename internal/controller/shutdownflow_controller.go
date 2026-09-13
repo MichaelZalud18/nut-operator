@@ -45,6 +45,7 @@ import (
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
+	triggerpkg "github.com/MichaelZalud18/nut-operator/internal/trigger"
 )
 
 // ShutdownFlowReconciler reconciles a ShutdownFlow object
@@ -155,6 +156,8 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var planEstimate *time.Duration
 	var estimateConfidence planner.EstimateConfidence
 	var triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus
+	var evaluation triggerpkg.Evaluation
+	var holdStates []powerv1alpha1.ShutdownTriggerHoldStateStatus
 	var hookDiagnostics []powerv1alpha1.ShutdownFlowDiagnosticStatus
 	if result.accepted {
 		digests, diagnostics, err := r.shutdownFlowHookDigests(ctx, &flow, managementCluster)
@@ -170,14 +173,20 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 	if result.accepted {
+		var err error
+		evaluation, triggerEvaluation, holdStates, err = evaluateShutdownFlowTriggers(ctx, r.Client, &flow, bundle, observedAt, "")
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("evaluate ShutdownFlow %q triggers: %w", flow.Name, err)
+		}
 		compileStart := time.Now()
-		compiledFlow := compileShutdownFlowWithHistory(&flow, bundle, shutdownFlowTierPolicy(managementCluster), func(hash string) planner.HistoryInputs {
+		compiledFlow := compileShutdownFlowForEvaluation(&flow, bundle, shutdownFlowTierPolicy(managementCluster), func(hash string) planner.HistoryInputs {
 			return r.flowExecutionHistory(ctx, managementCluster, &flow, hash)
-		}, hookDigests)
+		}, hookDigests, triggerEvaluation)
 		compiled = compiledFlow.Steps
 		compiledWaves = compiledFlow.Waves
 		estimatedDuration = compiledFlow.EstimatedDuration
 		configHash = compiledFlow.ConfigHash
+		triggerEvaluation.PlanConfigHash = configHash
 		publishedArtifact = compiledFlow.Artifact
 		plannerDiagnostics = compiledFlow.Diagnostics
 		blockedNodeReleases = compiledFlow.BlockedNodeReleases
@@ -190,11 +199,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		metrics.ShutdownFlowCompileTotal.WithLabelValues(flow.Name, plannerCompileMetricResult(configHash, plannerDiagnostics)).Inc()
 	}
 	if result.accepted {
-		evaluation, status, holdStates, err := evaluateShutdownFlowTriggers(ctx, r.Client, &flow, bundle, observedAt, configHash)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("evaluate ShutdownFlow %q triggers: %w", flow.Name, err)
-		}
-		triggerEvaluation = status
+		status := triggerEvaluation
 		// Computed here rather than at compile time because it needs the selection this
 		// evaluation just made: the warning compares against the devices that would
 		// actually power this flow, not the ones a previous reconcile saw.

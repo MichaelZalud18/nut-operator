@@ -210,11 +210,12 @@ func retainReleasedCarrierConsumers(input StructuralInputs, membership map[strin
 	if len(input.CommunicationDependencies) == 0 {
 		return
 	}
+	unresolved := unresolvedGroupMembership(input.GroupNodes)
 	for {
 		retained := map[string]bool{}
 		for _, group := range input.Groups {
 			nodes, known := membership[group.Name]
-			retained[group.Name] = !known || len(nodes) == 0 || !outsideNodeSet(nodes, affected)
+			retained[group.Name] = unresolved[group.Name] || !known || len(nodes) == 0 || !outsideNodeSet(nodes, affected)
 		}
 		var released []string
 		for _, entry := range input.GroupNodes {
@@ -320,19 +321,22 @@ func CommunicationBudgetForInputs(input StructuralInputs) *CommunicationBudget {
 		return nil
 	}
 	membership := groupNodeSets(input.GroupNodes)
+	incomplete := unresolvedGroupMembership(input.GroupNodes)
+	partialMembership := false
 	consumers := map[string]struct{}{}
 	unresolved := map[string]struct{}{}
 	for _, action := range actions {
 		nodes := membership[action]
-		if len(nodes) == 0 {
+		if len(nodes) == 0 || incomplete[action] {
 			unresolved[action] = struct{}{}
 		}
+		partialMembership = partialMembership || incomplete[action]
 		for node := range nodes {
 			consumers[node] = struct{}{}
 		}
 	}
 	coverage := communicationCoverage(input, sortedSetKeys(consumers))
-	if len(unresolved) > 0 && !completeServiceCoverage(coverage) {
+	if len(unresolved) > 0 && (!completeServiceCoverage(coverage) || partialMembership) {
 		for _, dependency := range input.CommunicationDependencies {
 			consumers[dependency.Dependent] = struct{}{}
 		}

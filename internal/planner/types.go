@@ -32,9 +32,12 @@ type StructuralInputs struct {
 	ResolvedInputHash string     `json:"resolvedInputHash,omitempty"`
 	TierPolicy        TierPolicy `json:"tierPolicy,omitempty"`
 	Triggers          []Trigger  `json:"triggers,omitempty"`
-	Groups            []Group    `json:"groups,omitempty"`
-	Steps             []Step     `json:"steps,omitempty"`
-	AbortBehavior     string     `json:"abortBehavior,omitempty"`
+	// ExecutionScope is the discrete trigger-selected scope for a run. Nil compiles
+	// the configured preflight plan; telemetry values never enter this input.
+	ExecutionScope *ExecutionScope `json:"executionScope,omitempty"`
+	Groups         []Group         `json:"groups,omitempty"`
+	Steps          []Step          `json:"steps,omitempty"`
+	AbortBehavior  string          `json:"abortBehavior,omitempty"`
 	// TierOverrunPolicy changes failure-path timing behavior during execution, so it
 	// participates in plan identity even though it does not reorder the compiled waves.
 	TierOverrunPolicy string `json:"tierOverrunPolicy,omitempty"`
@@ -66,6 +69,10 @@ type StructuralInputs struct {
 	// URL, credential reference, or rehearsal change is failure-path behavior and
 	// must move the plan hash even though hooks live outside ShutdownFlow.
 	HookDigests []HookDigest `json:"hookDigests,omitempty"`
+}
+
+type ExecutionScope struct {
+	UPSDevices []string `json:"upsDevices"`
 }
 
 // NodeTier is one node's declared shutdown tier, from inventory rather than
@@ -122,6 +129,8 @@ type CommunicationSupplyConstraint struct {
 // finish before whatever releases it.
 type GroupNodeMembership struct {
 	Group string `json:"group"`
+	// Unresolved means at least one referenced agent has no resolved node coverage.
+	Unresolved bool `json:"unresolved,omitempty"`
 	// Acts are nodes this group does work on without powering them off.
 	Acts []string `json:"acts,omitempty"`
 	// Releases are nodes this group powers off.

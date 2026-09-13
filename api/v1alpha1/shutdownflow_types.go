@@ -987,8 +987,9 @@ type PublishedCommunicationBudgetStatus struct {
 	// upsDevices are the additional runtime inputs, separate from trigger selection.
 	// +optional
 	UPSDevices []string `json:"upsDevices,omitempty"`
-	// unresolvedActions have no resolved node targets. They include all modeled carriers
-	// while shared service coverage is incomplete, otherwise only the declared service paths.
+	// unresolvedActions have absent or incomplete node targets. Incomplete agent coverage
+	// includes all modeled carriers. Node-less actions do likewise while shared service
+	// coverage is incomplete, otherwise they use the declared service paths.
 	// +optional
 	UnresolvedActions []string `json:"unresolvedActions,omitempty"`
 	// supplies give per-carrier power-domain and UPS provenance, including unknown supply.

@@ -417,9 +417,10 @@ func TestPlannerGroupNodesTreatsAbsentSelectorAsNoNodes(t *testing.T) {
 	}
 }
 
-func TestPlannerGroupNodesWithoutClusterContextIsEmpty(t *testing.T) {
-	if membership := PlannerGroupNodes(nodeExpansionFlow(), resolver.StructuralBundle{}); membership != nil {
-		t.Fatalf("expected no membership without cluster context, got %#v", membership)
+func TestPlannerGroupNodesWithoutClusterContextPreservesUnresolvedAgents(t *testing.T) {
+	want := []planner.GroupNodeMembership{{Group: "poweroff-rack-a", Unresolved: true}}
+	if membership := PlannerGroupNodes(nodeExpansionFlow(), resolver.StructuralBundle{}); !reflect.DeepEqual(membership, want) {
+		t.Fatalf("expected unresolved agent membership without cluster context, got %#v", membership)
 	}
 }
 

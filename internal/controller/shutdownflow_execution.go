@@ -260,7 +260,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, dedupeKey string, bundle resolver.StructuralBundle, rehearsal bool, resume shutdownExecutionResumeEvidence) (executorpkg.Input, error) {
 	waves := executorWavesFromFlow(flow.Status.CompiledWaves, flow.Status.CompiledSteps)
 	applyCommunicationBarriers(waves, flow.Status.PublishedArtifact)
-	groups, err := r.executorGroupsFromFlow(ctx, flow)
+	groups, err := r.executorGroupsFromFlow(ctx, flowForCompiledExecution(flow))
 	if err != nil {
 		return executorpkg.Input{}, err
 	}
@@ -294,6 +294,32 @@ func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flo
 		Adaptive:           adaptiveInputForFlow(flow, bundle, observation, resume.state),
 		Resume:             resume.input,
 	}, nil
+}
+
+// Resolve only compiled actions. Pruned hooks, agents, and selectors must not
+// perform reads or prevent an unrelated domain's execution from starting.
+func flowForCompiledExecution(flow *powerv1alpha1.ShutdownFlow) *powerv1alpha1.ShutdownFlow {
+	selected := map[string]bool{}
+	for _, step := range flow.Status.CompiledSteps {
+		selected[step.ID] = true
+	}
+	out := flow.DeepCopy()
+	out.Spec.Groups = nil
+	out.Spec.Steps = nil
+	if len(flow.Spec.Groups) > 0 {
+		for _, group := range flow.Spec.Groups {
+			if selected[group.Name] {
+				out.Spec.Groups = append(out.Spec.Groups, group)
+			}
+		}
+	} else {
+		for _, step := range flow.Spec.Steps {
+			if selected[step.ID] {
+				out.Spec.Steps = append(out.Spec.Steps, step)
+			}
+		}
+	}
+	return out
 }
 
 type shutdownRehearsalRequest struct {

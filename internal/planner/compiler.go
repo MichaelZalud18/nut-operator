@@ -63,6 +63,9 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 			Message:  fmt.Sprintf("triggers could not be hashed for deterministic ordering: %v", err),
 		}}, ErrRejected
 	}
+	if normalized.ExecutionScope != nil && len(normalized.ExecutionScope.UPSDevices) == 0 {
+		return Plan{}, []Diagnostic{{Severity: DiagnosticError, Reason: "ExecutionScopeEmpty", Message: "an execution scope must name eligible UPS devices"}}, ErrRejected
+	}
 	scoped, scopeDiagnostics := scopeStructuralInputs(normalized)
 	diagnostics := validateStructuralInputs(scoped)
 	diagnostics = append(diagnostics, communicationDiagnostics(scoped)...)
@@ -526,6 +529,9 @@ func normalizeStructuralInputs(input StructuralInputs) (StructuralInputs, error)
 		GroupNodes:                append([]GroupNodeMembership(nil), input.GroupNodes...),
 		NodeTiers:                 append([]NodeTier(nil), input.NodeTiers...),
 		HookDigests:               append([]HookDigest(nil), input.HookDigests...),
+	}
+	if input.ExecutionScope != nil {
+		normalized.ExecutionScope = &ExecutionScope{UPSDevices: sortedUnique(input.ExecutionScope.UPSDevices)}
 	}
 	sort.SliceStable(normalized.NodeTiers, func(left, right int) bool {
 		return normalized.NodeTiers[left].Name < normalized.NodeTiers[right].Name

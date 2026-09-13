@@ -98,6 +98,7 @@ func TestCommunicationOutageScope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			input := partialDomainInput(Trigger{Type: "OnBattery", PowerDomains: []string{"rack-a"}})
 			input.PowerDomains[0].Nodes = nil
+			input.PowerDomains[1].Nodes = append(input.PowerDomains[1].Nodes, "node-a")
 			if tc.healthyCarrier {
 				input.PowerDomains[0].Nodes = []string{"other-affected-node"}
 			}
@@ -186,13 +187,17 @@ func TestCommunicationMultipleSuppliesRetainConsumers(t *testing.T) {
 	}
 }
 
-func TestCommunicationAbsentPreservesScopeFallback(t *testing.T) {
+func TestCommunicationAbsentRetainsUnknownButPrunesHealthyMembership(t *testing.T) {
 	input := partialDomainInput(Trigger{Type: "OnBattery", PowerDomains: []string{"rack-a"}})
 	input.PowerDomains[0].Nodes = nil
 	input.PowerDomains[0].Infrastructure = []string{"switch"}
 	scoped, _ := scopeStructuralInputs(input)
-	if !reflect.DeepEqual(scoped, input) {
-		t.Fatal("without known affected nodes or communication consumers, retain existing scope fallback")
+	var groups []string
+	for _, group := range scoped.Groups {
+		groups = append(groups, group.Name)
+	}
+	if !slices.Equal(groups, []string{"drain-rack-a", "poweroff-rack-a", "global-notify"}) {
+		t.Fatalf("retain unmapped node-a and targetless work, but omit known healthy node-b: %v", groups)
 	}
 }
 

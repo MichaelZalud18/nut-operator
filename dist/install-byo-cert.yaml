@@ -6128,8 +6128,9 @@ spec:
                         type: array
                       unresolvedActions:
                         description: |-
-                          unresolvedActions have no resolved node targets. They include all modeled carriers
-                          while shared service coverage is incomplete, otherwise only the declared service paths.
+                          unresolvedActions have absent or incomplete node targets. Incomplete agent coverage
+                          includes all modeled carriers. Node-less actions do likewise while shared service
+                          coverage is incomplete, otherwise they use the declared service paths.
                         items:
                           type: string
                         type: array

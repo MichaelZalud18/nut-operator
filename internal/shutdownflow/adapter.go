@@ -112,6 +112,12 @@ func CompileFlowWithHistory(obj *powerv1alpha1.ShutdownFlow, bundle resolver.Str
 // CompileFlowWithHistoryAndHooks compiles with observed durations and resolved
 // hook identity folded into the structural plan hash.
 func CompileFlowWithHistoryAndHooks(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec, history planner.HistoryInputs, hookDigests []planner.HookDigest) CompiledFlow {
+	return CompileFlowWithScope(obj, bundle, tierPolicy, history, hookDigests, nil)
+}
+
+// CompileFlowWithScope preserves authored triggers while selecting work for the
+// eligible UPS roots. A nil scope is the configured preflight plan.
+func CompileFlowWithScope(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, tierPolicy powerv1alpha1.PowerShutdownTierPolicySpec, history planner.HistoryInputs, hookDigests []planner.HookDigest, scope *planner.ExecutionScope) CompiledFlow {
 	inputs, err := PlannerInputsWithTierPolicy(obj, tierPolicy)
 	if err != nil {
 		return CompiledFlow{Diagnostics: []planner.Diagnostic{{
@@ -123,6 +129,7 @@ func CompileFlowWithHistoryAndHooks(obj *powerv1alpha1.ShutdownFlow, bundle reso
 	inputs = resolver.AttachResolvedInputHash(inputs, bundle)
 	inputs.HookDigests = append([]planner.HookDigest(nil), hookDigests...)
 	inputs.GroupNodes = PlannerGroupNodes(obj, bundle)
+	inputs.ExecutionScope = scope
 	plan, diagnostics, err := planner.CompileWithHistory(inputs, planner.TelemetryInputs{}, history)
 	// F-120: the planner's own ShutdownTierZeroTargeted diagnostic only ever sees the resolved
 	// int32 a group carries by the time it reaches Compile, so it cannot say whether a human
@@ -310,10 +317,6 @@ func PlannerGroupNodes(obj *powerv1alpha1.ShutdownFlow, bundle resolver.Structur
 	if obj == nil || (len(obj.Spec.Groups) == 0 && len(obj.Spec.Steps) == 0) {
 		return nil
 	}
-	if len(bundle.ClusterNodes) == 0 && len(bundle.AgentCoverage) == 0 {
-		return nil
-	}
-
 	coverage := make(map[string][]string, len(bundle.AgentCoverage))
 	for _, agent := range bundle.AgentCoverage {
 		coverage[agent.Name] = agent.Nodes
@@ -331,12 +334,15 @@ func PlannerGroupNodes(obj *powerv1alpha1.ShutdownFlow, bundle resolver.Structur
 		entry := planner.GroupNodeMembership{Group: group.Name}
 		if group.Action == powerv1alpha1.ShutdownStepAgentShutdown {
 			for _, ref := range group.Target.AgentRefs {
+				if len(coverage[ref.Name]) == 0 {
+					entry.Unresolved = true
+				}
 				entry.Releases = append(entry.Releases, coverage[ref.Name]...)
 			}
 		} else {
 			entry.Acts = matchingNodeNames(group.Target, bundle.ClusterNodes)
 		}
-		if len(entry.Acts) == 0 && len(entry.Releases) == 0 {
+		if len(entry.Acts) == 0 && len(entry.Releases) == 0 && !entry.Unresolved {
 			continue
 		}
 		membership = append(membership, entry)

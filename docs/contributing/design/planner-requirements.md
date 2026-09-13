@@ -377,10 +377,30 @@ Naming follows: "universal floor" implied a guaranteed capability baseline and i
 degraded and the degradation reasons are enumerated.
 
 OD-14 applies that conservative rule to partial-domain outages. A trigger naming `powerDomains` or a
-UPS device that maps to a resolved domain compiles a domain-scoped subgraph: groups whose resolved
-node membership is wholly outside the affected domains are omitted, and dependencies on omitted
-groups are removed. Groups with no resolved node membership, mixed-domain membership, or a global
-trigger remain in the plan.
+UPS device that maps to a resolved domain defines the configured preflight scope. When triggers
+are eligible, execution uses the evaluator's eligible UPS roots instead of the union of configured
+trigger scopes. Held-but-not-yet-eligible devices do not expand that scope. This also applies to
+unscoped triggers: only the roots that actually satisfy them select execution domains.
+
+The configured plan is validated before compiling the execution subgraph. Grouped and linear
+plans omit only actions whose resolved node membership is proven wholly outside the affected
+domains; dependencies on omitted groups are removed, and linear steps keep their authored order.
+Mixed, missing-target, and unmapped membership stays in scope, including an action referencing
+both a resolved agent and one without node coverage. Incomplete agent membership also retains
+the conservative communication supply envelope even with explicit shared-service exemptions.
+Communication-dependent consumers under PL-21 also remain in scope. An eligible root without a
+resolved domain disables pruning and emits
+`ExecutionPowerDomainUnknown`. An empty execution-root selection is rejected, never interpreted
+as permission to execute everything. A fully pruned plan is rejected as `PlanRequired`; ignored
+linear fallback steps never become active because all groups were pruned.
+
+The discrete execution-root set participates in structural identity, while live runtime values,
+hold timestamps, and observed durations do not. History is selected using the execution plan's
+hash. Published waves, graph, feasibility, and trigger evaluation refer to that same plan. With no
+eligible trigger, status shows the configured preflight plan; explicit rehearsal retains that
+configured scope. A changed eligible set produces a new plan on reconciliation, not an in-flight
+change to a running plan. Action idempotency remains the contract for repeated work. Execution
+resolves only compiled actions, so pruned agent, hook, or selector reads cannot block another domain.
 
 ---
 

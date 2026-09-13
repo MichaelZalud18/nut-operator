@@ -35,7 +35,18 @@ func compileShutdownFlow(obj *powerv1alpha1.ShutdownFlow) ([]powerv1alpha1.Compi
 // Compile identity first: estimates do not contribute to the hash, so history
 // can be selected for the new target set even before status has been updated.
 func compileShutdownFlowWithHistory(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, policy powerv1alpha1.PowerShutdownTierPolicySpec, historyFor func(string) planner.HistoryInputs, hookDigests []planner.HookDigest) shutdownflowadapter.CompiledFlow {
+	return compileShutdownFlowForEvaluation(obj, bundle, policy, historyFor, hookDigests, nil)
+}
+
+// Validate the configured plan first, then compile the eligible scope. History
+// must be looked up under the hash of the plan that will actually execute.
+func compileShutdownFlowForEvaluation(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, policy powerv1alpha1.PowerShutdownTierPolicySpec, historyFor func(string) planner.HistoryInputs, hookDigests []planner.HookDigest, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) shutdownflowadapter.CompiledFlow {
 	compiled := shutdownflowadapter.CompileFlowWithHistoryAndHooks(obj, bundle, policy, planner.HistoryInputs{}, hookDigests)
+	var scope *planner.ExecutionScope
+	if compiled.ConfigHash != "" && evaluation != nil && evaluation.Eligible {
+		scope = &planner.ExecutionScope{UPSDevices: evaluation.SelectedUPSDevices}
+		compiled = shutdownflowadapter.CompileFlowWithScope(obj, bundle, policy, planner.HistoryInputs{}, hookDigests, scope)
+	}
 	if compiled.ConfigHash == "" || historyFor == nil {
 		return compiled
 	}
@@ -43,5 +54,5 @@ func compileShutdownFlowWithHistory(obj *powerv1alpha1.ShutdownFlow, bundle reso
 	if len(history.GroupDurations) == 0 {
 		return compiled
 	}
-	return shutdownflowadapter.CompileFlowWithHistoryAndHooks(obj, bundle, policy, history, hookDigests)
+	return shutdownflowadapter.CompileFlowWithScope(obj, bundle, policy, history, hookDigests, scope)
 }

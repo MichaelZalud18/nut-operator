@@ -165,11 +165,18 @@ disambiguates the two unrelated things this project still calls a phase.
 
 Reconciliation performs a deterministic compile before any enforcement behavior:
 
+Trigger evaluation selects the eligible UPS roots. The configured plan is still validated in full;
+an eligible run then compiles its domain-scoped subgraph, preserving unknown, mixed, and required
+communication-path membership. Without an eligible trigger, the published plan is the configured
+preflight view. The trigger evaluation's `planConfigHash` identifies the same plan published in
+status and used for history lookup and execution. See [OD-14](planner-requirements.md) for scope and
+identity details.
+
 1. Validate triggers.
 2. Validate group names are unique.
 3. Validate every dependency reference points to another group in the same flow.
 4. Resolve shutdown tiers from group fields, target labels, and central tier policy.
-5. Build directed edges from `requires`, `before`, `after`, and derived tier ordering.
+5. Build directed edges from `requires`, `before`, `after`, tiers, node clearance, and communication paths.
 6. Reject dependency cycles.
 7. Topologically sort the graph.
 8. Emit the dependency graph with edge provenance and explanations.
@@ -338,9 +345,9 @@ communication-path runtime budgeting. Publication and execution use the same pla
 - `upsDevices` is the deduplicated carrier-supply set, separate from trigger-selected UPS devices.
 - `supplies` identifies each carrier, its supplying power domains and UPS roots, and whether
   its supply is unknown.
-- `unresolvedActions` names compiled groups or linear steps without resolved node targets;
-  these cause conservative inclusion of all modeled carriers while shared service coverage
-  remains unmodeled.
+- `unresolvedActions` names compiled groups or linear steps with absent or incomplete node targets.
+  Partially unresolved agent coverage includes all modeled carriers. Node-less work does likewise
+  while shared service coverage remains unmodeled.
 - `coverage` reports each targeted node and both shared services as `Modeled`, `Unmodeled`, or
   `Exempt`; service entries include the declared inventory entity IDs.
 

@@ -210,13 +210,15 @@ func sharedCommunicationAffected(input StructuralInputs, affected map[string]str
 		}
 	}
 	membership := groupNodeSets(input.GroupNodes)
+	unresolved := unresolvedGroupMembership(input.GroupNodes)
 	affectedNodes := nodesForPowerDomains(input.PowerDomains, affected)
+	includeUnmappedNodes(input, membership, affectedNodes)
 	for entity := range communicationDependents(input, affected) {
 		affectedNodes[entity] = struct{}{}
 	}
 	retainReleasedCarrierConsumers(input, membership, affectedNodes)
 	for _, entry := range input.GroupNodes {
-		if outsideNodeSet(membership[entry.Group], affectedNodes) {
+		if !unresolved[entry.Group] && outsideNodeSet(membership[entry.Group], affectedNodes) {
 			continue
 		}
 		for _, node := range entry.Releases {

@@ -90,10 +90,18 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   unsafe-wave rejection, and an explicitly terminal release after orchestration finishes. Not
   covered by `VM-4` as scoped (one control-plane guest, no quorum to test against); would need a
   three-control-plane Hadron topology beyond `VM-2`'s current one-control-plane/one-worker scope.
-- [ ] `F-129` [High] restrict execution to actually eligible power domains. Compilation currently
-  scopes against every configured trigger, so one rack's outage also executes a healthy rack's
-  groups. Preserve conservative handling of mixed, unknown, and shared membership. **Testable now:**
-  two-domain controller-to-executor tests with only one eligible trigger, then both.
+- [x] `F-129` [High] restrict execution to actually eligible power domains (2026-09-13).
+  Validate the configured preflight plan, then compile grouped or linear execution against the
+  evaluator's eligible UPS roots. Preserve mixed, unmapped, partially unresolved agent, and
+  communication-dependent membership; an empty affected node set cannot admit healthy actions.
+  Hold expiry expands the selected scope and plan identity; history, published artifacts, and
+  execution use the same scoped hash. Resolve only compiled actions, including agent/hook reads.
+  Empty execution selections and fully pruned plans fail explicitly rather than activating a
+  broad plan or ignored linear fallback. With no eligible trigger, status retains preflight scope.
+  **Validated:** controller-to-executor grouped/linear scenarios, real API status round trips,
+  hold expiry, history identity, unknown/partial coverage, pruned agent references, empty-domain
+  and fallback regressions; full API/internal/command race sweep and repository lint. Independent
+  review findings received regression tests and fixes; the focused matrix passed ten repetitions.
 - [ ] `F-132` [High] keep long-running executions from monopolizing reconciliation. The entire flow
   runs synchronously on the sole ShutdownFlow worker, delaying other flows and active status
   heartbeats. **Testable now:** two simultaneous flows, a blocked action, ongoing status cadence,
