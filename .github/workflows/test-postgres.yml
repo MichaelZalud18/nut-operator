@@ -1,0 +1,48 @@
+name: PostgreSQL Component Tests
+
+on:
+  pull_request:
+    paths:
+      - 'internal/audit/**'
+      - 'internal/storage/**'
+      - 'internal/controller/**'
+      - 'internal/executor/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - 'hack/test-postgres.sh'
+      - '.github/workflows/test-postgres.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'internal/audit/**'
+      - 'internal/storage/**'
+      - 'internal/controller/**'
+      - 'internal/executor/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - 'hack/test-postgres.sh'
+      - '.github/workflows/test-postgres.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postgres-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+      - name: PostgreSQL migrations, writes, reads, replay and deadlines
+        run: timeout --signal=TERM --kill-after=15s 8m make test-postgres

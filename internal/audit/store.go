@@ -468,7 +468,8 @@ func (s *SQLStore) RecordPowerEvent(ctx context.Context, event PowerEvent) error
 	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.power_events
 (event_id, observed_at, event_type, severity, source_kind, source_name, resource_generation, correlation_id, message, details)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`, s.quotedSchema),
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+ON CONFLICT (event_id) DO NOTHING`, s.quotedSchema),
 		event.EventID,
 		observedAt(event.ObservedAt),
 		event.EventType,
@@ -496,7 +497,8 @@ func (s *SQLStore) RecordTelemetrySnapshot(ctx context.Context, snapshot Telemet
 	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.ups_telemetry_snapshots
 (snapshot_id, observed_at, ups_device, nut_server, nut_name, ups_status, battery_charge_percent, runtime_seconds, load_percent, variables)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`, s.quotedSchema),
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+ON CONFLICT (snapshot_id) DO NOTHING`, s.quotedSchema),
 		snapshot.SnapshotID,
 		observedAt(snapshot.ObservedAt),
 		snapshot.UPSDevice,
@@ -524,7 +526,8 @@ func (s *SQLStore) RecordCapabilityProfileMatch(ctx context.Context, match Capab
 	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.capability_profile_matches
 (match_id, observed_at, ups_device, profile_id, profile_version, profile_source, match_tier, fallback, declared_model, reported_model, diagnostics)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`, s.quotedSchema),
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+ON CONFLICT (match_id) DO NOTHING`, s.quotedSchema),
 		match.MatchID,
 		observedAt(match.ObservedAt),
 		match.UPSDevice,
@@ -573,7 +576,8 @@ func (s *SQLStore) RecordCapabilityProfileVerification(ctx context.Context, veri
 	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.capability_profile_verifications
 (verification_id, observed_at, ups_device, profile_id, profile_version, profile_source, model, firmware, nut_driver, nut_server, nut_name, verified, drift_detected, probe_variables, expected_variables, missing_variables, unexpected_variables, diagnostics, details)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb)`, s.quotedSchema),
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb)
+ON CONFLICT (verification_id) DO NOTHING`, s.quotedSchema),
 		verification.VerificationID,
 		observedAt(verification.ObservedAt),
 		verification.UPSDevice,
@@ -633,7 +637,8 @@ func (s *SQLStore) RecordShutdownFlowCompilation(ctx context.Context, compilatio
 	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.shutdownflow_compilations
 (compilation_id, observed_at, shutdownflow, resource_generation, config_hash, input_hash, accepted, diagnostics, compiled_waves, dependency_graph, startup_waves, explanations, diagram_exports)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb)`, s.quotedSchema),
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb)
+ON CONFLICT (compilation_id) DO NOTHING`, s.quotedSchema),
 		compilation.CompilationID,
 		observedAt(compilation.ObservedAt),
 		compilation.ShutdownFlow,
@@ -668,7 +673,8 @@ func (s *SQLStore) RecordShutdownFlowDecision(ctx context.Context, decision Shut
 	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.shutdownflow_decisions
 (decision_id, observed_at, shutdownflow, trigger_type, mode, approved, decision, reason, selected_ups_devices, plan_config_hash, details)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb)`, s.quotedSchema),
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb)
+ON CONFLICT (decision_id) DO NOTHING`, s.quotedSchema),
 		decision.DecisionID,
 		observedAt(decision.ObservedAt),
 		decision.ShutdownFlow,
@@ -836,7 +842,8 @@ func (s *SQLStore) RecordShutdownFlowActionAttempt(ctx context.Context, attempt 
 	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.shutdownflow_action_attempts
 (attempt_id, execution_id, observed_at, wave_index, group_name, action, target_kind, target_namespace, target_name, started_at, completed_at, outcome, error, dry_run, details)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)`, s.quotedSchema),
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)
+ON CONFLICT (attempt_id) DO NOTHING`, s.quotedSchema),
 		attempt.AttemptID,
 		attempt.ExecutionID,
 		observedAt(attempt.ObservedAt),
@@ -873,7 +880,8 @@ func (s *SQLStore) RecordNodeRelease(ctx context.Context, release NodeReleaseRec
 	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.node_release_records
 (release_id, execution_id, observed_at, node_name, node_power_agent, plan_config_hash, approved, released, reason, clearance, details)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)`, s.quotedSchema),
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)
+ON CONFLICT (release_id) DO NOTHING`, s.quotedSchema),
 		release.ReleaseID,
 		release.ExecutionID,
 		observedAt(release.ObservedAt),
@@ -906,7 +914,8 @@ func (s *SQLStore) RecordNodeSignalHandoff(ctx context.Context, handoff NodeSign
 	}
 	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.node_signal_handoffs
 (handoff_id, execution_id, observed_at, node_name, node_power_agent, signal_path, signal_payload, stale_after, accepted, reason, details)
-VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb)`, s.quotedSchema),
+VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb)
+ON CONFLICT (handoff_id) DO NOTHING`, s.quotedSchema),
 		handoff.HandoffID,
 		handoff.ExecutionID,
 		observedAt(handoff.ObservedAt),

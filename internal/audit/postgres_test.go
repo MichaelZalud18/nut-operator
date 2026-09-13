@@ -5,8 +5,11 @@ package audit
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -15,7 +18,8 @@ import (
 
 // The tagged suite requires an explicit disposable database; the default suite
 // neither opens database connections nor silently skips this acceptance test.
-func TestPostgresMigrationsHistoryAndRetention(t *testing.T) {
+func openTestPostgres(t *testing.T) (context.Context, *sql.DB, *SQLStore) {
+	t.Helper()
 	dsn := os.Getenv("AUDIT_TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Fatal("AUDIT_TEST_POSTGRES_DSN is required; use bash hack/test-postgres.sh")
@@ -26,7 +30,7 @@ func TestPostgresMigrationsHistoryAndRetention(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	for {
 		if err = db.PingContext(ctx); err == nil {
 			break
@@ -55,6 +59,11 @@ func TestPostgresMigrationsHistoryAndRetention(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	return ctx, db, store
+}
+
+func TestPostgresMigrationsHistoryAndRetention(t *testing.T) {
+	ctx, db, store := openTestPostgres(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	started := now.Add(-2 * time.Hour)
 	ended := started.Add(30 * time.Second)
@@ -122,5 +131,139 @@ func TestPostgresMigrationsHistoryAndRetention(t *testing.T) {
 	}
 	if err := db.PingContext(ctx); err != nil {
 		t.Fatalf("connection pool unusable after cancellation: %v", err)
+	}
+}
+
+func TestPostgresAllRecordsReplay(t *testing.T) {
+	ctx, db, store := openTestPostgres(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	id := "00000000-0000-4000-8000-000000000010"
+	dir := t.TempDir()
+	// A closed real connection exercises the same write-error boundary as an
+	// unavailable backend, without stopping a database another test may share.
+	closed, err := sql.Open("pgx", os.Getenv("AUDIT_TEST_POSTGRES_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	unavailable, err := NewSQLStore(closed, SQLStoreOptions{Schema: store.schema})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spool, err := NewSpoolWriter(unavailable, SpoolOptions{Directory: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writes := []struct {
+		table string
+		write func(Writer) error
+	}{
+		{"power_events", func(w Writer) error {
+			return w.RecordPowerEvent(ctx, PowerEvent{EventID: id, ObservedAt: now, EventType: "Test", Severity: "Info", SourceKind: "ShutdownFlow", SourceName: "flow", Message: "test"})
+		}},
+		{"ups_telemetry_snapshots", func(w Writer) error {
+			return w.RecordTelemetrySnapshot(ctx, TelemetrySnapshot{SnapshotID: id, ObservedAt: now, UPSDevice: "ups", NUTServer: "server", NUTName: "ups", Variables: map[string]string{"ups.status": "OL"}})
+		}},
+		{"capability_profile_matches", func(w Writer) error {
+			return w.RecordCapabilityProfileMatch(ctx, CapabilityProfileMatch{MatchID: id, ObservedAt: now, UPSDevice: "ups", ProfileID: "profile", ProfileVersion: "1", ProfileSource: "Bundled", MatchTier: "ModelGlob"})
+		}},
+		{"capability_profile_verifications", func(w Writer) error {
+			return w.RecordCapabilityProfileVerification(ctx, CapabilityProfileVerification{VerificationID: id, ObservedAt: now, UPSDevice: "ups", ProfileID: "profile", ProfileVersion: "1", ProfileSource: "Bundled"})
+		}},
+		{"shutdownflow_compilations", func(w Writer) error {
+			return w.RecordShutdownFlowCompilation(ctx, ShutdownFlowCompilation{CompilationID: id, ObservedAt: now, ShutdownFlow: "flow", ConfigHash: "hash", Accepted: true})
+		}},
+		{"shutdownflow_decisions", func(w Writer) error {
+			return w.RecordShutdownFlowDecision(ctx, ShutdownFlowDecision{DecisionID: id, ObservedAt: now, ShutdownFlow: "flow", TriggerType: "RuntimeBelow", Mode: "Enforce", Decision: "Execute", Reason: "test"})
+		}},
+		{"shutdownflow_executions", func(w Writer) error {
+			return w.RecordShutdownFlowExecution(ctx, ShutdownFlowExecution{ExecutionID: id, ObservedAt: now, ShutdownFlow: "flow", PlanConfigHash: "hash", Mode: "Enforce", Phase: "Completed"})
+		}},
+		{"shutdownflow_execution_waves", func(w Writer) error {
+			return w.RecordShutdownFlowExecutionWave(ctx, ShutdownFlowExecutionWave{WaveRecordID: id, ExecutionID: id, ObservedAt: now, Phase: "Completed", CompletedAt: &now})
+		}},
+		{"shutdownflow_execution_groups", func(w Writer) error {
+			return w.RecordShutdownFlowExecutionGroup(ctx, ShutdownFlowExecutionGroup{GroupRecordID: id, ExecutionID: id, ObservedAt: now, GroupName: "workers", Action: "DrainNodes", Phase: "Completed", CompletedAt: &now})
+		}},
+		{"shutdownflow_action_attempts", func(w Writer) error {
+			return w.RecordShutdownFlowActionAttempt(ctx, ShutdownFlowActionAttempt{AttemptID: id, ExecutionID: id, ObservedAt: now, Action: "DrainNodes", Outcome: "Completed"})
+		}},
+		{"node_release_records", func(w Writer) error {
+			return w.RecordNodeRelease(ctx, NodeReleaseRecord{ReleaseID: id, ExecutionID: id, ObservedAt: now, NodeName: "worker", Reason: "test"})
+		}},
+		{"node_signal_handoffs", func(w Writer) error {
+			return w.RecordNodeSignalHandoff(ctx, NodeSignalHandoff{HandoffID: id, ExecutionID: id, ObservedAt: now, NodeName: "worker", Reason: "test"})
+		}},
+		{"executor_resume_states", func(w Writer) error {
+			return w.UpsertExecutorResumeState(ctx, ExecutorResumeState{ExecutionID: id, ObservedAt: now, ShutdownFlow: "flow", PlanConfigHash: "hash", Phase: "Completed", State: map[string]any{"test": true}})
+		}},
+	}
+	if len(writes) != reflect.TypeFor[Writer]().NumMethod() {
+		t.Fatal("extend the PostgreSQL fixtures for the changed Writer interface")
+	}
+	for _, record := range writes {
+		if err := record.write(spool); err != nil {
+			t.Fatalf("spool %s: %v", record.table, err)
+		}
+	}
+	if _, err := ReplaySpool(ctx, unavailable, ReplayOptions{Directory: dir}); err == nil {
+		t.Fatal("unavailable database must retain journal")
+	}
+	path := filepath.Join(dir, defaultSpoolFileName)
+	journal, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		// Reintroduce the same journal to model retry after partial delivery. A
+		// missing journal alone cannot establish database-level repeat safety.
+		if err := os.WriteFile(path, journal, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stats, err := ReplaySpool(ctx, store, ReplayOptions{Directory: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stats.Replayed != len(writes) || stats.Skipped != 0 {
+			t.Fatalf("replay: %+v", stats)
+		}
+		for _, record := range writes {
+			var count int
+			if err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+store.quotedSchema+"."+record.table).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != 1 {
+				t.Fatalf("%s has %d rows", record.table, count)
+			}
+		}
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("drained journal remains: %v", err)
+	}
+	state, err := store.ExecutorResumeState(ctx, id)
+	if err != nil || state == nil || state.State["test"] != true {
+		t.Fatalf("stored state: %+v %v", state, err)
+	}
+	groups, err := store.ExecutionGroupProgress(ctx, id)
+	if err != nil || len(groups) != 1 || groups[0].GroupName != "workers" {
+		t.Fatalf("stored groups: %+v %v", groups, err)
+	}
+	if err := store.UpsertExecutorResumeState(ctx, ExecutorResumeState{ExecutionID: id, ShutdownFlow: "flow", PlanConfigHash: "hash", Phase: "Updated"}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = store.ExecutorResumeState(ctx, id)
+	if err != nil || state == nil || state.Phase != "Updated" {
+		t.Fatalf("updated state: %+v %v", state, err)
+	}
+	// Identity conflicts are repeat-safe, but unrelated integrity failures must
+	// remain errors rather than being mistaken for already-delivered evidence.
+	if err := store.RecordNodeRelease(ctx, NodeReleaseRecord{
+		ReleaseID:   "00000000-0000-4000-8000-000000000099",
+		ExecutionID: "00000000-0000-4000-8000-000000000098",
+		NodeName:    "worker", Reason: "missing parent",
+	}); err == nil {
+		t.Fatal("missing execution foreign key must remain an error")
 	}
 }

@@ -243,7 +243,8 @@ Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts sec
 Owns: the PostgreSQL audit schema, storage backend resolution, retention, and the shutdown-time
 spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 
-- [ ] `F-145` [Medium] add an isolated real-PostgreSQL component test suite for audit persistence.
+- [x] `F-145` [Medium] add an isolated real-PostgreSQL component test suite for audit persistence
+  (2026-09-13).
   **Evidence (2026-09-13):** inspected audit/storage tests exercise SQL and connection interfaces
   through fakes; the inspected CI/e2e harnesses provide no real PostgreSQL test dependency.
   These tests cannot establish server acceptance of migrations, queries, or database semantics.
@@ -261,9 +262,16 @@ spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
   execution/group persistence, plan-hash and dry-run history filtering, retention cascades, recent
   JSON payload preservation, and deadline cancellation of a real stalled query with subsequent
   pool usability. The explicit DSN entry point is for disposable databases only; tests create and
-  remove their own schema. **Remaining:** all other record/read paths, uniqueness/upsert matrices,
-  real-database spool replay and failure cases, and conditional CI wiring. This does not close
-  `F-131` or establish full storage-failure resilience.
+  remove their own schema. **Completed follow-up:** every Writer record family is persisted and
+  counted, all production reader methods run against PostgreSQL, progress upserts are checked,
+  and unavailable-database spool capture, failed replay retention, and repeated journal delivery
+  are exercised. A real regression reproduced duplicate-key failures for nine immutable record
+  families; their inserts now ignore conflicts on their own identity while unrelated integrity
+  errors still surface. The repeated-journal test checks database row counts and journal removal.
+  `.github/workflows/test-postgres.yml` adds bounded, path-filtered CI plus manual dispatch using
+  the same local harness. Local race-enabled database and audit/storage regressions passed;
+  hosted execution is verified by the workflow after publication. This does not close `F-131`
+  or establish full storage-failure resilience.
 
 - [ ] `F-131` [High] make the configured audit spool available when PostgreSQL is already unavailable
   at execution start. Storage-readiness and `OpenAuditStore` failures currently return before the

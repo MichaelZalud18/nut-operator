@@ -52,8 +52,8 @@ type ReplayOptions struct {
 // trail; it only loses it more slowly.
 //
 // Replay is safe to run repeatedly. Every record the spool writes carries the
-// same identity the primary writer uses, and every primary insert is an upsert
-// on that identity, so re-applying a record is a no-op rather than a duplicate.
+// same identity the primary writer uses. Immutable records ignore conflicts on
+// that identity; progress records upsert their state rather than add duplicates.
 // That is what lets the journal be removed only after a fully successful drain:
 // a partial drain leaves the file in place and the next attempt re-applies what
 // already landed.
