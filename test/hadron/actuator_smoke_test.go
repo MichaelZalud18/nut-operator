@@ -310,7 +310,11 @@ func TestHadronActuatorArmsWithNoSignal(t *testing.T) {
 // TestHadronActuatorRejectsInvalidSignals is VM-3's second milestone: real signal delivery,
 // scoped to the negative cases VM-3's own text names explicitly -- "negative cases must leave the
 // guest running" -- before ever attempting the positive one, which is the only path that can
-// actually halt the guest.
+// actually halt the guest. Covers every internal/nodeagent.InspectSignal rejection reason that a
+// malformed or mistargeted signal can actually produce (wrong node, stale, from the future, an
+// unparseable timestamp, missing required fields); SignalMissing itself is covered separately by
+// TestHadronActuatorArmsWithNoSignal, since that case is "no signal volume at all," not a signal
+// this test would write.
 //
 // Each case below is rejected by internal/nodeagent.InspectSignal before cmd/node-actuator/main.go
 // ever calls its actuatorFunc (powerOffActuator, the only thing that can call reboot(2)) --
@@ -361,6 +365,51 @@ func TestHadronActuatorRejectsInvalidSignals(t *testing.T) {
 					// old is unambiguously past it without depending on how close to that boundary
 					// the test happens to run.
 					Timestamp: time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339Nano),
+				}
+			},
+		},
+		{
+			name:       "future",
+			wantReason: "SignalFromFuture",
+			signal: func(nodeName string) nodeagent.ShutdownSignal {
+				return nodeagent.ShutdownSignal{
+					ExecutionID:    "exec-future",
+					NodeName:       nodeName,
+					PlanConfigHash: "test-hash",
+					ShutdownFlow:   "test-flow",
+					// Symmetric with "stale": ten minutes ahead is unambiguously past the same 2m
+					// TTL in the other direction (clock skew between the signal writer and this
+					// node, InspectSignal's own SignalFromFuture case).
+					Timestamp: time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339Nano),
+				}
+			},
+		},
+		{
+			name:       "malformed-timestamp",
+			wantReason: "SignalInvalidTimestamp",
+			signal: func(nodeName string) nodeagent.ShutdownSignal {
+				return nodeagent.ShutdownSignal{
+					ExecutionID:    "exec-malformed-timestamp",
+					NodeName:       nodeName,
+					PlanConfigHash: "test-hash",
+					ShutdownFlow:   "test-flow",
+					// Present (so this exercises InspectSignal's RFC3339Nano parse specifically,
+					// not the required-fields check below) but not a valid timestamp.
+					Timestamp: "not-a-timestamp",
+				}
+			},
+		},
+		{
+			name:       "missing-fields",
+			wantReason: "SignalMissingRequiredFields",
+			signal: func(nodeName string) nodeagent.ShutdownSignal {
+				return nodeagent.ShutdownSignal{
+					ExecutionID: "exec-missing-fields",
+					NodeName:    nodeName,
+					// PlanConfigHash and ShutdownFlow deliberately left empty: InspectSignal
+					// requires every one of ExecutionID/NodeName/PlanConfigHash/ShutdownFlow/
+					// Timestamp to be non-empty before it even reaches node-binding or TTL checks.
+					Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 				}
 			},
 		},
