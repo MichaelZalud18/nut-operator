@@ -299,7 +299,7 @@ also an early implementation priority, not a finding that custom VM code is inhe
   k3s, isolating exactly this one new mechanism from everything the single-guest workflow already
   proved. `TestSmokeWorkflowsReserveCleanupBudget` (`workflow_test.go`) now checks both smoke
   workflows, not just the first, and caught this new one's own step-timeout-vs-job-timeout budget
-  being wrong before any live run. Four live attempts so far, each finding one real, distinct gap,
+  being wrong before any live run. Six live attempts so far, each finding one real, distinct gap,
   none of them in the actual `ClusterLink` mechanism itself:
   [34714542243](https://github.com/MichaelZalud18/nut-operator/actions/runs/34714542243) found no
   guest account existed matching the fresh generated `Credentials` (this test's deliberate lack of
@@ -317,9 +317,22 @@ also an early implementation priority, not a finding that custom VM code is inhe
   assumption wrong (`ping6: command not found`, `ping` itself still resolves) — fixed by invoking
   `busybox ping6` directly, which only depends on the applet being compiled in, not on any
   particular name existing on `PATH`, with failure-path diagnostics added so a wrong assumption here
-  produces evidence on the next failure rather than requiring another dedicated diagnostic run. Not
-  yet re-run. The raw L2 segment also carries no DHCP of its own — each guest still needs an address
-  on it via some other mechanism.
+  produces evidence on the next failure rather than requiring another dedicated diagnostic run;
+  [34734495515](https://github.com/MichaelZalud18/nut-operator/actions/runs/34734495515) hit that
+  diagnostics path for real — `busybox ping6` itself failed (`applet not found`), and
+  `busybox --list` confirmed no ping6 applet is compiled into this build at all, alongside already-
+  captured usage text showing a minimal `ping` applet with no address-family flags whatsoever. Not a
+  naming problem — this build genuinely cannot address IPv6 through `ping`. Fixed by abandoning ICMP
+  entirely: a deliberately diagnostic-only commit inventoried the guest's real toolset instead of
+  guessing a third invocation, and
+  [34765273358](https://github.com/MichaelZalud18/nut-operator/actions/runs/34765273358) (passing,
+  since it made no connectivity assertion) found `nc`/`ncat`/`telnet`/`wget`/`socat` all absent, but
+  `curl`, `openssl`, and `ssh` present as real binaries, not busybox applets — fixed by proving
+  connectivity via `curl -6 --interface <iface> -v http://[<addr>]:22/`, asserting only that curl's
+  own verbose output reports a completed TCP handshake (`Connected to`), independent of the
+  HTTP-layer outcome against the peer's `sshd` already listening there. Not yet re-run. The raw L2
+  segment also carries no DHCP of its own — each guest still needs an address on it via some other
+  mechanism.
   Checked, not assumed: Kairos's own reference docs do not show a clear, reliable static-network
   cloud-config mechanism, and this project already has one direct cautionary tale about trusting an
   apparently-documented Kairos cloud-config feature that silently did not fire (the `k3s-ready`
