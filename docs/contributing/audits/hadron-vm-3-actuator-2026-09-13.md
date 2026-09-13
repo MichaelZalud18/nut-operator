@@ -74,7 +74,13 @@ process exiting on its own, discovered by polling its PID and never calling
 `SafeStop`/`SafeTeardown` first; whatever the log stream captures (including nothing) is logged
 for diagnostic value, and `streamActuatorLog` now reports its own retry errors into the same
 channel so a run that never manages to open the stream at all says why instead of coming back
-silently empty. Not yet re-run live.
+silently empty.
+
+| [34775306450](https://github.com/MichaelZalud18/nut-operator/actions/runs/34775306450) | fail (`TestHadronActuatorRejectsInvalidSignals/wrong-node` 1.28s, `TestHadronActuatorHaltsOnAcceptedSignal` 107.39s) | A real, distinct k3s startup race, in two independently booted guests: `pods "..." is forbidden: error looking up service account default/default: serviceaccount "default" not found`, on guests that had already reported a Ready node via `kubectl get nodes`. A Ready node proves the kubelet came up; it says nothing about the separate controllers that populate the default namespace's own `default` ServiceAccount, which every Pod needs for admission regardless of whether it names one explicitly. The first two live runs happened not to land in this timing window; this one did, twice. `TestHadronActuatorRejectsInvalidSignals/stale` and the earlier `TestHadronActuatorArmsWithNoSignal` in the same run did not hit it -- a timing race, not a deterministic failure. |
+
+Fixed: added one explicit wait for the default ServiceAccount in `bootActuatorReadyGuest`,
+benefiting every test built on that guest rather than each independently risking the same race.
+Not yet re-run live.
 
 ## Open, deliberately not attempted here
 

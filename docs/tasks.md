@@ -520,6 +520,12 @@ also an early implementation priority, not a finding that custom VM code is inhe
   result=pass` from the pod's streamed log was safe (it wasn't -- the whole guest, API server
   included, halts faster than that log line reliably survives the trip); fixed by dropping that
   assertion and keeping only the process-exit check as the hard requirement.
+  **Separately, [run 34775306450](https://github.com/MichaelZalud18/nut-operator/actions/runs/34775306450)
+  found a real k3s startup race** in two independently booted guests: pod creation failed with
+  `serviceaccount "default" not found` even though the node had already reported Ready -- a Ready
+  node proves the kubelet came up, not that the controllers populating the default namespace's own
+  `default` ServiceAccount have run yet. Fixed with one explicit wait for it in
+  `bootActuatorReadyGuest`, shared by every test built on that guest.
   (`test/hadron/actuator_smoke_test.go`, `hadron-actuator-smoke.yml`). Full rationale, scope
   boundary against the already-closed `F-61`, and evidence table in
   [hadron-vm-3-actuator-2026-09-13.md](contributing/audits/hadron-vm-3-actuator-2026-09-13.md).
