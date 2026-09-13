@@ -43,6 +43,11 @@ func TestCommunicationBudgetPublishedInPlan(t *testing.T) {
 	}
 	want := &CommunicationBudget{Scope: "WholePlan", UPSDevices: []string{"ups"}, UnresolvedActions: []string{}, Supplies: []CommunicationSupplyConstraint{
 		{Carrier: "carrier", PowerDomains: []string{"rack"}, UPSDevices: []string{"ups"}},
+	}, Coverage: []CommunicationCoverage{
+		{Kind: "Node", Name: "carrier", State: "Unmodeled"},
+		{Kind: "Node", Name: "consumer", State: "Modeled"},
+		{Kind: "Service", Name: "NUT", State: "Unmodeled"},
+		{Kind: "Service", Name: "OperatorAPI", State: "Unmodeled"},
 	}}
 	if !reflect.DeepEqual(plan.CommunicationBudget, want) {
 		t.Fatalf("budget=%+v want %+v", plan.CommunicationBudget, want)

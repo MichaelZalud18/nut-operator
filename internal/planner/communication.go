@@ -23,10 +23,10 @@ import (
 	"strings"
 )
 
-// collectCommunicationGraphEdges orders work on a dependent, including its own
+// collectNodeCommunicationGraphEdges orders work on a dependent, including its own
 // release, before release of the node carrying its control path. Non-actuated
 // carriers stay topology entities; they do not become synthetic shutdown groups.
-func collectCommunicationGraphEdges(groups []Group, membership []GroupNodeMembership, dependencies []CommunicationDependency) []GraphEdge {
+func collectNodeCommunicationGraphEdges(groups []Group, membership []GroupNodeMembership, dependencies []CommunicationDependency) []GraphEdge {
 	if len(groups) == 0 || len(membership) == 0 || len(dependencies) == 0 {
 		return nil
 	}
@@ -266,8 +266,12 @@ func communicationSupplyConstraints(input StructuralInputs, consumers []string) 
 			carriers[carrier] = struct{}{}
 		}
 	}
+	return supplyConstraintsForCarriers(input, sortedSetKeys(carriers))
+}
+
+func supplyConstraintsForCarriers(input StructuralInputs, carriers []string) []CommunicationSupplyConstraint {
 	var constraints []CommunicationSupplyConstraint
-	for _, carrier := range sortedSetKeys(carriers) {
+	for _, carrier := range carriers {
 		devices := map[string]struct{}{}
 		domains := map[string]struct{}{}
 		for _, domain := range input.PowerDomains {
@@ -303,9 +307,6 @@ func communicationSupplySummary(constraints []CommunicationSupplyConstraint) ([]
 // CommunicationBudgetForInputs is shared by publication and execution. Pass
 // only the compiled actions so pruned work cannot expand the runtime envelope.
 func CommunicationBudgetForInputs(input StructuralInputs) *CommunicationBudget {
-	if len(input.CommunicationDependencies) == 0 {
-		return nil
-	}
 	var actions []string
 	for _, group := range input.Groups {
 		actions = append(actions, group.Name)
@@ -314,6 +315,9 @@ func CommunicationBudgetForInputs(input StructuralInputs) *CommunicationBudget {
 		for _, step := range input.Steps {
 			actions = append(actions, step.ID)
 		}
+	}
+	if len(actions) == 0 {
+		return nil
 	}
 	membership := groupNodeSets(input.GroupNodes)
 	consumers := map[string]struct{}{}
@@ -327,19 +331,40 @@ func CommunicationBudgetForInputs(input StructuralInputs) *CommunicationBudget {
 			consumers[node] = struct{}{}
 		}
 	}
-	if len(unresolved) > 0 {
+	coverage := communicationCoverage(input, sortedSetKeys(consumers))
+	if len(unresolved) > 0 && !completeServiceCoverage(coverage) {
 		for _, dependency := range input.CommunicationDependencies {
 			consumers[dependency.Dependent] = struct{}{}
 		}
 	}
 	constraints := communicationSupplyConstraints(input, sortedSetKeys(consumers))
+	carriers := map[string]struct{}{}
+	for _, constraint := range constraints {
+		carriers[constraint.Carrier] = struct{}{}
+	}
+	for _, carrier := range sharedCommunicationCarriers(input) {
+		carriers[carrier] = struct{}{}
+	}
+	constraints = supplyConstraintsForCarriers(input, sortedSetKeys(carriers))
 	names, _ := communicationSupplySummary(constraints)
-	return &CommunicationBudget{Scope: "WholePlan", UPSDevices: names, UnresolvedActions: sortedSetKeys(unresolved), Supplies: constraints}
+	return &CommunicationBudget{Scope: "WholePlan", UPSDevices: names, UnresolvedActions: sortedSetKeys(unresolved), Supplies: constraints, Coverage: coverage}
 }
 
 func communicationDiagnostics(input StructuralInputs) []Diagnostic {
-	var diagnostics []Diagnostic
+	diagnostics := communicationServiceDiagnostics(input)
+	if budget := CommunicationBudgetForInputs(input); budget != nil {
+		for _, coverage := range budget.Coverage {
+			if coverage.State == "Unmodeled" {
+				diagnostics = append(diagnostics, Diagnostic{Severity: DiagnosticWarning, Reason: "CommunicationPathUnmodeled", Subject: coverage.Kind + "/" + coverage.Name, Message: fmt.Sprintf("%s %q has no modeled communication path; coverage is incomplete", coverage.Kind, coverage.Name)})
+			}
+		}
+	}
 	unknown := map[string]struct{}{}
+	for _, supply := range supplyConstraintsForCarriers(input, sharedCommunicationCarriers(input)) {
+		if supply.UnknownSupply {
+			unknown[supply.Carrier] = struct{}{}
+		}
+	}
 	for _, dependency := range input.CommunicationDependencies {
 		if dependency.Dependent == "" || dependency.Carrier == "" || dependency.Dependent == dependency.Carrier {
 			diagnostics = append(diagnostics, Diagnostic{Severity: DiagnosticError, Reason: "CommunicationDependencyInvalid", Message: "communication dependencies require distinct, non-empty dependent and carrier identities"})
@@ -352,7 +377,7 @@ func communicationDiagnostics(input StructuralInputs) []Diagnostic {
 	for _, carrier := range sortedSetKeys(unknown) {
 		diagnostics = append(diagnostics, Diagnostic{Severity: DiagnosticWarning, Reason: "CommunicationPowerDomainUnknown", Subject: carrier, Message: fmt.Sprintf("communication carrier %q has no resolved supplying power domain; its power-loss constraints are unknown", carrier)})
 	}
-	orderEdges := collectCommunicationGraphEdges(input.Groups, input.GroupNodes, input.CommunicationDependencies)
+	orderEdges := collectCommunicationGraphEdges(input.Groups, input.GroupNodes, input.CommunicationDependencies, input.CommunicationServices...)
 	stepIndex := map[string]int{}
 	if len(input.Groups) == 0 {
 		orderEdges = collectLinearCommunicationGraphEdges(input)
@@ -377,14 +402,14 @@ func communicationDiagnostics(input StructuralInputs) []Diagnostic {
 }
 
 func collectLinearCommunicationGraphEdges(input StructuralInputs) []GraphEdge {
-	if len(input.CommunicationDependencies) == 0 {
+	if len(input.CommunicationDependencies) == 0 && len(input.CommunicationServices) == 0 {
 		return nil
 	}
 	groups := make([]Group, 0, len(input.Steps))
 	for _, step := range input.Steps {
 		groups = append(groups, Group{Name: step.ID})
 	}
-	return collectCommunicationGraphEdges(groups, input.GroupNodes, input.CommunicationDependencies)
+	return collectCommunicationGraphEdges(groups, input.GroupNodes, input.CommunicationDependencies, input.CommunicationServices...)
 }
 
 func communicationExplanations(input StructuralInputs) []Explanation {

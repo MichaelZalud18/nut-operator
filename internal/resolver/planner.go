@@ -36,6 +36,14 @@ func AttachResolvedInputHash(flow planner.StructuralInputs, bundle StructuralBun
 	flow.DeviceCapabilities = plannerDeviceCapabilities(bundle)
 	flow.PowerDomains = plannerPowerDomains(bundle)
 	flow.NodeTiers = plannerNodeTiers(bundle)
+	flow.InventoryEntities = make([]string, 0, len(bundle.Topology.Entities))
+	flow.CommunicationExemptNodes = nil
+	for _, entity := range bundle.Topology.Entities {
+		flow.InventoryEntities = append(flow.InventoryEntities, entity.ID)
+		if entity.Kind == inventory.EntityKindNode && entity.CommunicationPathExempt {
+			flow.CommunicationExemptNodes = append(flow.CommunicationExemptNodes, entity.ID)
+		}
+	}
 	flow.CommunicationDependencies = nil
 	for _, order := range bundle.Topology.CommunicationOrders {
 		flow.CommunicationDependencies = append(flow.CommunicationDependencies, planner.CommunicationDependency{

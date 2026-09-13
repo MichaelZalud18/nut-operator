@@ -181,13 +181,14 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 		return planner.StructuralInputs{}, err
 	}
 	inputs := planner.StructuralInputs{
-		SourceID:          fmt.Sprintf("%s/ShutdownFlow/%s", powerv1alpha1.GroupVersion.String(), obj.Name),
-		TierPolicy:        plannerTierPolicy,
-		AbortBehavior:     string(obj.Spec.AbortPolicy.Behavior),
-		TierOverrunPolicy: string(effectiveTierOverrunPolicy(obj.Spec.TierOverrunPolicy)),
-		Triggers:          make([]planner.Trigger, 0, len(obj.Spec.Triggers)),
-		Groups:            make([]planner.Group, 0, len(obj.Spec.Groups)),
-		Steps:             make([]planner.Step, 0, len(obj.Spec.Steps)),
+		SourceID:              fmt.Sprintf("%s/ShutdownFlow/%s", powerv1alpha1.GroupVersion.String(), obj.Name),
+		TierPolicy:            plannerTierPolicy,
+		AbortBehavior:         string(obj.Spec.AbortPolicy.Behavior),
+		TierOverrunPolicy:     string(effectiveTierOverrunPolicy(obj.Spec.TierOverrunPolicy)),
+		Triggers:              make([]planner.Trigger, 0, len(obj.Spec.Triggers)),
+		Groups:                make([]planner.Group, 0, len(obj.Spec.Groups)),
+		Steps:                 make([]planner.Step, 0, len(obj.Spec.Steps)),
+		CommunicationServices: PlannerCommunicationServices(obj),
 	}
 
 	for _, trigger := range obj.Spec.Triggers {
@@ -606,6 +607,15 @@ func APIPlannerArtifact(plan planner.Plan) *powerv1alpha1.PublishedPlannerArtifa
 	}
 }
 
+// PlannerCommunicationServices is shared by compilation and live runtime budgeting.
+func PlannerCommunicationServices(obj *powerv1alpha1.ShutdownFlow) []planner.CommunicationServicePath {
+	var paths []planner.CommunicationServicePath
+	for _, path := range obj.Spec.CommunicationPaths {
+		paths = append(paths, planner.CommunicationServicePath{Service: path.Service, Entities: append([]string(nil), path.Entities...), Exempt: path.Exempt})
+	}
+	return paths
+}
+
 // APICommunicationBudget copies the planner's runtime constraints into status.
 func APICommunicationBudget(budget *planner.CommunicationBudget) *powerv1alpha1.PublishedCommunicationBudgetStatus {
 	if budget == nil {
@@ -619,6 +629,11 @@ func APICommunicationBudget(budget *planner.CommunicationBudget) *powerv1alpha1.
 		status.Supplies = append(status.Supplies, powerv1alpha1.PublishedCommunicationSupplyStatus{
 			Carrier: supply.Carrier, PowerDomains: append([]string(nil), supply.PowerDomains...),
 			UPSDevices: append([]string(nil), supply.UPSDevices...), UnknownSupply: supply.UnknownSupply,
+		})
+	}
+	for _, coverage := range budget.Coverage {
+		status.Coverage = append(status.Coverage, powerv1alpha1.PublishedCommunicationCoverageStatus{
+			Kind: coverage.Kind, Name: coverage.Name, State: coverage.State, Entities: append([]string(nil), coverage.Entities...),
 		})
 	}
 	return status

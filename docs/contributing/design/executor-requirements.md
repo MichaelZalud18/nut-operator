@@ -326,6 +326,11 @@ lower tier starts while the overrun tier keeps running, and the executor waits f
 waves before writing the final execution record. It does not add branching, retries, or artifact
 passing.
 
+`PL-21` carrier-release waves are a structural boundary within `Overlap`: the executor waits for
+outstanding overlapped work and surfaces any failure before dispatching carrier release. This
+keeps a shared communication path available to work still running. Unrelated waves retain normal
+overlap behavior, and `Preempt` retains its explicit cancellation semantics.
+
 `Preempt` is the reason this is a policy rather than a heuristic. Stopping a running group to protect
 a deeper tier's budget trades one workload's clean shutdown for another's, and nothing the operator
 can observe tells it which trade is right. Deciding that from a timer would be exactly the enforcement

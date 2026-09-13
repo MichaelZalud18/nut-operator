@@ -47,6 +47,51 @@ without knowing whether two edges are two real supplies or one supply recorded t
 A cyclic `feeds` graph is rejected with a `FeedsCycle` diagnostic before any of that runs. A UPS
 cannot ultimately feed itself, so a cycle is never a real topology.
 
+## Shared service paths
+
+Node `carries` edges describe how a node remains reachable. Also declare the shared paths the
+operator needs throughout a flow: the operator-to-Kubernetes-API path and the NUT telemetry path.
+Use inventory entity IDs, not URLs, Kubernetes Service names, or private addresses:
+
+```yaml
+spec:
+  communicationPaths:
+    - service: OperatorAPI
+      entities: [control-switch]
+    - service: NUT
+      entities: [telemetry-switch, nut-host]
+```
+
+This is a fragment of a `ShutdownFlow`. The entities must exist in resolved inventory. List all
+required endpoints and carriers, including the hosts supplying those services where appropriate;
+their upstream `carries` paths and supplying UPS domains are followed automatically. The operator
+does not discover routes or infer redundancy. Every listed entity is required, and every action
+depends on these paths, including notifications and other work without node targets.
+
+If a shared-path UPS loses power, work depending on that path stays in the plan even if its own UPS
+is healthy. Its runtime also constrains the plan. A flow that releases a shared carrier must put
+that release last. Under `Overlap`, carrier release waits for outstanding work to stop first.
+Preserving service pods and control-plane quorum is distinct from modeling the network path.
+
+Missing paths produce warnings and appear as `Unmodeled` in
+`status.publishedArtifact.communicationBudget.coverage`. Declare a deliberate exception explicitly:
+
+```yaml
+spec:
+  communicationPaths:
+    - service: NUT
+      exempt: true
+```
+
+For individual nodes, use `PowerInventoryNode.spec.communicationPathExempt: true`. Exemptions
+acknowledge omitted coverage; they do not assert independent power or reachability, and a node
+exemption does not erase existing `carries` dependencies. Do not add exemptions just to clear a
+warning. With incomplete shared-service coverage, node-less work conservatively budgets all
+modeled carriers. With both services declared or explicitly exempted, it uses the declared paths.
+
+The published artifact includes supply roots, unknown supply, unresolved action targets, and
+coverage state. These are modeling facts, not proof of an actual working network path.
+
 ## Keep it small
 
 An attribute exists in this model only if a planner rule consumes it. Rack position, site, tenant,

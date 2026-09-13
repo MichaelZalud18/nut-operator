@@ -210,16 +210,44 @@ The order constrains action completion and signal publication, not physical halt
 Carrier power-loss runtime constraints remain separate from release ordering; a switch does not
 need to be an actuation target for its supply to constrain the plan.
 
+`ShutdownFlow.spec.communicationPaths` binds the shared `OperatorAPI` and `NUT` paths to required
+inventory entity IDs. Include the endpoints and carriers the flow needs; their transitive
+`carries` dependencies are included automatically. These are conjunctive requirements, not
+alternative routes or a promise of failover. Inventory remains the owner of `feeds` and `carries`;
+the flow only declares which entities provide its shared services. This is authored topology,
+not Kubernetes Service discovery, pod-placement protection, or a network reachability probe.
+
+Every compiled action depends on each declared shared path, including actions with no resolved
+node targets. A shared-path outage retains all work across domains. A retained action releasing
+a shared carrier also retains that work. Shared carrier releases must follow all other actions;
+separate, mutually dependent service-release groups are rejected. A terminal release group may
+publish signals for its shared carriers, but this does not promise manager availability after
+that handoff. Normal carrier/dependent same-action conflicts remain rejected. Under `Overlap`,
+carrier-release waves drain previously overlapped work before dispatch and surface its failures;
+unrelated waves can still overlap. `Preempt` retains the author's existing cancellation policy.
+
 Runtime budgeting includes the UPS devices supplying upstream communication carriers for the
-compiled actions' resolved node targets, alongside the UPS devices selected by the trigger.
-Work without resolved node targets conservatively includes all modeled carriers; this does not
-assert complete operator/API or NUT service-path coverage. The whole-plan supply set is retained
+compiled actions' resolved node targets and declared service entities themselves, alongside the
+UPS devices selected by the trigger. Work without resolved node targets conservatively includes
+all modeled carriers while either shared service has unmodeled coverage. Once both services are
+declared or explicitly exempted, node-less actions use those shared paths instead of unrelated
+carriers. An exemption acknowledges intentionally omitted coverage; it is not a safety assertion.
+The whole-plan supply set is retained
 through execution, and telemetry is reread at every wave boundary. Online devices do not impose
 battery-runtime deadlines or reduce trust in other devices' estimates. Active supplies must have
 trusted runtime capabilities; stale, unreadable, or unresolved supply leaves the budget unknown.
 Partial readings cannot prove recovery while an unknown supply remains. Execution still runs
 under the existing unknown-runtime timing rules, and feasibility warnings use the same reduction.
 These additional timing inputs change neither trigger provenance nor structural plan identity.
+
+Publish node and service coverage as `Modeled`, `Unmodeled`, or `Exempt`, including service entity
+references. Missing declarations and node paths produce `CommunicationPathUnmodeled` warnings,
+even when there are no authored `carries` edges. Node `communicationPathExempt` suppresses that
+warning but never removes an existing modeled path or supply constraint. An explicit unknown
+service entity is a structural error (`CommunicationServiceEntityUnknown`), unlike an omitted
+declaration. Service declarations, exemptions, and modeled paths participate in plan identity;
+live telemetry does not. Physical halt acknowledgement and control-plane quorum enforcement
+remain separate contracts.
 
 **PL-20a** · Report and block tier inversion. A group whose tier is lower than the tier of a node it
 runs on is scheduled to keep working after that node powers off. Compilation reports this as

@@ -36,6 +36,9 @@ func scopeStructuralInputs(input StructuralInputs) (StructuralInputs, []Diagnost
 	if !scopedTrigger || len(affectedDomains) == 0 || len(input.Groups) == 0 || len(input.GroupNodes) == 0 {
 		return input, nil
 	}
+	if sharedCommunicationAffected(input, affectedDomains) {
+		return input, []Diagnostic{{Severity: DiagnosticInfo, Reason: "CommunicationServiceScopeRetained", Message: "all actions remain in scope because a shared service path is affected or released"}}
+	}
 
 	affectedNodes := nodesForPowerDomains(input.PowerDomains, affectedDomains)
 	// A healthy node can still lose its communication path with another UPS.

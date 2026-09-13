@@ -330,6 +330,10 @@
       "reason": "TelemetryPresent"
     },
     "diagnostics": [
+      "CommunicationPathUnmodeled",
+      "CommunicationPathUnmodeled",
+      "CommunicationPathUnmodeled",
+      "CommunicationPathUnmodeled",
       "PowerDomainScopeApplied"
     ],
     "edges": [

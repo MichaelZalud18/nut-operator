@@ -259,6 +259,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 
 func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, dedupeKey string, bundle resolver.StructuralBundle, rehearsal bool, resume shutdownExecutionResumeEvidence) (executorpkg.Input, error) {
 	waves := executorWavesFromFlow(flow.Status.CompiledWaves, flow.Status.CompiledSteps)
+	applyCommunicationBarriers(waves, flow.Status.PublishedArtifact)
 	groups, err := r.executorGroupsFromFlow(ctx, flow)
 	if err != nil {
 		return executorpkg.Input{}, err
@@ -460,6 +461,25 @@ func applyLastExecutionPhase(flow *powerv1alpha1.ShutdownFlow) {
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseCompleted
 	case powerv1alpha1.ShutdownExecutionPhaseAborted, powerv1alpha1.ShutdownExecutionPhaseFailed:
 		flow.Status.Phase = powerv1alpha1.ShutdownFlowPhaseAborted
+	}
+}
+
+func applyCommunicationBarriers(waves []executorpkg.Wave, artifact *powerv1alpha1.PublishedPlannerArtifactStatus) {
+	if artifact == nil {
+		return
+	}
+	carriers := map[string]bool{}
+	for _, edge := range artifact.Graph.Edges {
+		if edge.Relation == planner.GraphEdgeRelationCommunicationPath {
+			carriers[edge.To] = true
+		}
+	}
+	for i := range waves {
+		for _, group := range waves[i].Groups {
+			if carriers[group] {
+				waves[i].CommunicationBarrier = true
+			}
+		}
 	}
 }
 

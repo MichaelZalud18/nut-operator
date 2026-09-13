@@ -74,8 +74,9 @@ Four words carry most of the design, and two of them are easy to confuse:
 - **Power domain** — everything downstream of one UPS, derived by following `feeds` edges. Derived,
   never declared. A node can sit in more than one.
 
-Tiers are input; waves are output. Ordering comes from tiers plus `requires`/`before`/`after` and
-nothing else. Full glossary in [the glossary](docs/reference/glossary.md).
+Tiers are input; waves are output. Ordering combines tiers, `requires`/`before`/`after`, node
+clearance, and modeled communication dependencies. Full glossary in
+[the glossary](docs/reference/glossary.md).
 
 ## What it runs against
 

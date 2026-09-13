@@ -119,45 +119,17 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   2026-09-04 pass for what each test proved. What remains is what always remained: the reserve and
   minimum stand in for a handoff tail and a fitness floor nobody has measured against a real
   outage, and simulation is calibration evidence for that, not a substitute for it.
-- [ ] `PL-21` [High] implement communication-path dependencies in v1 planning and execution.
-  Combine `carries` paths with the supplying UPS/`feeds` topology so shutdown work accounts for
-  losing a switch or other required communication device when its power source expires, even
-  when that device is not an actuation target. Include the operator/API and NUT paths needed to
-  finish dependent work. This is not gated on switch shutdown or PDU outlet control.
-  **Testable now:** synthetic shared and separate UPS domains, dependent nodes across domains,
-  constrained runtime on a communication device's supply, and unknown/exempt path coverage;
-  assert resulting ordering, timing constraints, and diagnostics without physical switches.
-  **Implemented milestone (2026-09-13):** resolved `carries` dependencies now reach the planner;
-  domain scoping retains transitive consumers of affected communication carriers, including
-  consumers on otherwise unaffected UPS domains. Unknown carrier supply conservatively retains
-  consumers and produces `CommunicationPowerDomainUnknown`. Published explanations include
-  edge-source and supplying-domain provenance. Component tests cover transitive/cyclic paths,
-  unknown and unaffected supplies, deterministic identity, and inventory-to-artifact propagation.
-  **Ordering milestone (2026-09-13):** grouped plans derive carrier-node release order through
-  transitive paths; linear plans reject conflicting declared order. Combined carrier/dependent
-  release actions are rejected. Mixed-domain releases retain their consumers before pruning.
-  Derived ordering edges and path provenance reach published graphs, explanations, and diagrams.
-  Component tests exercise inventory-to-executor ordering, dependent-action failure, dry-run
-  evidence, tier/declared cycles, linear adapters, and iterative domain-scope retention.
-  **Runtime milestone (2026-09-13):** timing observations now include the supplying UPS devices
-  of modeled communication paths used by the compiled plan. Supplies are reread at each wave;
-  only non-online supplies constrain runtime/trust. Unknown or unreadable supply makes the
-  budget unknown without stopping the flow or assuming recovery. Feasibility warnings share
-  this reduction. Trigger selection and plan hashes remain independent of these live readings.
-  Tests cover transitive/shared supplies, partial recovery, untrusted and stale readings,
-  consecutive boundary updates, and actual executor compression from a shorter switch supply.
-  **Artifact milestone (2026-09-13):** `status.publishedArtifact.communicationBudget` publishes
-  the whole-plan supply envelope, per-carrier domain/UPS provenance, unknown supplies, and
-  unresolved actions. Publication and execution share selection logic; controller envtest
-  verifies these fields survive API status storage. CRDs and installers include the schema.
-  **Validation:** race-enabled inventory, planner, resolver, shutdownflow, executor, controller
-  (including envtest), and webhook suites passed. `make lint` reported zero issues. Execution
-  ordering tests use simulated actions and do not claim physical halt evidence.
-  **Still open:** cover operator/API and NUT service paths end to end (including work without
-  resolved node targets), and complete unmodeled/exempt-path diagnostics in the artifacts.
-  Runtime currently uses a conservative whole-plan supply envelope; node-less work includes all
-  modeled carriers rather than claiming precise service-path coverage. Physical halt
-  acknowledgement remains outside the action-ordering contract.
+- [x] `PL-21` [High] implement communication-path dependencies in v1 planning and execution
+  (2026-09-13). Node `carries` paths and explicit shared `OperatorAPI`/`NUT` service declarations
+  drive outage scope, carrier-release ordering, and UPS runtime budgets, including node-less
+  actions. Publication and execution share supply selection; artifacts distinguish modeled,
+  unmodeled, exempt, and unknown-supply coverage. Carrier releases wait for overlapped work and
+  surface its failures. CRDs and installers include the API; the topology guide covers authoring.
+  **Validated:** race-enabled API, internal, and command package sweep, including controller
+  API-schema/status envtest and webhook suites; repeated overlap/failure/cancellation
+  and inventory-to-executor service-path tests; clean repository lint. These component tests
+  require no physical switches. Modeled paths are not reachability or redundancy guarantees;
+  physical halt acknowledgement and control-plane quorum remain separate contracts.
 
 ---
 
@@ -207,14 +179,15 @@ Owns: the published planner artifact contract (compiled plan, dependency graph, 
 diagram exports) and the CR-status-as-interface model — the "what gets exported and how" surface.
 Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts section (`GP-6`/`GP-7`).
 
-- [ ] [Medium] publish v1 communication-ordering artifacts alongside `PL-21`: derived dependencies,
+- [x] [Medium] publish v1 communication-ordering artifacts alongside `PL-21` (2026-09-13): derived dependencies,
   their communication-path and power-supply provenance, resulting ordering/timing constraints,
   and unresolved-path diagnostics. Publishing topology alone is not the completed ordering feature.
   **Testable now:** deterministic planner artifact and controller-status fixtures matching the
   dependencies actually used by planning; no switch or PDU actuation is required.
-  **Implemented (2026-09-13):** derived carrier-node ordering edges, path-source provenance,
-  explanations, diagrams, and structured runtime-budget inputs with unknown supplies and
-  unresolved actions. Complete service-path and unmodeled/exempt-path diagnostics remain.
+  **Implemented:** derived node/shared-service ordering edges, path-source provenance,
+  explanations, diagrams, and structured runtime-budget inputs with unknown supplies,
+  unresolved actions, and explicit modeled/unmodeled/exempt coverage. API round-trip tests
+  verify service references and coverage survive storage; runtime and artifact fixtures agree.
 
 ---
 

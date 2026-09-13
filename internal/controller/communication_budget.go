@@ -37,6 +37,7 @@ func communicationBudgetDevices(flow *power.ShutdownFlow, bundle resolver.Struct
 	}
 	input := resolver.AttachResolvedInputHash(planner.StructuralInputs{}, bundle)
 	input.GroupNodes = shutdownflow.PlannerGroupNodes(flow, bundle)
+	input.CommunicationServices = shutdownflow.PlannerCommunicationServices(flow)
 	for _, step := range flow.Status.CompiledSteps {
 		input.Groups = append(input.Groups, planner.Group{Name: step.ID})
 	}

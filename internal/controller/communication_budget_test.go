@@ -191,10 +191,12 @@ func TestCommunicationSupplyCompressesExecutorBudget(t *testing.T) {
 }
 
 func TestPublishedCommunicationBudgetMatchesRuntimeSelection(t *testing.T) {
-	for _, mode := range []string{"resolved", "unknown-supply", "node-less", "linear"} {
+	for _, mode := range []string{"resolved", "unknown-supply", "node-less", "linear", "service-path"} {
 		t.Run(mode, func(t *testing.T) {
 			flow, bundle := communicationRuntimeFixture(t)
 			switch mode {
+			case "service-path":
+				flow.Spec.CommunicationPaths = []power.FlowCommunicationPath{{Service: "OperatorAPI", Entities: []string{"switch"}}, {Service: "NUT", Exempt: true}}
 			case "unknown-supply":
 				bundle.Topology.Domains = bundle.Topology.Domains[:1]
 			case "node-less":
@@ -224,5 +226,26 @@ func TestPublishedCommunicationBudgetMatchesRuntimeSelection(t *testing.T) {
 				t.Fatalf("missing conservative coverage reason: %+v", published)
 			}
 		})
+	}
+}
+
+func TestExplicitServiceBudgetForNodeLessWork(t *testing.T) {
+	flow, bundle := communicationRuntimeFixture(t)
+	flow.Spec.Groups = []power.ShutdownGroup{{Name: "notify", Action: power.ShutdownStepNotify}}
+	flow.Spec.CommunicationPaths = []power.FlowCommunicationPath{{Service: "OperatorAPI", Entities: []string{"switch"}}, {Service: "NUT", Exempt: true}}
+	bundle.Topology.CommunicationOrders = append(bundle.Topology.CommunicationOrders, inventory.DerivedEdge{From: "other", To: "unmodeled-supply"})
+	compiled := shutdownflow.CompileFlow(flow, bundle, power.PowerShutdownTierPolicySpec{})
+	if compiled.Artifact == nil {
+		t.Fatalf("compile: %+v", compiled.Diagnostics)
+	}
+	flow.Status.CompiledSteps = compiled.Steps
+	names, unknown := communicationBudgetDevices(flow, bundle)
+	if unknown || !slices.Equal(names, []string{"network-ups"}) {
+		t.Fatalf("explicit service selection: %v %v", names, unknown)
+	}
+	r := shutdownFlowReconcilerWithUPSDevices(t, upsDeviceTelemetry("compute-ups", power.UPSDevicePhaseOnBattery, 900, 80, 20), upsDeviceTelemetry("network-ups", power.UPSDevicePhaseOnBattery, 35, 20, 10))
+	observation, err := r.powerObserverForFlow(flow, bundle, []string{"compute-ups"}, adaptive.PowerObservation{OnBattery: true})(context.Background())
+	if err != nil || observation.RuntimeSeconds == nil || *observation.RuntimeSeconds != 35 || !observation.RuntimeTrusted {
+		t.Fatalf("service runtime: %+v %v", observation, err)
 	}
 }

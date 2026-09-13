@@ -45,6 +45,13 @@ type ShutdownFlowSpec struct {
 	// +optional
 	Steps []ShutdownStep `json:"steps,omitempty"`
 
+	// communicationPaths declares shared operator/API and NUT dependencies for every action.
+	// Omission is reported as unmodeled coverage, not a compile failure.
+	// +optional
+	// +listType=map
+	// +listMapKey=service
+	CommunicationPaths []FlowCommunicationPath `json:"communicationPaths,omitempty"`
+
 	// concurrencyPolicy controls overlapping flow evaluations.
 	// +kubebuilder:validation:Enum=Forbid;Replace
 	// +kubebuilder:default=Forbid
@@ -71,6 +78,22 @@ type ShutdownFlowSpec struct {
 	// safety defines global safety gates for this flow.
 	// +optional
 	Safety FlowSafetySpec `json:"safety,omitempty"`
+}
+
+// FlowCommunicationPath binds a shared service path to inventory entities.
+// +kubebuilder:validation:XValidation:rule="(has(self.entities) && size(self.entities) > 0) != (has(self.exempt) && self.exempt)",message="declare entities or explicitly exempt the service path"
+type FlowCommunicationPath struct {
+	// service identifies the shared path required throughout this flow.
+	// +kubebuilder:validation:Enum=OperatorAPI;NUT
+	Service string `json:"service"`
+	// entities names required inventory endpoints and carriers, including their upstream carries paths.
+	// Each entry is required; this is not a failover or route-discovery mechanism.
+	// +optional
+	// +listType=set
+	Entities []string `json:"entities,omitempty"`
+	// exempt explicitly acknowledges that this path is intentionally outside modeled coverage.
+	// +optional
+	Exempt bool `json:"exempt,omitempty"`
 }
 
 // ShutdownFlowStatus defines the observed state of ShutdownFlow.
@@ -964,12 +987,25 @@ type PublishedCommunicationBudgetStatus struct {
 	// upsDevices are the additional runtime inputs, separate from trigger selection.
 	// +optional
 	UPSDevices []string `json:"upsDevices,omitempty"`
-	// unresolvedActions have no resolved node targets and include all modeled carriers.
+	// unresolvedActions have no resolved node targets. They include all modeled carriers
+	// while shared service coverage is incomplete, otherwise only the declared service paths.
 	// +optional
 	UnresolvedActions []string `json:"unresolvedActions,omitempty"`
 	// supplies give per-carrier power-domain and UPS provenance, including unknown supply.
 	// +optional
 	Supplies []PublishedCommunicationSupplyStatus `json:"supplies,omitempty"`
+	// coverage distinguishes modeled, unmodeled, and deliberately exempt node and service paths.
+	// +optional
+	Coverage []PublishedCommunicationCoverageStatus `json:"coverage,omitempty"`
+}
+
+// PublishedCommunicationCoverageStatus states authored coverage, not reachability.
+type PublishedCommunicationCoverageStatus struct {
+	Kind  string `json:"kind"`
+	Name  string `json:"name"`
+	State string `json:"state"`
+	// +optional
+	Entities []string `json:"entities,omitempty"`
 }
 
 // PublishedCommunicationSupplyStatus is one carrier's structural runtime constraint.

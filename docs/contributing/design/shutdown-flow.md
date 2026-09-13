@@ -339,12 +339,16 @@ communication-path runtime budgeting. Publication and execution use the same pla
 - `supplies` identifies each carrier, its supplying power domains and UPS roots, and whether
   its supply is unknown.
 - `unresolvedActions` names compiled groups or linear steps without resolved node targets;
-  these cause conservative inclusion of all modeled carriers.
+  these cause conservative inclusion of all modeled carriers while shared service coverage
+  remains unmodeled.
+- `coverage` reports each targeted node and both shared services as `Modeled`, `Unmodeled`, or
+  `Exempt`; service entries include the declared inventory entity IDs.
 
 These are structural constraints, not a telemetry snapshot or a predicted failure time.
-Live runtime and capability trust are evaluated at wave boundaries. Empty modeled coverage is
-not proof of reachability; complete service-path and unmodeled/exempt-path diagnostics remain
-tracked under `PL-21`.
+Live runtime and capability trust are evaluated at wave boundaries. Empty or exempt coverage is
+not proof of reachability. `spec.communicationPaths` declares the shared `OperatorAPI` and `NUT`
+paths; the [topology guide](../../guides/model-your-topology.md#shared-service-paths) covers authoring
+and the [PL-21 contract](planner-requirements.md) owns ordering and budgeting behavior.
 
 Examples:
 

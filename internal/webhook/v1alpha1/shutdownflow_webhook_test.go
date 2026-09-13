@@ -66,7 +66,9 @@ var _ = Describe("ShutdownFlow Webhook", func() {
 
 			warnings, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(warnings).To(BeEmpty())
+			Expect(warnings).To(HaveLen(2))
+			Expect(warnings[0]).To(ContainSubstring("NUT"))
+			Expect(warnings[1]).To(ContainSubstring("OperatorAPI"))
 		})
 
 		It("Should admit a coarser trigger fallback", func() {

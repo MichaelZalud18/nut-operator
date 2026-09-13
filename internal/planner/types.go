@@ -47,7 +47,11 @@ type StructuralInputs struct {
 	// which devices a domain-scoped trigger is validated against.
 	PowerDomains []PowerDomainMembership `json:"powerDomains,omitempty"`
 	// CommunicationDependencies are authored carries edges, oriented dependent -> carrier.
-	CommunicationDependencies []CommunicationDependency `json:"communicationDependencies,omitempty"`
+	CommunicationDependencies []CommunicationDependency  `json:"communicationDependencies,omitempty"`
+	CommunicationServices     []CommunicationServicePath `json:"communicationServices,omitempty"`
+	CommunicationExemptNodes  []string                   `json:"communicationExemptNodes,omitempty"`
+	// InventoryEntities is nil at admission, where inventory references cannot be resolved.
+	InventoryEntities []string `json:"inventoryEntities,omitempty"`
 	// GroupNodes is which cluster nodes each group touches, resolved before the
 	// planner runs because expanding a selector requires reading the cluster.
 	// Without it the planner cannot name a node, and PL-20 clearance edges
@@ -77,6 +81,21 @@ type CommunicationDependency struct {
 	Source    string `json:"source,omitempty"`
 }
 
+// CommunicationServicePath names inventory entities required throughout a flow.
+// Entities are conjunctive dependencies, not redundant alternatives.
+type CommunicationServicePath struct {
+	Service  string   `json:"service"`
+	Entities []string `json:"entities,omitempty"`
+	Exempt   bool     `json:"exempt,omitempty"`
+}
+
+type CommunicationCoverage struct {
+	Kind     string   `json:"kind"`
+	Name     string   `json:"name"`
+	State    string   `json:"state"`
+	Entities []string `json:"entities,omitempty"`
+}
+
 // CommunicationBudget publishes the structural inputs to live runtime reduction.
 // It contains no telemetry or calculated time-to-failure promise.
 type CommunicationBudget struct {
@@ -84,6 +103,7 @@ type CommunicationBudget struct {
 	UPSDevices        []string                        `json:"upsDevices,omitempty"`
 	UnresolvedActions []string                        `json:"unresolvedActions,omitempty"`
 	Supplies          []CommunicationSupplyConstraint `json:"supplies,omitempty"`
+	Coverage          []CommunicationCoverage         `json:"coverage,omitempty"`
 }
 
 type CommunicationSupplyConstraint struct {

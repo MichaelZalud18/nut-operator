@@ -73,7 +73,7 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 
 	var plan Plan
 	if len(scoped.Groups) > 0 {
-		plan.Graph = buildGroupGraph(scoped.Groups, scoped.TierPolicy, scoped.GroupNodes, scoped.CommunicationDependencies)
+		plan.Graph = buildGroupGraph(scoped.Groups, scoped.TierPolicy, scoped.GroupNodes, scoped.CommunicationDependencies, scoped.CommunicationServices...)
 		steps, waves, duration, stalled := compileGroups(scoped.Groups, plan.Graph)
 		// Rejected rather than published half-descended. A plan missing the groups that could not be
 		// scheduled would still compile, still hash, and still look like a plan -- and the groups it
@@ -257,7 +257,7 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 			}
 		}
 	}
-	if hasGroupCycle(input.Groups, input.TierPolicy, input.GroupNodes, input.CommunicationDependencies) {
+	if hasGroupCycle(input.Groups, input.TierPolicy, input.GroupNodes, input.CommunicationDependencies, input.CommunicationServices...) {
 		diagnostics = append(diagnostics, Diagnostic{
 			Severity: DiagnosticError,
 			Reason:   "DependencyCycle",
@@ -413,12 +413,12 @@ func powerDomainArtifacts(domains []PowerDomainMembership) []PowerDomainArtifact
 	return artifacts
 }
 
-func groupEdges(groups []Group, policy TierPolicy, membership []GroupNodeMembership, communication []CommunicationDependency) map[string][]string {
-	return graphSuccessors(buildGroupGraph(groups, policy, membership, communication))
+func groupEdges(groups []Group, policy TierPolicy, membership []GroupNodeMembership, communication []CommunicationDependency, services ...CommunicationServicePath) map[string][]string {
+	return graphSuccessors(buildGroupGraph(groups, policy, membership, communication, services...))
 }
 
-func hasGroupCycle(groups []Group, policy TierPolicy, membership []GroupNodeMembership, communication []CommunicationDependency) bool {
-	edges := groupEdges(groups, policy, membership, communication)
+func hasGroupCycle(groups []Group, policy TierPolicy, membership []GroupNodeMembership, communication []CommunicationDependency, services ...CommunicationServicePath) bool {
+	edges := groupEdges(groups, policy, membership, communication, services...)
 	visiting := map[string]bool{}
 	visited := map[string]bool{}
 
@@ -520,6 +520,9 @@ func normalizeStructuralInputs(input StructuralInputs) (StructuralInputs, error)
 		DeviceCapabilities:        append([]DeviceCapability(nil), input.DeviceCapabilities...),
 		PowerDomains:              append([]PowerDomainMembership(nil), input.PowerDomains...),
 		CommunicationDependencies: normalizeCommunicationDependencies(input.CommunicationDependencies),
+		CommunicationServices:     normalizeCommunicationServices(input.CommunicationServices),
+		CommunicationExemptNodes:  sortedUnique(input.CommunicationExemptNodes),
+		InventoryEntities:         sortedUnique(input.InventoryEntities),
 		GroupNodes:                append([]GroupNodeMembership(nil), input.GroupNodes...),
 		NodeTiers:                 append([]NodeTier(nil), input.NodeTiers...),
 		HookDigests:               append([]HookDigest(nil), input.HookDigests...),

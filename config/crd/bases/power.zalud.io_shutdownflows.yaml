@@ -55,6 +55,44 @@ spec:
                     description: notify enables notification steps after abort.
                     type: boolean
                 type: object
+              communicationPaths:
+                description: |-
+                  communicationPaths declares shared operator/API and NUT dependencies for every action.
+                  Omission is reported as unmodeled coverage, not a compile failure.
+                items:
+                  description: FlowCommunicationPath binds a shared service path to
+                    inventory entities.
+                  properties:
+                    entities:
+                      description: |-
+                        entities names required inventory endpoints and carriers, including their upstream carries paths.
+                        Each entry is required; this is not a failover or route-discovery mechanism.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: set
+                    exempt:
+                      description: exempt explicitly acknowledges that this path is
+                        intentionally outside modeled coverage.
+                      type: boolean
+                    service:
+                      description: service identifies the shared path required throughout
+                        this flow.
+                      enum:
+                      - OperatorAPI
+                      - NUT
+                      type: string
+                  required:
+                  - service
+                  type: object
+                  x-kubernetes-validations:
+                  - message: declare entities or explicitly exempt the service path
+                    rule: (has(self.entities) && size(self.entities) > 0) != (has(self.exempt)
+                      && self.exempt)
+                type: array
+                x-kubernetes-list-map-keys:
+                - service
+                x-kubernetes-list-type: map
               concurrencyPolicy:
                 default: Forbid
                 description: concurrencyPolicy controls overlapping flow evaluations.
@@ -1372,6 +1410,29 @@ spec:
                       communicationBudget identifies the carrier supplies used in live runtime reduction.
                       It publishes structural constraints, not telemetry or a predicted failure time.
                     properties:
+                      coverage:
+                        description: coverage distinguishes modeled, unmodeled, and
+                          deliberately exempt node and service paths.
+                        items:
+                          description: PublishedCommunicationCoverageStatus states
+                            authored coverage, not reachability.
+                          properties:
+                            entities:
+                              items:
+                                type: string
+                              type: array
+                            kind:
+                              type: string
+                            name:
+                              type: string
+                            state:
+                              type: string
+                          required:
+                          - kind
+                          - name
+                          - state
+                          type: object
+                        type: array
                       scope:
                         description: 'scope is WholePlan: the supply set is retained
                           for the entire execution.'
@@ -1409,8 +1470,9 @@ spec:
                           type: object
                         type: array
                       unresolvedActions:
-                        description: unresolvedActions have no resolved node targets
-                          and include all modeled carriers.
+                        description: |-
+                          unresolvedActions have no resolved node targets. They include all modeled carriers
+                          while shared service coverage is incomplete, otherwise only the declared service paths.
                         items:
                           type: string
                         type: array

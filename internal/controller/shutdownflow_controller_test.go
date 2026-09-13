@@ -33,6 +33,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -83,6 +84,10 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				},
 				Spec: powerv1alpha1.ShutdownFlowSpec{
 					Mode: powerv1alpha1.ShutdownFlowModeDryRun,
+					CommunicationPaths: []powerv1alpha1.FlowCommunicationPath{
+						{Service: "OperatorAPI", Entities: []string{shutdownFlowTestSwitchName}},
+						{Service: "NUT", Entities: []string{shutdownFlowTestSwitchName}},
+					},
 					Triggers: []powerv1alpha1.ShutdownTrigger{
 						{
 							Type: powerv1alpha1.ShutdownTriggerOnBattery,
@@ -109,6 +114,53 @@ var _ = Describe("ShutdownFlow Controller", func() {
 
 		AfterEach(func() {
 			cleanupShutdownFlowResolverFixture(ctx)
+		})
+
+		It("validates service path declarations in the API schema", func() {
+			for _, paths := range [][]powerv1alpha1.FlowCommunicationPath{
+				{{Service: "Other", Exempt: true}},
+				{{Service: "NUT"}},
+				{{Service: "NUT", Exempt: true, Entities: []string{shutdownFlowTestSwitchName}}},
+				{{Service: "NUT", Exempt: true}, {Service: "NUT", Exempt: true}},
+			} {
+				flow := &powerv1alpha1.ShutdownFlow{}
+				Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
+				flow.Spec.CommunicationPaths = paths
+				Expect(apierrors.IsInvalid(k8sClient.Update(ctx, flow))).To(BeTrue())
+			}
+		})
+
+		It("publishes missing and deliberately exempt service coverage", func() {
+			flow := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
+			flow.Spec.CommunicationPaths = []powerv1alpha1.FlowCommunicationPath{{Service: "NUT", Exempt: true}}
+			Expect(k8sClient.Update(ctx, flow)).To(Succeed())
+			r := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
+			Expect(meta.FindStatusCondition(flow.Status.Conditions, powerv1alpha1.ConditionAccepted).Status).To(Equal(metav1.ConditionTrue))
+			Expect(flow.Status.PublishedArtifact.CommunicationBudget.Coverage).To(ConsistOf(
+				powerv1alpha1.PublishedCommunicationCoverageStatus{Kind: "Service", Name: "NUT", State: "Exempt"},
+				powerv1alpha1.PublishedCommunicationCoverageStatus{Kind: "Service", Name: "OperatorAPI", State: "Unmodeled"},
+			))
+			Expect(flow.Status.CompileDiagnostics).To(ContainElement(And(
+				HaveField("Reason", "CommunicationPathUnmodeled"), HaveField("Subject", "Service/OperatorAPI"),
+			)))
+		})
+
+		It("rejects an unresolved explicit service entity during compilation", func() {
+			flow := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
+			flow.Spec.CommunicationPaths[0].Entities = []string{"missing-service-carrier"}
+			Expect(k8sClient.Update(ctx, flow)).To(Succeed())
+			r := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
+			Expect(meta.FindStatusCondition(flow.Status.Conditions, powerv1alpha1.ConditionAccepted).Status).To(Equal(metav1.ConditionFalse))
+			Expect(flow.Status.PublishedArtifact).To(BeNil())
+			Expect(flow.Status.CompileDiagnostics).To(ContainElement(HaveField("Reason", "CommunicationServiceEntityUnknown")))
 		})
 
 		It("should accept but degrade inventory with unknown communication supply", func() {
@@ -171,6 +223,11 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			budget := resource.Status.PublishedArtifact.CommunicationBudget
 			Expect(budget).NotTo(BeNil())
 			Expect(budget.Scope).To(Equal("WholePlan"))
+			Expect(resource.Spec.CommunicationPaths).To(HaveLen(2))
+			Expect(budget.Coverage).To(ConsistOf(
+				powerv1alpha1.PublishedCommunicationCoverageStatus{Kind: "Service", Name: "NUT", State: "Modeled", Entities: []string{shutdownFlowTestSwitchName}},
+				powerv1alpha1.PublishedCommunicationCoverageStatus{Kind: "Service", Name: "OperatorAPI", State: "Modeled", Entities: []string{shutdownFlowTestSwitchName}},
+			))
 			Expect(budget.UPSDevices).To(ConsistOf(shutdownFlowTestUPSName))
 			Expect(budget.UnresolvedActions).To(ConsistOf("applications", "databases"))
 			Expect(budget.Supplies).To(HaveLen(1))

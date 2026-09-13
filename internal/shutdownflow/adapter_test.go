@@ -75,11 +75,20 @@ func TestAPICommunicationBudgetCopiesNestedFields(t *testing.T) {
 		{Carrier: "switch", PowerDomains: []string{"network"}, UPSDevices: []string{"ups"}},
 		{Carrier: "unknown", UnknownSupply: true},
 	}}
+	budget.Coverage = []planner.CommunicationCoverage{{Kind: "Service", Name: "NUT", State: "Modeled", Entities: []string{"switch"}}}
 	status := APICommunicationBudget(budget)
 	if status.Scope != "WholePlan" || !status.Supplies[1].UnknownSupply {
 		t.Fatalf("conversion lost fields: %+v", status)
 	}
 	copy := status.DeepCopy()
+	copy.Coverage[0].Entities[0] = "changed"
+	if status.Coverage[0].Entities[0] != "switch" {
+		t.Fatal("coverage deepcopy aliases nested entities")
+	}
+	status.Coverage[0].Entities[0] = "changed"
+	if budget.Coverage[0].Entities[0] != "switch" {
+		t.Fatal("coverage conversion aliases planner input")
+	}
 	copy.UPSDevices[0] = "changed"
 	copy.UnresolvedActions[0] = "changed"
 	copy.Supplies[0].PowerDomains[0] = "changed"

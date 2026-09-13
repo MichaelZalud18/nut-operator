@@ -140,6 +140,8 @@ type CompletedGroup struct {
 // Wave is one ordered unit from the compiled plan.
 type Wave struct {
 	Index int32
+	// CommunicationBarrier drains overlapped work before releasing its carrier.
+	CommunicationBarrier bool
 	// ShutdownTier is the tier this wave belongs to, when tier policy assigned the
 	// wave's groups a shared one. Nil for an untiered flow, which is legitimate:
 	// tiers are optional.
@@ -438,6 +440,16 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	}
 
 	for waveIndex, wave := range input.Waves {
+		if wave.CommunicationBarrier {
+			pendingErr, failedGroup, pendingRecordErr := waitForPending()
+			recordErr = errors.Join(recordErr, pendingRecordErr)
+			if pendingErr != nil {
+				return e.recordAborted(ctx, writer, input, &result, abortRecord{
+					ExecutionID: executionID, Mode: mode, Err: pendingErr, FailedGroup: failedGroup,
+					DryRun: dryRun, StartedAt: startedAt, RecordError: recordErr,
+				})
+			}
+		}
 		// Evaluated at wave boundaries only, never inside one: adaptation may change
 		// timings but never wave order or membership, which are hashed into plan
 		// identity (PL-14). The compression is measured against the plan still to run,

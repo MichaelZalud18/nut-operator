@@ -39,13 +39,13 @@ const (
 	GraphEdgeProvenancePolicy   = "Policy"
 )
 
-func buildGroupGraph(groups []Group, policy TierPolicy, membership []GroupNodeMembership, communication []CommunicationDependency) Graph {
+func buildGroupGraph(groups []Group, policy TierPolicy, membership []GroupNodeMembership, communication []CommunicationDependency, services ...CommunicationServicePath) Graph {
 	tiers := effectiveShutdownTiers(groups, policy)
 	graph := Graph{
 		Vertices: make([]GraphVertex, 0, len(groups)),
 		Edges:    append(collectGroupGraphEdges(groups, policy), collectNodeClearanceGraphEdges(groups, membership)...),
 	}
-	graph.Edges = append(graph.Edges, collectCommunicationGraphEdges(groups, membership, communication)...)
+	graph.Edges = append(graph.Edges, collectCommunicationGraphEdges(groups, membership, communication, services...)...)
 	for _, group := range groups {
 		graph.Vertices = append(graph.Vertices, GraphVertex{
 			ID:            group.Name,

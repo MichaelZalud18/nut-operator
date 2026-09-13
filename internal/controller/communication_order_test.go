@@ -174,3 +174,47 @@ func TestCommunicationOrderThroughLinearAdapter(t *testing.T) {
 		})
 	}
 }
+
+func TestSharedServicePathFromInventoryToExecutor(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			flow, bundle := communicationOrderFixture(t)
+			flow.Spec.Groups = append(flow.Spec.Groups[:1], power.ShutdownGroup{Name: "notify", Action: power.ShutdownStepNotify})
+			flow.Spec.CommunicationPaths = []power.FlowCommunicationPath{{Service: "OperatorAPI", Entities: []string{"switch"}}, {Service: "NUT", Exempt: true}}
+			compiled := shutdownflow.CompileFlow(flow, bundle, power.PowerShutdownTierPolicySpec{})
+			if compiled.Artifact == nil || len(compiled.Waves) != 2 {
+				t.Fatalf("compile: %+v", compiled.Diagnostics)
+			}
+			waves := executorWavesFromFlow(compiled.Waves, compiled.Steps)
+			applyCommunicationBarriers(waves, compiled.Artifact)
+			if !waves[1].CommunicationBarrier || !slices.Equal(waves[0].Groups, []string{"notify"}) {
+				t.Fatalf("waves: %+v", waves)
+			}
+			if !slices.ContainsFunc(compiled.Artifact.Graph.Edges, func(edge power.PlannerGraphEdgeStatus) bool {
+				return edge.From == "notify" && edge.To == "halt-carrier" && slices.ContainsFunc(edge.Sources, func(source power.PlannerGraphSourceRefStatus) bool {
+					return source.Field == "spec.communicationPaths" && source.Name == "OperatorAPI"
+				})
+			}) {
+				t.Fatal("missing shared service ordering provenance")
+			}
+			var calls []string
+			e := executor.Executor{Runner: communicationOrderRunner(func(_ context.Context, action executor.Action) (executor.ActionOutcome, error) {
+				calls = append(calls, action.Group.Name)
+				if fail && action.Group.Name == "notify" {
+					return executor.ActionOutcome{}, errors.New("notification failed")
+				}
+				return executor.ActionOutcome{Outcome: executor.OutcomeSucceeded}, nil
+			})}
+			_, err := e.Execute(context.Background(), executor.Input{ShutdownFlow: flow.Name, PlanConfigHash: compiled.ConfigHash, Mode: executor.ModeEnforce, Approved: true, Waves: waves,
+				Groups: []executor.Group{{Name: "notify", Action: "Notify"}, {Name: "halt-carrier", Action: executor.ActionAgentShutdown, NodeReleases: []executor.NodeRelease{{NodeName: "carrier", NodePowerAgent: "carrier-agent", AgentReady: true, TelemetryFresh: true, Cleared: true}}}},
+			})
+			want := []string{"notify", "halt-carrier"}
+			if fail {
+				want = want[:1]
+			}
+			if (err != nil) != fail || !slices.Equal(calls, want) {
+				t.Fatalf("calls=%v error=%v", calls, err)
+			}
+		})
+	}
+}
