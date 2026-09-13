@@ -80,7 +80,12 @@ silently empty.
 
 Fixed: added one explicit wait for the default ServiceAccount in `bootActuatorReadyGuest`,
 benefiting every test built on that guest rather than each independently risking the same race.
-Not yet re-run live.
+
+| [34775970876](https://github.com/MichaelZalud18/nut-operator/actions/runs/34775970876) | **all pass** (`TestHadronActuatorArmsWithNoSignal` 188.85s, `TestHadronActuatorRejectsInvalidSignals` 123.54s, `TestHadronActuatorHaltsOnAcceptedSignal` 115.73s) | Clean run across all three tests. `TestHadronActuatorHaltsOnAcceptedSignal` this time won the log-capture race and recorded the complete gate chain: `SignalAccepted` (pass) -> `FlowBinding` (pass) -> `ModeAuthorized` (pass) -> `Sync` (started, then completed in 400ms) -> `CapabilityEffective` (pass) -> `SyscallIssued` (pass, "no further output is expected from this container") -- immediately followed by the guest's own QEMU process exiting on its own, hypervisor-confirmed independently of that log. Full corroboration between the two evidence sources this test was designed around, on a run where both happened to succeed. |
+
+VM-3's first three milestones are now closed: the real actuator arms with a real capability
+round trip, correctly rejects invalid signals without ever halting the guest, and correctly halts
+the guest on a real accepted signal with hypervisor-confirmed evidence.
 
 ## Open, deliberately not attempted here
 

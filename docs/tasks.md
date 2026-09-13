@@ -516,37 +516,17 @@ also an early implementation priority, not a finding that custom VM code is inhe
   termination, not actuator success ([QEMU implementation](https://github.com/spectrocloud/peg/blob/d8627da0983c42bde4d5b21dee650205fd1fb3b7/pkg/machine/qemu.go)).
   Add negative controls proving these failure modes cannot satisfy the shutdown assertion, and
   reuse the same evidence checks in `VM-4`. A false pass would hide a broken shutdown path.
-  **First two milestones passed 2026-09-13**, both first attempt: `TestHadronActuatorArmsWithNoSignal`
-  ([run 34768697157](https://github.com/MichaelZalud18/nut-operator/actions/runs/34768697157),
-  171.81s) built the real, shipped `node-actuator` image from this checkout's own Dockerfile,
-  imported it into a Hadron guest's own containerd, and deployed it with production's real
-  `PowerOff`/`Actuate` security context and environment, with no signal ever written --
-  `CAP_SYS_BOOT` survived to the actuator's own startup gate
-  (`halt gate=CapabilityPermitted result=pass`) on a real kernel.
-  `TestHadronActuatorRejectsInvalidSignals` ([run 34770625393](https://github.com/MichaelZalud18/nut-operator/actions/runs/34770625393),
-  wrong-node 21.89s, stale 5.09s) wrote real signal Secrets that
-  `internal/nodeagent.InspectSignal` must reject -- `halt gate=SignalAccepted result=fail
-  detail="SignalWrongNode ..."` and `"SignalStale ..."` -- confirming actuation gates were never
-  reached and the guest answered SSH again immediately after each, the concrete evidence behind
-  VM-3's own "negative cases must leave the guest running" requirement.
-  **Third milestone's real mechanism succeeded 2026-09-13, test itself not yet green**
-  ([run 34774417081](https://github.com/MichaelZalud18/nut-operator/actions/runs/34774417081)):
-  `TestHadronActuatorHaltsOnAcceptedSignal` gave the guest a valid, accepted signal, and its own
-  QEMU process exited **on its own** in ~16s -- hypervisor-confirmed evidence of a genuine
-  actuator-driven halt, discovered without the test ever calling `SafeStop`/`SafeTeardown`. The
-  test still failed on its own wrong assumption that capturing `halt gate=SignalAccepted
-  result=pass` from the pod's streamed log was safe (it wasn't -- the whole guest, API server
-  included, halts faster than that log line reliably survives the trip); fixed by dropping that
-  assertion and keeping only the process-exit check as the hard requirement.
-  **Separately, [run 34775306450](https://github.com/MichaelZalud18/nut-operator/actions/runs/34775306450)
-  found a real k3s startup race** in two independently booted guests: pod creation failed with
-  `serviceaccount "default" not found` even though the node had already reported Ready -- a Ready
-  node proves the kubelet came up, not that the controllers populating the default namespace's own
-  `default` ServiceAccount have run yet. Fixed with one explicit wait for it in
-  `bootActuatorReadyGuest`, shared by every test built on that guest.
-  (`test/hadron/actuator_smoke_test.go`, `hadron-actuator-smoke.yml`). Full rationale, scope
-  boundary against the already-closed `F-61`, and evidence table in
-  [hadron-vm-3-actuator-2026-09-13.md](contributing/audits/hadron-vm-3-actuator-2026-09-13.md).
+  **First three milestones closed 2026-09-13** ([run 34775970876](https://github.com/MichaelZalud18/nut-operator/actions/runs/34775970876),
+  all pass): the real, shipped `node-actuator` image arms correctly (`CAP_SYS_BOOT` survives a
+  real kubelet/containerd round trip), correctly rejects wrong-node and stale signals without ever
+  halting the guest, and correctly halts the guest on a real accepted signal -- full gate chain
+  captured (`SignalAccepted` -> `FlowBinding` -> `ModeAuthorized` -> `Sync` -> `CapabilityEffective`
+  -> `SyscallIssued`) and independently corroborated by the guest's own QEMU process exiting on its
+  own, without the test ever calling `SafeStop`/`SafeTeardown`. Three real, distinct bugs were
+  found and fixed along the way (a wrong assumption about capturing a racy pod log, and a genuine
+  k3s default-ServiceAccount startup race) -- full history and evidence table in
+  [hadron-vm-3-actuator-2026-09-13.md](contributing/audits/hadron-vm-3-actuator-2026-09-13.md)
+  (`test/hadron/actuator_smoke_test.go`, `hadron-actuator-smoke.yml`).
   Revoked approval and the full DaemonSet/RBAC remain open.
 - [ ] `VM-4` [Medium] drive a simulated UPS outage through actual NUT telemetry, trigger evaluation,
   planning, execution, draining, signal delivery, and guest power-off. Assert survivor availability,
