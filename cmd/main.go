@@ -238,24 +238,26 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "nodehalt")
 		os.Exit(1)
 	}
-	if err := (&controller.ShutdownFlowReconciler{
+	shutdownFlowReconciler := &controller.ShutdownFlowReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		APIReader: mgr.GetAPIReader(),
-		ExecutorRunner: kubeactions.Runner{
-			Client:           mgr.GetClient(),
-			ManagerNamespace: os.Getenv("POD_NAMESPACE"),
-			Recorder:         mgr.GetEventRecorder("shutdownflow-executor"),
-			SignalWritten: func(node, shutdownFlow, executionID string, at time.Time) {
-				haltObserver.SignalWritten(haltwatch.Attempt{
-					Node:            node,
-					ShutdownFlow:    shutdownFlow,
-					ExecutionID:     executionID,
-					SignalWrittenAt: at,
-				})
-			},
+	}
+	shutdownFlowReconciler.ExecutorRunner = kubeactions.Runner{
+		ValidateNodeRelease: shutdownFlowReconciler.ValidateNodeReleaseAuthorization,
+		Client:              mgr.GetClient(),
+		ManagerNamespace:    os.Getenv("POD_NAMESPACE"),
+		Recorder:            mgr.GetEventRecorder("shutdownflow-executor"),
+		SignalWritten: func(node, shutdownFlow, executionID string, at time.Time) {
+			haltObserver.SignalWritten(haltwatch.Attempt{
+				Node:            node,
+				ShutdownFlow:    shutdownFlow,
+				ExecutionID:     executionID,
+				SignalWrittenAt: at,
+			})
 		},
-	}).SetupWithManager(mgr); err != nil {
+	}
+	if err := shutdownFlowReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "shutdownflow")
 		os.Exit(1)
 	}

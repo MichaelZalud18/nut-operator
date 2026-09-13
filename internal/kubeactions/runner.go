@@ -72,6 +72,10 @@ type Runner struct {
 	Client client.Client
 	Clock  func() time.Time
 
+	// ValidateNodeRelease is required for signal publication and is called separately
+	// for every node immediately before its Secret mutation.
+	ValidateNodeRelease func(context.Context, executor.NodeRelease) error
+
 	// ManagerNamespace is the controller-manager's own install namespace (POD_NAMESPACE via the
 	// downward API in config/manager/manager.yaml). Included in protectedNamespaces so a
 	// ShutdownFlow's DrainNodes/ScaleWorkload actions can never evict or scale down the operator that
@@ -1033,6 +1037,9 @@ func (r Runner) agentShutdownHandoff(ctx context.Context, action executor.Action
 }
 
 func (r Runner) upsertSignalSecret(ctx context.Context, action executor.Action, release executor.NodeRelease, payload []byte) error {
+	if r.ValidateNodeRelease == nil {
+		return fmt.Errorf("AgentShutdown requires a live node release validator")
+	}
 	key := client.ObjectKey{Namespace: release.SignalSecretNamespace, Name: release.SignalSecretName}
 	var secret corev1.Secret
 	if err := r.Client.Get(ctx, key, &secret); err != nil {
@@ -1047,6 +1054,9 @@ func (r Runner) upsertSignalSecret(ctx context.Context, action executor.Action, 
 			},
 			Type: corev1.SecretTypeOpaque,
 			Data: map[string][]byte{release.SignalSecretKey: payload},
+		}
+		if err := r.ValidateNodeRelease(ctx, release); err != nil {
+			return fmt.Errorf("validate release for node %q: %w", release.NodeName, err)
 		}
 		if err := r.Client.Create(ctx, &secret); err != nil {
 			return fmt.Errorf("create signal Secret %s/%s: %w", key.Namespace, key.Name, err)
@@ -1064,6 +1074,9 @@ func (r Runner) upsertSignalSecret(ctx context.Context, action executor.Action, 
 	}
 	secret.Type = corev1.SecretTypeOpaque
 	secret.Data[release.SignalSecretKey] = payload
+	if err := r.ValidateNodeRelease(ctx, release); err != nil {
+		return fmt.Errorf("validate release for node %q: %w", release.NodeName, err)
+	}
 	if err := r.Client.Update(ctx, &secret); err != nil {
 		return fmt.Errorf("update signal Secret %s/%s key %q: %w", key.Namespace, key.Name, release.SignalSecretKey, err)
 	}

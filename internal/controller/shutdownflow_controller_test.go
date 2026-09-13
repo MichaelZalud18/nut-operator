@@ -1141,7 +1141,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(powerv1alpha1.AddToScheme(scheme)).To(Succeed())
 			heartbeat := metav1.NewTime(time.Date(2026, 8, 3, 9, 30, 0, 0, time.UTC))
 			agent := &powerv1alpha1.NodePowerAgent{
-				ObjectMeta: metav1.ObjectMeta{Name: "rack-a-agents"},
+				ObjectMeta: metav1.ObjectMeta{Name: "rack-a-agents", UID: "selected-agent", Generation: 3},
 				Spec: powerv1alpha1.NodePowerAgentSpec{
 					NUTServerRefs: []powerv1alpha1.ObjectNameReference{{Name: "rack-a"}},
 					// This spec covers the coverage-mapping logic, not telemetry-freshness gating (F-33)
@@ -1216,6 +1216,9 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(*releasesByNode["node-a"].LastHeartbeatTime).To(BeTemporally("==", heartbeat.Time))
 			Expect(releasesByNode["node-a"].TelemetryFresh).To(BeTrue())
 			Expect(releasesByNode["node-b"]).To(Equal(executorpkg.NodeRelease{
+				AgentUID:              "selected-agent",
+				AgentGeneration:       3,
+				ActuatorPolicy:        "Simulate",
 				NodeName:              "node-b",
 				NodePowerAgent:        "rack-a-agents",
 				SignalPath:            "/run/power-agent/shutdown.json",

@@ -51,8 +51,12 @@ it is written, not on the day the power fails.
 
 **EX-4 · Both approval gates are checked at execution time, not deployment time** (RB-4, GP-2).
 `ShutdownFlow` enforcement approval and `NodePowerAgent` actuation approval are independently
-verified when the flow fires. Absence of either downgrades execution to dry-run behavior; it never
-silently proceeds.
+verified rather than inferred from an already-rendered actuator. Flow approval is re-read at wave
+boundaries and its loss makes subsequent work dry-run (EX-6). Agent authorization is re-read for
+each node immediately before its signal Secret mutation. A missing or revoked agent approval,
+failed read, or changed selected agent identity/specification blocks that handoff; the existing
+`HaltAndSurface` failure policy stops the remaining execution. Already-published signals remain
+recorded as published, not relabeled as simulated. The writer never silently proceeds.
 
 **EX-5 · Dry-run executes everything except effects.** Wave sequencing, instance enumeration,
 clearance evaluation, and record writing all run identically in dry-run; only workload mutation and

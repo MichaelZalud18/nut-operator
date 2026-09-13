@@ -190,6 +190,11 @@ type Target struct {
 
 // NodeRelease describes a terminal node-agent handoff candidate.
 type NodeRelease struct {
+	// Bind authorization to the selected agent instance and specification. A live
+	// handoff check must not silently adopt a replacement object or changed policy.
+	AgentUID              string
+	AgentGeneration       int64
+	ActuatorPolicy        string
 	NodeName              string
 	NodePowerAgent        string
 	SignalPath            string

@@ -775,6 +775,9 @@ func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, targ
 				return nil, err
 			}
 			releases = append(releases, executorpkg.NodeRelease{
+				AgentUID:              string(agent.UID),
+				AgentGeneration:       agent.Generation,
+				ActuatorPolicy:        string(nodePowerAgentActuatorPolicy(&agent)),
 				NodeName:              nodeName,
 				NodePowerAgent:        agent.Name,
 				SignalPath:            nodePowerAgentSignalPath(&agent),

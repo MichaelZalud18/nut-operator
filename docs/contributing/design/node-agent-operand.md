@@ -80,6 +80,17 @@ Defense in depth remains on top of revocation, not instead of it: a scan stops a
 signal, so one episode delivered twice actuates once (`F-58`), and an agent declaring a
 `shutdownFlowRef` accepts releases only from that flow.
 
+Before each signal Secret create or update, the operator re-reads that node's `NodePowerAgent`
+through its uncached API reader. Physical policies still require `Actuate` and the configured
+approval annotation equal to `true`. The selected agent UID, generation, and policy must match;
+deleted agents and nodes removed from coverage are refused. This check is required even if the
+flow passed its separate approval check at the wave boundary. A read failure blocks publication,
+and partial handoff receipts distinguish already-written signals from the refused node.
+
+The agent read and Secret write are separate Kubernetes requests, not an atomic cross-resource
+transaction. This gate checks current authorization; refreshing placement, pod readiness, and
+telemetry is the separate live-release contract in the executor requirements.
+
 ## Actuation
 
 **NA-6 · The capability is proven at startup, not discovered during a power event (`F-61`).**

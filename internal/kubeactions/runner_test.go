@@ -622,12 +622,16 @@ func TestRunnerCreatesGenericKubernetesObjectShutdownHook(t *testing.T) {
 	}
 }
 
+// Publication tests isolate Secret handling; controller tests exercise live authorization.
+func allowTestNodeRelease(context.Context, executor.NodeRelease) error { return nil }
+
 func TestRunnerRequiresAgentShutdownReleases(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme returned error: %v", err)
 	}
-	runner := Runner{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	runner := Runner{
+		ValidateNodeRelease: allowTestNodeRelease, Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
 	outcome, err := runner.RunAction(context.Background(), executor.Action{
 		Group: executor.Group{Name: "node-a", Action: executor.ActionAgentShutdown},
 	})
@@ -669,8 +673,9 @@ func TestRunnerWritesAgentShutdownSignalSecret(t *testing.T) {
 	}
 	fixed := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
 	runner := Runner{
-		Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
-		Clock:  func() time.Time { return fixed },
+		ValidateNodeRelease: allowTestNodeRelease,
+		Client:              fake.NewClientBuilder().WithScheme(scheme).Build(),
+		Clock:               func() time.Time { return fixed },
 	}
 
 	outcome, err := runner.RunAction(context.Background(), executor.Action{
@@ -731,8 +736,9 @@ func TestRunnerCarriesTierOverrunIntoSkipSync(t *testing.T) {
 	run := func(t *testing.T, overrunning bool) map[string]any {
 		t.Helper()
 		runner := Runner{
-			Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
-			Clock:  func() time.Time { return time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC) },
+			ValidateNodeRelease: allowTestNodeRelease,
+			Client:              fake.NewClientBuilder().WithScheme(scheme).Build(),
+			Clock:               func() time.Time { return time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC) },
 		}
 		if _, err := runner.RunAction(context.Background(), executor.Action{
 			ExecutionID:     "execution-b",
@@ -777,8 +783,9 @@ func TestRunnerCarriesTierOverrunIntoSkipSync(t *testing.T) {
 			t.Fatalf("AddToScheme returned error: %v", err)
 		}
 		runner := Runner{
-			Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
-			Clock:  func() time.Time { return time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC) },
+			ValidateNodeRelease: allowTestNodeRelease,
+			Client:              fake.NewClientBuilder().WithScheme(scheme).Build(),
+			Clock:               func() time.Time { return time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC) },
 		}
 		outcome, err := runner.RunAction(context.Background(), executor.Action{
 			ExecutionID:     "execution-c",
@@ -968,8 +975,9 @@ func TestRunnerStartsTheHaltClockAfterTheSignalLands(t *testing.T) {
 	t.Run("every released node starts its own clock", func(t *testing.T) {
 		var recorded []record
 		runner := Runner{
-			Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
-			Clock:  func() time.Time { return written },
+			ValidateNodeRelease: allowTestNodeRelease,
+			Client:              fake.NewClientBuilder().WithScheme(scheme).Build(),
+			Clock:               func() time.Time { return written },
 			SignalWritten: func(node, flow, executionID string, at time.Time) {
 				recorded = append(recorded, record{node: node, flow: flow, executionID: executionID, at: at})
 			},
@@ -1010,6 +1018,7 @@ func TestRunnerStartsTheHaltClockAfterTheSignalLands(t *testing.T) {
 	t.Run("a refused write starts no clock", func(t *testing.T) {
 		var recorded []record
 		runner := Runner{
+			ValidateNodeRelease: allowTestNodeRelease,
 			// An empty scheme cannot encode a Secret, so the upsert fails.
 			Client: fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build(),
 			Clock:  func() time.Time { return written },
@@ -1042,8 +1051,9 @@ func TestRunnerStartsTheHaltClockAfterTheSignalLands(t *testing.T) {
 	// records nothing, not a nil dereference on the shutdown path.
 	t.Run("an unset hook is not a crash", func(t *testing.T) {
 		runner := Runner{
-			Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
-			Clock:  func() time.Time { return written },
+			ValidateNodeRelease: allowTestNodeRelease,
+			Client:              fake.NewClientBuilder().WithScheme(scheme).Build(),
+			Clock:               func() time.Time { return written },
 		}
 		if _, err := runner.RunAction(context.Background(), executor.Action{
 			ExecutionID:    "execution-e",
@@ -1105,7 +1115,8 @@ func drainOneNode(t *testing.T, evictionErr error) (executor.ActionOutcome, clie
 		})
 	}
 	kube := build.Build()
-	runner := Runner{Client: kube}
+	runner := Runner{
+		ValidateNodeRelease: allowTestNodeRelease, Client: kube}
 	outcome, err := runner.RunAction(context.Background(), executor.Action{
 		ExecutionID: "e1", ShutdownFlow: "f1", PlanConfigHash: "h1",
 		Group: executor.Group{

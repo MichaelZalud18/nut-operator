@@ -88,7 +88,7 @@ func TestHandoffAuditUsesActualSecretWrites(t *testing.T) {
 					return c.Update(ctx, obj, opts...)
 				},
 			}).Build()
-			var runner executor.ActionRunner = kubeactions.Runner{Client: kube, Clock: func() time.Time { return issuedAt }, SignalWritten: func(string, string, string, time.Time) {
+			var runner executor.ActionRunner = kubeactions.Runner{Client: kube, ValidateNodeRelease: func(context.Context, executor.NodeRelease) error { return nil }, Clock: func() time.Time { return issuedAt }, SignalWritten: func(string, string, string, time.Time) {
 				if tc.cancelAfterFirst {
 					cancel()
 				}
