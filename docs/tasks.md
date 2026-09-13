@@ -290,6 +290,12 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   and required-check semantics. No suite split, fewer checks, or CI rewrite is approved by this task.
   Priority reflects developer feedback/test isolation, not a demonstrated shutdown-safety defect.
 
+### v1 Release Readiness
+
+Owns: public naming, branch/PR protections, package lifecycle, and first-release validation.
+Complete the component safety and validation gates below before tagging v1. Remote settings,
+registry cleanup, and publishing require explicit authorization; this checklist grants none.
+
 - [ ] `REL-1` [Medium] choose and implement a new public project name before the v1 release.
   The product covers topology-aware power orchestration, planning, and execution beyond NUT server
   management; the current name undersells that scope. Agree the name with the maintainer before
@@ -305,24 +311,25 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   build/install/upgrade/promotion paths. Check remote redirects, package access, and protections
   after separately authorized remote changes. Name selection does not authorize publishing a rename.
 
-- Enable branch protection on `main` at release. Deliberately off during build: every CI check
-  exists and passes, and requiring them would only add a merge round-trip to a single-maintainer
-  repository that is still changing shape daily. This is a release gate, not a gap — the checks to
-  require are already there, so turning it on is a repository-settings change and nothing else.
-  Recorded here because this section previously described it as already in place.
+- [ ] `REL-2` [High] enable and verify branch/PR protections before release. Protection was
+  deliberately deferred during development; inspect actual remote settings and current CI results
+  rather than assuming either is ready. Select required checks, review/bypass rules, and force-push
+  and deletion safeguards. Verify required checks report for supported PR paths, including docs-only
+  changes, without leaving merges permanently pending. Coordinate repository naming with `REL-1`.
 
-- Set a retention policy on the four GHCR packages. About 1,780 of ~2,180 versions carry no tag at
-  all as of 2026-08-25 -- superseded digests and attestation layers from 550+ builds -- and nothing
-  prunes them.
-- Delete the one tag on the `nut-operator` package that is neither `main` nor a digest reference,
-  pushed by hand on 2026-07-31. It is the only human-readable tag on a public package that the
-  promote job did not put there.
-- `F-112` run and verify the first `v*.*.*` release through the existing tag-promotion workflow.
+- [ ] `REL-3` [Medium] define and verify GHCR retention for production image packages. Refresh the
+  package inventory; the 2026-08-25 review found extensive untagged accumulation. Preview deletions
+  and protect release/promotion/rollback digests and referenced attestations and multi-platform
+  manifests. Untagged does not automatically mean unused. Verify cleanup against the final names.
+- [ ] `REL-4` [Low] investigate and retire the manually published legacy image tag identified on
+  2026-07-31. Confirm its current identity and consumers before deletion; remove only the approved
+  obsolete reference and preserve shared digests needed by supported tags or installations.
+- [ ] `F-112` [High] run and verify the first `v*.*.*` release through the existing tag-promotion workflow.
   Local upgrade coverage now checks CRD/deployment reapply plus manager replacement over an existing
   resource. True previous-release schema compatibility starts after there is a previous released API
   to install.
 
-#### Hadron VM Test Coverage
+### Hadron VM Test Coverage
 
 Owns: portable Kairos Hadron + k3s test infrastructure, VM-boundary acceptance tests, and their
 GitHub Actions integration in this development repository. Keep this separate from Kind and
@@ -487,11 +494,19 @@ also an early implementation priority, not a finding that custom VM code is inhe
   detail="SignalWrongNode ..."` and `"SignalStale ..."` -- confirming actuation gates were never
   reached and the guest answered SSH again immediately after each, the concrete evidence behind
   VM-3's own "negative cases must leave the guest running" requirement.
+  **Third milestone's real mechanism succeeded 2026-09-13, test itself not yet green**
+  ([run 34774417081](https://github.com/MichaelZalud18/nut-operator/actions/runs/34774417081)):
+  `TestHadronActuatorHaltsOnAcceptedSignal` gave the guest a valid, accepted signal, and its own
+  QEMU process exited **on its own** in ~16s -- hypervisor-confirmed evidence of a genuine
+  actuator-driven halt, discovered without the test ever calling `SafeStop`/`SafeTeardown`. The
+  test still failed on its own wrong assumption that capturing `halt gate=SignalAccepted
+  result=pass` from the pod's streamed log was safe (it wasn't -- the whole guest, API server
+  included, halts faster than that log line reliably survives the trip); fixed by dropping that
+  assertion and keeping only the process-exit check as the hard requirement.
   (`test/hadron/actuator_smoke_test.go`, `hadron-actuator-smoke.yml`). Full rationale, scope
   boundary against the already-closed `F-61`, and evidence table in
   [hadron-vm-3-actuator-2026-09-13.md](contributing/audits/hadron-vm-3-actuator-2026-09-13.md).
-  The accepted-signal path, real `reboot(2)`, hypervisor-confirmed shutdown evidence, and revoked
-  approval remain open.
+  Revoked approval and the full DaemonSet/RBAC remain open.
 - [ ] `VM-4` [Medium] drive a simulated UPS outage through actual NUT telemetry, trigger evaluation,
   planning, execution, draining, signal delivery, and guest power-off. Assert survivor availability,
   current authorization/release evidence (`F-126`/`F-127`), enforced network policy, and audit results;

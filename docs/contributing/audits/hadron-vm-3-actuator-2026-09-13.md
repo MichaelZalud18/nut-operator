@@ -1,7 +1,7 @@
 # Hadron VM-3: real actuator on a real guest
 
-Status: design rationale and first two milestones, 2026-09-13. See `docs/tasks.md`'s `VM-3` entry
-for current status.
+Status: design rationale and three milestones, 2026-09-13. See `docs/tasks.md`'s `VM-3` entry for
+current status.
 
 ## Scope, and what this milestone deliberately does not attempt
 
@@ -67,23 +67,31 @@ a real kernel underneath, once. Reaching that log line is a legitimate, narrower
 | --- | --- | --- |
 | [34768697157](https://github.com/MichaelZalud18/nut-operator/actions/runs/34768697157) | **pass** (171.81s, first attempt) | `halt gate=CapabilityPermitted result=pass detail="CAP_SYS_BOOT is in the permitted set; actuation armed" node=kairos-76ed` -- the real image, imported via `docker save`/`k3s ctr images import` into the guest's own containerd, held CAP_SYS_BOOT through a real kubelet's UID-65532 transition on a real kernel, first try. Two other gate lines fired, neither a failure of what this test asserts: `halt gate=SignalChannel result=fail detail="signal directories cannot be read: /var/lib/power-agent/signals"` (expected -- no signal directory was ever created) and a state-write warning at `/run/actuator/state.json` (expected -- this bare test Pod has no `emptyDir` mounted there, unlike the full rendered manifest; the readiness probe would fail here, which is fine, since nothing in this milestone checks readiness). |
 | [34770625393](https://github.com/MichaelZalud18/nut-operator/actions/runs/34770625393) | **pass** (`TestHadronActuatorArmsWithNoSignal` 191.97s, `TestHadronActuatorRejectsInvalidSignals` 132.70s -- `wrong-node` 21.89s, `stale` 5.09s -- all first attempt) | Real signal delivery via a real Kubernetes Secret, both rejected shapes proven distinct and correctly identified: `halt gate=SignalAccepted result=fail detail="SignalWrongNode at /var/lib/power-agent/signals/kairos-8c33.json" node=kairos-8c33-not-this-one executionID=exec-wrong-node`, and separately `halt gate=SignalAccepted result=fail detail="SignalStale at ..." node=kairos-8c33 executionID=exec-stale`. Neither reached `gateModeAuthorized` or `gateSyscallIssued`; the guest answered SSH again immediately after each. |
+| [34774417081](https://github.com/MichaelZalud18/nut-operator/actions/runs/34774417081) | fail (`TestHadronActuatorHaltsOnAcceptedSignal`, 123.98s), but the actual mechanism worked | The real, high-severity core succeeded on the first attempt: with a valid, accepted signal already mounted, the guest's own QEMU process exited **on its own** in ~16s of polling, discovered without this test ever calling `SafeStop`/`SafeTeardown` -- hypervisor-confirmed evidence of a genuine actuator-driven halt, independent of the guest's own API. The test still failed because its own doc comment asserted an unverified claim: that `halt gate=SignalAccepted result=pass` was "not itself a race" to capture from a streamed pod log. It was -- the captured log came back completely empty, because the whole log pipeline (container stdout -> containerd -> kubelet -> this same guest's own k3s API server) is itself slower than how fast a small idle guest reaches `reboot(2)` once a valid signal is already waiting. Same class of mistake as the `ping6` assumption in `VM-2`'s own history: stated as settled, disproved by the first live run. |
+
+Fixed: dropped the log-capture assertion entirely. The only hard requirement is now the QEMU
+process exiting on its own, discovered by polling its PID and never calling
+`SafeStop`/`SafeTeardown` first; whatever the log stream captures (including nothing) is logged
+for diagnostic value, and `streamActuatorLog` now reports its own retry errors into the same
+channel so a run that never manages to open the stream at all says why instead of coming back
+silently empty. Not yet re-run live.
 
 ## Open, deliberately not attempted here
 
-- The accepted-signal path and real `reboot(2)` with hypervisor-confirmed shutdown evidence -- the
-  actual high-severity part of `VM-3`. `node-agent-operand.md`'s `OD-27` records that the operator
-  has no independent channel to learn what the actuator did; proving this live means watching the
-  guest from outside (the QEMU process exiting on its own via ACPI poweroff, not via
-  `SafeStop`/`SafeTeardown` killing it) and capturing the actuator's own gate/syscall log lines from
-  the guest's serial console (`test/hadron/adapter.go` already pipes it to `stdout`/`stderr`, per
-  `smoke_test.go`'s own comment) before the process disappears, since PEG gives no separate signal
-  for "guest asked to power off" versus "process died."
-- Remaining negative controls: missing required fields, an invalid/future timestamp, and revoked
-  approval. Missing-signal-entirely is already covered by the first milestone (`SignalMissing` is
-  the silent normal case with no signal volume at all); wrong-node and stale are covered by the
-  second (above). Revoked approval is a controller-level concern (`F-126`), not something this
-  actuator-only harness can exercise without also standing up the `ShutdownFlow`/executor path.
-- The full `NodePowerAgent` DaemonSet, RBAC, and the real per-node Secret projection -- these two
+- Remaining negative controls: missing required fields and an invalid/future timestamp. Missing-
+  signal-entirely is already covered by the first milestone (`SignalMissing` is the silent normal
+  case with no signal volume at all); wrong-node and stale are covered by the second.
+- Revoked approval as a negative control -- a controller-level concern (`F-126`), not something
+  this actuator-only harness can exercise without also standing up the `ShutdownFlow`/executor
+  path.
+- Corroborating the accepted-signal halt with the guest's own kernel-level console output
+  (`test/hadron/adapter.go` already pipes it to `stdout`/`stderr`, per `smoke_test.go`'s own
+  comment) -- a real kernel `kernel_power_off()` message would be independent of the K8s log
+  pipeline entirely, unlike the pod-log capture this milestone found too racy to require. Not
+  pursued yet since the process-exit check alone is already load-bearing evidence: nothing else in
+  this single-purpose guest holds `CAP_SYS_BOOT`, and the two prior tests in this file prove the
+  same guest shape does not exit on its own without a valid signal.
+- The full `NodePowerAgent` DaemonSet, RBAC, and the real per-node Secret projection -- these
   milestones deploy a bare Pod with the production environment/security context and a hand-built
   Secret, not the full rendered manifest, to isolate "does the real image run for real" from "is the
   rendered manifest correct," which is already covered by existing envtest/Kind coverage against
