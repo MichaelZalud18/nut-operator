@@ -127,6 +127,19 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   **Testable now:** synthetic shared and separate UPS domains, dependent nodes across domains,
   constrained runtime on a communication device's supply, and unknown/exempt path coverage;
   assert resulting ordering, timing constraints, and diagnostics without physical switches.
+  **Implemented milestone (2026-09-13):** resolved `carries` dependencies now reach the planner;
+  domain scoping retains transitive consumers of affected communication carriers, including
+  consumers on otherwise unaffected UPS domains. Unknown carrier supply conservatively retains
+  consumers and produces `CommunicationPowerDomainUnknown`. Published explanations include
+  edge-source and supplying-domain provenance. Component tests cover transitive/cyclic paths,
+  unknown and unaffected supplies, deterministic identity, and inventory-to-artifact propagation.
+  **Validation:** race-enabled inventory, planner, resolver, shutdownflow, and controller tests
+  passed, including envtest coverage for accepted-but-degraded unknown communication supply;
+  `make lint` reported zero issues.
+  **Still open:** enforce carrier release ordering, incorporate communication-supply runtime
+  into execution budgeting, cover operator/API and NUT service paths end to end, and publish
+  resulting structured ordering/timing constraints. Dependency explanations alone do not
+  complete this requirement or the communication-ordering artifact task.
 
 ---
 

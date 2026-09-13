@@ -26,7 +26,8 @@ import (
 // AttachResolvedInputHash marks planner structural input with the resolver
 // bundle hash so inventory and capability changes participate in plan identity,
 // and carries the resolved capability matches and derived power domains the
-// planner needs to validate trigger definitions (PL-19).
+// planner needs to validate trigger definitions (PL-19), plus communication
+// dependencies used in outage scoping (PL-21).
 func AttachResolvedInputHash(flow planner.StructuralInputs, bundle StructuralBundle) planner.StructuralInputs {
 	flow.ResolvedInputHash = bundle.Hash
 	if flow.ObservedAt == "" {
@@ -35,6 +36,12 @@ func AttachResolvedInputHash(flow planner.StructuralInputs, bundle StructuralBun
 	flow.DeviceCapabilities = plannerDeviceCapabilities(bundle)
 	flow.PowerDomains = plannerPowerDomains(bundle)
 	flow.NodeTiers = plannerNodeTiers(bundle)
+	flow.CommunicationDependencies = nil
+	for _, order := range bundle.Topology.CommunicationOrders {
+		flow.CommunicationDependencies = append(flow.CommunicationDependencies, planner.CommunicationDependency{
+			Dependent: order.From, Carrier: order.To, Source: order.Source,
+		})
+	}
 	return flow
 }
 

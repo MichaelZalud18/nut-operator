@@ -18,6 +18,8 @@ package shutdownflow
 
 import (
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -28,6 +30,45 @@ import (
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
+
+func TestCommunicationDependencyFromInventoryToPublishedPlan(t *testing.T) {
+	topology, diagnostics, err := inventory.Compile(inventory.Snapshot{
+		Entities: []inventory.Entity{
+			{ID: "ups-network", Kind: inventory.EntityKindUPSDevice, PowerDomains: []string{"network"}},
+			{ID: "ups-compute", Kind: inventory.EntityKindUPSDevice, PowerDomains: []string{"compute"}},
+			{ID: "switch", Kind: inventory.EntityKindPowerInfrastructure},
+			{ID: "node-a1", Kind: inventory.EntityKindNode},
+		},
+		Edges: []inventory.Edge{
+			{From: "ups-network", To: "switch", Relation: inventory.EdgeRelationFeeds, Input: "power"},
+			{From: "ups-compute", To: "node-a1", Relation: inventory.EdgeRelationFeeds, Input: "power"},
+			{From: "switch", To: "node-a1", Relation: inventory.EdgeRelationCarries, SourceID: "inventory/network-path"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("inventory: %v: %+v", err, diagnostics)
+	}
+	flow := nodeExpansionFlow()
+	flow.Spec.Groups = flow.Spec.Groups[:1]
+	flow.Spec.Triggers = []powerv1alpha1.ShutdownTrigger{{Type: powerv1alpha1.ShutdownTriggerOnBattery, PowerDomains: []string{"network"}}}
+	bundle := resolver.StructuralBundle{Topology: topology, ClusterNodes: []resolver.ClusterNode{{Name: "node-a1", Labels: map[string]string{"rack": "a"}}}}
+	compiled := CompileFlow(flow, bundle, powerv1alpha1.PowerShutdownTierPolicySpec{})
+	if slices.ContainsFunc(compiled.Diagnostics, func(d planner.Diagnostic) bool { return d.Severity == planner.DiagnosticError }) {
+		t.Fatalf("compile: %+v", compiled.Diagnostics)
+	}
+	if len(compiled.Steps) != 1 {
+		t.Fatalf("healthy compute supply must not prune network-dependent work: %+v", compiled.Steps)
+	}
+	artifact := compiled.Artifact
+	if artifact == nil {
+		t.Fatal("missing published artifact")
+	}
+	if !slices.ContainsFunc(artifact.Explanations, func(e powerv1alpha1.PlannerExplanationStatus) bool {
+		return e.Reason == "CommunicationPowerDependency" && e.Subject == "node-a1" && strings.Contains(e.Message, "inventory/network-path") && strings.Contains(e.Message, "network")
+	}) {
+		t.Fatalf("dependency provenance lost in publication: %+v", artifact.Explanations)
+	}
+}
 
 func TestPlannerInputsResolveShutdownTierFromGroupAndTargetLabel(t *testing.T) {
 	explicitTier := int32(2)

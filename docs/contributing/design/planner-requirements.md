@@ -186,6 +186,15 @@ when ordering and budgeting dependent shutdown work. Publish the derived constra
 provenance, including unresolved coverage, in the planner artifacts. Switch actuation and PDU
 outlet control remain separate scope decisions, not prerequisites for this requirement.
 
+Domain scoping follows `carries` transitively from entities in affected power domains. A
+consumer can remain in scope even when its own supply is unaffected. Multiple supplying
+domains do not establish failover or redundant-path guarantees: membership in any affected
+domain is sufficient for conservative retention. A carrier without a resolved supplying
+domain also retains its consumers and produces `CommunicationPowerDomainUnknown`. These
+dependencies participate in structural identity, and `CommunicationPowerDependency`
+explanations identify the authored edge source and supplying domains. This scoping rule does
+not itself establish a runtime deadline or enforce carrier-release ordering.
+
 **PL-20a** · Report and block tier inversion. A group whose tier is lower than the tier of a node it
 runs on is scheduled to keep working after that node powers off. Compilation reports this as
 `ShutdownTierInversion`, naming the group, the node, and both tiers, and withholds the node from

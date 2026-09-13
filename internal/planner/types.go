@@ -46,6 +46,8 @@ type StructuralInputs struct {
 	// PowerDomains is the resolver's derived domain membership, used to decide
 	// which devices a domain-scoped trigger is validated against.
 	PowerDomains []PowerDomainMembership `json:"powerDomains,omitempty"`
+	// CommunicationDependencies are authored carries edges, oriented dependent -> carrier.
+	CommunicationDependencies []CommunicationDependency `json:"communicationDependencies,omitempty"`
 	// GroupNodes is which cluster nodes each group touches, resolved before the
 	// planner runs because expanding a selector requires reading the cluster.
 	// Without it the planner cannot name a node, and PL-20 clearance edges
@@ -67,6 +69,12 @@ type StructuralInputs struct {
 type NodeTier struct {
 	Name string `json:"name"`
 	Tier int32  `json:"tier"`
+}
+
+type CommunicationDependency struct {
+	Dependent string `json:"dependent"`
+	Carrier   string `json:"carrier"`
+	Source    string `json:"source,omitempty"`
 }
 
 // GroupNodeMembership is one group's relationship to real cluster nodes.

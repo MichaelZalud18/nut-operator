@@ -65,6 +65,7 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 	}
 	scoped, scopeDiagnostics := scopeStructuralInputs(normalized)
 	diagnostics := validateStructuralInputs(scoped)
+	diagnostics = append(diagnostics, communicationDiagnostics(scoped)...)
 	diagnostics = append(diagnostics, scopeDiagnostics...)
 	if hasError(diagnostics) {
 		return Plan{}, diagnostics, ErrRejected
@@ -117,6 +118,7 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 	plan.PowerDomains = powerDomainArtifacts(scoped.PowerDomains)
 	plan.BlockedNodes = blockedNodesFromInversions(detectTierInversions(scoped))
 	plan.Explanations = graphExplanations(plan.Graph, len(plan.Waves), len(plan.StartupWaves))
+	plan.Explanations = append(plan.Explanations, communicationExplanations(scoped)...)
 	plan.Diagrams = renderDiagramExports(plan.Graph)
 	plan.Feasibility = advisoryFeasibility(telemetry, scoped.DeviceCapabilities)
 	plan.StructuralHash, err = stableHash(scoped)
@@ -512,11 +514,12 @@ func normalizeStructuralInputs(input StructuralInputs) (StructuralInputs, error)
 		Groups:            append([]Group(nil), input.Groups...),
 		Steps:             append([]Step(nil), input.Steps...),
 
-		DeviceCapabilities: append([]DeviceCapability(nil), input.DeviceCapabilities...),
-		PowerDomains:       append([]PowerDomainMembership(nil), input.PowerDomains...),
-		GroupNodes:         append([]GroupNodeMembership(nil), input.GroupNodes...),
-		NodeTiers:          append([]NodeTier(nil), input.NodeTiers...),
-		HookDigests:        append([]HookDigest(nil), input.HookDigests...),
+		DeviceCapabilities:        append([]DeviceCapability(nil), input.DeviceCapabilities...),
+		PowerDomains:              append([]PowerDomainMembership(nil), input.PowerDomains...),
+		CommunicationDependencies: normalizeCommunicationDependencies(input.CommunicationDependencies),
+		GroupNodes:                append([]GroupNodeMembership(nil), input.GroupNodes...),
+		NodeTiers:                 append([]NodeTier(nil), input.NodeTiers...),
+		HookDigests:               append([]HookDigest(nil), input.HookDigests...),
 	}
 	sort.SliceStable(normalized.NodeTiers, func(left, right int) bool {
 		return normalized.NodeTiers[left].Name < normalized.NodeTiers[right].Name

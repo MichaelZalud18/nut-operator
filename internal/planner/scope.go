@@ -38,6 +38,11 @@ func scopeStructuralInputs(input StructuralInputs) (StructuralInputs, []Diagnost
 	}
 
 	affectedNodes := nodesForPowerDomains(input.PowerDomains, affectedDomains)
+	// A healthy node can still lose its communication path with another UPS.
+	// Follow carries edges from affected carriers, including transit-only devices.
+	for entity := range communicationDependents(input, affectedDomains) {
+		affectedNodes[entity] = struct{}{}
+	}
 	if len(affectedNodes) == 0 {
 		return input, nil
 	}

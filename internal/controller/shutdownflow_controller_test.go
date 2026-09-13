@@ -60,6 +60,7 @@ const (
 	shutdownFlowTestNodeInventoryName    = "test-resolver-node-inventory"
 	shutdownFlowTestNodeName             = "test-resolver-node"
 	shutdownFlowTestFeedsEdgeName        = "test-resolver-ups-feeds-node"
+	shutdownFlowTestSwitchFeedsEdgeName  = "test-resolver-ups-feeds-switch"
 	shutdownFlowTestCarriesEdgeName      = "test-resolver-switch-carries-node"
 	shutdownFlowTestDriverProfileName    = "test-resolver-snmp-profile"
 	shutdownFlowTestUniversalProfileName = "test-resolver-universal-profile"
@@ -110,6 +111,20 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			cleanupShutdownFlowResolverFixture(ctx)
 		})
 
+		It("should accept but degrade inventory with unknown communication supply", func() {
+			Expect(k8sClient.Delete(ctx, &powerv1alpha1.PowerInventoryEdge{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestSwitchFeedsEdgeName}})).To(Succeed())
+			reconciler := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			flow := &powerv1alpha1.ShutdownFlow{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
+			Expect(meta.IsStatusConditionTrue(flow.Status.Conditions, powerv1alpha1.ConditionAccepted)).To(BeTrue())
+			degraded := meta.FindStatusCondition(flow.Status.Conditions, powerv1alpha1.ConditionDegraded)
+			Expect(degraded).NotTo(BeNil())
+			Expect(degraded.Status).To(Equal(metav1.ConditionTrue))
+			Expect(degraded.Message).To(ContainSubstring("no resolved supplying power domain"))
+		})
+
 		It("should successfully reconcile the resource against declarative inventory", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &ShutdownFlowReconciler{
@@ -157,7 +172,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.ResolvedInputHash).NotTo(BeEmpty())
 			Expect(resource.Status.TopologyHash).NotTo(BeEmpty())
 			Expect(resource.Status.InventoryEntityCount).To(Equal(int32(3)))
-			Expect(resource.Status.InventoryEdgeCount).To(Equal(int32(2)))
+			Expect(resource.Status.InventoryEdgeCount).To(Equal(int32(3)))
 			Expect(resource.Status.CapabilityMatchCount).To(Equal(int32(1)))
 		})
 
@@ -1773,6 +1788,15 @@ func createShutdownFlowResolverFixture(ctx context.Context) error {
 			},
 		},
 		&powerv1alpha1.PowerInventoryEdge{
+			ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestSwitchFeedsEdgeName},
+			Spec: powerv1alpha1.PowerInventoryEdgeSpec{
+				From:     powerv1alpha1.PowerInventoryEntityReference{Kind: powerv1alpha1.PowerInventoryEntityUPSDevice, Name: shutdownFlowTestUPSName},
+				To:       powerv1alpha1.PowerInventoryEntityReference{Kind: powerv1alpha1.PowerInventoryEntityPowerInfrastructure, Name: shutdownFlowTestSwitchName},
+				Relation: powerv1alpha1.PowerInventoryEdgeFeeds,
+				Input:    "power",
+			},
+		},
+		&powerv1alpha1.PowerInventoryEdge{
 			ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestCarriesEdgeName},
 			Spec: powerv1alpha1.PowerInventoryEdgeSpec{
 				From: powerv1alpha1.PowerInventoryEntityReference{
@@ -1824,6 +1848,7 @@ func cleanupShutdownFlowResolverFixture(ctx context.Context) {
 		&powerv1alpha1.ShutdownFlow{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestResourceName}},
 		&powerv1alpha1.PowerInventoryEdge{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestInvalidEdgeName}},
 		&powerv1alpha1.PowerInventoryEdge{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestFeedsEdgeName}},
+		&powerv1alpha1.PowerInventoryEdge{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestSwitchFeedsEdgeName}},
 		&powerv1alpha1.PowerInventoryEdge{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestCarriesEdgeName}},
 		&powerv1alpha1.UPSCapabilityProfile{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestDriverProfileName}},
 		&powerv1alpha1.UPSCapabilityProfile{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestUniversalProfileName}},
