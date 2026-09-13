@@ -564,8 +564,8 @@ also an early implementation priority, not a finding that custom VM code is inhe
   a shutdown signal into a projected Secret to prove the actuator accepts it, but nothing there
   creates a `ShutdownFlow`, waits for trigger evaluation, and asserts execution/drain/poweroff --
   this is genuinely new ground, not a Hadron variant of an existing Kind test.
-  **First milestone: real operator deployment, not yet run live.**
-  `TestHadronOperatorManagerDeploys` (`test/hadron/operator_smoke_test.go`,
+  **First milestone passed 2026-09-13** ([run 34777697857](https://github.com/MichaelZalud18/nut-operator/actions/runs/34777697857),
+  262.16s, first attempt): `TestHadronOperatorManagerDeploys` (`test/hadron/operator_smoke_test.go`,
   `hadron-operator-smoke.yml`) gets the real CRDs/RBAC/manager Deployment running inside a Hadron
   guest's k3s, before wiring any CRs or the outage flow itself -- via `config/byo-cert` and
   `hack/webhook-cert.sh` (this repo's own no-cert-manager deploy path, chosen deliberately: "this

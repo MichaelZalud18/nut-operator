@@ -81,7 +81,7 @@ this test simply exercises instead of the cert-manager one.
 
 | Run | Result | Finding |
 | --- | --- | --- |
-| _(not yet run live)_ | | |
+| [34777697857](https://github.com/MichaelZalud18/nut-operator/actions/runs/34777697857) | **pass** (262.16s, first attempt) | The real CRDs, RBAC, and controller-manager Deployment all deployed correctly on the first try: `make install` (~18s), `make deploy-byo-cert` including `hack/webhook-cert.sh`'s CA/serving-certificate generation and `caBundle` patching (~8.5s), then the real `nut-operator-controller-manager` Deployment reached `ReadyReplicas >= 1` within ~15s more -- a real image import, real webhook admission wiring, and a real controller-manager binary starting cleanly on a real guest kernel, none of it exercised in any Hadron test before this. |
 
 ## Open, deliberately not attempted here
 
