@@ -195,9 +195,8 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
   runs the embedded production bytes without source-text substitution. Controller rendering remains
   an adapter using the same script, preserving compatibility with current NUT images. The package
   README records upstream `upsdrvctl` versus systemd/SMF service-management boundaries and the
-  existing stable-sidecar contract. **Still open:** evaluate generic supervisor replacements and
-  validate the final lifecycle design against actual packaged NUT binaries, including termination,
-  partial-start/reload failures and readiness. Extraction alone does not complete this redesign.
+  existing stable-sidecar contract. The subsequent design review and actual-NUT tests below cover
+  the alternatives and packaged behavior; bounded uncooperative-worker cleanup remains open.
   **Validated:** standalone race-enabled process tests and controller rendering regressions;
   full API/internal/command race sweep, shell syntax, and PostgreSQL-tagged repository lint passed.
   **Actual-NUT slice (2026-09-13):** added `docker-smoke-nut-supervisor`, using the exact production
@@ -232,6 +231,16 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
   NUT packaging, supervision, probes, or fixtures change. The 2026-08-24 isolated fixture did not
   reproduce the failure; that leaves the reproducer incomplete, not dependent on physical UPS
   hardware. Real USB/SNMP device behavior remains a separate hardware-compatibility boundary.
+  **Stress harness (2026-09-13):** `make docker-stress-nut-readiness` runs actual `dummy-ups`,
+  `upsd`, and authenticated secondary `upsmon` in a private non-root container, comparing fresh
+  driver probes with four concurrent server reads per sample. It reports probe misses, server
+  failures, and disagreements separately; misses and the overall timeout fail the run. The sample
+  count is bounded, and the owning harness removes the container on exit. This opt-in component
+  test is separate from ordinary image smoke and should accompany NUT/probe/supervision changes.
+  **Validated:** final 60-sample local run with authenticated upsmon had zero probe misses, server
+  failures, or disagreements, and passed lifecycle cleanup; a three-sample run also passed. Both
+  used the cached ARM64 operand image. The original intermittent root cause remains open. One
+  image architecture and dummy data do not establish Kind or hardware compatibility.
 
 ---
 

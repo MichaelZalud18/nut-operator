@@ -94,6 +94,10 @@ responsive good
 test "$(cat "$NUT_SUPERVISOR_STATE_DIR/good.pid")" = "$good_worker"
 write_config good
 
+if [ "${NUT_READINESS_SAMPLES:-0}" -gt 0 ]; then
+  sh /probe-stress.sh
+fi
+
 for crash in 1 2; do
   old_pid="$(cat "$(pid_file good)")"
   kill -KILL "$old_pid"

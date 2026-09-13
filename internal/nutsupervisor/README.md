@@ -83,3 +83,14 @@ the run and removes its owned container on failure or cancellation.
 The existing image workflow runs this check immediately after building its native NUT server
 image; `docker-smoke-nut-server` includes it too. This complements, rather than replaces, the
 process-fixture tests for deterministic failure injection and Kind's actual sidecar wiring.
+
+`make docker-stress-nut-readiness NUT_SERVER_IMG=<image>` adds 60 readiness samples to the same
+isolated lifecycle fixture. Each sample compares a fresh `upsdrvctl status` response with four
+concurrent `upsc` reads while a real secondary `upsmon` process runs. Output separates driver-probe
+misses, server-read failures, and disagreements (the server responds while the driver probe fails).
+The harness fails on any miss and retains sample counts in its output, rather than averaging
+failures away. The overall 180-second deadline also applies to the stress run.
+
+Run this opt-in target when investigating NUT binary, probe, or supervision changes. It is not
+part of the ordinary image smoke job. A clean run is a bounded observation with dummy data, not
+proof that the intermittent startup-readiness issue is absent from other images or Kind sidecars.

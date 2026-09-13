@@ -8,6 +8,11 @@ fi
 
 container_tool="$1"
 image="$2"
+samples="${NUT_READINESS_SAMPLES:-0}"
+if [[ ! "$samples" =~ ^(0|[1-9][0-9]?)$ ]] || (( samples > 60 )); then
+  echo 'NUT_READINESS_SAMPLES must be an integer from 0 to 60' >&2
+  exit 64
+fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 identity="$(mktemp -d)"
 container="nut-supervisor-${identity##*/}"
@@ -23,8 +28,10 @@ trap 'exit 143' TERM
 timeout --signal=TERM --kill-after=5s 180s "$container_tool" run --rm --init \
   --name "$container" --network none --read-only --user 65532:65532 \
   --cap-drop ALL --security-opt no-new-privileges \
+  --env "NUT_READINESS_SAMPLES=$samples" \
   --tmpfs /tmp:rw,nosuid,nodev,uid=65532,gid=65532,mode=0700 \
   --tmpfs /run/nut:rw,nosuid,nodev,uid=65532,gid=65532,mode=0700 \
   --mount "type=bind,src=$root/internal/nutsupervisor/supervisor.sh,dst=/supervisor.sh,readonly" \
   --mount "type=bind,src=$root/hack/nut-supervisor-smoke-container.sh,dst=/smoke.sh,readonly" \
+  --mount "type=bind,src=$root/hack/nut-readiness-stress-container.sh,dst=/probe-stress.sh,readonly" \
   --entrypoint /bin/sh "$image" /smoke.sh
