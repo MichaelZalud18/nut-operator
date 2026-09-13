@@ -207,9 +207,17 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
   unchanged worker and driver PIDs, two forced driver crashes and recovery, and termination with
   no remaining NUT workers. Local execution passed against a cached operand image; the existing
   image job now runs it against its freshly built native image. The harness has bounded runtime
-  and owned-container cleanup. **Remaining:** generic-supervisor design decision, actual-NUT
-  malformed-config injection, and final lifecycle review; this slice does not
+  and owned-container cleanup. **Remaining:** final lifecycle review, including bounded cleanup
+  when a worker ignores termination; this slice does not
   establish the separate `F-97` root cause or replace Kind sidecar integration evidence.
+  **Malformed-config fix and design review (2026-09-13):** actual NUT interpreted an unterminated
+  section as an empty device set, causing the supervisor to reload away and stop a healthy driver.
+  The new regression failed before the fix and passed afterward: enumeration is validated before
+  server reload, and only the renderer's zero-byte file is accepted as intentional empty input.
+  Supervisor and controller race tests passed. The package README compares upstream service
+  management, s6, runit, and per-device containers; retain upstream named workers and the isolated
+  configuration adapter for v1. The remaining termination bound is Medium lifecycle hardening,
+  not evidence that normal termination or the separate readiness root cause is solved by this fix.
 
 - `F-97` [High] find out why a driver `upsd` is still talking to fails a fresh `upsdrvctl status`
   connection, and only in the minutes after a pod start. The recovery half is done and measured in

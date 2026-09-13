@@ -46,7 +46,9 @@ configuredDrivers() {
     printf '%s\n' "$output"
     return 0
   fi
-  if grep -q "no UPS definitions found" "$list_error"; then
+  # The renderer emits a zero-byte file for zero devices. NUT also uses this
+  # diagnostic for malformed section headers, which must not remove live workers.
+  if [ -f "$config_dir/ups.conf" ] && [ ! -s "$config_dir/ups.conf" ] && grep -q "no UPS definitions found" "$list_error"; then
     return 0
   fi
   echo "driver-supervisor: cannot list drivers from $config_dir/ups.conf; keeping existing workers" >&2
@@ -177,6 +179,8 @@ while true; do
   server_reload_ok=true
   current_server_digest="$(configDigest "$config_dir/ups.conf" "$config_dir/upsd.users")"
   if [ "$current_server_digest" != "$last_server_digest" ]; then
+    # Validate enumeration before upsd can discard its last working device set.
+    configuredDrivers >/dev/null || continue
     echo "driver-supervisor: reloadable server configuration changed, reloading upsd"
     if upsd -c reload; then
       last_server_digest="$current_server_digest"

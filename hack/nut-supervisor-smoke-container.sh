@@ -85,6 +85,15 @@ await 'removed driver disappears from upsd and supervisor' removed
 same_good_pid
 test "$(cat "$NUT_SUPERVISOR_STATE_DIR/good.pid")" = "$good_worker"
 
+# NUT reports a malformed section as "no UPS definitions", just like an empty file.
+printf '[unterminated\n' > "$NUT_CONFPATH/ups.conf.next"
+mv "$NUT_CONFPATH/ups.conf.next" "$NUT_CONFPATH/ups.conf"
+await 'malformed configuration is refused' grep -q 'keeping existing workers' /tmp/supervisor.log
+same_good_pid
+responsive good
+test "$(cat "$NUT_SUPERVISOR_STATE_DIR/good.pid")" = "$good_worker"
+write_config good
+
 for crash in 1 2; do
   old_pid="$(cat "$(pid_file good)")"
   kill -KILL "$old_pid"
