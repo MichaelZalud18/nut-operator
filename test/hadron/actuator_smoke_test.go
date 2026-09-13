@@ -21,6 +21,7 @@ package hadron
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,39 +36,27 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
-// TestHadronActuatorArmsWithNoSignal is VM-3's first milestone: get the real, shipped
-// node-actuator image -- built from this checkout's own images/node-actuator/Dockerfile, not a
-// stand-in binary -- running inside a Hadron guest's real k3s/containerd/kubelet stack, and prove
-// its one load-bearing precondition holds there: CAP_SYS_BOOT survives to the point the actuator
-// checks for it (F-61's own gate, "halt gate=CapabilityPermitted result=pass").
-//
-// This deliberately does not attempt actuation yet. No signal is ever written, so the actuator's
-// own watch loop can only ever observe SignalMissing -- the normal, silent, non-crashing case
-// (cmd/node-actuator/main.go's own comment: "SignalMissing is the normal case on every tick and is
-// deliberately not logged"). Proving that alone, before wiring any real ShutdownFlow-driven signal,
-// isolates exactly one new mechanism (the actuator running for real, under Kubernetes' own kubelet
-// and Pod Security Admission, with the exact security context production renders) from everything
-// still to come: real signal delivery, real reboot(2), and hypervisor-confirmed evidence that the
-// guest powered itself off rather than being killed by the test harness (VM-3's own text, and
-// node-agent-operand.md's OD-27 -- the operator has no independent channel to learn what the
-// actuator did, so proving it here means watching the guest from outside, not asking it).
-//
-// F-61 (the capability surviving the switch to UID 65532) is already closed and verified via Kind
-// -- a real kubelet and containerd, just not a real kernel underneath them. This test exercises a
-// different delivery path (a local containerd image import into k3s's own embedded containerd,
-// not a registry pull) against a real VM kernel, which is a legitimate, narrower thing to confirm
-// once, not a re-litigation of F-61's own finding.
-func TestHadronActuatorArmsWithNoSignal(t *testing.T) {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	if deadline, ok := t.Deadline(); ok {
-		var deadlineCancel context.CancelFunc
-		ctx, deadlineCancel = context.WithDeadline(ctx, deadline.Add(-time.Minute))
-		defer deadlineCancel()
-	}
+// actuatorGuest is one Hadron guest, booted to a Ready k3s node, with the real node-actuator image
+// already imported into its own containerd -- the shared precondition for every actuator smoke
+// test below, so each test's own body is only the part that differs: what signal (if any) reaches
+// the actuator, and what that must do to the guest.
+type actuatorGuest struct {
+	creds     Credentials
+	clientset *kubernetes.Clientset
+	nodeName  string
+	imageRef  string
+}
 
+// bootActuatorReadyGuest boots one guest via the same install path TestHadronSingleNodeBoot
+// already proved, builds the real production actuator image, and imports it into that guest's own
+// containerd -- everything every actuator test needs before it can differ on the one thing it's
+// actually testing.
+func bootActuatorReadyGuest(ctx context.Context, t *testing.T) actuatorGuest {
+	t.Helper()
 	imageRef, tarPath := buildActuatorImageTarball(ctx, t)
 
 	m, creds, err := NewSafeMachineContext(ctx, Config{
@@ -151,20 +140,39 @@ func TestHadronActuatorArmsWithNoSignal(t *testing.T) {
 		t.Fatalf("importing actuator image into guest containerd: %v\n%s", err, out)
 	}
 
-	// PowerOff/Actuate is production's real policy/mode combination -- Simulate or DryRun would
-	// never reach the CAP_SYS_BOOT check this test exists to exercise. POWER_SIGNAL_PATHS is left
-	// unset deliberately, so the actuator falls back to its own derived per-node default
-	// (main.go's defaultSignalPath) exactly as production does, rather than this test inventing a
-	// path of its own -- and that default path is never created here, so it never resolves to
-	// anything but SignalMissing.
+	return actuatorGuest{creds: creds, clientset: clientset, nodeName: nodeName, imageRef: imageRef}
+}
+
+// actuatorPodSpec is production's real PowerOff/Actuate security context and environment shape
+// (internal/controller/nodepoweragent_render.go's actuatorContainerSecurityContext, minus the
+// full DaemonSet/RBAC this milestone deliberately does not build yet -- see
+// docs/contributing/audits/hadron-vm-3-actuator-2026-09-13.md for why a bare Pod is enough here).
+func actuatorPodSpec(name, imageRef, nodeName string, signalSecretName string) *corev1.Pod {
 	falseVal := false
 	trueVal := true
 	nonRootUID := int64(65532)
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "actuator-arms-smoke", Namespace: "default"},
+	volumes := []corev1.Volume{{
+		Name: "power-agent-actuator-state",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}}
+	mounts := []corev1.VolumeMount{{Name: "power-agent-actuator-state", MountPath: "/run/actuator"}}
+	if signalSecretName != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "power-agent-signals",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{SecretName: signalSecretName},
+			},
+		})
+		mounts = append(mounts, corev1.VolumeMount{Name: "power-agent-signals", MountPath: "/var/lib/power-agent/signals", ReadOnly: true})
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 		Spec: corev1.PodSpec{
 			HostPID:       true,
 			RestartPolicy: corev1.RestartPolicyNever,
+			Volumes:       volumes,
 			Containers: []corev1.Container{{
 				Name:            "actuator",
 				Image:           imageRef,
@@ -184,51 +192,211 @@ func TestHadronActuatorArmsWithNoSignal(t *testing.T) {
 						Add:  []corev1.Capability{"SYS_BOOT"},
 					},
 				},
+				VolumeMounts: mounts,
 			}},
 		},
 	}
-	if _, err := clientset.CoreV1().Pods("default").Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-		t.Fatalf("creating actuator pod: %v", err)
-	}
-	t.Cleanup(func() {
-		delCtx, delCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer delCancel()
-		if err := clientset.CoreV1().Pods("default").Delete(delCtx, pod.Name, metav1.DeleteOptions{}); err != nil {
-			t.Logf("deleting actuator pod during cleanup: %v", err)
-		}
-	})
+}
 
-	t.Log("waiting for the actuator pod to report armed, with no signal ever written")
+// waitForActuatorLog polls the pod's own log for want, failing the test if the pod ever leaves
+// Running/Pending (a crash is never the expected outcome of any scenario below, including the
+// rejected-signal ones -- a rejected signal must stop at its own gate, not crash the container).
+func waitForActuatorLog(ctx context.Context, t *testing.T, clientset *kubernetes.Clientset, podName, what, want string) string {
+	t.Helper()
 	var log string
-	waitForWithDiagnostics(t, ctx, 2*time.Minute, "actuator armed log line", func(ctx context.Context) error {
-		current, err := clientset.CoreV1().Pods("default").Get(ctx, pod.Name, metav1.GetOptions{})
+	waitForWithDiagnostics(t, ctx, 2*time.Minute, what, func(ctx context.Context) error {
+		current, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
 		if current.Status.Phase != corev1.PodRunning && current.Status.Phase != corev1.PodPending {
 			return fmt.Errorf("pod left Running/Pending unexpectedly: phase=%s", current.Status.Phase)
 		}
-		req := clientset.CoreV1().Pods("default").GetLogs(pod.Name, &corev1.PodLogOptions{})
-		raw, err := req.DoRaw(ctx)
+		raw, err := clientset.CoreV1().Pods("default").GetLogs(podName, &corev1.PodLogOptions{}).DoRaw(ctx)
 		if err != nil {
 			return err
 		}
 		log = string(raw)
-		if !strings.Contains(log, "halt gate=CapabilityPermitted result=pass") {
-			return fmt.Errorf("no armed gate line yet:\n%s", log)
+		if !strings.Contains(log, want) {
+			return fmt.Errorf("no %q yet:\n%s", want, log)
 		}
 		return nil
 	}, func(ctx context.Context) {
-		current, err := clientset.CoreV1().Pods("default").Get(ctx, pod.Name, metav1.GetOptions{})
+		current, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
 			t.Logf("diagnostic pod fetch failed: %v", err)
 			return
 		}
 		t.Logf("diagnostic pod status: phase=%s\n%+v", current.Status.Phase, current.Status)
 	})
+	return log
+}
+
+// TestHadronActuatorArmsWithNoSignal is VM-3's first milestone: get the real, shipped
+// node-actuator image -- built from this checkout's own images/node-actuator/Dockerfile, not a
+// stand-in binary -- running inside a Hadron guest's real k3s/containerd/kubelet stack, and prove
+// its one load-bearing precondition holds there: CAP_SYS_BOOT survives to the point the actuator
+// checks for it (F-61's own gate, "halt gate=CapabilityPermitted result=pass").
+//
+// This deliberately does not attempt actuation yet. No signal is ever written, so the actuator's
+// own watch loop can only ever observe SignalMissing -- the normal, silent, non-crashing case
+// (cmd/node-actuator/main.go's own comment: "SignalMissing is the normal case on every tick and is
+// deliberately not logged"). Proving that alone, before wiring any real ShutdownFlow-driven signal,
+// isolates exactly one new mechanism (the actuator running for real, under Kubernetes' own kubelet
+// and Pod Security Admission, with the exact security context production renders) from everything
+// still to come: real signal delivery, real reboot(2), and hypervisor-confirmed evidence that the
+// guest powered itself off rather than being killed by the test harness (VM-3's own text, and
+// node-agent-operand.md's OD-27 -- the operator has no independent channel to learn what the
+// actuator did, so proving it here means watching the guest from outside, not asking it).
+//
+// F-61 (the capability surviving the switch to UID 65532) is already closed and verified via Kind
+// -- a real kubelet and containerd, just not a real kernel underneath them. This test exercises a
+// different delivery path (a local containerd image import into k3s's own embedded containerd,
+// not a registry pull) against a real VM kernel, which is a legitimate, narrower thing to confirm
+// once, not a re-litigation of F-61's own finding.
+func TestHadronActuatorArmsWithNoSignal(t *testing.T) {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	if deadline, ok := t.Deadline(); ok {
+		var deadlineCancel context.CancelFunc
+		ctx, deadlineCancel = context.WithDeadline(ctx, deadline.Add(-time.Minute))
+		defer deadlineCancel()
+	}
+
+	guest := bootActuatorReadyGuest(ctx, t)
+
+	// POWER_SIGNAL_PATHS is left unset deliberately, so the actuator falls back to its own derived
+	// per-node default (main.go's defaultSignalPath) exactly as production does, rather than this
+	// test inventing a path of its own -- and no signal volume is mounted at all, so that default
+	// path never resolves to anything but SignalMissing.
+	pod := actuatorPodSpec("actuator-arms-smoke", guest.imageRef, guest.nodeName, "")
+	if _, err := guest.clientset.CoreV1().Pods("default").Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("creating actuator pod: %v", err)
+	}
+	t.Cleanup(func() {
+		delCtx, delCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer delCancel()
+		if err := guest.clientset.CoreV1().Pods("default").Delete(delCtx, pod.Name, metav1.DeleteOptions{}); err != nil {
+			t.Logf("deleting actuator pod during cleanup: %v", err)
+		}
+	})
+
+	t.Log("waiting for the actuator pod to report armed, with no signal ever written")
+	log := waitForActuatorLog(ctx, t, guest.clientset, pod.Name, "actuator armed log line", "halt gate=CapabilityPermitted result=pass")
 	t.Logf("actuator log:\n%s", log)
 	if strings.Contains(log, "refusing to arm PowerOff actuation") {
 		t.Fatalf("actuator refused to arm -- CAP_SYS_BOOT did not survive in this environment:\n%s", log)
+	}
+}
+
+// TestHadronActuatorRejectsInvalidSignals is VM-3's second milestone: real signal delivery,
+// scoped to the negative cases VM-3's own text names explicitly -- "negative cases must leave the
+// guest running" -- before ever attempting the positive one, which is the only path that can
+// actually halt the guest.
+//
+// Each case below is rejected by internal/nodeagent.InspectSignal before cmd/node-actuator/main.go
+// ever calls its actuatorFunc (powerOffActuator, the only thing that can call reboot(2)) --
+// confirmed by reading the gate order, not assumed: watchSignals checks gateSignalAccepted and
+// gateFlowBinding first, and only an accepted, correctly-bound signal ever reaches
+// gateModeAuthorized inside powerOffActuator itself. So proving the guest survives each of these
+// is a direct, load-bearing consequence of that gate ordering holding on a real kernel, not a
+// coincidence of nothing having gone wrong yet.
+func TestHadronActuatorRejectsInvalidSignals(t *testing.T) {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	if deadline, ok := t.Deadline(); ok {
+		var deadlineCancel context.CancelFunc
+		ctx, deadlineCancel = context.WithDeadline(ctx, deadline.Add(-time.Minute))
+		defer deadlineCancel()
+	}
+
+	guest := bootActuatorReadyGuest(ctx, t)
+
+	cases := []struct {
+		name       string
+		wantReason string
+		signal     func(nodeName string) nodeagent.ShutdownSignal
+	}{
+		{
+			name:       "wrong-node",
+			wantReason: "SignalWrongNode",
+			signal: func(nodeName string) nodeagent.ShutdownSignal {
+				return nodeagent.ShutdownSignal{
+					ExecutionID:    "exec-wrong-node",
+					NodeName:       nodeName + "-not-this-one",
+					PlanConfigHash: "test-hash",
+					ShutdownFlow:   "test-flow",
+					Timestamp:      time.Now().UTC().Format(time.RFC3339Nano),
+				}
+			},
+		},
+		{
+			name:       "stale",
+			wantReason: "SignalStale",
+			signal: func(nodeName string) nodeagent.ShutdownSignal {
+				return nodeagent.ShutdownSignal{
+					ExecutionID:    "exec-stale",
+					NodeName:       nodeName,
+					PlanConfigHash: "test-hash",
+					ShutdownFlow:   "test-flow",
+					// Default POWER_SIGNAL_TTL is 2m (main.go's loadActuatorConfig); ten minutes
+					// old is unambiguously past it without depending on how close to that boundary
+					// the test happens to run.
+					Timestamp: time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339Nano),
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			secretName := "actuator-signal-" + tc.name
+			payload, err := json.Marshal(tc.signal(guest.nodeName))
+			if err != nil {
+				t.Fatalf("encode signal: %v", err)
+			}
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"},
+				Data: map[string][]byte{
+					guest.nodeName + ".json":        payload,
+					nodeagent.DeliveryChannelMarker: []byte(""),
+				},
+			}
+			if _, err := guest.clientset.CoreV1().Secrets("default").Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("creating signal secret: %v", err)
+			}
+			t.Cleanup(func() {
+				delCtx, delCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer delCancel()
+				if err := guest.clientset.CoreV1().Secrets("default").Delete(delCtx, secretName, metav1.DeleteOptions{}); err != nil {
+					t.Logf("deleting signal secret during cleanup: %v", err)
+				}
+			})
+
+			pod := actuatorPodSpec("actuator-signal-"+tc.name, guest.imageRef, guest.nodeName, secretName)
+			if _, err := guest.clientset.CoreV1().Pods("default").Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("creating actuator pod: %v", err)
+			}
+			t.Cleanup(func() {
+				delCtx, delCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer delCancel()
+				if err := guest.clientset.CoreV1().Pods("default").Delete(delCtx, pod.Name, metav1.DeleteOptions{}); err != nil {
+					t.Logf("deleting actuator pod during cleanup: %v", err)
+				}
+			})
+
+			log := waitForActuatorLog(ctx, t, guest.clientset, pod.Name, "signal rejection log line",
+				"halt gate=SignalAccepted result=fail detail=\""+tc.wantReason)
+			t.Logf("actuator log:\n%s", log)
+			if strings.Contains(log, "halt gate=ModeAuthorized") || strings.Contains(log, "halt gate=SyscallIssued") {
+				t.Fatalf("actuator reached actuation gates on a signal that should have been rejected at SignalAccepted:\n%s", log)
+			}
+
+			t.Log("confirming the guest is still reachable -- the rejected signal must not have halted it")
+			if _, err := guestCommand(ctx, guest.creds, "true"); err != nil {
+				t.Fatalf("guest unreachable after a signal that should have been rejected, not actuated: %v", err)
+			}
+		})
 	}
 }
 
