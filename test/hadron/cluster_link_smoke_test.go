@@ -116,18 +116,21 @@ func TestHadronClusterLinkConnectivity(t *testing.T) {
 	// nc/ncat/telnet/wget/socat are all absent, but curl, openssl, and ssh are present as real
 	// binaries (not busybox applets).
 	//
-	// curl gives a protocol-agnostic connectivity proof: its verbose output prints "Connected to"
-	// the instant its TCP handshake completes, independent of whatever happens at the HTTP layer
-	// afterward. Targeting port 22 needs no extra listener -- sshd is already guaranteed running
-	// on both guests, since the host itself depends on it for setup -- and receiving its SSH
-	// banner instead of an HTTP response is expected, not a failure: only "Connected to" being
-	// present or absent matters here. --interface binds the outgoing socket to the server's own
-	// cluster interface, the same source-scope association ping's -I flag would have given a
-	// link-local IPv6 destination.
+	// curl gives a protocol-agnostic connectivity proof: hitting the peer's own sshd (already
+	// guaranteed running on both guests, since the host itself depends on it for setup) over HTTP
+	// gets back real application data from across the link, not just a local socket-layer event --
+	// stronger evidence than any wording in curl's own log. --interface binds the outgoing socket
+	// to the server's own cluster interface, the same source-scope association ping's -I flag
+	// would have given a link-local IPv6 destination.
+	//
+	// A first version of this check asserted on curl's own verbose log instead ("Connected to"),
+	// which a live run showed was the wrong string for this curl version (8.21.0 logs "Established
+	// connection to") -- a cosmetic difference, since that same run's log already contained
+	// "SSH-2.0-OpenSSH_10.3" read back from the peer, proof the link carried real bytes both ways.
 	out, _ := guestCommand(ctx, server.creds, fmt.Sprintf(
 		`curl -6 -v --interface %s --connect-timeout 5 "http://[%s]:22/" 2>&1`, serverIface, clientAddr))
-	if !strings.Contains(out, "Connected to") {
-		t.Fatalf("curl never reported a completed TCP connection over the cluster link:\n%s", out)
+	if !strings.Contains(out, "SSH-2.0-") {
+		t.Fatalf("no SSH banner read back over the cluster link:\n%s", out)
 	}
 	t.Logf("cluster link connectivity confirmed via curl TCP connect:\n%s", out)
 }
