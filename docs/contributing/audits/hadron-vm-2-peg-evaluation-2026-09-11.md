@@ -290,4 +290,15 @@ is expected, not a failure.
 Fixed: assert on the SSH banner (`SSH-2.0-`) actually read back over the link instead of any of
 curl's own log wording. Strictly stronger evidence regardless -- it proves a real two-way byte
 exchange rather than a local socket-layer event -- and does not depend on phrasing staying stable
-across curl versions. Not yet re-run live.
+across curl versions.
+
+| [34766743049](https://github.com/MichaelZalud18/nut-operator/actions/runs/34766743049) | **pass** (42.39s) | `TestHadronClusterLinkConnectivity` passes end to end: real `SSH-2.0-OpenSSH_10.3` banner read back between two independently booted guests over the raw QEMU socket netdev `ClusterLink`. VM-2's inter-guest networking proof is done. |
+
+VM-2 conclusion: the raw QEMU socket netdev `ClusterLink`/`ClusterNIC` mechanism (`network.go`) is
+proven to carry real traffic between two independently booted guests. Every one of the eight runs
+above that failed did so in host-side test tooling -- guest login, a missing package, a workflow
+timeout budget, BusyBox's minimal `ping` applet lacking any IPv6 support at all, and a curl-version
+log-wording mismatch -- never in the link itself. The raw L2 segment still carries no DHCP of its
+own; a future harness needing static or negotiated addressing on it (rather than the IPv6
+link-local addresses this test deliberately used to sidestep that question) still needs its own
+mechanism, not assumed to be free from this result.

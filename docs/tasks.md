@@ -312,16 +312,15 @@ also an early implementation priority, not a finding that custom VM code is inhe
   k3s, isolating exactly this one new mechanism from everything the single-guest workflow already
   proved. `TestSmokeWorkflowsReserveCleanupBudget` (`workflow_test.go`) now checks both smoke
   workflows, not just the first, and caught this new one's own step-timeout-vs-job-timeout budget
-  being wrong before any live run. Seven live attempts so far; full evidence table in
+  being wrong before any live run. **Passed 2026-09-13** ([run 34766743049](https://github.com/MichaelZalud18/nut-operator/actions/runs/34766743049),
+  42.39s): a real SSH banner read back between two independently booted guests over the raw QEMU
+  socket netdev link. Full evidence table, including the seven host-side tooling failures along the
+  way (guest login, a missing package, BusyBox's `ping` applet having no IPv6 support at all, a
+  curl-version log-wording mismatch) — never the `ClusterLink` mechanism itself — in
   [hadron-vm-2-peg-evaluation-2026-09-11.md](contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md).
-  The `ClusterLink` mechanism itself is now proven working: run
-  [34765823021](https://github.com/MichaelZalud18/nut-operator/actions/runs/34765823021) got a real
-  SSH banner back from one guest to the other over the raw QEMU socket netdev link. Every failure
-  so far has been host-side test tooling (guest login, a missing package, BusyBox's minimal `ping`
-  applet having no IPv6 support at all, then an assertion checking the wrong curl log wording) —
-  never the link itself. Latest fix (not yet re-run) asserts on the SSH banner directly rather than
-  curl's own log phrasing. The raw L2 segment also carries no DHCP of its own — each guest still
-  needs an address on it via some other mechanism.
+  The raw L2 segment still carries no DHCP of its own — a future harness needing static or
+  negotiated addressing on it (rather than the IPv6 link-local addresses this test used
+  deliberately) still needs its own mechanism.
   Checked, not assumed: Kairos's own reference docs do not show a clear, reliable static-network
   cloud-config mechanism, and this project already has one direct cautionary tale about trusting an
   apparently-documented Kairos cloud-config feature that silently did not fire (the `k3s-ready`
