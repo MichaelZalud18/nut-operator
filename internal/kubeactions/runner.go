@@ -969,10 +969,23 @@ func (r Runner) agentShutdownHandoff(ctx context.Context, action executor.Action
 	}
 	observedAt := r.now()
 	updatedSecrets := map[string]struct{}{}
+	var results []executor.NodeSignalResult
+	fail := func(err error) (executor.ActionOutcome, error) {
+		if len(results) > 0 {
+			results[len(results)-1].Error = err.Error()
+		}
+		outcome := blocked(err)
+		outcome.SignalResults = results
+		return outcome, err
+	}
 	for _, release := range action.Group.NodeReleases {
+		results = append(results, executor.NodeSignalResult{
+			NodeName: release.NodeName, NodePowerAgent: release.NodePowerAgent,
+			SignalSecretNamespace: release.SignalSecretNamespace, SignalSecretName: release.SignalSecretName, SignalSecretKey: release.SignalSecretKey,
+		})
 		if release.NodeName == "" || release.SignalSecretNamespace == "" || release.SignalSecretName == "" || release.SignalSecretKey == "" {
 			err := fmt.Errorf("AgentShutdown release for node %q requires signal Secret namespace, name, and key", release.NodeName)
-			return blocked(err), err
+			return fail(err)
 		}
 		payload := nodeagent.ShutdownSignal{
 			ExecutionID:        action.ExecutionID,
@@ -990,19 +1003,23 @@ func (r Runner) agentShutdownHandoff(ctx context.Context, action executor.Action
 		}
 		encoded, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
-			return blocked(err), fmt.Errorf("encode AgentShutdown signal for node %q: %w", release.NodeName, err)
+			return fail(fmt.Errorf("encode AgentShutdown signal for node %q: %w", release.NodeName, err))
 		}
 		encoded = append(encoded, '\n')
+		results[len(results)-1].IssuedAt = observedAt
+		results[len(results)-1].SkipSync = action.TierOverrunning
 		if err := r.upsertSignalSecret(ctx, action, release, encoded); err != nil {
-			return blocked(err), err
+			return fail(err)
 		}
+		results[len(results)-1].Published = true
 		if r.SignalWritten != nil {
 			r.SignalWritten(release.NodeName, action.ShutdownFlow, action.ExecutionID, observedAt)
 		}
 		updatedSecrets[release.SignalSecretNamespace+"/"+release.SignalSecretName] = struct{}{}
 	}
 	return executor.ActionOutcome{
-		Outcome: executor.OutcomeSucceeded,
+		Outcome:       executor.OutcomeSucceeded,
+		SignalResults: results,
 		Details: map[string]any{
 			"handoff":       "ProjectedSecretSignal",
 			"nodeReleases":  len(action.Group.NodeReleases),

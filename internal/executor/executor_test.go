@@ -735,8 +735,41 @@ type fakeActionRunner struct {
 	outcome ActionOutcome
 }
 
-func (r fakeActionRunner) RunAction(context.Context, Action) (ActionOutcome, error) {
-	return r.outcome, nil
+func TestSignalResultRequiresExactReleaseIdentity(t *testing.T) {
+	release := NodeRelease{NodeName: "node", NodePowerAgent: "agent", SignalSecretNamespace: "power", SignalSecretName: "signals", SignalSecretKey: "node.json"}
+	valid := NodeSignalResult{NodeName: "node", NodePowerAgent: "agent", SignalSecretNamespace: "power", SignalSecretName: "signals", SignalSecretKey: "node.json", Published: true}
+	if result, found := signalResultForRelease([]NodeSignalResult{valid}, release); !found || !result.Published {
+		t.Fatal("matching publication was not found")
+	}
+	for _, mutate := range []func(*NodeSignalResult){
+		func(r *NodeSignalResult) { r.NodeName = "other" },
+		func(r *NodeSignalResult) { r.NodePowerAgent = "other" },
+		func(r *NodeSignalResult) { r.SignalSecretNamespace = "other" },
+		func(r *NodeSignalResult) { r.SignalSecretName = "other" },
+		func(r *NodeSignalResult) { r.SignalSecretKey = "other" },
+	} {
+		wrong := valid
+		mutate(&wrong)
+		if result, found := signalResultForRelease([]NodeSignalResult{wrong}, release); found || result.Published {
+			t.Fatalf("mismatched publication accepted: %#v", wrong)
+		}
+	}
+}
+
+func (r fakeActionRunner) RunAction(_ context.Context, action Action) (ActionOutcome, error) {
+	outcome := r.outcome
+	// This success fixture models confirmed publications as well as the group outcome.
+	if action.Group.Action == ActionAgentShutdown && outcome.Outcome == OutcomeSucceeded {
+		outcome.SignalResults = append([]NodeSignalResult(nil), outcome.SignalResults...)
+		for _, release := range action.Group.NodeReleases {
+			outcome.SignalResults = append(outcome.SignalResults, NodeSignalResult{
+				NodeName: release.NodeName, NodePowerAgent: release.NodePowerAgent,
+				SignalSecretNamespace: release.SignalSecretNamespace, SignalSecretName: release.SignalSecretName, SignalSecretKey: release.SignalSecretKey,
+				Published: true,
+			})
+		}
+	}
+	return outcome, nil
 }
 
 type recordingActionRunner struct {

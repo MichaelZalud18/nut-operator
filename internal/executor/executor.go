@@ -255,9 +255,20 @@ type ActionPowerObservation struct {
 
 // ActionOutcome summarizes one action-runner result.
 type ActionOutcome struct {
-	Outcome string
-	Error   string
-	Details map[string]any
+	Outcome       string
+	Error         string
+	Details       map[string]any
+	SignalResults []NodeSignalResult
+}
+
+// NodeSignalResult records a node's signal publication attempt, not an observed host halt.
+type NodeSignalResult struct {
+	NodeName, NodePowerAgent                                 string
+	SignalSecretNamespace, SignalSecretName, SignalSecretKey string
+	Published                                                bool
+	Error                                                    string
+	IssuedAt                                                 time.Time
+	SkipSync                                                 bool
 }
 
 // ActionRunner performs effectful Kubernetes work for enforce mode.
@@ -1086,7 +1097,7 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 
 	result := groupExecutionResult{ActionAttempts: 1, RecordError: recordErr}
 	if group.Action == ActionAgentShutdown {
-		releaseCount, releaseErr := e.recordNodeReleases(recordCtx, writer, input, executionID, dryRun, group, completedAt)
+		releaseCount, releaseErr := e.recordNodeReleases(recordCtx, writer, input, executionID, dryRun, group, outcome, completedAt)
 		result.NodeReleases = releaseCount
 		result.RecordError = errors.Join(result.RecordError, releaseErr)
 	}
@@ -1099,7 +1110,7 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 	return result, actionErr
 }
 
-func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, input Input, executionID string, dryRun bool, group Group, observedAt time.Time) (int, error) {
+func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, input Input, executionID string, dryRun bool, group Group, outcome ActionOutcome, observedAt time.Time) (int, error) {
 	var recordErr error
 	for _, release := range group.NodeReleases {
 		if release.NodeName == "" {
@@ -1110,10 +1121,27 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 		if signalPath == "" {
 			signalPath = DefaultSignalPath
 		}
-		staleAfter := observedAt.Add(signalTTL(input.SignalTTL))
 		clearedForRelease := release.AgentReady && release.TelemetryFresh && release.Cleared
-		released := clearedForRelease && !dryRun
+		publication, reported := signalResultForRelease(outcome.SignalResults, release)
+		issuedAt := observedAt
+		if !publication.IssuedAt.IsZero() {
+			issuedAt = publication.IssuedAt
+		}
+		staleAfter := issuedAt.Add(signalTTL(input.SignalTTL))
+		released := clearedForRelease && !dryRun && publication.Published
 		reason := nodeReleaseReason(release, dryRun)
+		handoffReason := nodeSignalHandoffReason(release, dryRun)
+		if clearedForRelease && !dryRun && !publication.Published {
+			reason = "SignalPublicationUnconfirmed"
+			if !reported {
+				reason = "SignalPublicationNotReported"
+			}
+			handoffReason = reason
+		}
+		signalReason := reason
+		if !publication.IssuedAt.IsZero() {
+			signalReason = "ReleaseApproved"
+		}
 		recordErr = errors.Join(recordErr, writer.RecordNodeRelease(ctx, audit.NodeReleaseRecord{
 			ReleaseID:      e.newID(),
 			ExecutionID:    executionID,
@@ -1138,11 +1166,12 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 				"telemetryStaleReason": release.TelemetryStaleReason,
 			},
 			Details: map[string]any{
-				"readinessMessage":   release.ReadinessMessage,
-				"selectedUPSDevices": append([]string(nil), input.SelectedUPSDevices...),
+				"readinessMessage":       release.ReadinessMessage,
+				"signalPublicationError": publication.Error,
+				"signalResultReported":   reported,
+				"selectedUPSDevices":     append([]string(nil), input.SelectedUPSDevices...),
 			},
 		}))
-		handoffReason := nodeSignalHandoffReason(release, dryRun)
 		recordErr = errors.Join(recordErr, writer.RecordNodeSignalHandoff(ctx, audit.NodeSignalHandoff{
 			HandoffID:      e.newID(),
 			ExecutionID:    executionID,
@@ -1159,25 +1188,38 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 				"planConfigHash":       input.PlanConfigHash,
 				"podName":              release.PodName,
 				"readinessReason":      release.ReadinessReason,
-				"reason":               reason,
+				"reason":               signalReason,
 				"selectedUPSDevices":   append([]string(nil), input.SelectedUPSDevices...),
 				"shutdownFlow":         input.ShutdownFlow,
 				"telemetryFresh":       release.TelemetryFresh,
 				"telemetryStaleReason": release.TelemetryStaleReason,
-				"timestamp":            observedAt.UTC().Format(time.RFC3339Nano),
+				"timestamp":            issuedAt.UTC().Format(time.RFC3339Nano),
+				"skipSync":             publication.SkipSync,
 			},
 			StaleAfter: &staleAfter,
-			Accepted:   clearedForRelease && !dryRun,
+			Accepted:   released,
 			Reason:     handoffReason,
 			Details: map[string]any{
-				"group":             group.Name,
-				"readinessMessage":  release.ReadinessMessage,
-				"readinessReason":   release.ReadinessReason,
-				"lastHeartbeatTime": releaseHeartbeatTime(release),
+				"group":                  group.Name,
+				"signalPublicationError": publication.Error,
+				"signalResultReported":   reported,
+				"readinessMessage":       release.ReadinessMessage,
+				"readinessReason":        release.ReadinessReason,
+				"lastHeartbeatTime":      releaseHeartbeatTime(release),
 			},
 		}))
 	}
 	return len(group.NodeReleases), recordErr
+}
+
+func signalResultForRelease(results []NodeSignalResult, release NodeRelease) (NodeSignalResult, bool) {
+	for _, result := range results {
+		if result.NodeName == release.NodeName && result.NodePowerAgent == release.NodePowerAgent &&
+			result.SignalSecretNamespace == release.SignalSecretNamespace && result.SignalSecretName == release.SignalSecretName && result.SignalSecretKey == release.SignalSecretKey {
+			return result, true
+		}
+	}
+	return NodeSignalResult{}, false
 }
 
 func agentShutdownReadinessError(dryRun bool, group Group) error {

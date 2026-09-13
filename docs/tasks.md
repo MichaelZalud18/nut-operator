@@ -186,10 +186,6 @@ spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
   the shutdown window. **Testable now:** unavailable/stalled backend at trigger time and mid-execution,
   with spool replay when storage returns; preserve approval gates and report evidence failures
   separately from action outcomes. Durable resume evidence is not an execution requirement (SB-1).
-- [ ] `F-139` [Medium] derive node-release and handoff audit outcomes from actual per-node Secret
-  write results. A failed handoff currently records `Accepted=true` and `Released=true` when the
-  precomputed checks passed. **Testable now:** failed first write, partial multi-node success, and
-  cancellation; distinguish signal publication from independently observed host halt evidence.
 
 ---
 

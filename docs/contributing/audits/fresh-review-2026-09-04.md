@@ -300,6 +300,32 @@ but recorded `Accepted=true` and `Released=true`. Carry actual per-node publicat
 issued signal metadata into audit records; do not infer a physical halt from a successful Secret
 write. Test complete failure, partial success, and cancellation independently.
 
+### F-139 Resolution (2026-09-12)
+
+The action runner returns typed per-node signal publication results, including partial batches
+when a later Secret create/update fails or the request is canceled. The executor matches each
+result to the exact node, agent, namespace, Secret, and key before setting `Released` or `Accepted`.
+Missing results and API errors remain unconfirmed rather than inheriting group-level success or
+preflight clearance. API errors may be ambiguous about server-side commit, so they are not proof
+that a signal was never stored. Dry-run and blocked releases remain unaccepted.
+
+Audit details retain publication errors and result presence; handoff timestamps, expiry basis,
+and skip-sync metadata use the runner's issued signal. A successful API write confirms publication
+only, not actuator consumption or physical shutdown. Release-count summaries retain their existing
+count-of-recorded-decisions meaning, not a count of confirmed host halts.
+
+`TestHandoffAuditUsesActualSecretWrites` drives the actual runner through the executor using a
+fault-injected Kubernetes client: all-success, failed create, failed initial update, partial
+multi-node update failure, cancellation after one publication, and a runner claiming success
+without publication results. It compares audit flags against stored Secret data and checks issued
+timestamps. Executor tests also reject results for mismatched node/agent/Secret identities.
+The shared successful fake runner now explicitly models publication receipts, preserving the
+existing approval-revocation tests without changing approval logic.
+
+Validation: full executor, kubeactions, and controller suites passed with race detection, including
+controller envtest. The final identity-matching regression passed separately. Lint and
+`git diff --check` passed. F-139 is closed; no live host actuation was performed.
+
 ## F-140: Per-Device Trigger Holds
 
 **Medium.** [Trigger evaluation](../../../internal/trigger/evaluator.go#L178) collects all matching

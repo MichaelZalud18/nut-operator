@@ -73,6 +73,16 @@ such as CloudNativePG: those talk to PostgreSQL as the workload they manage, not
 - `executor_resume_states`: compact execution state used by existing resume helpers; retained
   implementation, not a supported restart-continuity guarantee (EX-14, superseded OD-17).
 
+For node handoff evidence, `Released=true` and `Accepted=true` require a successful signal Secret
+write reported by the action runner for that exact node, agent, namespace, Secret, and data key.
+Group-level success and preflight clearance alone are insufficient. A later failure preserves
+earlier confirmed publications. A failed write is unconfirmed: an API error can be ambiguous about
+whether the server committed it. Missing per-node results are reported separately. Dry-run and
+blocked candidates remain false. Details retain the publication error and whether a result was
+reported; signal timestamp and skip-sync metadata come from the runner's issued payload.
+These flags describe API publication, not actuator consumption or a confirmed host halt;
+independent halt observations remain separate evidence.
+
 ### Identity
 
 Every table is keyed on a `uuid`. Most are freshly generated per row; `shutdownflow_executions` is
