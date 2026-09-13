@@ -117,8 +117,10 @@ trigger fires. Both verdicts are recorded.
 devices involved. "Cycle detected" is not acceptable output; "cycle: applications → databases →
 applications" is.
 
-**PL-18** · Abort-policy annotation. Groups eligible under `abortPolicy.behavior: ContinueSafeSteps`
-are marked in the compiled plan, not resolved at execution time.
+**PL-18** · Abort-policy validation. V1 supports only halt-on-failure. Reject `ContinueSafeSteps`,
+`continueOnError: true`, and `abortPolicy.notify: true` during admission and pure compilation,
+including objects stored before these checks existed. This replaces the unimplemented abort-tail
+annotation contract (F-142, 2026-09-13), not the settled advisory-hook behavior.
 
 **PL-45** · Published plan artifact. The planner returns a single structured artifact containing
 the compiled execution plan, dependency graph, shutdown waves, advisory startup wave projection,

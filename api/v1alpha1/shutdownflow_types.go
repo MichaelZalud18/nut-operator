@@ -794,7 +794,8 @@ type ShutdownStep struct {
 	// +optional
 	Timeout *metav1.Duration `json:"timeout,omitempty"`
 
-	// continueOnError allows later steps to continue after this step fails.
+	// continueOnError must be false; v1 stops after an action failure.
+	// +kubebuilder:validation:XValidation:rule="self == false",message="continueOnError is unsupported; use false"
 	// +kubebuilder:default=false
 	// +optional
 	ContinueOnError *bool `json:"continueOnError,omitempty"`
@@ -857,7 +858,7 @@ type WorkloadReference struct {
 }
 
 // AbortBehavior defines flow abort behavior.
-// +kubebuilder:validation:Enum=HaltAndSurface;ContinueSafeSteps
+// +kubebuilder:validation:Enum=HaltAndSurface
 type AbortBehavior string
 
 const (
@@ -872,8 +873,10 @@ type AbortPolicySpec struct {
 	// +optional
 	Behavior AbortBehavior `json:"behavior,omitempty"`
 
-	// notify enables notification steps after abort.
-	// +kubebuilder:default=true
+	// notify must be false; abort-only notification steps are not implemented in v1.
+	// Normal Notify actions still execute when reached before an abort.
+	// +kubebuilder:default=false
+	// +kubebuilder:validation:XValidation:rule="self == false",message="abort-only notifications are unsupported; use false"
 	// +optional
 	Notify *bool `json:"notify,omitempty"`
 }

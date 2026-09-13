@@ -437,8 +437,9 @@ Execution uses the compiled waves, not raw YAML order.
 
 - Every group in a wave is eligible to run concurrently.
 - The next wave cannot start until all required completion conditions in the current wave are satisfied.
-- A failed group aborts the flow by default.
-- `abortPolicy.behavior: ContinueSafeSteps` can allow explicitly safe follow-up actions, such as notification.
+- A failed group aborts the flow. V1 accepts only `abortPolicy.behavior: HaltAndSurface`.
+- `continueOnError: true` and `abortPolicy.notify: true` are rejected as unsupported; Notify actions
+  still execute normally before a failure, and advisory hooks keep their non-blocking contract.
 - Node poweroff groups are terminal vertices and stay last for their power domain.
 - Control-plane or controller nodes carry explicit late dependencies, not just a low tier number.
 

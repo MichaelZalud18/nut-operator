@@ -191,6 +191,7 @@ func PlannerInputsWithTierPolicy(obj *powerv1alpha1.ShutdownFlow, tierPolicy pow
 		SourceID:              fmt.Sprintf("%s/ShutdownFlow/%s", powerv1alpha1.GroupVersion.String(), obj.Name),
 		TierPolicy:            plannerTierPolicy,
 		AbortBehavior:         string(obj.Spec.AbortPolicy.Behavior),
+		AbortNotify:           obj.Spec.AbortPolicy.Notify != nil && *obj.Spec.AbortPolicy.Notify,
 		TierOverrunPolicy:     string(effectiveTierOverrunPolicy(obj.Spec.TierOverrunPolicy)),
 		Triggers:              make([]planner.Trigger, 0, len(obj.Spec.Triggers)),
 		Groups:                make([]planner.Group, 0, len(obj.Spec.Groups)),

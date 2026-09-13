@@ -151,9 +151,12 @@ actually reached, so a second dip descends from there and re-crosses executed ti
 (EX-26). Subscribers watching the published metrics see power move both ways and act on it. This
 operator does not.
 
-**EX-12 · Abort policy executes as compiled** (PL-18). A failed group aborts the flow by default.
-Under `ContinueSafeSteps`, only groups pre-marked eligible in the compiled plan may still run. The
-executor makes no execution-time eligibility judgments.
+**EX-12 · Abort stops the flow** (PL-18). A failed group aborts the flow. For v1, admission and
+planning accept only `HaltAndSurface`, `continueOnError: false`, and `abortPolicy.notify: false`.
+Continuation and abort-only notifications are rejected rather than silently ignored (F-142,
+2026-09-13). Ordinary Notify actions execute when reached before a failure; advisory hooks retain
+their existing non-blocking failure contract. No execution-time definition of "safe to continue"
+is introduced.
 
 **EX-24 · Every action in the enum does something.** An action the API accepts and the runner
 ignores is worse than a missing one: a flow author reads it as configured behavior. `Gate` was

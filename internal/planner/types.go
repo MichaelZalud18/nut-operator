@@ -38,6 +38,7 @@ type StructuralInputs struct {
 	Groups         []Group         `json:"groups,omitempty"`
 	Steps          []Step          `json:"steps,omitempty"`
 	AbortBehavior  string          `json:"abortBehavior,omitempty"`
+	AbortNotify    bool            `json:"abortNotify,omitempty"`
 	// TierOverrunPolicy changes failure-path timing behavior during execution, so it
 	// participates in plan identity even though it does not reorder the compiled waves.
 	TierOverrunPolicy string `json:"tierOverrunPolicy,omitempty"`

@@ -4705,12 +4705,16 @@ spec:
                     description: behavior controls what happens after abort.
                     enum:
                     - HaltAndSurface
-                    - ContinueSafeSteps
                     type: string
                   notify:
-                    default: true
-                    description: notify enables notification steps after abort.
+                    default: false
+                    description: |-
+                      notify must be false; abort-only notification steps are not implemented in v1.
+                      Normal Notify actions still execute when reached before an abort.
                     type: boolean
+                    x-kubernetes-validations:
+                    - message: abort-only notifications are unsupported; use false
+                      rule: self == false
                 type: object
               communicationPaths:
                 description: |-
@@ -5151,9 +5155,12 @@ spec:
                   properties:
                     continueOnError:
                       default: false
-                      description: continueOnError allows later steps to continue
-                        after this step fails.
+                      description: continueOnError must be false; v1 stops after an
+                        action failure.
                       type: boolean
+                      x-kubernetes-validations:
+                      - message: continueOnError is unsupported; use false
+                        rule: self == false
                     description:
                       description: description explains the operator-facing purpose
                         of the step.

@@ -120,7 +120,7 @@ spec:
   concurrencyPolicy: Forbid
   abortPolicy:
     behavior: HaltAndSurface
-    notify: true
+    notify: false
   safety:
     requireManualApproval: true
     approvalAnnotation: power.zalud.io/approved-for-enforce

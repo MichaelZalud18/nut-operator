@@ -111,7 +111,7 @@ func defaultShutdownFlow(obj *powerv1alpha1.ShutdownFlow) {
 		obj.Spec.AbortPolicy.Behavior = powerv1alpha1.AbortBehaviorHaltAndSurface
 	}
 	if obj.Spec.AbortPolicy.Notify == nil {
-		obj.Spec.AbortPolicy.Notify = ptrBool(true)
+		obj.Spec.AbortPolicy.Notify = ptrBool(false)
 	}
 	if obj.Spec.Safety.RequireManualApproval == nil {
 		obj.Spec.Safety.RequireManualApproval = ptrBool(true)
@@ -413,11 +413,10 @@ func validateShutdownTierOverrunPolicy(path *field.Path, policy powerv1alpha1.Sh
 func validateAbortPolicy(path *field.Path, policy powerv1alpha1.AbortPolicySpec) field.ErrorList {
 	var errs field.ErrorList
 	switch policy.Behavior {
-	case "", powerv1alpha1.AbortBehaviorHaltAndSurface, powerv1alpha1.AbortBehaviorContinueSafeSteps:
+	case "", powerv1alpha1.AbortBehaviorHaltAndSurface:
 	default:
 		errs = append(errs, field.NotSupported(path.Child("behavior"), policy.Behavior, []string{
 			string(powerv1alpha1.AbortBehaviorHaltAndSurface),
-			string(powerv1alpha1.AbortBehaviorContinueSafeSteps),
 		}))
 	}
 	return errs

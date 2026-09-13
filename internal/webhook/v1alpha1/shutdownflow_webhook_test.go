@@ -30,6 +30,34 @@ import (
 )
 
 var _ = Describe("ShutdownFlow Webhook", func() {
+	It("enforces failure-policy defaults and rejection through the API server", func() {
+		flow := &powerv1alpha1.ShutdownFlow{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "failure-policy-"},
+			Spec:       validShutdownFlowSpec(),
+		}
+		flow.Spec.AbortPolicy = powerv1alpha1.AbortPolicySpec{}
+		Expect(k8sClient.Create(ctx, flow)).To(Succeed())
+		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, flow)).To(Succeed()) })
+		Expect(flow.Spec.AbortPolicy.Behavior).To(Equal(powerv1alpha1.AbortBehaviorHaltAndSurface))
+		Expect(flow.Spec.AbortPolicy.Notify).NotTo(BeNil())
+		Expect(*flow.Spec.AbortPolicy.Notify).To(BeFalse())
+		for _, setting := range []string{"behavior", "notify", "continueOnError"} {
+			changed := flow.DeepCopy()
+			switch setting {
+			case "behavior":
+				changed.Spec.AbortPolicy.Behavior = powerv1alpha1.AbortBehaviorContinueSafeSteps
+			case "notify":
+				changed.Spec.AbortPolicy.Notify = ptrBool(true)
+			case "continueOnError":
+				changed.Spec.Groups = nil
+				changed.Spec.Steps = []powerv1alpha1.ShutdownStep{{ID: "notify", Type: powerv1alpha1.ShutdownStepNotify, ContinueOnError: ptrBool(true)}}
+			}
+			err := k8sClient.Update(ctx, changed)
+			Expect(err).To(HaveOccurred(), setting)
+			Expect(err.Error()).To(ContainSubstring(setting))
+		}
+	})
+
 	var (
 		obj       *powerv1alpha1.ShutdownFlow
 		oldObj    *powerv1alpha1.ShutdownFlow
@@ -54,7 +82,7 @@ var _ = Describe("ShutdownFlow Webhook", func() {
 			Expect(obj.Spec.ConcurrencyPolicy).To(Equal("Forbid"))
 			Expect(obj.Spec.TierOverrunPolicy).To(Equal(powerv1alpha1.ShutdownTierOverrunWait))
 			Expect(obj.Spec.AbortPolicy.Behavior).To(Equal(powerv1alpha1.AbortBehaviorHaltAndSurface))
-			Expect(*obj.Spec.AbortPolicy.Notify).To(BeTrue())
+			Expect(*obj.Spec.AbortPolicy.Notify).To(BeFalse())
 			Expect(*obj.Spec.Safety.RequireManualApproval).To(BeTrue())
 			Expect(*obj.Spec.Steps[0].ContinueOnError).To(BeFalse())
 		})
@@ -271,7 +299,7 @@ func validShutdownFlowSpec() powerv1alpha1.ShutdownFlowSpec {
 		TierOverrunPolicy: powerv1alpha1.ShutdownTierOverrunWait,
 		AbortPolicy: powerv1alpha1.AbortPolicySpec{
 			Behavior: powerv1alpha1.AbortBehaviorHaltAndSurface,
-			Notify:   ptrBool(true),
+			Notify:   ptrBool(false),
 		},
 		Safety: powerv1alpha1.FlowSafetySpec{
 			RequireManualApproval: ptrBool(true),

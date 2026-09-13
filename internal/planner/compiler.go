@@ -165,6 +165,12 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 
 func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 	var diagnostics []Diagnostic
+	if input.AbortBehavior != "" && input.AbortBehavior != "HaltAndSurface" {
+		diagnostics = append(diagnostics, Diagnostic{Severity: DiagnosticError, Reason: "AbortBehaviorUnsupported", Message: "v1 supports only HaltAndSurface abort behavior"})
+	}
+	if input.AbortNotify {
+		diagnostics = append(diagnostics, Diagnostic{Severity: DiagnosticError, Reason: "AbortNotifyUnsupported", Message: "abort-only notifications are unsupported; set abortPolicy.notify to false"})
+	}
 	diagnostics = append(diagnostics, validateTierPolicy(input.TierPolicy)...)
 	diagnostics = append(diagnostics, validateTriggerCapabilities(input)...)
 	if len(input.Triggers) == 0 {
@@ -194,6 +200,9 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 	// emit another diagnostic on top of the one already raised for the second.
 	reportedStepIDs := map[string]struct{}{}
 	for _, step := range input.Steps {
+		if step.ContinueOnError {
+			diagnostics = append(diagnostics, Diagnostic{Severity: DiagnosticError, Reason: "ContinueOnErrorUnsupported", Subject: step.ID, Message: "v1 stops after action failure; continueOnError must be false"})
+		}
 		if step.ID == "" {
 			diagnostics = append(diagnostics, Diagnostic{
 				Severity: DiagnosticError,
@@ -515,6 +524,7 @@ func normalizeStructuralInputs(input StructuralInputs) (StructuralInputs, error)
 		ResolvedInputHash: input.ResolvedInputHash,
 		TierPolicy:        normalizeTierPolicy(input.TierPolicy),
 		AbortBehavior:     input.AbortBehavior,
+		AbortNotify:       input.AbortNotify,
 		TierOverrunPolicy: input.TierOverrunPolicy,
 		Triggers:          append([]Trigger(nil), input.Triggers...),
 		Groups:            append([]Group(nil), input.Groups...),

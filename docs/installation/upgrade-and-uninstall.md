@@ -5,9 +5,23 @@ Audience: operators.
 
 ## Upgrade
 
-Re-apply the bundled manifest, or re-apply your Kustomize overlay with a new digest. CRD changes so
-far have been additive. Your own custom resources are never modified by an upgrade, and CRD-authored
-capability profiles always outrank bundled ones.
+Re-apply the bundled manifest, or re-apply your Kustomize overlay with a new digest. Pre-v1 changes
+can tighten validation as well as add fields. Your own custom resources are never automatically
+migrated by an upgrade, and CRD-authored capability profiles always outrank bundled ones.
+
+### Failure-policy validation
+
+Before upgrading to the F-142 validation change, update existing ShutdownFlows and their GitOps
+sources to `abortPolicy.behavior: HaltAndSurface`, `abortPolicy.notify: false`, and
+`continueOnError: false` on every authored step. Set notification to false explicitly: older
+defaulting stored true even when the field was omitted. These unsupported options previously had
+no execution effect; v1 rejects them rather than promising continuation or an abort-notification
+tail. Normal Notify actions and advisory hooks retain their behavior.
+
+Apply these resource changes before upgrading the CRDs/operator. Admission rejects unsupported new
+values, and the planner also rejects unchanged legacy objects that still contain them, so relying
+on Kubernetes retaining an older object does not make its plan executable. Review compiled status
+after upgrade. No resource deletion or automatic rewrite is required.
 
 ## Uninstall
 

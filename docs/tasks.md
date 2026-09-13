@@ -126,10 +126,13 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   contracts. Acceptance must demonstrate a blocked flow cannot starve another flow or progress
   updates, repeated reconciles cannot start duplicate work, and canceled work releases its owned
   resources. A new network service, durable queue, or crash-resume subsystem is not required.
-- [ ] `F-142` [Medium] honor the accepted abort-policy and `continueOnError` fields, or explicitly
-  reject unsupported settings before v1. They currently do not reach execution, so a failure always
-  stops the tail, including requested abort notifications. **Testable now:** failure-policy matrices
-  through admission, adapter, and executor; preserve settled advisory hook behavior.
+- [x] `F-142` [Medium] reject unsupported failure-policy settings before v1 (2026-09-13).
+  Admission, CRD validation, and pure compilation accept only `HaltAndSurface`, abort `notify: false`,
+  and `continueOnError: false`. Normal Notify actions and settled advisory-hook behavior remain
+  unchanged. Defaults, samples, generated installers, and the owning design contracts agree.
+  The upgrade guide covers explicitly clearing previously defaulted abort notification settings.
+  **Validated:** rejection matrices through create/update admission and API-to-planner conversion;
+  API-server default/update checks; full API/internal/command race suite and repository lint.
 - `OD-27` [Medium] confirm the reserve and minimum-compression defaults against a real outage.
   Simulation coverage is done —
   `internal/controller/adaptive_boundary_simulation_test.go` compiles a real plan through
