@@ -298,8 +298,8 @@ also an early implementation priority, not a finding that custom VM code is inhe
   k3s, isolating exactly this one new mechanism from everything the single-guest workflow already
   proved. `TestSmokeWorkflowsReserveCleanupBudget` (`workflow_test.go`) now checks both smoke
   workflows, not just the first, and caught this new one's own step-timeout-vs-job-timeout budget
-  being wrong before any live run. Three live attempts so far, each finding one real, distinct
-  gap, none of them in the actual `ClusterLink` mechanism itself:
+  being wrong before any live run. Four live attempts so far, each finding one real, distinct gap,
+  none of them in the actual `ClusterLink` mechanism itself:
   [34714542243](https://github.com/MichaelZalud18/nut-operator/actions/runs/34714542243) found no
   guest account existed matching the fresh generated `Credentials` (this test's deliberate lack of
   `CloudConfig` meant nothing created one) — fixed with `MinimalSSHCloudConfig` (a users-only
@@ -309,9 +309,16 @@ also an early implementation priority, not a finding that custom VM code is inhe
   step never picked up — fixed;
   [34716739515](https://github.com/MichaelZalud18/nut-operator/actions/runs/34716739515) got all
   the way through SSH and MAC-based address/interface discovery on both independently booted
-  guests, then found the live environment's BusyBox `ping` has no `-4`/`-6` flags compiled in —
-  fixed by switching to BusyBox's `ping6` applet. Not yet re-run. The raw L2 segment also carries
-  no DHCP of its own — each guest still needs an address on it via some other mechanism.
+  guests, then found the live environment's BusyBox `ping` has no `-4`/`-6` flags compiled in — the
+  fix (switching to a bare `ping6` command) was itself an unverified assumption, not confirmed
+  evidence, about this build shipping a `ping6` name on `PATH`;
+  [34726449871](https://github.com/MichaelZalud18/nut-operator/actions/runs/34726449871) proved that
+  assumption wrong (`ping6: command not found`, `ping` itself still resolves) — fixed by invoking
+  `busybox ping6` directly, which only depends on the applet being compiled in, not on any
+  particular name existing on `PATH`, with failure-path diagnostics added so a wrong assumption here
+  produces evidence on the next failure rather than requiring another dedicated diagnostic run. Not
+  yet re-run. The raw L2 segment also carries no DHCP of its own — each guest still needs an address
+  on it via some other mechanism.
   Checked, not assumed: Kairos's own reference docs do not show a clear, reliable static-network
   cloud-config mechanism, and this project already has one direct cautionary tale about trusting an
   apparently-documented Kairos cloud-config feature that silently did not fire (the `k3s-ready`

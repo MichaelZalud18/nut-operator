@@ -257,6 +257,7 @@ check).
 | [34714542243](https://github.com/MichaelZalud18/nut-operator/actions/runs/34714542243) | fail (~11.5m, controlled) | Both guests were booted with no `CloudConfig` at all -- deliberately, since this test needs neither install nor k3s. That also meant neither guest had any account matching the fresh `Credentials` `NewSafeMachine` generated: nothing else creates one. Every SSH attempt failed with `ssh: unable to authenticate`, not a connectivity problem. Separately, the wait itself had no bound of its own -- it fell through to the overall test deadline, so a failure that should have surfaced in well under a minute instead consumed the full ten-minute budget before being reported. |
 | [34715782711](https://github.com/MichaelZalud18/nut-operator/actions/runs/34715782711) | fail (~1.5m) | Fixed the SSH login, introduced a new dependency in the same change: `MinimalSSHCloudConfig` means both guests now get a real cloud-init seed ISO built (`buildNoCloudISO`), which needs `genisoimage`/`mkisofs` -- present in `hadron-vm-boot-smoke.yml`'s own install step, never added to this workflow's, since its first version had no `CloudConfig` at all and never needed it. `NewSafeMachine` failed immediately with "neither genisoimage nor mkisofs found on PATH." The fast, controlled failure (1.5m, not a timeout) is itself the payoff of the previous run's bounded-wait fix -- this surfaced immediately instead of only after minutes of waiting. |
 | [34716739515](https://github.com/MichaelZalud18/nut-operator/actions/runs/34716739515) | fail (~40s), but the actual mechanism worked | SSH succeeded on both guests. `linkLocalAddress` correctly identified each guest's own cluster interface and its kernel-assigned link-local address by MAC lookup on both sides -- the client's derived address (`fe80::5054:ff:fe8b:a3db`) and the server's interface name (`ens5`, confirming systemd's own predictable naming for a second virtio-net-pci device, not predicted or hardcoded here). Only the `ping` invocation was wrong: this live environment's `ping` is BusyBox v1.37.0, and its own usage text (captured from the actual failure, not assumed from BusyBox's general docs, which describe a differently configured build) showed no `-4`/`-6` flags compiled in. `ping6` is BusyBox's standard alternate applet name for exactly this case. |
+| [34726449871](https://github.com/MichaelZalud18/nut-operator/actions/runs/34726449871) | fail (~41s), same mechanism worked again | SSH and address discovery on both guests succeeded again, unchanged. The `ping6` fix from the previous run was itself wrong: "`ping6` is BusyBox's standard alternate applet name for exactly this case" was written above as a confirmed finding but was never actually verified against this build -- it was an assumption carried over from general BusyBox knowledge, not from captured evidence, and this run proved it false: `sudo: ping6: command not found`. `ping` itself resolves on PATH; a separate `ping6` name does not. |
 
 Fixed: added `genisoimage` to the workflow's install step, and switched `ping -6` to `ping6`. This
 is the first run where every piece up through address discovery on both independently booted
@@ -264,4 +265,12 @@ guests actually worked -- the raw QEMU socket netdev ClusterLink itself has not 
 anything; only host-side test tooling has, three times over. `TestSmokeWorkflowsReserveCleanupBudget`
 does not catch a missing package or a wrong shell command (it only checks the YAML's own
 timeout/cleanup shape), which is itself worth noting as a real limit on what a static workflow
-check can catch. Not yet re-run live.
+check can catch.
+
+Fixed: invoke `busybox ping6 ...` directly instead of a bare `ping6` command. BusyBox dispatches on
+its own first argument when invoked as `busybox` itself, so this works regardless of whether a
+`ping6` symlink exists on PATH -- it only depends on the ping6 applet being compiled into this
+build at all, which is a materially weaker assumption than the previous fix relied on. Also added
+failure-path diagnostics (`busybox --list`, a `ping*` PATH listing, and the resolved `ping` target)
+so a wrong assumption here produces evidence on the next failure instead of requiring another
+separate diagnostic run. Not yet re-run live.
