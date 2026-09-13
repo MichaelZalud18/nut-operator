@@ -99,7 +99,13 @@ this test simply exercises instead of the cert-manager one.
 | Run | Result | Finding |
 | --- | --- | --- |
 | [34777697857](https://github.com/MichaelZalud18/nut-operator/actions/runs/34777697857) | **pass** (262.16s, first attempt) | The real CRDs, RBAC, and controller-manager Deployment all deployed correctly on the first try: `make install` (~18s), `make deploy-byo-cert` including `hack/webhook-cert.sh`'s CA/serving-certificate generation and `caBundle` patching (~8.5s), then the real `nut-operator-controller-manager` Deployment reached `ReadyReplicas >= 1` within ~15s more -- a real image import, real webhook admission wiring, and a real controller-manager binary starting cleanly on a real guest kernel, none of it exercised in any Hadron test before this. |
-| _(second milestone not yet run live)_ | | |
+| [34778921481](https://github.com/MichaelZalud18/nut-operator/actions/runs/34778921481) | fail (`fixture apply`, 518.53s) | Guest boot, k3s readiness, the default-ServiceAccount wait, and the real controller-manager reaching Ready all succeeded again, cleanly. The fixture apply itself failed after its full 2-minute budget with only `kubectl apply: context deadline exceeded` -- a diagnostic gap in this test, not necessarily evidence about the fixture itself: `pollGuest` keeps only its check function's most recent return, and that last `kubectl apply` attempt shared the overall polling context, so it was cancelled (not genuinely failed) the instant the deadline landed mid-attempt, discarding roughly twenty-three earlier attempts' real, informative errors in favor of one timeout artifact. The true cause is still unknown. |
+
+Fixed the diagnostic gap, not (yet) a root cause: each apply attempt now gets its own short-lived
+context and logs its own error immediately, and a diagnose callback dumps a full pod listing and
+the manager's own log tail. Every kind in this fixture has a mutating webhook (`test/e2e`'s own
+comment on this exact fixture shape), so the manager's own webhook-server readiness is the most
+likely place the next run's real error points to. Not yet re-run live.
 
 ## Open, deliberately not attempted here
 
