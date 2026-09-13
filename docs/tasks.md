@@ -7,7 +7,7 @@ Open work is grouped by owning component. Keep rationale in the design docs, set
 `docs/contributing/audits/`. Completed work is represented by the implemented docs/code, not repeated
 here. Work deliberately deferred beyond v1 lives in [tasks-post-v1.md](tasks-post-v1.md).
 
-Last reviewed: 2026-09-12 (F-133, F-135, F-137, and F-140 fixed and regression-tested; other audit findings retain their recorded review dates).
+Last reviewed: 2026-09-13 (component modularity and test boundaries; earlier findings retain their recorded review dates).
 
 The [2026-09-04 fresh review](contributing/audits/fresh-review-2026-09-04.md) records evidence for
 `F-126` through `F-143`, including later scope corrections. Open findings are listed below; withdrawn
@@ -84,6 +84,16 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   Pod can be halted, while a node drained by an earlier wave can remain falsely blocked.
   **Testable now:** placement changes, drain-to-release transitions, and stale-agent simulations.
   Real-guest cross-check once built: `VM-4` (Hadron VM Test Coverage).
+  **Implementation context (2026-09-13):** make wave-target resolution and per-node release
+  validation explicit, independently testable contracts between controller wiring, executor, and
+  action runner. `shutdownExecutionInput`/`executorGroupsFromFlow` currently assemble release
+  evidence before `Executor.Execute`; existing power-observer and approval-checker callbacks show
+  the intended direction for refreshing live state. Keep the planner deterministic and separate
+  from Kubernetes reads. Re-read authoritative state immediately before signal publication and
+  refuse release on unavailable or invalid evidence. Coordinate the agent-authorization check with
+  `F-126`, rather than implementing competing gates. Acceptance includes a Pod arriving between
+  waves, an earlier drain clearing a later release, target membership changing, readiness loss,
+  read failure, and cancellation; verify the production adapter as well as fake executor inputs.
 - [ ] `F-128` [High] implement the documented control-plane quorum and late-ordering checks
   (`PL-23`, `PL-24`, `EX-18`). A plan currently accepts releasing all three control-plane nodes before
   later API work. **Testable now:** synthetic HA membership, readiness loss between releases,
@@ -107,6 +117,15 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   heartbeats. **Testable now:** two simultaneous flows, a blocked action, ongoing status cadence,
   and cancellation. Preserve per-flow serialization and correct in-process progress reporting;
   restart/resume continuity is not part of this task (SB-1).
+  **Modularity context (2026-09-13):** `recordShutdownFlowExecution` directly calls
+  `Executor.Execute` inside reconciliation. Separate bounded in-process execution ownership from
+  reconciliation/status publication; keep executor policy independently runnable through its
+  existing action, observation, approval, and audit interfaces. Define cancellation and manager
+  shutdown cleanup, duplicate-reconcile behavior, per-flow serialization, and handling of two
+  flows targeting overlapping resources. Merely increasing worker count does not settle these
+  contracts. Acceptance must demonstrate a blocked flow cannot starve another flow or progress
+  updates, repeated reconciles cannot start duplicate work, and canceled work releases its owned
+  resources. A new network service, durable queue, or crash-resume subsystem is not required.
 - [ ] `F-142` [Medium] honor the accepted abort-policy and `continueOnError` fields, or explicitly
   reject unsupported settings before v1. They currently do not reach execution, so a failure always
   stops the tail, including requested abort notifications. **Testable now:** failure-policy matrices
@@ -147,6 +166,26 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `nut-server` operand image. Audit: `docs/contributing/audits/nutserver-pod-audit.md` (`F-15`–`F-19`, `F-23`,
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`, `F-124`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
+
+- [ ] `F-144` [Medium] redesign NUT supervision ownership and packaging for independent testing.
+  **Evidence (2026-09-13):** `driverSupervisorScript()` embeds process-management shell in
+  `internal/controller/nutserver_render.go`; the component harness rewrites hardcoded paths to
+  execute it. Existing process tests are valuable, but runtime supervision and Kubernetes rendering
+  remain awkwardly coupled. This is maintainability/test-fidelity risk, not evidence that every
+  current supervisor behavior is faulty.
+  **Design first:** compare the current contract with upstream NUT process-management facilities
+  and established supervision tooling. Record what can be reused and what remains project-owned;
+  do not replace it with another bespoke supervisor by default. Separate runtime implementation,
+  configuration, rendering, and health probes. An owned script/module may suffice; extraction alone
+  does not close the task unless the lifecycle contract and production-artifact tests are clear.
+  Preserve per-driver failure isolation, unchanged-driver PIDs during add/remove, bounded restart
+  cadence, reload retry, empty-device startup, credential isolation, and deterministic termination.
+  Keep the network-only scope and existing privilege boundaries; no new service is assumed.
+  **Testable now; Conditional:** retain process-tree regressions and add tests using the packaged
+  implementation with actual NUT binaries, covering invalid configuration, partial startup,
+  repeated crashes, reload, readiness, and cancellation/cleanup. Configure test paths explicitly
+  instead of rewriting implementation text. Compare behavior with the current harness before
+  replacement. Coordinate with `F-97`; a redesign must not silently close its unreproduced root cause.
 
 - `F-97` [High] find out why a driver `upsd` is still talking to fails a fresh `upsdrvctl status`
   connection, and only in the minutes after a pod start. The recovery half is done and measured in
@@ -204,6 +243,19 @@ Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts sec
 Owns: the PostgreSQL audit schema, storage backend resolution, retention, and the shutdown-time
 spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 
+- [ ] `F-145` [Medium] add an isolated real-PostgreSQL component test suite for audit persistence.
+  **Evidence (2026-09-13):** inspected audit/storage tests exercise SQL and connection interfaces
+  through fakes; the inspected CI/e2e harnesses provide no real PostgreSQL test dependency.
+  These tests cannot establish server acceptance of migrations, queries, or database semantics.
+  Keep the fast fake-based tests and add a disposable PostgreSQL instance using established
+  container tooling, with explicit isolated connection configuration and cleanup ownership.
+  **Testable now; Conditional:** verify fresh and repeated migrations, custom schema quoting,
+  all record write/read paths, uniqueness/upsert behavior, retention, history queries, and spool
+  replay. Exercise connection failure and bounded stalled I/O alongside `F-131`, preserving
+  action-outcome versus evidence-failure separation. Assert replay repeat safety, not executor
+  crash-resume guarantees. Run for audit/storage/schema/dependency/harness changes; no UPS or
+  Kubernetes cluster is needed. PostgreSQL coverage does not claim CNPG failover qualification.
+
 - [ ] `F-131` [High] make the configured audit spool available when PostgreSQL is already unavailable
   at execution start. Storage-readiness and `OpenAuditStore` failures currently return before the
   executor or spool is reached. Bound history, replay, and audit I/O so stalled storage cannot consume
@@ -217,6 +269,41 @@ spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 
 Owns: reconciler correctness, RBAC scope, leader election, metrics infrastructure, and
 image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity-benchmarks.md` (`F-1`–`F-7`).
+
+- [ ] `F-146` [Medium, investigation] assess Kind suite setup costs and component-test boundaries
+  before deciding whether any restructuring is warranted.
+  **Confirmed context (2026-09-13):** `test/e2e/e2e_suite_test.go`'s shared `BeforeSuite` resolves
+  and loads five images and sets up cert-manager even for a focused spec run. This does not mean
+  every CI run rebuilds all production images: `.github/workflows/test-e2e.yml` builds from the
+  checkout for PR/local runs, while the image-promotion caller passes four published operand/manager
+  digests; the test-only SNMP fixture still builds on both paths. Shared setup can amortize costs
+  across the full suite and protects production-artifact wiring. Its existence is not a defect.
+  **Investigate:** inventory each scenario's real prerequisites and measure build/pull/load,
+  cluster/CNI/certificate setup, scenario execution, and teardown separately. Compare focused versus
+  full runs and PR versus promotion paths, including cache state, failures, retries, cancellations,
+  and runner resource use. Keep unsuccessful timings visible and distinguish canceled observations
+  from completed durations. Use existing timing evidence where available; record sample dates and
+  counts rather than inferring savings from source alone.
+  **Acceptance:** document a measured keep/change decision. Compare shared setup with selective
+  fixtures or narrow component-image tests, including duplicated startup and maintenance costs.
+  Preserve full Kind coverage, exact promoted-image testing, network-policy enforcement, cleanup,
+  and required-check semantics. No suite split, fewer checks, or CI rewrite is approved by this task.
+  Priority reflects developer feedback/test isolation, not a demonstrated shutdown-safety defect.
+
+- [ ] `REL-1` [Medium] choose and implement a new public project name before the v1 release.
+  The product covers topology-aware power orchestration, planning, and execution beyond NUT server
+  management; the current name undersells that scope. Agree the name with the maintainer before
+  performing repository or registry mutations. Check discoverability, existing project/package
+  collisions, and naming suitability; retain accurate attribution and the NUT transport dependency.
+  **Release coordination:** inventory repository/module paths, image packages, CLI names, manifests,
+  labels/annotations, API identities, docs/examples, badges/links, CI permissions, provenance,
+  release automation, and branch/PR protections. Decide explicitly which are branding-only changes
+  and which require migration; renaming must not silently replace CRDs, strand resources, invalidate
+  approvals, or break upgrades. Coordinate with `F-112` before the first tagged release.
+  **Acceptance:** an agreed naming/migration plan, updated generated distribution artifacts and
+  public references, compatibility or documented migration for existing installs, and verified
+  build/install/upgrade/promotion paths. Check remote redirects, package access, and protections
+  after separately authorized remote changes. Name selection does not authorize publishing a rename.
 
 - Enable branch protection on `main` at release. Deliberately off during build: every CI check
   exists and passes, and requiring them would only add a merge round-trip to a single-maintainer
