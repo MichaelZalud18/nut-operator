@@ -73,7 +73,7 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 
 	var plan Plan
 	if len(scoped.Groups) > 0 {
-		plan.Graph = buildGroupGraph(scoped.Groups, scoped.TierPolicy, scoped.GroupNodes)
+		plan.Graph = buildGroupGraph(scoped.Groups, scoped.TierPolicy, scoped.GroupNodes, scoped.CommunicationDependencies)
 		steps, waves, duration, stalled := compileGroups(scoped.Groups, plan.Graph)
 		// Rejected rather than published half-descended. A plan missing the groups that could not be
 		// scheduled would still compile, still hash, and still look like a plan -- and the groups it
@@ -111,6 +111,8 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 		}
 	} else {
 		plan.Graph = buildStepGraph(scoped.Steps)
+		plan.Graph.Edges = append(plan.Graph.Edges, collectLinearCommunicationGraphEdges(scoped)...)
+		sortGraph(plan.Graph)
 		steps, duration := compileSteps(scoped.Steps)
 		plan.Steps = steps
 		plan.EstimatedDuration = Duration{Duration: duration}
@@ -254,7 +256,7 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 			}
 		}
 	}
-	if hasGroupCycle(input.Groups, input.TierPolicy, input.GroupNodes) {
+	if hasGroupCycle(input.Groups, input.TierPolicy, input.GroupNodes, input.CommunicationDependencies) {
 		diagnostics = append(diagnostics, Diagnostic{
 			Severity: DiagnosticError,
 			Reason:   "DependencyCycle",
@@ -410,12 +412,12 @@ func powerDomainArtifacts(domains []PowerDomainMembership) []PowerDomainArtifact
 	return artifacts
 }
 
-func groupEdges(groups []Group, policy TierPolicy, membership []GroupNodeMembership) map[string][]string {
-	return graphSuccessors(buildGroupGraph(groups, policy, membership))
+func groupEdges(groups []Group, policy TierPolicy, membership []GroupNodeMembership, communication []CommunicationDependency) map[string][]string {
+	return graphSuccessors(buildGroupGraph(groups, policy, membership, communication))
 }
 
-func hasGroupCycle(groups []Group, policy TierPolicy, membership []GroupNodeMembership) bool {
-	edges := groupEdges(groups, policy, membership)
+func hasGroupCycle(groups []Group, policy TierPolicy, membership []GroupNodeMembership, communication []CommunicationDependency) bool {
+	edges := groupEdges(groups, policy, membership, communication)
 	visiting := map[string]bool{}
 	visited := map[string]bool{}
 

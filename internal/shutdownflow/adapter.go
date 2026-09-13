@@ -290,8 +290,9 @@ func PlannerTierPolicy(policy powerv1alpha1.PowerShutdownTierPolicySpec) (planne
 	return converted, nil
 }
 
-// PlannerGroupNodes resolves which real cluster nodes each shutdown group
-// touches, splitting them into nodes the group acts on and nodes it powers off.
+// PlannerGroupNodes resolves which real cluster nodes each shutdown group or
+// linear step touches, splitting them into acted-on and released nodes. Linear
+// step IDs occupy the Group field for communication-order validation.
 //
 // This is the step that lets the planner name a node at all. Group targets are
 // selectors, and the planner is pure — it receives a target summary, never the
@@ -305,7 +306,7 @@ func PlannerTierPolicy(policy powerv1alpha1.PowerShutdownTierPolicySpec) (planne
 // release time — deriving it any other way would let the plan disagree with
 // what execution actually does.
 func PlannerGroupNodes(obj *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle) []planner.GroupNodeMembership {
-	if obj == nil || len(obj.Spec.Groups) == 0 {
+	if obj == nil || (len(obj.Spec.Groups) == 0 && len(obj.Spec.Steps) == 0) {
 		return nil
 	}
 	if len(bundle.ClusterNodes) == 0 && len(bundle.AgentCoverage) == 0 {
@@ -317,8 +318,15 @@ func PlannerGroupNodes(obj *powerv1alpha1.ShutdownFlow, bundle resolver.Structur
 		coverage[agent.Name] = agent.Nodes
 	}
 
-	membership := make([]planner.GroupNodeMembership, 0, len(obj.Spec.Groups))
-	for _, group := range obj.Spec.Groups {
+	groups := obj.Spec.Groups
+	if len(groups) == 0 {
+		groups = make([]powerv1alpha1.ShutdownGroup, 0, len(obj.Spec.Steps))
+		for _, step := range obj.Spec.Steps {
+			groups = append(groups, powerv1alpha1.ShutdownGroup{Name: step.ID, Action: step.Type, Target: step.Target})
+		}
+	}
+	membership := make([]planner.GroupNodeMembership, 0, len(groups))
+	for _, group := range groups {
 		entry := planner.GroupNodeMembership{Group: group.Name}
 		if group.Action == powerv1alpha1.ShutdownStepAgentShutdown {
 			for _, ref := range group.Target.AgentRefs {

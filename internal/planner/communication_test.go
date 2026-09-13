@@ -17,6 +17,7 @@ limitations under the License.
 package planner
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -135,5 +136,226 @@ func TestCommunicationAbsentPreservesScopeFallback(t *testing.T) {
 	scoped, _ := scopeStructuralInputs(input)
 	if !reflect.DeepEqual(scoped, input) {
 		t.Fatal("without known affected nodes or communication consumers, retain existing scope fallback")
+	}
+}
+
+func communicationReleaseInput() StructuralInputs {
+	return StructuralInputs{
+		Triggers: []Trigger{{Type: "OnBattery"}},
+		Groups: []Group{
+			{Name: "drain-consumer", Action: "DrainNodes", Target: Target{NodeSelector: true}},
+			{Name: "halt-consumer", Action: "AgentShutdown", Target: Target{AgentRefCount: 1}},
+			{Name: "halt-carrier", Action: "AgentShutdown", Target: Target{AgentRefCount: 1}},
+		},
+		GroupNodes: []GroupNodeMembership{
+			{Group: "drain-consumer", Acts: []string{"consumer"}},
+			{Group: "halt-consumer", Releases: []string{"consumer"}},
+			{Group: "halt-carrier", Releases: []string{"carrier"}},
+		},
+		CommunicationDependencies: []CommunicationDependency{{Dependent: "consumer", Carrier: "carrier", Source: "inventory/path"}},
+		PowerDomains:              []PowerDomainMembership{{Name: "rack", UPSDevices: []string{"ups"}, Nodes: []string{"consumer", "carrier"}}},
+	}
+}
+
+func TestCommunicationCarrierReleaseFollowsDependentWork(t *testing.T) {
+	plan, diagnostics, err := Compile(communicationReleaseInput(), TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("compile: %v: %+v", err, diagnostics)
+	}
+	var waves [][]string
+	for _, wave := range plan.Waves {
+		waves = append(waves, wave.Groups)
+	}
+	want := [][]string{{"drain-consumer"}, {"halt-consumer"}, {"halt-carrier"}}
+	if !reflect.DeepEqual(waves, want) {
+		t.Fatalf("communication carrier released too early: waves=%v, want %v", waves, want)
+	}
+	for _, group := range []string{"drain-consumer", "halt-consumer"} {
+		edge := findGraphEdge(plan.Graph.Edges, group, "halt-carrier", "CommunicationPath")
+		if edge == nil || edge.Provenance != GraphEdgeProvenanceDerived {
+			t.Fatalf("missing derived order for %s", group)
+		}
+		if !slices.ContainsFunc(edge.Sources, func(s GraphSourceRef) bool { return s.Name == "inventory/path" }) {
+			t.Fatalf("missing authored path provenance: %+v", edge)
+		}
+	}
+}
+
+func TestCommunicationReleaseTraversesNonActuatedTransit(t *testing.T) {
+	input := communicationReleaseInput()
+	input.CommunicationDependencies = []CommunicationDependency{
+		{Dependent: "consumer", Carrier: "switch", Source: "access-link"},
+		{Dependent: "switch", Carrier: "carrier", Source: "upstream-link"},
+		{Dependent: "carrier", Carrier: "switch", Source: "transit-cycle"},
+	}
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("compile: %v: %+v", err, diagnostics)
+	}
+	if len(plan.Waves) != 3 || !slices.Equal(plan.Waves[2].Groups, []string{"halt-carrier"}) {
+		t.Fatalf("transit path lost: %+v", plan.Waves)
+	}
+	if len(plan.Graph.Vertices) != len(input.Groups) {
+		t.Fatal("non-actuated switch became a shutdown target")
+	}
+	edge := findGraphEdge(plan.Graph.Edges, "halt-consumer", "halt-carrier", "CommunicationPath")
+	if edge == nil {
+		t.Fatal("missing transitive order")
+	}
+	for _, source := range []string{"access-link", "upstream-link"} {
+		if !slices.ContainsFunc(edge.Sources, func(s GraphSourceRef) bool { return s.Name == source }) {
+			t.Fatalf("missing %s provenance: %+v", source, edge.Sources)
+		}
+	}
+}
+
+func TestCommunicationReleaseRejectsUnsafeOrders(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*StructuralInputs)
+		reason string
+	}{
+		{name: "declared reverse order", reason: "DependencyCycle", change: func(input *StructuralInputs) { input.Groups[2].Before = []string{"drain-consumer"} }},
+		{name: "tier inversion", reason: "DependencyCycle", change: func(input *StructuralInputs) {
+			early, late := int32(4), int32(2)
+			input.Groups[0].ShutdownTier = &late
+			input.Groups[1].ShutdownTier = &late
+			input.Groups[2].ShutdownTier = &early
+		}},
+		{name: "mutually dependent releases", reason: "DependencyCycle", change: func(input *StructuralInputs) {
+			input.CommunicationDependencies = append(input.CommunicationDependencies, CommunicationDependency{Dependent: "carrier", Carrier: "consumer", Source: "reverse-path"})
+		}},
+		{name: "one release group for both nodes", reason: "CommunicationReleaseConflict", change: func(input *StructuralInputs) {
+			input.Groups = input.Groups[:2]
+			input.GroupNodes = input.GroupNodes[:2]
+			input.GroupNodes[1].Releases = []string{"consumer", "carrier"}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := communicationReleaseInput()
+			tc.change(&input)
+			plan, diagnostics, err := Compile(input, TelemetryInputs{})
+			if err == nil || len(plan.Waves) != 0 {
+				t.Fatalf("unsafe order compiled: %+v", plan.Waves)
+			}
+			if !slices.ContainsFunc(diagnostics, func(d Diagnostic) bool { return d.Reason == tc.reason && d.Severity == DiagnosticError }) {
+				t.Fatalf("missing %s: %+v", tc.reason, diagnostics)
+			}
+		})
+	}
+}
+
+func TestCommunicationOrderProvenanceIsCanonical(t *testing.T) {
+	input := communicationReleaseInput()
+	input.GroupNodes[0].Acts = append(input.GroupNodes[0].Acts, "second-consumer")
+	input.CommunicationDependencies = append(input.CommunicationDependencies,
+		CommunicationDependency{Dependent: "second-consumer", Carrier: "carrier", Source: "second-path"},
+		CommunicationDependency{Dependent: "consumer", Carrier: "carrier", Source: "alternate-path"},
+	)
+	first, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("compile: %v: %+v", err, diagnostics)
+	}
+	slices.Reverse(input.Groups)
+	slices.Reverse(input.GroupNodes)
+	slices.Reverse(input.CommunicationDependencies)
+	input.CommunicationDependencies = append(input.CommunicationDependencies, input.CommunicationDependencies[0])
+	second, _, err := Compile(input, TelemetryInputs{})
+	if err != nil || !reflect.DeepEqual(first, second) {
+		t.Fatalf("input order changed plan: %v", err)
+	}
+	edge := findGraphEdge(first.Graph.Edges, "drain-consumer", "halt-carrier", "CommunicationPath")
+	if edge == nil {
+		t.Fatal("missing derived order")
+	}
+	for _, node := range []string{"consumer", "second-consumer", "carrier"} {
+		if !slices.Contains(edge.Sources, GraphSourceRef{Kind: "Node", Name: node}) {
+			t.Fatalf("lost contributor %s: %+v", node, edge.Sources)
+		}
+	}
+	if !strings.Contains(first.Diagrams.Mermaid, "CommunicationPath") || !hasExplanationReason(first.Explanations, "CommunicationPath") {
+		t.Fatal("derived ordering absent from published graph explanations/diagrams")
+	}
+}
+
+func TestCommunicationOrderIgnoresUnscheduledCarrierRelease(t *testing.T) {
+	input := communicationReleaseInput()
+	input.Groups = input.Groups[:2]
+	// Membership can include stale or pruned groups. They must not become vertices.
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("compile: %v: %+v", err, diagnostics)
+	}
+	if len(plan.Waves) != 2 || len(plan.Graph.Vertices) != 2 {
+		t.Fatalf("unscheduled carrier became a target: %+v", plan)
+	}
+	if slices.ContainsFunc(plan.Graph.Edges, func(e GraphEdge) bool { return e.Relation == "CommunicationPath" }) {
+		t.Fatal("derived edge points to an unscheduled group")
+	}
+}
+
+func TestCommunicationScopeRetainsConsumersOfMixedReleaseGroup(t *testing.T) {
+	input := communicationReleaseInput()
+	input.Triggers = []Trigger{{Type: "OnBattery", PowerDomains: []string{"affected"}}}
+	input.PowerDomains = append(input.PowerDomains, PowerDomainMembership{Name: "affected", UPSDevices: []string{"other-ups"}, Nodes: []string{"affected-node"}})
+	// This retained group powers off a healthy-domain carrier alongside a node
+	// in the affected domain. Its consumers still need to finish before it runs.
+	input.GroupNodes[2].Releases = []string{"affected-node", "carrier"}
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("compile: %v: %+v", err, diagnostics)
+	}
+	if len(plan.Waves) != 3 || !slices.Equal(plan.Waves[0].Groups, []string{"drain-consumer"}) || !slices.Equal(plan.Waves[2].Groups, []string{"halt-carrier"}) {
+		t.Fatalf("consumer work pruned ahead of retained carrier release: %+v", plan.Waves)
+	}
+}
+
+func TestCommunicationReleaseLinearOrder(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reverse=%v", reverse), func(t *testing.T) {
+			input := communicationReleaseInput()
+			for _, group := range input.Groups {
+				input.Steps = append(input.Steps, Step{ID: group.Name, Action: group.Action, Target: group.Target})
+			}
+			input.Groups = nil
+			if reverse {
+				slices.Reverse(input.Steps)
+			}
+			plan, diagnostics, err := Compile(input, TelemetryInputs{})
+			if reverse {
+				if err == nil || !slices.ContainsFunc(diagnostics, func(d Diagnostic) bool { return d.Reason == "CommunicationReleaseOrderInvalid" }) {
+					t.Fatalf("unsafe linear order accepted: %+v", diagnostics)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("compile: %v: %+v", err, diagnostics)
+			}
+			if len(plan.Steps) != 3 || plan.Steps[0].ID != "drain-consumer" || plan.Steps[2].ID != "halt-carrier" {
+				t.Fatalf("linear order changed: %+v", plan.Steps)
+			}
+			if findGraphEdge(plan.Graph.Edges, "halt-consumer", "halt-carrier", "CommunicationPath") == nil {
+				t.Fatal("linear plan lost communication constraint")
+			}
+		})
+	}
+}
+
+func TestCommunicationScopeClosesOverNewlyRetainedReleases(t *testing.T) {
+	input := communicationReleaseInput()
+	input.Triggers = []Trigger{{Type: "OnBattery", PowerDomains: []string{"affected"}}}
+	input.PowerDomains[0].Nodes = append(input.PowerDomains[0].Nodes, "second-carrier", "second-consumer")
+	input.PowerDomains = append(input.PowerDomains, PowerDomainMembership{Name: "affected", Nodes: []string{"affected-node"}})
+	input.GroupNodes[2].Releases = append(input.GroupNodes[2].Releases, "affected-node")
+	input.GroupNodes[1].Releases = append(input.GroupNodes[1].Releases, "second-carrier")
+	input.Groups = append(input.Groups, Group{Name: "drain-second", Action: "DrainNodes", Target: Target{NodeSelector: true}})
+	input.GroupNodes = append(input.GroupNodes, GroupNodeMembership{Group: "drain-second", Acts: []string{"second-consumer"}})
+	input.CommunicationDependencies = append(input.CommunicationDependencies, CommunicationDependency{Dependent: "second-consumer", Carrier: "second-carrier", Source: "second-path"})
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("compile: %v: %+v", err, diagnostics)
+	}
+	if len(plan.Waves) != 3 || !slices.Equal(plan.Waves[0].Groups, []string{"drain-consumer", "drain-second"}) {
+		t.Fatalf("dependent of newly retained mixed release was pruned: %+v", plan.Waves)
 	}
 }

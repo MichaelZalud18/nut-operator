@@ -48,6 +48,7 @@ func scopeStructuralInputs(input StructuralInputs) (StructuralInputs, []Diagnost
 	}
 
 	membership := groupNodeSets(input.GroupNodes)
+	retainReleasedCarrierConsumers(input, membership, affectedNodes)
 	pruned := map[string]struct{}{}
 	groups := make([]Group, 0, len(input.Groups))
 	for _, group := range input.Groups {

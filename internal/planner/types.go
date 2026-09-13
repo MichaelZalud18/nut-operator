@@ -78,6 +78,7 @@ type CommunicationDependency struct {
 }
 
 // GroupNodeMembership is one group's relationship to real cluster nodes.
+// Linear flows use the step ID as Group for PL-21 order validation.
 //
 // Acts and Releases are deliberately separate. A group that drains a node acts
 // on it; a group that powers it off releases it. The distinction is the whole

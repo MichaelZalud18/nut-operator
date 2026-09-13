@@ -193,7 +193,22 @@ domain is sufficient for conservative retention. A carrier without a resolved su
 domain also retains its consumers and produces `CommunicationPowerDomainUnknown`. These
 dependencies participate in structural identity, and `CommunicationPowerDependency`
 explanations identify the authored edge source and supplying domains. This scoping rule does
-not itself establish a runtime deadline or enforce carrier-release ordering.
+not itself establish a runtime deadline.
+
+For carriers that are node-release targets, derived `CommunicationPath` group edges place
+all resolved dependent work, including dependent release, before carrier release. Traversal
+includes non-actuated transit devices without inventing shutdown targets for them. Each
+constraint publishes a deterministic shortest path as ordering evidence; contributions from
+different dependent nodes to the same group edge are combined. A cycle against declared
+ordering or tiers is rejected. A single action targeting both carrier and dependent is rejected
+as `CommunicationReleaseConflict`: split carrier release into its own group or step. Linear
+flows preserve declared order and reject inversions as `CommunicationReleaseOrderInvalid`.
+
+Domain scoping also retains consumers of carriers released by retained mixed-domain groups.
+This expansion repeats until no further consumers are brought into scope, before pruning groups.
+The order constrains action completion and signal publication, not physical halt acknowledgement.
+Carrier power-loss runtime constraints remain separate from release ordering; a switch does not
+need to be an actuation target for its supply to constrain the plan.
 
 **PL-20a** · Report and block tier inversion. A group whose tier is lower than the tier of a node it
 runs on is scheduled to keep working after that node powers off. Compilation reports this as

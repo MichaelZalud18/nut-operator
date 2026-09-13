@@ -133,13 +133,19 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   consumers and produces `CommunicationPowerDomainUnknown`. Published explanations include
   edge-source and supplying-domain provenance. Component tests cover transitive/cyclic paths,
   unknown and unaffected supplies, deterministic identity, and inventory-to-artifact propagation.
-  **Validation:** race-enabled inventory, planner, resolver, shutdownflow, and controller tests
-  passed, including envtest coverage for accepted-but-degraded unknown communication supply;
-  `make lint` reported zero issues.
-  **Still open:** enforce carrier release ordering, incorporate communication-supply runtime
-  into execution budgeting, cover operator/API and NUT service paths end to end, and publish
-  resulting structured ordering/timing constraints. Dependency explanations alone do not
-  complete this requirement or the communication-ordering artifact task.
+  **Ordering milestone (2026-09-13):** grouped plans derive carrier-node release order through
+  transitive paths; linear plans reject conflicting declared order. Combined carrier/dependent
+  release actions are rejected. Mixed-domain releases retain their consumers before pruning.
+  Derived ordering edges and path provenance reach published graphs, explanations, and diagrams.
+  Component tests exercise inventory-to-executor ordering, dependent-action failure, dry-run
+  evidence, tier/declared cycles, linear adapters, and iterative domain-scope retention.
+  **Validation:** race-enabled inventory, planner, resolver, shutdownflow, executor, controller
+  (including envtest), and webhook suites passed. `make lint` reported zero issues. Execution
+  ordering tests use simulated actions and do not claim physical halt evidence.
+  **Still open:** incorporate communication-supply runtime into execution budgeting, cover
+  operator/API and NUT service paths end to end (including work without resolved node targets),
+  and publish structured timing constraints and unresolved coverage. Action ordering does not
+  establish physical halt acknowledgement or power-loss deadlines for non-actuated switches.
 
 ---
 
@@ -194,6 +200,8 @@ Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts sec
   and unresolved-path diagnostics. Publishing topology alone is not the completed ordering feature.
   **Testable now:** deterministic planner artifact and controller-status fixtures matching the
   dependencies actually used by planning; no switch or PDU actuation is required.
+  **Implemented (2026-09-13):** derived carrier-node ordering edges, path-source provenance,
+  explanations, and diagrams. Timing constraints and complete unresolved-path coverage remain.
 
 ---
 

@@ -26,24 +26,26 @@ const (
 	GraphVertexKindGroup = "ShutdownGroup"
 	GraphVertexKindStep  = "ShutdownStep"
 
-	GraphEdgeRelationRequires      = "Requires"
-	GraphEdgeRelationBefore        = "Before"
-	GraphEdgeRelationAfter         = "After"
-	GraphEdgeRelationLinearOrder   = "LinearOrder"
-	GraphEdgeRelationShutdownTier  = "ShutdownTier"
-	GraphEdgeRelationNodeClearance = "NodeClearance"
+	GraphEdgeRelationRequires          = "Requires"
+	GraphEdgeRelationBefore            = "Before"
+	GraphEdgeRelationAfter             = "After"
+	GraphEdgeRelationLinearOrder       = "LinearOrder"
+	GraphEdgeRelationShutdownTier      = "ShutdownTier"
+	GraphEdgeRelationNodeClearance     = "NodeClearance"
+	GraphEdgeRelationCommunicationPath = "CommunicationPath"
 
 	GraphEdgeProvenanceDeclared = "Declared"
 	GraphEdgeProvenanceDerived  = "Derived"
 	GraphEdgeProvenancePolicy   = "Policy"
 )
 
-func buildGroupGraph(groups []Group, policy TierPolicy, membership []GroupNodeMembership) Graph {
+func buildGroupGraph(groups []Group, policy TierPolicy, membership []GroupNodeMembership, communication []CommunicationDependency) Graph {
 	tiers := effectiveShutdownTiers(groups, policy)
 	graph := Graph{
 		Vertices: make([]GraphVertex, 0, len(groups)),
 		Edges:    append(collectGroupGraphEdges(groups, policy), collectNodeClearanceGraphEdges(groups, membership)...),
 	}
+	graph.Edges = append(graph.Edges, collectCommunicationGraphEdges(groups, membership, communication)...)
 	for _, group := range groups {
 		graph.Vertices = append(graph.Vertices, GraphVertex{
 			ID:            group.Name,
