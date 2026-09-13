@@ -217,6 +217,12 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
   management, s6, runit, and per-device containers; retain upstream named workers and the isolated
   configuration adapter for v1. The remaining termination bound is Medium lifecycle hardening,
   not evidence that normal termination or the separate readiness root cause is solved by this fix.
+  **Harness cancellation (2026-09-13):** fixed delayed EXIT cleanup while Bash waited for a
+  foreground container command. The harness now uses an interruptible background-job wait and
+  reaps its command after removing its owned container. The Docker-free regression failed before
+  the fix and passed three race-enabled repetitions afterward; real forced cancellation returned
+  within its deadline with no fixture container remaining. This proves test-harness cleanup, not
+  the separate runtime worker-termination bound above.
 
 - `F-97` [High] find out why a driver `upsd` is still talking to fails a fresh `upsdrvctl status`
   connection, and only in the minutes after a pod start. The recovery half is done and measured in

@@ -16,8 +16,14 @@ fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 identity="$(mktemp -d)"
 container="nut-supervisor-${identity##*/}"
+run_pid=
 cleanup() {
+  trap '' INT TERM
   "$container_tool" rm -f "$container" >/dev/null 2>&1 || true
+  if [[ -n "$run_pid" ]]; then
+    kill "$run_pid" 2>/dev/null || true
+    wait "$run_pid" 2>/dev/null || true
+  fi
   rmdir "$identity"
 }
 trap cleanup EXIT
@@ -34,4 +40,7 @@ timeout --signal=TERM --kill-after=5s 180s "$container_tool" run --rm --init \
   --mount "type=bind,src=$root/internal/nutsupervisor/supervisor.sh,dst=/supervisor.sh,readonly" \
   --mount "type=bind,src=$root/hack/nut-supervisor-smoke-container.sh,dst=/smoke.sh,readonly" \
   --mount "type=bind,src=$root/hack/nut-readiness-stress-container.sh,dst=/probe-stress.sh,readonly" \
-  --entrypoint /bin/sh "$image" /smoke.sh
+  --entrypoint /bin/sh "$image" /smoke.sh &
+run_pid=$!
+# Bash runs traps promptly while waiting on a background job, not a foreground command.
+wait "$run_pid"
