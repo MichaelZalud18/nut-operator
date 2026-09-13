@@ -65,7 +65,7 @@ a real kernel underneath, once. Reaching that log line is a legitimate, narrower
 
 | Run | Result | Finding |
 | --- | --- | --- |
-| _(not yet run live)_ | | |
+| [34768697157](https://github.com/MichaelZalud18/nut-operator/actions/runs/34768697157) | **pass** (171.81s, first attempt) | `halt gate=CapabilityPermitted result=pass detail="CAP_SYS_BOOT is in the permitted set; actuation armed" node=kairos-76ed` -- the real image, imported via `docker save`/`k3s ctr images import` into the guest's own containerd, held CAP_SYS_BOOT through a real kubelet's UID-65532 transition on a real kernel, first try. Two other gate lines fired, neither a failure of what this test asserts: `halt gate=SignalChannel result=fail detail="signal directories cannot be read: /var/lib/power-agent/signals"` (expected -- no signal directory was ever created) and a state-write warning at `/run/actuator/state.json` (expected -- this bare test Pod has no `emptyDir` mounted there, unlike the full rendered manifest; the readiness probe would fail here, which is fine, since nothing in this milestone checks readiness). |
 
 ## Open, deliberately not attempted here
 
