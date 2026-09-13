@@ -20,6 +20,8 @@ and never renumbered.
 - [Scope boundaries](design/scope-boundaries.md) — what the project is and is not, plus the decision
   registry of record.
 - [Decision index](design/decision-index.md) — the map across the design set.
+- [User stories](design/user-stories.md) — requested outcomes for architectural review, separate
+  from approved implementation tasks.
 - [Settled questions](design/settled-questions.md) — closed questions and how they were closed.
 - [Shutdown flow](design/shutdown-flow.md) — the compiled plan model and the published artifacts.
 - Requirements: [planner](design/planner-requirements.md), [executor](design/executor-requirements.md),
