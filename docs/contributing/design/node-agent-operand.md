@@ -87,9 +87,12 @@ deleted agents and nodes removed from coverage are refused. This check is requir
 flow passed its separate approval check at the wave boundary. A read failure blocks publication,
 and partial handoff receipts distinguish already-written signals from the refused node.
 
-The agent read and Secret write are separate Kubernetes requests, not an atomic cross-resource
-transaction. This gate checks current authorization; refreshing placement, pod readiness, and
-telemetry is the separate live-release contract in the executor requirements.
+Before that final authorization read, the writer checks current node clearance, the reported
+telemetry phase, and the actual agent Pod's readiness, node assignment, mode, and actuator policy.
+An unobserved agent generation, changed signal destination, or unavailable evidence blocks the
+write. This guards against an old ready Pod retaining a different actuator mode during rollout.
+These are separate Kubernetes requests, not an atomic cross-resource transaction. Wave-start
+target resolution and execution-time evidence refresh are separate parts of the executor contract.
 
 ## Actuation
 

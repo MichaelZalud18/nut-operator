@@ -70,8 +70,8 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   The agent read and Secret write remain separate API requests, not an atomic transaction.
   Fresh placement/readiness/telemetry and wave target resolution remain `F-127`.
 - [ ] `F-127` [High] resolve targets at wave start and refresh node clearance, readiness, and telemetry
-  before each halt signal. These are currently captured before the whole execution: a newly placed
-  Pod can be halted, while a node drained by an earlier wave can remain falsely blocked.
+  before each halt signal. Wave targets and initial guard evidence are captured before the whole
+  execution; a node drained by an earlier wave can remain falsely blocked.
   **Testable now:** placement changes, drain-to-release transitions, and stale-agent simulations.
   Real-guest cross-check once built: `VM-4` (Hadron VM Test Coverage).
   **Implementation context (2026-09-13):** make wave-target resolution and per-node release
@@ -84,6 +84,15 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   `F-126`, rather than implementing competing gates. Acceptance includes a Pod arriving between
   waves, an earlier drain clearing a later release, target membership changing, readiness loss,
   read failure, and cancellation; verify the production adapter as well as fake executor inputs.
+  **Publication gate (2026-09-13):** the production runner now re-reads agent generation/status,
+  signal destination, the actual Pod's node/readiness and actuator mode/policy, reported UPS phase,
+  and current blocking Pods before its final authorization check and Secret mutation. Tests use
+  stale cached objects plus an independent fresh reader and assert that no signal is written for
+  new workloads, missing/unready Pods, stale policy, stale telemetry phase, read failure, or
+  cancellation. Affected controller/executor/runner/manager race suites and repeated gate tests
+  passed. **Still open:** wave-start target resolution, refreshing the executor's initial guard
+  evidence so an earlier drain can clear a later release, and timestamp-age telemetry expiry
+  rather than only re-reading reported phase. These changes do not implement the new user stories.
 - [ ] `F-128` [High] implement the documented control-plane quorum and late-ordering checks
   (`PL-23`, `PL-24`, `EX-18`). A plan currently accepts releasing all three control-plane nodes before
   later API work. **Testable now:** synthetic HA membership, readiness loss between releases,

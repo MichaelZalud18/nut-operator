@@ -856,7 +856,7 @@ func (r *ShutdownFlowReconciler) nodeClearance(ctx context.Context, nodeName str
 // waited for them to leave would wait forever on work that is supposed to be there.
 func (r *ShutdownFlowReconciler) clearanceExemptNamespaces(ctx context.Context) (map[string]struct{}, error) {
 	var agents powerv1alpha1.NodePowerAgentList
-	if err := r.List(ctx, &agents); err != nil {
+	if err := r.reader().List(ctx, &agents); err != nil {
 		return nil, fmt.Errorf("list NodePowerAgents for node clearance: %w", err)
 	}
 	exempt := make(map[string]struct{}, len(agents.Items)+1)
@@ -935,7 +935,7 @@ func (r *ShutdownFlowReconciler) nodePowerAgentTelemetryFreshness(ctx context.Co
 	deviceNames := map[string]struct{}{}
 	for _, ref := range agent.Spec.NUTServerRefs {
 		var server powerv1alpha1.NUTServer
-		if err := r.Get(ctx, client.ObjectKey{Name: ref.Name}, &server); err != nil {
+		if err := r.reader().Get(ctx, client.ObjectKey{Name: ref.Name}, &server); err != nil {
 			return false, "", fmt.Errorf("get NUTServer %q for NodePowerAgent %q telemetry freshness: %w", ref.Name, agent.Name, err)
 		}
 		for _, name := range server.Status.SelectedDevices {
@@ -953,7 +953,7 @@ func (r *ShutdownFlowReconciler) nodePowerAgentTelemetryFreshness(ctx context.Co
 	sort.Strings(names)
 	for _, name := range names {
 		var device powerv1alpha1.UPSDevice
-		if err := r.Get(ctx, client.ObjectKey{Name: name}, &device); err != nil {
+		if err := r.reader().Get(ctx, client.ObjectKey{Name: name}, &device); err != nil {
 			if apierrors.IsNotFound(err) {
 				return false, "AgentTelemetryUnknown", nil
 			}
@@ -974,7 +974,7 @@ func (r *ShutdownFlowReconciler) getNodePowerAgentManagementCluster(ctx context.
 		return nil, nil
 	}
 	var cluster powerv1alpha1.PowerManagementCluster
-	if err := r.Get(ctx, client.ObjectKey{Name: agent.Spec.ManagementClusterRef.Name}, &cluster); err != nil {
+	if err := r.reader().Get(ctx, client.ObjectKey{Name: agent.Spec.ManagementClusterRef.Name}, &cluster); err != nil {
 		return nil, fmt.Errorf("get PowerManagementCluster %q for NodePowerAgent %q: %w", agent.Spec.ManagementClusterRef.Name, agent.Name, err)
 	}
 	return &cluster, nil

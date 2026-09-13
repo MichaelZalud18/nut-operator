@@ -244,7 +244,7 @@ func main() {
 		APIReader: mgr.GetAPIReader(),
 	}
 	shutdownFlowReconciler.ExecutorRunner = kubeactions.Runner{
-		ValidateNodeRelease: shutdownFlowReconciler.ValidateNodeReleaseAuthorization,
+		ValidateNodeRelease: shutdownFlowReconciler.ValidateNodeRelease,
 		Client:              mgr.GetClient(),
 		ManagerNamespace:    os.Getenv("POD_NAMESPACE"),
 		Recorder:            mgr.GetEventRecorder("shutdownflow-executor"),
