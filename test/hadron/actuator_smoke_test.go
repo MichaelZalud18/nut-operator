@@ -20,9 +20,11 @@ limitations under the License.
 package hadron
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -37,6 +39,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/spectrocloud/peg/pkg/machine/types"
+
 	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
 )
 
@@ -45,6 +49,7 @@ import (
 // test below, so each test's own body is only the part that differs: what signal (if any) reaches
 // the actuator, and what that must do to the guest.
 type actuatorGuest struct {
+	machine   types.Machine
 	creds     Credentials
 	clientset *kubernetes.Clientset
 	nodeName  string
@@ -140,7 +145,7 @@ func bootActuatorReadyGuest(ctx context.Context, t *testing.T) actuatorGuest {
 		t.Fatalf("importing actuator image into guest containerd: %v\n%s", err, out)
 	}
 
-	return actuatorGuest{creds: creds, clientset: clientset, nodeName: nodeName, imageRef: imageRef}
+	return actuatorGuest{machine: m, creds: creds, clientset: clientset, nodeName: nodeName, imageRef: imageRef}
 }
 
 // actuatorPodSpec is production's real PowerOff/Actuate security context and environment shape
@@ -397,6 +402,172 @@ func TestHadronActuatorRejectsInvalidSignals(t *testing.T) {
 				t.Fatalf("guest unreachable after a signal that should have been rejected, not actuated: %v", err)
 			}
 		})
+	}
+}
+
+// TestHadronActuatorHaltsOnAcceptedSignal is VM-3's third milestone and its actual high-severity
+// core: a real, accepted signal, a real reboot(2), and hypervisor-confirmed evidence that the
+// guest halted itself rather than being stopped by this test harness.
+//
+// The evidence problem is exactly what VM-3's own text and node-agent-operand.md's OD-27 warn
+// about: neither the operator nor this test has a channel inside the guest to ask what happened,
+// and once reboot(2) fires the guest -- including its own k3s API server -- disappears atomically.
+// A log line racing that disappearance may or may not make it out over the network before the
+// connection dies with the guest; gateSyscallIssued's own comment says as much ("no further output
+// is expected from this container"). So a fully captured log tail is not the pass condition here.
+// Two things are required instead, one from inside the pipe and one entirely outside it:
+//
+//  1. halt gate=SignalAccepted result=pass, captured from a log stream started before the pod even
+//     exists -- proof the real, valid signal was read, parsed, and accepted. This happens early
+//     enough in the sequence (well before the sync/reboot race) that capturing it is not itself a
+//     race.
+//  2. The QEMU process PEG is driving exits on its own, discovered by polling its PID directly and
+//     never calling SafeStop/SafeTeardown ourselves first -- proof of a real, hypervisor-visible
+//     halt, independent of anything (or nothing) the guest's own Kubernetes API said about it.
+//
+// Everything captured past SignalAccepted is logged for its diagnostic value, not asserted on:
+// FlowBinding, ModeAuthorized, CapabilityEffective, and SyscallIssued are a bonus this test does
+// not require, since nothing here guarantees it is possible to observe them from outside a dying
+// guest.
+func TestHadronActuatorHaltsOnAcceptedSignal(t *testing.T) {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	if deadline, ok := t.Deadline(); ok {
+		var deadlineCancel context.CancelFunc
+		ctx, deadlineCancel = context.WithDeadline(ctx, deadline.Add(-time.Minute))
+		defer deadlineCancel()
+	}
+
+	guest := bootActuatorReadyGuest(ctx, t)
+
+	secretName := "actuator-signal-accepted"
+	payload, err := json.Marshal(nodeagent.ShutdownSignal{
+		ExecutionID:    "exec-accepted",
+		NodeName:       guest.nodeName,
+		PlanConfigHash: "test-hash",
+		ShutdownFlow:   "test-flow",
+		Timestamp:      time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatalf("encode signal: %v", err)
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"},
+		Data: map[string][]byte{
+			guest.nodeName + ".json":        payload,
+			nodeagent.DeliveryChannelMarker: []byte(""),
+		},
+	}
+	// Created before the pod, matching production's own ordering (the operator writes the Secret,
+	// then the DaemonSet's actuator starts and finds it already there) -- watchSignals' own first
+	// pass runs before its first tick, so a pod that starts with a valid signal already mounted
+	// begins actuating on its very first read, not on some later poll.
+	if _, err := guest.clientset.CoreV1().Secrets("default").Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("creating signal secret: %v", err)
+	}
+	t.Cleanup(func() {
+		delCtx, delCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer delCancel()
+		if err := guest.clientset.CoreV1().Secrets("default").Delete(delCtx, secretName, metav1.DeleteOptions{}); err != nil {
+			t.Logf("deleting signal secret during cleanup (guest is likely already gone): %v", err)
+		}
+	})
+
+	pod := actuatorPodSpec("actuator-signal-accepted", guest.imageRef, guest.nodeName, secretName)
+
+	// Started before the pod exists and read for as long as the connection lasts: polling logs
+	// after the fact cannot see a line the guest never survives long enough to be asked about
+	// again.
+	logCtx, logCancel := context.WithCancel(ctx)
+	defer logCancel()
+	logLines := make(chan string, 256)
+	go streamActuatorLog(logCtx, guest.clientset, pod.Name, logLines)
+
+	if _, err := guest.clientset.CoreV1().Pods("default").Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("creating actuator pod: %v", err)
+	}
+	t.Cleanup(func() {
+		delCtx, delCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer delCancel()
+		if err := guest.clientset.CoreV1().Pods("default").Delete(delCtx, pod.Name, metav1.DeleteOptions{}); err != nil {
+			t.Logf("deleting actuator pod during cleanup (guest is likely already gone): %v", err)
+		}
+	})
+
+	t.Log("waiting for the guest's own QEMU process to exit on its own -- this test never stops it itself")
+	process, err := machineProcess(guest.machine)
+	if err != nil {
+		t.Fatalf("getting machine process handle: %v", err)
+	}
+	defer func() { _ = process.Release() }()
+	haltCtx, haltCancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer haltCancel()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	exited := false
+	for !exited {
+		select {
+		case <-haltCtx.Done():
+			t.Fatalf("guest process never exited on its own within the budget -- the actuator armed but the guest did not actually halt (a container outside the host PID namespace can call reboot(2) successfully and leave the machine running)")
+		case <-ticker.C:
+			if err := process.Signal(syscall.Signal(0)); err != nil {
+				exited = true
+			}
+		}
+	}
+	t.Log("confirmed: the guest's own QEMU process exited on its own, without this test stopping it")
+
+	// A short grace period for the streaming goroutine to push whatever it already received into
+	// the buffered channel before this drains it -- the goroutine and this exit check race by
+	// construction, and this is not the race the test is trying to measure.
+	time.Sleep(500 * time.Millisecond)
+	logCancel()
+	var captured []string
+collect:
+	for {
+		select {
+		case line := <-logLines:
+			captured = append(captured, line)
+		default:
+			break collect
+		}
+	}
+	log := strings.Join(captured, "\n")
+	t.Logf("captured actuator log (best-effort, up to the guest's own disconnect):\n%s", log)
+	if !strings.Contains(log, "halt gate=SignalAccepted result=pass") {
+		t.Fatalf("never observed the signal being accepted before the guest halted:\n%s", log)
+	}
+}
+
+// streamActuatorLog follows podName's log for as long as the connection lasts, sending each line
+// to lines. Meant to be started before the pod even exists and run in its own goroutine: a dying
+// guest can end this stream at any moment, including mid-line, which is expected here and not
+// itself a failure -- the caller decides what an incomplete capture means.
+func streamActuatorLog(ctx context.Context, clientset *kubernetes.Clientset, podName string, lines chan<- string) {
+	// The pod does not exist yet when this starts (it is launched before pod creation, to not miss
+	// the earliest lines) -- retry until the stream opens or the context ends.
+	var stream io.ReadCloser
+	for stream == nil {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		s, err := clientset.CoreV1().Pods("default").GetLogs(podName, &corev1.PodLogOptions{Follow: true}).Stream(ctx)
+		if err != nil {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		stream = s
+	}
+	defer func() { _ = stream.Close() }()
+	scanner := bufio.NewScanner(stream)
+	for scanner.Scan() {
+		select {
+		case lines <- scanner.Text():
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 

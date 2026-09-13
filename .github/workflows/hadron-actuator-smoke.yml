@@ -1,9 +1,9 @@
 name: Hadron Actuator Smoke Test
 
-# VM-3's first two milestones: manually triggered only. Boots one Hadron guest to a Ready k3s node
-# per test (the same proof VM-2's boot-smoke workflow already established), builds the real,
-# shipped node-actuator image from this checkout's own images/node-actuator/Dockerfile, imports it
-# into each guest's own containerd, and deploys it with production's real PowerOff/Actuate security
+# VM-3's three milestones: manually triggered only. Boots one Hadron guest to a Ready k3s node per
+# test (the same proof VM-2's boot-smoke workflow already established), builds the real, shipped
+# node-actuator image from this checkout's own images/node-actuator/Dockerfile, imports it into
+# each guest's own containerd, and deploys it with production's real PowerOff/Actuate security
 # context and environment.
 #
 # TestHadronActuatorArmsWithNoSignal: no shutdown signal is ever written, so the only thing under
@@ -15,9 +15,14 @@ name: Hadron Actuator Smoke Test
 # the guest running" as a requirement to prove, before ever attempting the one signal shape that
 # can actually halt a guest.
 #
+# TestHadronActuatorHaltsOnAcceptedSignal: the actual high-severity core -- a real, accepted
+# signal, a real reboot(2), and hypervisor-confirmed evidence (the QEMU process this workflow never
+# stops itself exiting on its own) that the guest halted itself. This is the one test here that can
+# actually power a guest off; hack/hadron-cleanup.py finding nothing left running for it afterward
+# is expected, not a sign cleanup skipped anything.
+#
 # See docs/contributing/audits/hadron-vm-3-actuator-2026-09-13.md for the design rationale, and
-# docs/tasks.md's VM-3 entry for what remains: the accepted-signal path, real reboot(2), and
-# hypervisor-confirmed shutdown evidence.
+# docs/tasks.md's VM-3 entry for what remains: revoked approval, and the full DaemonSet/RBAC.
 on:
   workflow_dispatch: {}
 
@@ -27,10 +32,10 @@ jobs:
   actuator-arms:
     permissions:
       contents: read
-    name: Boot Hadron guests and confirm the real actuator arms and rejects bad signals
+    name: Boot Hadron guests and confirm the real actuator arms, rejects, and halts correctly
     runs-on: ubuntu-latest
-    # Sum of bounded steps below is 63 minutes; reserve additional cancellation margin.
-    timeout-minutes: 70
+    # Sum of bounded steps below is 74 minutes; reserve additional cancellation margin.
+    timeout-minutes: 82
     steps:
       - name: Clone the code
         timeout-minutes: 2
@@ -74,9 +79,9 @@ jobs:
       # GNU timeout bounds compilation, the docker build/save the test performs itself, and the
       # test binary as a whole. TERM permits cooperative cancellation; KILL bounds a hung library
       # call. The Go deadline reserves cleanup time.
-      - name: Boot guests, build the real actuator image, and confirm it arms and rejects bad signals
-        timeout-minutes: 41
-        run: TMPDIR="$HADRON_STATE_ROOT" timeout --signal=TERM --kill-after=15s 40m go test -tags=hadron,hadron_smoke ./test/hadron -run '^TestHadronActuator' -v -timeout=38m
+      - name: Boot guests, build the real actuator image, and confirm it arms, rejects, and halts correctly
+        timeout-minutes: 52
+        run: TMPDIR="$HADRON_STATE_ROOT" timeout --signal=TERM --kill-after=15s 51m go test -tags=hadron,hadron_smoke ./test/hadron -run '^TestHadronActuator' -v -timeout=49m
 
       - name: Stop leftover guests owned by this run
         id: cleanup
