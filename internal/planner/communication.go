@@ -248,6 +248,40 @@ func carrierPowerDomains(input StructuralInputs, carrier string) []string {
 	return sortedSetKeys(domains)
 }
 
+// CommunicationSupplyDevices resolves UPS supplies of all upstream carriers for
+// the given consumers. Unknown supply remains explicit rather than disappearing
+// from a minimum-runtime calculation.
+func CommunicationSupplyDevices(input StructuralInputs, consumers []string) ([]string, bool) {
+	upstream := map[string][]CommunicationDependency{}
+	for _, dependency := range normalizeCommunicationDependencies(input.CommunicationDependencies) {
+		upstream[dependency.Dependent] = append(upstream[dependency.Dependent], dependency)
+	}
+	carriers := map[string]struct{}{}
+	for _, consumer := range consumers {
+		for carrier := range communicationPathsFrom(upstream, consumer) {
+			carriers[carrier] = struct{}{}
+		}
+	}
+	devices := map[string]struct{}{}
+	unknown := false
+	for carrier := range carriers {
+		found := false
+		for _, domain := range input.PowerDomains {
+			if !slices.Contains(domainEntities(domain), carrier) {
+				continue
+			}
+			for _, device := range domain.UPSDevices {
+				if device != "" {
+					devices[device] = struct{}{}
+					found = true
+				}
+			}
+		}
+		unknown = unknown || !found
+	}
+	return sortedSetKeys(devices), unknown
+}
+
 func communicationDiagnostics(input StructuralInputs) []Diagnostic {
 	var diagnostics []Diagnostic
 	unknown := map[string]struct{}{}

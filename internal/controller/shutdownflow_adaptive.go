@@ -17,11 +17,7 @@ limitations under the License.
 package controller
 
 import (
-	"context"
-	"sort"
 	"time"
-
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
@@ -271,67 +267,6 @@ func adaptiveStatusFromResult(result executorpkg.AdaptiveResult) *powerv1alpha1.
 		status.TimingMode = string(adaptive.ModeRelaxed)
 	}
 	return status
-}
-
-// powerObserverForDevices reads live power state from the UPS devices a firing
-// trigger selected.
-//
-// Called at each wave boundary, so it reads through the API rather than closing
-// over a snapshot: the whole point of evaluating at wave boundaries is that the
-// power state may have moved since the last one.
-//
-// A device that cannot be read degrades the observation instead of failing the
-// flow. Both rules that bear on this point the same way. PL-32 forbids resolving
-// missing data optimistically, and an unreadable device is treated here exactly
-// like a stale one -- it contributes no runtime, and unknown runtime on battery
-// selects the most urgent timings. PL-31 forbids the other half: refusing to run
-// mid-outage is the worst available outcome, and a cluster that dies ungracefully
-// because one UPSDevice object went missing is a worse result than one that
-// shuts down on a degraded reading.
-func (r *ShutdownFlowReconciler) powerObserverForDevices(deviceNames []string, trusted bool, fallback adaptive.PowerObservation) executorpkg.PowerObserver {
-	if len(deviceNames) == 0 {
-		return nil
-	}
-	names := append([]string(nil), deviceNames...)
-	sort.Strings(names)
-	return func(ctx context.Context) (adaptive.PowerObservation, error) {
-		devices := make([]powerv1alpha1.UPSDevice, 0, len(names))
-		for _, name := range names {
-			var device powerv1alpha1.UPSDevice
-			if err := r.Get(ctx, client.ObjectKey{Name: name}, &device); err != nil {
-				// Recorded as a device in an unknown phase, which is what it is.
-				devices = append(devices, powerv1alpha1.UPSDevice{
-					Status: powerv1alpha1.UPSDeviceStatus{Phase: powerv1alpha1.UPSDevicePhaseUnknown},
-				})
-				continue
-			}
-			devices = append(devices, device)
-		}
-		observation := powerObservationFromDevices(devices, trusted)
-		if !observation.OnBattery && !observation.LowBattery && !anyDeviceReporting(devices) {
-			// Nothing could be read at all. The trigger fired on a power event, so the
-			// honest carry-forward is the state that fired it, not an unobserved "mains is
-			// fine" that would halt the flow on no evidence.
-			return fallback, nil
-		}
-		return observation, nil
-	}
-}
-
-// anyDeviceReporting reports whether at least one device published a phase the
-// model can act on. Used to tell "every device says mains is back" from "no device
-// said anything" -- which look identical in the reduced observation and mean
-// opposite things.
-func anyDeviceReporting(devices []powerv1alpha1.UPSDevice) bool {
-	for _, device := range devices {
-		switch device.Status.Phase {
-		case powerv1alpha1.UPSDevicePhaseOnline,
-			powerv1alpha1.UPSDevicePhaseOnBattery,
-			powerv1alpha1.UPSDevicePhaseLowBattery:
-			return true
-		}
-	}
-	return false
 }
 
 // powerObservationFromDevices reduces several devices to the one observation the

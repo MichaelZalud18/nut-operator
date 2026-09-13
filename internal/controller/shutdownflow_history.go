@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,6 +28,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
@@ -172,16 +175,19 @@ func bestPlanEstimate(observed, declared *metav1.Duration) *time.Duration {
 // boundaries, so the runtime in the warning is the runtime the flow would actually act on. Trust is
 // gated by CR-4: a device reporting a fixed firmware estimate contributes no runtime, because a
 // constant cannot say whether this plan fits. Charge and load are still published as generic public
-// UPS telemetry when every selected device reports them; they are not site-local metrics and they
+// UPS telemetry when every budget supply reports them; they are not site-local metrics and they
 // do not change the plan hash.
-func (r *ShutdownFlowReconciler) flowRuntimeObservation(ctx context.Context, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, bundle resolver.StructuralBundle) planner.HistoryObservation {
+func (r *ShutdownFlowReconciler) flowRuntimeObservation(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, bundle resolver.StructuralBundle) planner.HistoryObservation {
 	if evaluation == nil || len(evaluation.SelectedUPSDevices) == 0 {
 		return planner.HistoryObservation{}
 	}
-	trusted := runtimeIsTrustedForFlow(bundle.CapabilityMatches, evaluation.SelectedUPSDevices)
+	supplies, unknownSupply := communicationBudgetDevices(flow, bundle)
+	names := append(slices.Clone(evaluation.SelectedUPSDevices), supplies...)
+	sort.Strings(names)
+	names = slices.Compact(names)
 
-	devices := make([]powerv1alpha1.UPSDevice, 0, len(evaluation.SelectedUPSDevices))
-	for _, name := range evaluation.SelectedUPSDevices {
+	devices := make([]powerv1alpha1.UPSDevice, 0, len(names))
+	for _, name := range names {
 		var device powerv1alpha1.UPSDevice
 		if err := r.Get(ctx, client.ObjectKey{Name: name}, &device); err != nil {
 			// An unreadable device makes the aggregate unknown rather than merely less
@@ -191,9 +197,9 @@ func (r *ShutdownFlowReconciler) flowRuntimeObservation(ctx context.Context, eva
 		devices = append(devices, device)
 	}
 
-	observation := powerObservationFromDevices(devices, trusted)
+	observation := runtimeBudgetFromDevices(devices, bundle, adaptive.PowerObservation{}, unknownSupply)
 	history := planner.HistoryObservation{}
-	if trusted {
+	if observation.RuntimeTrusted {
 		history.RuntimeSeconds = observation.RuntimeSeconds
 	}
 

@@ -30,6 +30,7 @@ import (
 	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
+	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
 func adaptiveTierPtr(tier int32) *int32 { return &tier }
@@ -152,11 +153,12 @@ func TestReportingIsDistinguishedFromSilence(t *testing.T) {
 		deviceIn(powerv1alpha1.UPSDevicePhaseUnknown, nil),
 		deviceIn(powerv1alpha1.UPSDevicePhaseStale, nil),
 	}
-	if anyDeviceReporting(silent) {
-		t.Fatal("devices in Unknown/Stale phases are not reporting")
+	fallback := adaptive.PowerObservation{OnBattery: true}
+	if !runtimeBudgetFromDevices(silent, resolver.StructuralBundle{}, fallback, false).OnBattery {
+		t.Fatal("silent devices must preserve the active power event")
 	}
-	if !anyDeviceReporting([]powerv1alpha1.UPSDevice{deviceIn(powerv1alpha1.UPSDevicePhaseOnline, nil)}) {
-		t.Fatal("an Online device is reporting")
+	if runtimeBudgetFromDevices([]powerv1alpha1.UPSDevice{deviceIn(powerv1alpha1.UPSDevicePhaseOnline, nil)}, resolver.StructuralBundle{}, fallback, false).OnBattery {
+		t.Fatal("observed mains recovery must clear the battery state")
 	}
 }
 
@@ -170,7 +172,7 @@ func TestAnUnreadableDeviceDegradesRatherThanFailing(t *testing.T) {
 	reconciler := &ShutdownFlowReconciler{Client: fake.NewClientBuilder().WithScheme(testScheme).Build()}
 	fallback := adaptive.PowerObservation{OnBattery: true}
 
-	observer := reconciler.powerObserverForDevices([]string{"ups-does-not-exist"}, true, fallback)
+	observer := reconciler.powerObserverForFlow(nil, resolver.StructuralBundle{}, []string{"ups-does-not-exist"}, fallback)
 	observation, err := observer(t.Context())
 	if err != nil {
 		t.Fatalf("a missing device must not fail the flow, got %v", err)

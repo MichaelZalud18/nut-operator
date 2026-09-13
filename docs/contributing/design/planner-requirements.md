@@ -210,6 +210,17 @@ The order constrains action completion and signal publication, not physical halt
 Carrier power-loss runtime constraints remain separate from release ordering; a switch does not
 need to be an actuation target for its supply to constrain the plan.
 
+Runtime budgeting includes the UPS devices supplying upstream communication carriers for the
+compiled actions' resolved node targets, alongside the UPS devices selected by the trigger.
+Work without resolved node targets conservatively includes all modeled carriers; this does not
+assert complete operator/API or NUT service-path coverage. The whole-plan supply set is retained
+through execution, and telemetry is reread at every wave boundary. Online devices do not impose
+battery-runtime deadlines or reduce trust in other devices' estimates. Active supplies must have
+trusted runtime capabilities; stale, unreadable, or unresolved supply leaves the budget unknown.
+Partial readings cannot prove recovery while an unknown supply remains. Execution still runs
+under the existing unknown-runtime timing rules, and feasibility warnings use the same reduction.
+These additional timing inputs change neither trigger provenance nor structural plan identity.
+
 **PL-20a** · Report and block tier inversion. A group whose tier is lower than the tier of a node it
 runs on is scheduled to keep working after that node powers off. Compilation reports this as
 `ShutdownTierInversion`, naming the group, the node, and both tiers, and withholds the node from

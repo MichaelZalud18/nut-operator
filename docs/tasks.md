@@ -139,13 +139,21 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   Derived ordering edges and path provenance reach published graphs, explanations, and diagrams.
   Component tests exercise inventory-to-executor ordering, dependent-action failure, dry-run
   evidence, tier/declared cycles, linear adapters, and iterative domain-scope retention.
+  **Runtime milestone (2026-09-13):** timing observations now include the supplying UPS devices
+  of modeled communication paths used by the compiled plan. Supplies are reread at each wave;
+  only non-online supplies constrain runtime/trust. Unknown or unreadable supply makes the
+  budget unknown without stopping the flow or assuming recovery. Feasibility warnings share
+  this reduction. Trigger selection and plan hashes remain independent of these live readings.
+  Tests cover transitive/shared supplies, partial recovery, untrusted and stale readings,
+  consecutive boundary updates, and actual executor compression from a shorter switch supply.
   **Validation:** race-enabled inventory, planner, resolver, shutdownflow, executor, controller
   (including envtest), and webhook suites passed. `make lint` reported zero issues. Execution
   ordering tests use simulated actions and do not claim physical halt evidence.
-  **Still open:** incorporate communication-supply runtime into execution budgeting, cover
-  operator/API and NUT service paths end to end (including work without resolved node targets),
-  and publish structured timing constraints and unresolved coverage. Action ordering does not
-  establish physical halt acknowledgement or power-loss deadlines for non-actuated switches.
+  **Still open:** cover operator/API and NUT service paths end to end (including work without
+  resolved node targets), and publish structured timing constraints and unresolved coverage.
+  Runtime currently uses a conservative whole-plan supply envelope; node-less work includes all
+  modeled carriers rather than claiming precise service-path coverage. Physical halt
+  acknowledgement remains outside the action-ordering contract.
 
 ---
 

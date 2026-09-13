@@ -198,7 +198,9 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		// Computed here rather than at compile time because it needs the selection this
 		// evaluation just made: the warning compares against the devices that would
 		// actually power this flow, not the ones a previous reconcile saw.
-		planFeasibility = planFeasibilityStatus(planEstimate, r.flowRuntimeObservation(ctx, status, bundle), estimateConfidence)
+		budgetFlow := flow.DeepCopy()
+		budgetFlow.Status.CompiledSteps = compiled
+		planFeasibility = planFeasibilityStatus(planEstimate, r.flowRuntimeObservation(ctx, budgetFlow, status, bundle), estimateConfidence)
 		metrics.ShutdownFlowTriggerEvaluationsTotal.WithLabelValues(flow.Name, strconv.FormatBool(status.Eligible)).Inc()
 		if requeueAfter := triggerRequeueAfter(evaluation, observedAt); requeueAfter > 0 {
 			reconcileResult.RequeueAfter = requeueAfter

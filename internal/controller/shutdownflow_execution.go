@@ -151,9 +151,8 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		// Re-read at each wave boundary rather than closing over the trigger-time
 		// snapshot: the whole reason to evaluate at boundaries is that power may have
 		// moved since the last one.
-		Observer: r.powerObserverForDevices(
-			executionEvaluation.SelectedUPSDevices,
-			runtimeIsTrustedForFlow(bundle.CapabilityMatches, executionEvaluation.SelectedUPSDevices),
+		Observer: r.powerObserverForFlow(
+			flow, bundle, executionEvaluation.SelectedUPSDevices,
 			input.Adaptive.Observation,
 		),
 		ApprovalChecker: r.approvalChecker(flow),

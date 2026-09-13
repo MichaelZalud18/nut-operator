@@ -189,7 +189,7 @@ func TestFlowRuntimeObservationAggregatesSelectedUPSDeviceTelemetry(t *testing.T
 		upsDeviceTelemetry("ups-b", powerv1alpha1.UPSDevicePhaseOnline, runtimeB, chargeB, loadB),
 	)
 
-	observation := reconciler.flowRuntimeObservation(context.Background(),
+	observation := reconciler.flowRuntimeObservation(context.Background(), nil,
 		&powerv1alpha1.ShutdownTriggerEvaluationStatus{SelectedUPSDevices: []string{"ups-a", "ups-b"}},
 		resolver.StructuralBundle{CapabilityMatches: []capability.MatchResult{
 			dynamicRuntimeMatch("ups-a"),
@@ -215,7 +215,7 @@ func TestFlowRuntimeObservationKeepsGenericTelemetryWhenRuntimeIsUntrusted(t *te
 		upsDeviceTelemetry("ups-a", powerv1alpha1.UPSDevicePhaseOnBattery, runtime, charge, load),
 	)
 
-	observation := reconciler.flowRuntimeObservation(context.Background(),
+	observation := reconciler.flowRuntimeObservation(context.Background(), nil,
 		&powerv1alpha1.ShutdownTriggerEvaluationStatus{SelectedUPSDevices: []string{"ups-a"}},
 		resolver.StructuralBundle{})
 
@@ -241,7 +241,7 @@ func shutdownFlowReconcilerWithUPSDevices(t *testing.T, devices ...powerv1alpha1
 	for i := range devices {
 		objects = append(objects, &devices[i])
 	}
-	return &ShutdownFlowReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build()}
+	return &ShutdownFlowReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&powerv1alpha1.UPSDevice{}).WithRuntimeObjects(objects...).Build()}
 }
 
 func upsDeviceTelemetry(name string, phase powerv1alpha1.UPSDevicePhase, runtimeSeconds int64, chargePercent, loadPercent int32) powerv1alpha1.UPSDevice {

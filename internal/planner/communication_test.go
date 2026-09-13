@@ -359,3 +359,30 @@ func TestCommunicationScopeClosesOverNewlyRetainedReleases(t *testing.T) {
 		t.Fatalf("dependent of newly retained mixed release was pruned: %+v", plan.Waves)
 	}
 }
+
+func TestCommunicationSupplyDevices(t *testing.T) {
+	input := StructuralInputs{
+		CommunicationDependencies: []CommunicationDependency{
+			{Dependent: "consumer", Carrier: "access"}, {Dependent: "access", Carrier: "uplink"},
+			{Dependent: "uplink", Carrier: "access"}, {Dependent: "uplink", Carrier: "router"},
+		},
+		PowerDomains: []PowerDomainMembership{
+			{Name: "compute", Nodes: []string{"consumer"}, UPSDevices: []string{"compute-ups"}},
+			{Name: "access", Infrastructure: []string{"access"}, UPSDevices: []string{"access-ups", "shared-ups"}},
+			{Name: "uplink", Infrastructure: []string{"uplink"}, UPSDevices: []string{"shared-ups"}},
+		},
+	}
+	names, unknown := CommunicationSupplyDevices(input, []string{"consumer", "consumer"})
+	if !unknown || !slices.Equal(names, []string{"access-ups", "shared-ups"}) {
+		t.Fatalf("wrong partial supply closure: %v unknown=%v", names, unknown)
+	}
+	input.PowerDomains = append(input.PowerDomains, PowerDomainMembership{Name: "router", Nodes: []string{"router"}, UPSDevices: []string{"router-ups"}})
+	names, unknown = CommunicationSupplyDevices(input, []string{"consumer"})
+	if unknown || !slices.Equal(names, []string{"access-ups", "router-ups", "shared-ups"}) {
+		t.Fatalf("wrong complete supply closure: %v unknown=%v", names, unknown)
+	}
+	names, unknown = CommunicationSupplyDevices(input, []string{"unmodeled"})
+	if unknown || len(names) != 0 {
+		t.Fatalf("invented supply for unmodeled path: %v unknown=%v", names, unknown)
+	}
+}
