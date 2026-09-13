@@ -401,6 +401,16 @@ also an early implementation priority, not a finding that custom VM code is inhe
   termination, not actuator success ([QEMU implementation](https://github.com/spectrocloud/peg/blob/d8627da0983c42bde4d5b21dee650205fd1fb3b7/pkg/machine/qemu.go)).
   Add negative controls proving these failure modes cannot satisfy the shutdown assertion, and
   reuse the same evidence checks in `VM-4`. A false pass would hide a broken shutdown path.
+  **First milestone in progress (2026-09-13):** `TestHadronActuatorArmsWithNoSignal`
+  (`test/hadron/actuator_smoke_test.go`, `hadron-actuator-smoke.yml`) builds the real, shipped
+  `node-actuator` image from this checkout's own Dockerfile, imports it into a Hadron guest's own
+  containerd, and deploys it with production's real `PowerOff`/`Actuate` security context and
+  environment, with no signal ever written -- asserting only that CAP_SYS_BOOT survives to the
+  actuator's own startup gate (`halt gate=CapabilityPermitted result=pass`) in a real kernel. Full
+  rationale, scope boundary against the already-closed `F-61`, and evidence table in
+  [hadron-vm-3-actuator-2026-09-13.md](contributing/audits/hadron-vm-3-actuator-2026-09-13.md). Not
+  yet run live. Real signal delivery, negative controls, real `reboot(2)`, and hypervisor-confirmed
+  shutdown evidence remain open.
 - [ ] `VM-4` [Medium] drive a simulated UPS outage through actual NUT telemetry, trigger evaluation,
   planning, execution, draining, signal delivery, and guest power-off. Assert survivor availability,
   current authorization/release evidence (`F-126`/`F-127`), enforced network policy, and audit results;
