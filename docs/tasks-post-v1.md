@@ -17,20 +17,6 @@ Use the testability labels defined in [tasks.md](tasks.md): **Testable now**, **
 
 ---
 
-## Inventory System
-
-### `carries`-based ordering (`PL-21`)
-
-Communication-path edges are compiled and published; nothing orders against them. Wiring the
-ordering needs a network device to be an actuation target.
-
-**Why it is post-v1:** `OD-24` makes switches topological-only, and the revisit condition is PDU
-outlet control — both already on this page. The Planning & Execution Logic entry for `PL-21` is the
-owning line; this is the Inventory-side half of the same gate.
-
-Testability: **Testable now** for synthetic ordering fixtures once a network-device actuation
-interface exists; **Real-resource** only for final outlet or network-device behavior.
-
 ## Capability Profiles
 
 ### Actuation verification lifecycle (`F-27`)

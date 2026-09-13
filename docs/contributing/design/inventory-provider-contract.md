@@ -242,9 +242,11 @@ exemption marker exists anyway.
 
 The asymmetry with `feeds` is the point. A node no UPS reaches raises `PowerPlanningOrphan`, an
 *error*, because it cannot be planned for at all — the operator has no idea when it loses power. A
-node with no modeled `carries` path can be planned normally and loses only communication ordering,
-which `PL-21` defers past v1. Same shape of gap, different cost, so different severity. Silent-assume
-stays excluded either way (IN-6).
+node with no modeled `carries` path can still be planned, but the planner cannot derive all of
+v1's communication-safety constraints for it. The warning exposes that limitation; it does not
+promise the path will survive. `PL-21` uses modeled communication paths and their supplying power
+domains even when the communication device cannot be actuated. Silent-assume stays excluded
+either way (IN-6).
 
 **OD-14 · Partial-domain outage plan scope — settled as domain-scoped, conservatively.**
 `internal/planner/scope.go` omits only groups whose resolved node membership is proved wholly outside

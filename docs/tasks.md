@@ -119,8 +119,14 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   2026-09-04 pass for what each test proved. What remains is what always remained: the reserve and
   minimum stand in for a handoff tail and a fitness floor nobody has measured against a real
   outage, and simulation is calibration evidence for that, not a substitute for it.
-- `PL-21` communication-path edges stay unwired until a network device can be an actuation target
-  (`OD-24` makes switches topological-only). Revisit with PDU outlet control.
+- [ ] `PL-21` [High] implement communication-path dependencies in v1 planning and execution.
+  Combine `carries` paths with the supplying UPS/`feeds` topology so shutdown work accounts for
+  losing a switch or other required communication device when its power source expires, even
+  when that device is not an actuation target. Include the operator/API and NUT paths needed to
+  finish dependent work. This is not gated on switch shutdown or PDU outlet control.
+  **Testable now:** synthetic shared and separate UPS domains, dependent nodes across domains,
+  constrained runtime on a communication device's supply, and unknown/exempt path coverage;
+  assert resulting ordering, timing constraints, and diagnostics without physical switches.
 
 ---
 
@@ -170,8 +176,11 @@ Owns: the published planner artifact contract (compiled plan, dependency graph, 
 diagram exports) and the CR-status-as-interface model — the "what gets exported and how" surface.
 Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts section (`GP-6`/`GP-7`).
 
-- Publish communication-ordering artifacts once the planner consumes `carries` ordering (see Planning
-  & Execution Logic).
+- [ ] [Medium] publish v1 communication-ordering artifacts alongside `PL-21`: derived dependencies,
+  their communication-path and power-supply provenance, resulting ordering/timing constraints,
+  and unresolved-path diagnostics. Publishing topology alone is not the completed ordering feature.
+  **Testable now:** deterministic planner artifact and controller-status fixtures matching the
+  dependencies actually used by planning; no switch or PDU actuation is required.
 
 ---
 

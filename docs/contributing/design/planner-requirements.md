@@ -179,6 +179,13 @@ that group's own action sequence.
 for node N cannot precede N in shutdown order. The communication path is modeled as `carries` edges
 per IN-5; OD-3 is closed.
 
+This is a v1 requirement regardless of whether the communication device is an actuation target.
+Its supplying UPS can expire and remove the path without an operator-issued shutdown. Planning
+must account for `carries` dependencies together with supplying `feeds` paths and power domains
+when ordering and budgeting dependent shutdown work. Publish the derived constraints and their
+provenance, including unresolved coverage, in the planner artifacts. Switch actuation and PDU
+outlet control remain separate scope decisions, not prerequisites for this requirement.
+
 **PL-20a** · Report and block tier inversion. A group whose tier is lower than the tier of a node it
 runs on is scheduled to keep working after that node powers off. Compilation reports this as
 `ShutdownTierInversion`, naming the group, the node, and both tiers, and withholds the node from
@@ -443,8 +450,9 @@ and startup waves are advisory projections rather than operator-executed recover
 **OD-16 · Missing `carries` coverage — closed as a warning plus an explicit exemption.** A node with
 no modeled communication path raises the `CommunicationPathUnmodeled` warning and can be opted out
 with `communicationPathExempt`. It is deliberately not the hard failure that a missing `feeds` path
-is (`PowerPlanningOrphan`), because an unmodeled communication path costs only communication
-ordering, which `PL-21` defers past v1. Silent-assume stays excluded. Full reasoning in
+is (`PowerPlanningOrphan`). Missing coverage limits the communication-safety constraints the
+planner can derive under v1's `PL-21`; the warning must expose that limitation rather than imply
+the path is safe. Silent-assume stays excluded. Full reasoning in
 `inventory-provider-contract.md`.
 
 **OD-8r · Provider key validation.** Resolver behavior when the topology provider supplies a
