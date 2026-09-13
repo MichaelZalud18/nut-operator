@@ -245,7 +245,7 @@ time. `VM-5`'s own text already said to prefer a pinned published artifact when 
 requirements before evaluating this workflow at all -- it does, so this stays unevaluated further
 unless that changes.
 
-## ClusterLink connectivity: first live attempt found a real bug (2026-09-12)
+## ClusterLink connectivity: mechanism proven, six rounds of tooling fixes (2026-09-12/13)
 
 `hadron-cluster-link-smoke.yml` boots two guests wired by `network.go`'s `ClusterLink`/
 `ClusterNIC` and pings between their kernel-assigned IPv6 link-local addresses, deliberately never
@@ -260,6 +260,7 @@ check).
 | [34726449871](https://github.com/MichaelZalud18/nut-operator/actions/runs/34726449871) | fail (~41s), same mechanism worked again | SSH and address discovery on both guests succeeded again, unchanged. The `ping6` fix from the previous run was itself wrong: "`ping6` is BusyBox's standard alternate applet name for exactly this case" was written above as a confirmed finding but was never actually verified against this build -- it was an assumption carried over from general BusyBox knowledge, not from captured evidence, and this run proved it false: `sudo: ping6: command not found`. `ping` itself resolves on PATH; a separate `ping6` name does not. |
 | [34734495515](https://github.com/MichaelZalud18/nut-operator/actions/runs/34734495515) | fail (~58s), diagnostics worked as designed | SSH and address discovery succeeded again. `busybox ping6` failed too: `ping6: applet not found`, exit 127. This time the failure-path diagnostics fired and gave a definitive answer instead of another assumption -- `busybox --list \| grep -i ping` returned only `ping`, and captured usage text from an earlier run already on record showed a minimal `CONFIG_PING` applet (`-c`/`-s`/`-i`/`-A`/`-t`/`-I`/`-W`/`-w` only, no address-family flags at all). This build cannot address IPv6 through `ping` by any invocation -- not a naming problem, a real capability gap. |
 | [34765273358](https://github.com/MichaelZalud18/nut-operator/actions/runs/34765273358) | pass (diagnostic only, ~40s) | `busybox --list` is short -- most common utilities on this guest (`ip`, `curl`, `openssl`, `ssh`, etc.) are real binaries, not busybox applets. Confirmed absent: `nc`, `ncat`, `telnet`, `wget`, `socat`. Confirmed present as real binaries: `curl` (`/bin/curl`), `openssl` (`/bin/openssl`), `ssh` (`/bin/ssh`). |
+| [34765823021](https://github.com/MichaelZalud18/nut-operator/actions/runs/34765823021) | fail (~44s), but `ClusterLink` itself worked for the first time | The mechanism this whole test exists to prove actually succeeded: curl's log shows `Established connection to [fe80::5054:ff:fe7f:4a2a] (... port 22) from fe80::5054:ff:fe4a:a3b2 port 34154`, followed by the peer's real `SSH-2.0-OpenSSH_10.3` banner read back over the link -- the raw QEMU socket netdev carrying actual application data between two independently booted guests, for the first time in six runs. The test still failed on a wording mismatch: curl 8.21.0 logs `Established connection to`, not the `Connected to` string the assertion checked for. |
 
 Fixed: added `genisoimage` to the workflow's install step, and switched `ping -6` to `ping6`. This
 is the first run where every piece up through address discovery on both independently booted
@@ -284,4 +285,9 @@ Fixed: replaced the ping-based check with `curl -6 -v --interface <iface> --conn
 protocol-agnostic proof that curl's own TCP handshake completed, independent of the HTTP-layer
 outcome. Targeting port 22 needs no new listener: both guests already depend on `sshd` being
 reachable for the host's own setup steps, so getting back an SSH banner instead of an HTTP response
-is expected, not a failure. Not yet re-run live.
+is expected, not a failure.
+
+Fixed: assert on the SSH banner (`SSH-2.0-`) actually read back over the link instead of any of
+curl's own log wording. Strictly stronger evidence regardless -- it proves a real two-way byte
+exchange rather than a local socket-layer event -- and does not depend on phrasing staying stable
+across curl versions. Not yet re-run live.
