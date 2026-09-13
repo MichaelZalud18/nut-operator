@@ -114,6 +114,10 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile $(COVERAGE_PROFILE)
 
+.PHONY: test-postgres
+test-postgres: ## Run audit component tests against an isolated disposable PostgreSQL container.
+	bash hack/test-postgres.sh
+
 .PHONY: cover
 cover: ## Report coverage per function and in total from the profile `make test` wrote.
 	@test -f "$(COVERAGE_PROFILE)" || { \

@@ -30,6 +30,13 @@ make manifests generate
 `make test` sets up the required envtest assets. Use a writable `GOCACHE` when needed;
 do not mistake a sandbox restriction for a broken host setup.
 
+`make test-postgres` runs the audit database component suite using Docker and a disposable,
+digest-pinned PostgreSQL container. It creates a private network and loopback-only ephemeral port,
+then removes its container and network on exit. No existing database is required. The `postgres`
+build tag keeps this separate from `make test`; direct tagged runs require an explicit
+`AUDIT_TEST_POSTGRES_DSN` pointing at a disposable database where a test-owned schema may be created
+and dropped. This suite tests PostgreSQL behavior, not CNPG failover or full outage orchestration.
+
 Inspect build tags and test entry points when selecting narrower checks. Component tests,
 Kind suites, and opt-in VM tests have different prerequisites and prove different things.
 Read the relevant workflow before running infrastructure tests, and use isolated resources,

@@ -255,6 +255,15 @@ spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
   action-outcome versus evidence-failure separation. Assert replay repeat safety, not executor
   crash-resume guarantees. Run for audit/storage/schema/dependency/harness changes; no UPS or
   Kubernetes cluster is needed. PostgreSQL coverage does not claim CNPG failover qualification.
+  **First component slice (2026-09-13):** `make test-postgres` runs the tagged audit suite against
+  a digest-pinned disposable PostgreSQL image, private Docker network, and ephemeral loopback port;
+  its trap removes owned resources. Verified fresh/repeated migrations with quoted schema names,
+  execution/group persistence, plan-hash and dry-run history filtering, retention cascades, recent
+  JSON payload preservation, and deadline cancellation of a real stalled query with subsequent
+  pool usability. The explicit DSN entry point is for disposable databases only; tests create and
+  remove their own schema. **Remaining:** all other record/read paths, uniqueness/upsert matrices,
+  real-database spool replay and failure cases, and conditional CI wiring. This does not close
+  `F-131` or establish full storage-failure resilience.
 
 - [ ] `F-131` [High] make the configured audit spool available when PostgreSQL is already unavailable
   at execution start. Storage-readiness and `OpenAuditStore` failures currently return before the
