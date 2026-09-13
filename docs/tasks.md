@@ -379,17 +379,24 @@ also an early implementation priority, not a finding that custom VM code is inhe
   termination, not actuator success ([QEMU implementation](https://github.com/spectrocloud/peg/blob/d8627da0983c42bde4d5b21dee650205fd1fb3b7/pkg/machine/qemu.go)).
   Add negative controls proving these failure modes cannot satisfy the shutdown assertion, and
   reuse the same evidence checks in `VM-4`. A false pass would hide a broken shutdown path.
-  **First milestone passed 2026-09-13** ([run 34768697157](https://github.com/MichaelZalud18/nut-operator/actions/runs/34768697157),
-  171.81s, first attempt): `TestHadronActuatorArmsWithNoSignal`
-  (`test/hadron/actuator_smoke_test.go`, `hadron-actuator-smoke.yml`) built the real, shipped
-  `node-actuator` image from this checkout's own Dockerfile, imported it into a Hadron guest's own
-  containerd, and deployed it with production's real `PowerOff`/`Actuate` security context and
-  environment, with no signal ever written -- `CAP_SYS_BOOT` survived to the actuator's own startup
-  gate (`halt gate=CapabilityPermitted result=pass`) on a real kernel. Full rationale, scope
+  **First two milestones passed 2026-09-13**, both first attempt: `TestHadronActuatorArmsWithNoSignal`
+  ([run 34768697157](https://github.com/MichaelZalud18/nut-operator/actions/runs/34768697157),
+  171.81s) built the real, shipped `node-actuator` image from this checkout's own Dockerfile,
+  imported it into a Hadron guest's own containerd, and deployed it with production's real
+  `PowerOff`/`Actuate` security context and environment, with no signal ever written --
+  `CAP_SYS_BOOT` survived to the actuator's own startup gate
+  (`halt gate=CapabilityPermitted result=pass`) on a real kernel.
+  `TestHadronActuatorRejectsInvalidSignals` ([run 34770625393](https://github.com/MichaelZalud18/nut-operator/actions/runs/34770625393),
+  wrong-node 21.89s, stale 5.09s) wrote real signal Secrets that
+  `internal/nodeagent.InspectSignal` must reject -- `halt gate=SignalAccepted result=fail
+  detail="SignalWrongNode ..."` and `"SignalStale ..."` -- confirming actuation gates were never
+  reached and the guest answered SSH again immediately after each, the concrete evidence behind
+  VM-3's own "negative cases must leave the guest running" requirement.
+  (`test/hadron/actuator_smoke_test.go`, `hadron-actuator-smoke.yml`). Full rationale, scope
   boundary against the already-closed `F-61`, and evidence table in
   [hadron-vm-3-actuator-2026-09-13.md](contributing/audits/hadron-vm-3-actuator-2026-09-13.md).
-  Real signal delivery, negative controls, real `reboot(2)`, and hypervisor-confirmed shutdown
-  evidence remain open.
+  The accepted-signal path, real `reboot(2)`, hypervisor-confirmed shutdown evidence, and revoked
+  approval remain open.
 - [ ] `VM-4` [Medium] drive a simulated UPS outage through actual NUT telemetry, trigger evaluation,
   planning, execution, draining, signal delivery, and guest power-off. Assert survivor availability,
   current authorization/release evidence (`F-126`/`F-127`), enforced network policy, and audit results;
