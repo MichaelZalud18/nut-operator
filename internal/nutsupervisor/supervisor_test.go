@@ -108,6 +108,7 @@ case "$1" in
     ;;
   -FF)
     ups="$3"
+    echo "$$" > "$behave_dir/$ups.child"
     behavior_file="$behave_dir/$ups.behavior"
     behavior="run"
     if [ -f "$behavior_file" ]; then
@@ -115,8 +116,12 @@ case "$1" in
     fi
     case "$behavior" in
       run)
-        trap 'exit 0' TERM INT
-        while :; do sleep 3600 & wait $!; done
+        trap 'kill "$sleeper" 2>/dev/null || true; wait "$sleeper" 2>/dev/null || true; exit 0' TERM INT
+        while :; do sleep 3600 & sleeper=$!; wait "$sleeper"; done
+        ;;
+      ignore-term)
+        trap '' TERM INT
+        exec sleep 3600
         ;;
       crash)
         exit 7
@@ -134,6 +139,7 @@ case "$1" in
     esac
     ;;
   stop)
+    if [ -f "$behave_dir/.stop_hang" ]; then exec sleep 30; fi
     exit 0
     ;;
   *)

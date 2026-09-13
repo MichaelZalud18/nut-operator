@@ -173,7 +173,7 @@ func TestDriverSupervisorRestartsOnlyTheDriverWhoseConfigurationChanged(t *testi
 func TestDriverSupervisorRetriesAFailedReload(t *testing.T) {
 	script := driverSupervisorScript()
 
-	reload := strings.Index(script, "if upsd -c reload; then")
+	reload := strings.Index(script, "if timeout -s KILL 5 upsd -c reload; then")
 	advance := strings.Index(script, `last_server_digest="$current_server_digest"`)
 	if reload < 0 || advance < 0 || advance < reload {
 		t.Fatalf("supervisor must record the digest only after a successful reload:\n%s", script)

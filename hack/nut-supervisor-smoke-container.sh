@@ -108,6 +108,22 @@ kill -TERM "$supervisor_pid"
 wait "$supervisor_pid"
 supervisor_pid=
 await 'supervisor termination cleans up NUT workers' workers_gone
+
+# A stopped real driver cannot handle TERM. The supervisor must still reap it on time.
+sh /supervisor.sh >>/tmp/supervisor.log 2>&1 &
+supervisor_pid=$!
+await 'replacement driver writes a PID file' test -s "$(pid_file good)"
+await 'replacement driver serves state' responsive good
+stopped_pid="$(cat "$(pid_file good)")"
+kill -STOP "$stopped_pid"
+stop_started=$(date +%s)
+kill -TERM "$supervisor_pid"
+wait "$supervisor_pid"
+supervisor_pid=
+test "$(( $(date +%s) - stop_started ))" -le 8
+await 'stopped driver is killed and reaped' workers_gone
+grep -q 'ignored termination; killing owned child' /tmp/supervisor.log
+
 kill -TERM "$server_pid"
 wait "$server_pid"
 server_pid=

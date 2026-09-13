@@ -170,59 +170,23 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`, `F-124`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
-- [ ] `F-144` [Medium] redesign NUT supervision ownership and packaging for independent testing.
-  **Evidence (2026-09-13):** `driverSupervisorScript()` embeds process-management shell in
-  `internal/controller/nutserver_render.go`; the component harness rewrites hardcoded paths to
-  execute it. Existing process tests are valuable, but runtime supervision and Kubernetes rendering
-  remain awkwardly coupled. This is maintainability/test-fidelity risk, not evidence that every
-  current supervisor behavior is faulty.
-  **Design first:** compare the current contract with upstream NUT process-management facilities
-  and established supervision tooling. Record what can be reused and what remains project-owned;
-  do not replace it with another bespoke supervisor by default. Separate runtime implementation,
-  configuration, rendering, and health probes. An owned script/module may suffice; extraction alone
-  does not close the task unless the lifecycle contract and production-artifact tests are clear.
-  Preserve per-driver failure isolation, unchanged-driver PIDs during add/remove, bounded restart
-  cadence, reload retry, empty-device startup, credential isolation, and deterministic termination.
-  Keep the network-only scope and existing privilege boundaries; no new service is assumed.
-  **Testable now; Conditional:** retain process-tree regressions and add tests using the packaged
-  implementation with actual NUT binaries, covering invalid configuration, partial startup,
-  repeated crashes, reload, readiness, and cancellation/cleanup. Configure test paths explicitly
-  instead of rewriting implementation text. Compare behavior with the current harness before
-  replacement. Coordinate with `F-97`; a redesign must not silently close its unreproduced root cause.
-  **Modularity slice (2026-09-13):** extracted the exact embedded shell into
-  `internal/nutsupervisor/supervisor.sh` and moved process-tree tests into that standalone package.
-  Configuration paths, private state, and polling interval are explicit runtime inputs; the harness
-  runs the embedded production bytes without source-text substitution. Controller rendering remains
-  an adapter using the same script, preserving compatibility with current NUT images. The package
-  README records upstream `upsdrvctl` versus systemd/SMF service-management boundaries and the
-  existing stable-sidecar contract. The subsequent design review and actual-NUT tests below cover
-  the alternatives and packaged behavior; bounded uncooperative-worker cleanup remains open.
-  **Validated:** standalone race-enabled process tests and controller rendering regressions;
-  full API/internal/command race sweep, shell syntax, and PostgreSQL-tagged repository lint passed.
-  **Actual-NUT slice (2026-09-13):** added `docker-smoke-nut-supervisor`, using the exact production
-  supervisor bytes and real NUT binaries in a non-root, read-only, network-isolated container.
-  It verifies empty startup, a failed definition beside a healthy driver, failed reload retries
-  and recovery, add/remove reloads,
-  unchanged worker and driver PIDs, two forced driver crashes and recovery, and termination with
-  no remaining NUT workers. Local execution passed against a cached operand image; the existing
-  image job now runs it against its freshly built native image. The harness has bounded runtime
-  and owned-container cleanup. **Remaining:** final lifecycle review, including bounded cleanup
-  when a worker ignores termination; this slice does not
-  establish the separate `F-97` root cause or replace Kind sidecar integration evidence.
-  **Malformed-config fix and design review (2026-09-13):** actual NUT interpreted an unterminated
-  section as an empty device set, causing the supervisor to reload away and stop a healthy driver.
-  The new regression failed before the fix and passed afterward: enumeration is validated before
-  server reload, and only the renderer's zero-byte file is accepted as intentional empty input.
-  Supervisor and controller race tests passed. The package README compares upstream service
-  management, s6, runit, and per-device containers; retain upstream named workers and the isolated
-  configuration adapter for v1. The remaining termination bound is Medium lifecycle hardening,
-  not evidence that normal termination or the separate readiness root cause is solved by this fix.
-  **Harness cancellation (2026-09-13):** fixed delayed EXIT cleanup while Bash waited for a
-  foreground container command. The harness now uses an interruptible background-job wait and
-  reaps its command after removing its owned container. The Docker-free regression failed before
-  the fix and passed three race-enabled repetitions afterward; real forced cancellation returned
-  within its deadline with no fixture container remaining. This proves test-harness cleanup, not
-  the separate runtime worker-termination bound above.
+- [x] `F-144` [Medium] isolate and harden NUT supervision (2026-09-13).
+  Runtime shell, configuration, and process tests now belong to `internal/nutsupervisor`;
+  the controller embeds the same bytes without source rewriting. Its README compares upstream
+  service management, s6, runit, and per-device containers. Retain named upstream `upsdrvctl`
+  workers plus the small configuration adapter for v1, with existing credential/privilege boundaries.
+  Malformed enumeration preserves working drivers and server configuration; empty startup,
+  per-driver failure isolation, PID preservation, reload retry, and restart cadence are covered.
+  Workers receive TERM, then KILL after a five-second grace period and are reaped. Shutdown starts
+  all worker grace periods together; polling sleeps are interruptible and NUT control commands
+  have five-second bounds. Unrelated workers survive removal of a stuck peer.
+  **Validated:** full API/internal/command race suite, repository lint, repeated stuck-worker
+  regressions, and a stalled named-stop helper. The real-NUT image harness passed normal lifecycle
+  tests and killed/reaped a STOP-frozen driver within its bound using the cached ARM64 operand.
+  Image CI runs the harness against its newly built native image. Cancellation cleanup is separately
+  regression-tested. The container remains the final boundary for unexpected descendants and
+  userspace deadlines cannot resolve kernel-level uninterruptible I/O. This closes the modularity
+  and lifecycle task, not `F-97`'s intermittent readiness root cause or Kind/hardware qualification.
 
 - `F-97` [High] find out why a driver `upsd` is still talking to fails a fresh `upsdrvctl status`
   connection, and only in the minutes after a pod start. The recovery half is done and measured in

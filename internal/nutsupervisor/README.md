@@ -15,8 +15,13 @@ binaries. There is no second generated copy of the script and no new runtime ser
   controller-owned pod replacements, not supervisor reloads.
 - Handle no configured devices as an idle state. Preserve existing workers when listing fails.
 - The supervisor owns its state directory and must never share it with another instance.
-  Termination stops owned workers; the operand's container boundary remains the final process
-  cleanup boundary.
+  Each worker gives its owned foreground NUT child five seconds after TERM, then uses KILL and
+  reaps it. Supervisor shutdown starts all worker grace periods together, rather than spending
+  five seconds per device. Removing one device preserves unrelated workers. Enumeration, reload,
+  and best-effort named stop commands also have five-second bounds through the image's `timeout`.
+  The polling sleep is interruptible. The operand's container boundary remains the final process
+  cleanup boundary, including unexpected descendants; kernel-level uninterruptible I/O is not
+  something a userspace deadline can resolve.
 
 Runtime configuration is explicit:
 
@@ -79,6 +84,10 @@ driver-crash recovery, and graceful termination without remaining NUT workers. I
 data, a non-root read-only container, private temporary filesystems, no capabilities, and no
 external network. It requires neither Kubernetes nor physical equipment. The outer harness bounds
 the run and removes its owned container on failure or cancellation.
+
+The lifecycle fixture also freezes a real driver with STOP, then verifies that supervisor shutdown
+kills and reaps it within the grace bound. Process tests cover multiple TERM-ignoring workers and
+a stalled named-stop helper without requiring a container or Kubernetes.
 
 The existing image workflow runs this check immediately after building its native NUT server
 image; `docker-smoke-nut-server` includes it too. This complements, rather than replaces, the

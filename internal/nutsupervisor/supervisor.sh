@@ -40,7 +40,7 @@ configDigest() {
 
 configuredDrivers() {
   list_error="$state_dir/list.err"
-  output="$(NUT_QUIET_INIT_BANNER=true upsdrvctl list 2>"$list_error")"
+  output="$(NUT_QUIET_INIT_BANNER=true timeout -s KILL 5 upsdrvctl list 2>"$list_error")"
   rc="$?"
   if [ "$rc" -eq 0 ]; then
     printf '%s\n' "$output"
@@ -87,7 +87,24 @@ startDriver() {
   rm -f "$exit_file"
   echo "driver-supervisor: starting $ups"
   (
-    trap 'if [ -n "${driver_child:-}" ]; then kill "$driver_child" 2>/dev/null || true; wait "$driver_child" 2>/dev/null || true; fi; exit 0' INT TERM
+    stopChild() {
+      trap '' INT TERM
+      if [ -n "${driver_child:-}" ]; then
+        kill -TERM "$driver_child" 2>/dev/null || true
+        remaining=5
+        while kill -0 "$driver_child" 2>/dev/null && [ "$remaining" -gt 0 ]; do
+          sleep 1
+          remaining=$((remaining - 1))
+        done
+        if kill -0 "$driver_child" 2>/dev/null; then
+          echo "driver-supervisor: $ups ignored termination; killing owned child"
+          kill -KILL "$driver_child" 2>/dev/null || true
+        fi
+        wait "$driver_child" 2>/dev/null || true
+      fi
+      exit 0
+    }
+    trap stopChild INT TERM
     NUT_QUIET_INIT_BANNER=true upsdrvctl -FF start "$ups" &
     driver_child="$!"
     wait "$driver_child"
@@ -110,15 +127,27 @@ stopDriver() {
     fi
   fi
   rm -f "$pid_file" "$(driverExitFile "$ups")"
-  NUT_QUIET_INIT_BANNER=true upsdrvctl stop "$ups" >/dev/null 2>&1 || true
+  NUT_QUIET_INIT_BANNER=true timeout -s KILL 5 upsdrvctl stop "$ups" >/dev/null 2>&1 || true
 }
 
 stopAllDrivers() {
+  trap '' INT TERM
+  if [ -n "${sleep_pid:-}" ]; then
+    kill "$sleep_pid" 2>/dev/null || true
+    wait "$sleep_pid" 2>/dev/null || true
+  fi
+  # Start every worker's grace period together, then reap our own children.
+  # Their foreground NUT processes are terminated by stopChild, not by a global kill.
+  for pid_file in "$state_dir"/*.pid; do
+    [ -s "$pid_file" ] || continue
+    pid="$(cat "$pid_file")"
+    kill -TERM "$pid" 2>/dev/null || true
+  done
   for pid_file in "$state_dir"/*.pid; do
     [ -e "$pid_file" ] || continue
     ups="${pid_file##*/}"
     ups="${ups%.pid}"
-    stopDriver "$ups"
+    reapDriver "$ups"
   done
 }
 
@@ -174,7 +203,10 @@ last_driver_digest="$(configDigest "$config_dir/ups.conf")"
 reconcileDrivers || true
 
 while true; do
-  sleep "$interval"
+  sleep "$interval" &
+  sleep_pid=$!
+  wait "$sleep_pid" || true
+  sleep_pid=
 
   server_reload_ok=true
   current_server_digest="$(configDigest "$config_dir/ups.conf" "$config_dir/upsd.users")"
@@ -182,7 +214,7 @@ while true; do
     # Validate enumeration before upsd can discard its last working device set.
     configuredDrivers >/dev/null || continue
     echo "driver-supervisor: reloadable server configuration changed, reloading upsd"
-    if upsd -c reload; then
+    if timeout -s KILL 5 upsd -c reload; then
       last_server_digest="$current_server_digest"
     else
       server_reload_ok=false
