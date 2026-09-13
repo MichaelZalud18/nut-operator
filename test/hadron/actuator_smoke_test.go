@@ -135,6 +135,19 @@ func bootActuatorReadyGuest(ctx context.Context, t *testing.T) actuatorGuest {
 	nodeName := nodes.Items[0].Name
 	t.Logf("target node: %s", nodeName)
 
+	// A Ready node proves the kubelet came up; it says nothing about the separate controllers
+	// (serviceaccount, token) that populate the default namespace's own "default" ServiceAccount,
+	// which every Pod created below needs for admission regardless of whether it names one
+	// explicitly. A live run found this race directly: "serviceaccount default/default not found"
+	// on pod creation, on a guest that had already reported a Ready node. Waiting for it here,
+	// once, benefits every test built on this guest rather than each independently risking the
+	// same race.
+	t.Log("waiting for the default namespace's own default ServiceAccount")
+	waitForWithDiagnostics(t, ctx, 2*time.Minute, "default ServiceAccount", func(ctx context.Context) error {
+		_, err := clientset.CoreV1().ServiceAccounts("default").Get(ctx, "default", metav1.GetOptions{})
+		return err
+	}, nil)
+
 	t.Log("importing the real node-actuator image into the guest's own containerd")
 	f, err := os.Open(tarPath)
 	if err != nil {
