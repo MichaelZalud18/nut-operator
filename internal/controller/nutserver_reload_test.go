@@ -115,7 +115,7 @@ func TestDriverSupervisorReloadsOnReloadableConfigChange(t *testing.T) {
 	if !strings.Contains(script, "upsd -c reload") {
 		t.Fatalf("supervisor must reload upsd when reloadable config changes:\n%s", script)
 	}
-	for _, watched := range []string{"/etc/nut/ups.conf", "/etc/nut/upsd.users"} {
+	for _, watched := range []string{"$config_dir/ups.conf", "$config_dir/upsd.users"} {
 		if !strings.Contains(script, watched) {
 			t.Fatalf("supervisor must watch %s for changes:\n%s", watched, script)
 		}
@@ -128,7 +128,7 @@ func TestDriverSupervisorReloadsOnReloadableConfigChange(t *testing.T) {
 func TestDriverSupervisorRestartsDriversWhenUPSConfChanges(t *testing.T) {
 	script := driverSupervisorScript()
 
-	if !strings.Contains(script, `current_driver_digest="$(configDigest /etc/nut/ups.conf)"`) {
+	if !strings.Contains(script, `current_driver_digest="$(configDigest "$config_dir/ups.conf")"`) {
 		t.Fatalf("supervisor must track ups.conf separately for driver restarts:\n%s", script)
 	}
 	if !strings.Contains(script, "driver-supervisor: driver configuration changed, reconciling managed drivers") {

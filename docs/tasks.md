@@ -186,6 +186,17 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
   repeated crashes, reload, readiness, and cancellation/cleanup. Configure test paths explicitly
   instead of rewriting implementation text. Compare behavior with the current harness before
   replacement. Coordinate with `F-97`; a redesign must not silently close its unreproduced root cause.
+  **Modularity slice (2026-09-13):** extracted the exact embedded shell into
+  `internal/nutsupervisor/supervisor.sh` and moved process-tree tests into that standalone package.
+  Configuration paths, private state, and polling interval are explicit runtime inputs; the harness
+  runs the embedded production bytes without source-text substitution. Controller rendering remains
+  an adapter using the same script, preserving compatibility with current NUT images. The package
+  README records upstream `upsdrvctl` versus systemd/SMF service-management boundaries and the
+  existing stable-sidecar contract. **Still open:** evaluate generic supervisor replacements and
+  validate the final lifecycle design against actual packaged NUT binaries, including termination,
+  partial-start/reload failures and readiness. Extraction alone does not complete this redesign.
+  **Validated:** standalone race-enabled process tests and controller rendering regressions;
+  full API/internal/command race sweep, shell syntax, and PostgreSQL-tagged repository lint passed.
 
 - `F-97` [High] find out why a driver `upsd` is still talking to fails a fresh `upsdrvctl status`
   connection, and only in the minutes after a pod start. The recovery half is done and measured in
@@ -306,6 +317,13 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   Preserve full Kind coverage, exact promoted-image testing, network-policy enforcement, cleanup,
   and required-check semantics. No suite split, fewer checks, or CI rewrite is approved by this task.
   Priority reflects developer feedback/test isolation, not a demonstrated shutdown-safety defect.
+  **Investigated (2026-09-13):** a timestamped successful promotion job shows shared BeforeSuite
+  taking 47.004s of a 14m23s job; four production-image pull/load operations account for 16.188s.
+  The roughly 9m50s scenario interval includes deployment, waits and cleanup, not just assertions.
+  Current recommendation is to retain shared setup and the exact-image gate. See
+  [the evidence and dependency map](contributing/audits/kind-modularity-2026-09-13.md).
+  Controlled focused/full, PR/promotion, cache-state, failure/retry and resource-use comparisons
+  remain open; this single success does not establish average costs or a justified suite split.
 
 ### v1 Release Readiness
 

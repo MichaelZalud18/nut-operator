@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package nutsupervisor
 
 import (
 	"fmt"
@@ -28,27 +28,10 @@ import (
 	"time"
 )
 
-// This file exercises driverSupervisorScript() as a running process tree rather than as text.
-//
-// Every existing test for this script (nutserver_watchdog_test.go, nutserver_reload_test.go) checks
-// that a substring is present in the rendered script. None of them run it, so the property the
-// per-device split exists to prove -- that one driver failing cannot take healthy ones with it -- has
-// never actually been observed happening. That property, reload convergence, and the bound on
-// restart frequency are what this file adds (component-test item, docs/tasks.md, NUT Server /
-// upsd, [High]).
-//
-// The script hardcodes /etc/nut and /run/nut/driver-supervisor, which a non-root test cannot write
-// to. Rather than adding a testability seam to the production script, this substitutes those two
-// literal paths for a temp directory before executing it -- the same approach
-// nodepoweragent_probes_test.go already uses for the upsmon probe script. Production behavior is
-// unchanged because the production script is never modified; only this test's private copy of the
-// string is.
-//
-// `upsdrvctl` and `upsd` are replaced on PATH with fake implementations whose behavior per UPS name
-// is read from a fixture directory this harness controls, so a "driver" here is a real OS process
-// with a real PID, started and reaped by the real script logic, just not real NUT code.
+// The exact embedded supervisor runs against fake NUT commands and isolated paths.
+// Real child processes exercise crash isolation, reloads, and restart cadence.
 
-// driverSupervisorHarness runs one instance of driverSupervisorScript() against a fixture directory
+// driverSupervisorHarness runs one instance of Script against a fixture directory
 // this test controls, and gives each test a way to change what a named UPS's fake driver does while
 // the supervisor is running.
 type driverSupervisorHarness struct {
@@ -160,7 +143,7 @@ case "$1" in
 esac
 `
 	upsd := `#!/bin/sh
-# Only "-c reload" is exercised by driverSupervisorScript. A marker file lets tests assert it was
+# Only "-c reload" is exercised by the supervisor. A marker file lets tests assert it was
 # actually invoked, and a present .reload_fail file lets a test make it fail on purpose.
 if [ "$1" = "-c" ] && [ "$2" = "reload" ]; then
   echo "reload $(date +%s%N)" >> "` + filepath.Join(h.root, "upsd-reload.log") + `"
@@ -258,30 +241,6 @@ func (h *driverSupervisorHarness) failListing(fail bool) {
 	}
 }
 
-// script returns driverSupervisorScript() with its hardcoded paths pointed at this harness's temp
-// directory, and its reconcile interval shortened so a test does not have to wait multiples of a
-// real 5s just to observe a second pass. Both substitutions are exact-string, so if the production
-// script is ever edited to spell either literal differently, this fails to match rather than
-// silently testing nothing -- verified below in TestFakeUpsdrvctlPathSubstitutionMatchesTheRealScript.
-func (h *driverSupervisorHarness) script(intervalSeconds int) string {
-	h.t.Helper()
-	script := driverSupervisorScript()
-	replacements := []struct{ from, to string }{
-		{"state_dir=/run/nut/driver-supervisor", "state_dir=" + h.stateDir},
-		{"/etc/nut/ups.conf", h.upsConf},
-		{"/etc/nut/upsd.users", h.upsdUsers},
-		{"\n  sleep 5\n", fmt.Sprintf("\n  sleep %d\n", intervalSeconds)},
-	}
-	for _, r := range replacements {
-		if !strings.Contains(script, r.from) {
-			h.t.Fatalf("path substitution target %q not found in driverSupervisorScript(); "+
-				"the production script changed shape and this harness needs updating", r.from)
-		}
-		script = strings.ReplaceAll(script, r.from, r.to)
-	}
-	return script
-}
-
 // start launches the supervisor with a 1s reconcile interval, fast enough to keep these tests in
 // the sub-minute range a unit-test suite needs to stay in, and stops it automatically at test
 // cleanup by sending the same TERM the script's own trap handles.
@@ -292,8 +251,10 @@ func (h *driverSupervisorHarness) start() {
 
 func (h *driverSupervisorHarness) startWithInterval(intervalSeconds int) {
 	h.t.Helper()
-	cmd := exec.Command("sh", "-c", h.script(intervalSeconds))
-	cmd.Env = append(os.Environ(), "PATH="+h.binDir+":"+os.Getenv("PATH"))
+	cmd := exec.Command("sh", "-c", Script())
+	cmd.Env = append(os.Environ(), "PATH="+h.binDir+":"+os.Getenv("PATH"),
+		"NUT_CONFPATH="+h.etcDir, "NUT_SUPERVISOR_STATE_DIR="+h.stateDir,
+		fmt.Sprintf("NUT_SUPERVISOR_INTERVAL_SECONDS=%d", intervalSeconds))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	h.stdout = &strings.Builder{}
 	cmd.Stdout = &syncWriter{mu: &h.mu, w: h.stdout}
@@ -330,7 +291,7 @@ func (h *driverSupervisorHarness) log() string {
 	return h.stdout.String()
 }
 
-// pid reads the pid file the real startDriver writes, in the substituted state dir. It returns
+// pid reads the pid file the real startDriver writes, in the configured state dir. It returns
 // false rather than failing the test when the file is absent, because "not started yet" is a normal
 // intermediate state every polling helper below has to tolerate.
 func (h *driverSupervisorHarness) pid(ups string) (int, bool) {
@@ -381,21 +342,21 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 	return s.w.Write(p)
 }
 
-// TestFakeUpsdrvctlPathSubstitutionMatchesTheRealScript fails loudly, on its own, if the production
-// script is ever edited so the literal strings this harness substitutes no longer appear -- rather
-// than every other test in this file quietly exercising an empty no-op script because none of its
-// path rewrites landed. script() already asserts this per call; this test exists so the failure has
-// one clear name instead of surfacing as an unrelated timeout somewhere else in the suite.
-func TestFakeUpsdrvctlPathSubstitutionMatchesTheRealScript(t *testing.T) {
-	h := newDriverSupervisorHarness(t)
-	script := h.script(1)
-	if strings.Contains(script, "/etc/nut") || strings.Contains(script, "/run/nut/driver-supervisor") {
-		t.Fatalf("substituted script still references a real system path:\n%s", script)
+// Configuration errors must exit before any state directory or driver is touched.
+func TestSupervisorRejectsInvalidInterval(t *testing.T) {
+	for _, interval := range []string{"0", "00", "-1", "1; exit 0", "1.5"} {
+		t.Run(interval, func(t *testing.T) {
+			cmd := exec.Command("sh", "-c", Script())
+			cmd.Env = append(os.Environ(), "NUT_SUPERVISOR_INTERVAL_SECONDS="+interval)
+			if err := cmd.Run(); err == nil {
+				t.Fatal("invalid interval accepted")
+			}
+		})
 	}
 }
 
 // TestDriverSupervisorIsolatesACrashingDriverFromHealthyOnes is the property the per-device split
-// exists for (see driverSupervisorScript's own doc comment): a bundled `upsdrvctl -FF start` for
+// exists for: a bundled `upsdrvctl -FF start` for
 // every device took every driver down when one failed. This runs a healthy and a permanently
 // crashing driver side by side and asserts the healthy one's process is never disturbed while the
 // broken one is repeatedly restarted -- the first time this has been observed happening rather than
@@ -537,7 +498,7 @@ func TestDriverSupervisorKeepsRunningDriversWhenListingFails(t *testing.T) {
 
 // TestDriverSupervisorRestartCadenceIsBoundedByTheReconcileInterval is the investigation the task
 // description's "backoff stays bounded" sent this to: there is no backoff mechanism anywhere in
-// driverSupervisorScript or the node-agent-operand design docs, no attempt counter, no growing
+// the supervisor or the node-agent-operand design docs, no attempt counter, no growing
 // delay. What actually exists is a fixed reconcile interval, and restart attempts for a
 // permanently-crashing driver are bound to at most one per interval by construction -- startDriver
 // backgrounds the run-and-record-exit step, but the *next* attempt only happens on the next
