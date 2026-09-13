@@ -356,7 +356,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 		return nil
 	}
 	cluster, err := r.getManagementCluster(ctx, flow)
-	if err != nil || cluster == nil || !managementClusterStorageReady(cluster) {
+	if err != nil || cluster == nil || (!managementClusterStorageReady(cluster) && !cluster.Spec.Storage.AuditSpool.Enabled) {
 		if result.accepted && triggerEvaluation != nil && triggerEvaluation.Eligible {
 			setExecutionReadyCondition(
 				&flow.Status.Conditions,
@@ -369,7 +369,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 		return err
 	}
 
-	store, err := r.storageConnector().OpenAuditStore(ctx, cluster)
+	store, err := r.openExecutionAuditStore(ctx, cluster)
 	if err != nil {
 		return err
 	}
@@ -518,6 +518,8 @@ func (r *ShutdownFlowReconciler) drainAuditSpool(ctx context.Context, cluster *p
 	}
 
 	log := logf.FromContext(ctx)
+	ctx, cancel := context.WithTimeout(ctx, shutdownAuditIOTimeout)
+	defer cancel()
 	stats, err := audit.ReplaySpool(ctx, store, audit.ReplayOptions{Directory: backend.AuditSpool.Path})
 	// Counted before the error check: a partial drain still returned records to
 	// PostgreSQL, and those are exactly the ones worth seeing when the drain as

@@ -139,6 +139,15 @@ contains the audit record kind, a stable replay key such as `executionID` or
 payload. A successful fallback sets the `Degraded` and `ExecutionReady` conditions to
 `AuditSpoolFallback` on the `ShutdownFlow`.
 
+When configured, the spool is also available if storage readiness is false or opening PostgreSQL
+fails before execution starts. The controller supplies an explicitly unavailable primary writer;
+it does not substitute successful empty reads. Approval and action safety checks still apply.
+Database connection, execution-history reads, and journal replay have one-second context budgets.
+Execution writes use a one-second deadline and latch a timeout for the rest of that reconcile, so
+later records immediately use fallback instead of each spending another timeout. The production
+SQL driver honors these contexts; these bounds do not guarantee progress through a stalled local
+filesystem. Storage evidence failures remain separate from action outcomes.
+
 The journal is bounded by `spec.storage.auditSpool.maxSize` (default `64Mi`, minimum `1Mi`). A
 PostgreSQL outage has no bounded duration, so an uncapped journal grows until the durable volume is
 full — and a full volume during a power event is a worse failure than a truncated audit trail,
@@ -153,13 +162,13 @@ operator problems, but neither outranks power response (SB-11).
 ### Replay
 
 `audit.ReplaySpool` drains the journal back into the primary writer, and `ShutdownFlow`
-reconciliation runs it immediately after the audit store opens — the one point the operator reliably
-knows PostgreSQL is accepting writes. A spool that captures records but never returns them does not
+reconciliation attempts it before writing new execution evidence. An unavailable primary leaves the
+journal in place for a later healthy reconcile. A spool that captures records but never returns them does not
 preserve the audit trail; it loses it more slowly.
 
 Replay is safe to repeat. Every spooled record carries the same identity the primary writer uses and
-every primary insert is an upsert on that identity, so re-applying a record is a no-op rather than a
-duplicate. The journal is removed only after a fully clean drain: a record that fails, or one this
+immutable inserts ignore conflicts on that identity, while mutable execution progress uses upserts.
+Re-applying a record does not create a duplicate. The journal is removed only after a fully clean drain: a record that fails, or one this
 build does not recognize, leaves the file in place. A drain failure is logged, never returned.
 
 The behavior has direct precedent in the telemetry tier — Fluent Bit filesystem buffering, the

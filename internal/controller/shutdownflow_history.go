@@ -142,6 +142,8 @@ func (r *ShutdownFlowReconciler) flowExecutionHistory(ctx context.Context, clust
 	if cluster == nil || flow == nil || planConfigHash == "" || !managementClusterStorageReady(cluster) {
 		return planner.HistoryInputs{}
 	}
+	ctx, cancel := context.WithTimeout(ctx, shutdownAuditIOTimeout)
+	defer cancel()
 	store, err := r.storageConnector().OpenAuditStore(ctx, cluster)
 	if err != nil || store == nil {
 		return planner.HistoryInputs{}

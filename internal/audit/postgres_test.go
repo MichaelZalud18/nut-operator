@@ -267,3 +267,39 @@ func TestPostgresAllRecordsReplay(t *testing.T) {
 		t.Fatal("missing execution foreign key must remain an error")
 	}
 }
+
+func TestPostgresLockedWriterFallsBackToSpool(t *testing.T) {
+	ctx, db, store := openTestPostgres(t)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "LOCK TABLE "+store.quotedSchema+".power_events IN ACCESS EXCLUSIVE MODE"); err != nil {
+		t.Fatal(err)
+	}
+	bounded, err := NewBoundedStore(store, 50*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	spool, err := NewSpoolWriter(bounded, SpoolOptions{Directory: dir, DisableSync: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := PowerEvent{EventID: "00000000-0000-4000-8000-000000000099", EventType: "Test", Severity: "Info", SourceKind: "ShutdownFlow", SourceName: "flow", Message: "blocked writer"}
+	started := time.Now()
+	if err := spool.RecordPowerEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(started) > time.Second || spool.Stats().FallbackWrites != 1 {
+		t.Fatalf("unbounded or missing fallback: %+v", spool.Stats())
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := ReplaySpool(ctx, store, ReplayOptions{Directory: dir})
+	if err != nil || stats.Replayed != 1 {
+		t.Fatalf("replay after lock release: %+v %v", stats, err)
+	}
+}

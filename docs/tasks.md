@@ -284,12 +284,15 @@ spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
   hosted execution is verified by the workflow after publication. This does not close `F-131`
   or establish full storage-failure resilience.
 
-- [ ] `F-131` [High] make the configured audit spool available when PostgreSQL is already unavailable
-  at execution start. Storage-readiness and `OpenAuditStore` failures currently return before the
-  executor or spool is reached. Bound history, replay, and audit I/O so stalled storage cannot consume
-  the shutdown window. **Testable now:** unavailable/stalled backend at trigger time and mid-execution,
-  with spool replay when storage returns; preserve approval gates and report evidence failures
-  separately from action outcomes. Durable resume evidence is not an execution requirement (SB-1).
+- [x] `F-131` [High] make configured audit fallback available during startup storage outages
+  (2026-09-13). Unready storage and failed connections reach the spool-backed execution writer.
+  Connection, history, replay, and execution writes have context deadlines; a timed-out writer
+  latches failure for the reconcile to avoid repeatedly consuming the shutdown window.
+  **Validated:** enforced-flow component tests execute actions with unavailable storage; cancellation
+  and stalled-writer tests cover fallback; a real PostgreSQL table-lock test proves bounded write
+  failure and successful recovery replay. Full API/internal/command race tests passed. Existing
+  approval checks remain in force, and evidence failures stay separate from action outcomes.
+  Local filesystem stalls are not covered by database deadlines; durable resume remains outside SB-1.
 
 ---
 
