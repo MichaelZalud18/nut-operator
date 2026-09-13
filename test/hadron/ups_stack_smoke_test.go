@@ -195,6 +195,12 @@ func TestHadronOperatorRunsRealUPSStack(t *testing.T) {
 	// exactly (repository/tag/pullPolicy substituted for this run's own locally-built, locally-
 	// imported images) -- a proven-correct manifest, not a guess at the CRD schema. DryRun/
 	// Simulate, also matching that spec: nothing here should be able to halt the guest.
+	//
+	// Tag values are quoted deliberately: they are pure-digit Unix-nanosecond timestamps, and an
+	// unquoted numeric-looking YAML scalar is parsed as a JSON number, not a string, even though
+	// ImageReference.Tag is a Go string field -- a live run found the exact failure this produces:
+	// the NUTServer/NodePowerAgent admission webhooks rejecting the request with "json: cannot
+	// unmarshal number into Go struct field ImageReference.spec.image.tag of type string".
 	manifest := fmt.Sprintf(`
 apiVersion: power.zalud.io/v1alpha1
 kind: UPSDevice
@@ -214,7 +220,7 @@ spec:
     - name: hadron-ups
   image:
     repository: %[2]s
-    tag: %[3]s
+    tag: "%[3]s"
     pullPolicy: IfNotPresent
   auth:
     mode: OperatorManaged
@@ -236,11 +242,11 @@ spec:
   images:
     upsmon:
       repository: %[5]s
-      tag: %[6]s
+      tag: "%[6]s"
       pullPolicy: IfNotPresent
     actuator:
       repository: %[7]s
-      tag: %[8]s
+      tag: "%[8]s"
       pullPolicy: IfNotPresent
   shutdown:
     actuatorPolicy: Simulate
