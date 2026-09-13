@@ -146,11 +146,15 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   this reduction. Trigger selection and plan hashes remain independent of these live readings.
   Tests cover transitive/shared supplies, partial recovery, untrusted and stale readings,
   consecutive boundary updates, and actual executor compression from a shorter switch supply.
+  **Artifact milestone (2026-09-13):** `status.publishedArtifact.communicationBudget` publishes
+  the whole-plan supply envelope, per-carrier domain/UPS provenance, unknown supplies, and
+  unresolved actions. Publication and execution share selection logic; controller envtest
+  verifies these fields survive API status storage. CRDs and installers include the schema.
   **Validation:** race-enabled inventory, planner, resolver, shutdownflow, executor, controller
   (including envtest), and webhook suites passed. `make lint` reported zero issues. Execution
   ordering tests use simulated actions and do not claim physical halt evidence.
   **Still open:** cover operator/API and NUT service paths end to end (including work without
-  resolved node targets), and publish structured timing constraints and unresolved coverage.
+  resolved node targets), and complete unmodeled/exempt-path diagnostics in the artifacts.
   Runtime currently uses a conservative whole-plan supply envelope; node-less work includes all
   modeled carriers rather than claiming precise service-path coverage. Physical halt
   acknowledgement remains outside the action-ordering contract.
@@ -209,7 +213,8 @@ Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts sec
   **Testable now:** deterministic planner artifact and controller-status fixtures matching the
   dependencies actually used by planning; no switch or PDU actuation is required.
   **Implemented (2026-09-13):** derived carrier-node ordering edges, path-source provenance,
-  explanations, and diagrams. Timing constraints and complete unresolved-path coverage remain.
+  explanations, diagrams, and structured runtime-budget inputs with unknown supplies and
+  unresolved actions. Complete service-path and unmodeled/exempt-path diagnostics remain.
 
 ---
 

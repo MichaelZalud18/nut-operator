@@ -17,12 +17,64 @@ limitations under the License.
 package planner
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestCommunicationBudgetPublishedInPlan(t *testing.T) {
+	plan, diagnostics, err := Compile(communicationReleaseInput(), TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("compile: %v: %+v", err, diagnostics)
+	}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var published map[string]json.RawMessage
+	if err := json.Unmarshal(data, &published); err != nil {
+		t.Fatal(err)
+	}
+	if len(published["communicationBudget"]) == 0 {
+		t.Fatal("plan omits structured communication runtime constraints")
+	}
+	want := &CommunicationBudget{Scope: "WholePlan", UPSDevices: []string{"ups"}, UnresolvedActions: []string{}, Supplies: []CommunicationSupplyConstraint{
+		{Carrier: "carrier", PowerDomains: []string{"rack"}, UPSDevices: []string{"ups"}},
+	}}
+	if !reflect.DeepEqual(plan.CommunicationBudget, want) {
+		t.Fatalf("budget=%+v want %+v", plan.CommunicationBudget, want)
+	}
+}
+
+func TestCommunicationBudgetNamesUnresolvedCoverage(t *testing.T) {
+	input := communicationReleaseInput()
+	input.Groups = append(input.Groups, Group{Name: "shared-api", Action: "Notify"})
+	input.CommunicationDependencies = append(input.CommunicationDependencies, CommunicationDependency{Dependent: "outside-node", Carrier: "unknown-switch", Source: "outside-path"})
+	plan, diagnostics, err := Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("compile: %v: %+v", err, diagnostics)
+	}
+	budget := plan.CommunicationBudget
+	if !slices.Equal(budget.UnresolvedActions, []string{"shared-api"}) {
+		t.Fatalf("lost unresolved action: %+v", budget)
+	}
+	if !slices.ContainsFunc(budget.Supplies, func(s CommunicationSupplyConstraint) bool {
+		return s.Carrier == "unknown-switch" && s.UnknownSupply && len(s.UPSDevices) == 0
+	}) {
+		t.Fatalf("lost unknown supply: %+v", budget.Supplies)
+	}
+	input.Groups = input.Groups[:3]
+	plan, diagnostics, err = Compile(input, TelemetryInputs{})
+	if err != nil {
+		t.Fatalf("compile: %v: %+v", err, diagnostics)
+	}
+	if len(plan.CommunicationBudget.Supplies) != 1 {
+		t.Fatal("unrelated carrier affected a fully resolved plan")
+	}
+}
 
 func TestCommunicationOutageScope(t *testing.T) {
 	for _, tc := range []struct {

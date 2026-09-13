@@ -252,6 +252,10 @@ func carrierPowerDomains(input StructuralInputs, carrier string) []string {
 // the given consumers. Unknown supply remains explicit rather than disappearing
 // from a minimum-runtime calculation.
 func CommunicationSupplyDevices(input StructuralInputs, consumers []string) ([]string, bool) {
+	return communicationSupplySummary(communicationSupplyConstraints(input, consumers))
+}
+
+func communicationSupplyConstraints(input StructuralInputs, consumers []string) []CommunicationSupplyConstraint {
 	upstream := map[string][]CommunicationDependency{}
 	for _, dependency := range normalizeCommunicationDependencies(input.CommunicationDependencies) {
 		upstream[dependency.Dependent] = append(upstream[dependency.Dependent], dependency)
@@ -262,24 +266,75 @@ func CommunicationSupplyDevices(input StructuralInputs, consumers []string) ([]s
 			carriers[carrier] = struct{}{}
 		}
 	}
-	devices := map[string]struct{}{}
-	unknown := false
-	for carrier := range carriers {
-		found := false
+	var constraints []CommunicationSupplyConstraint
+	for _, carrier := range sortedSetKeys(carriers) {
+		devices := map[string]struct{}{}
+		domains := map[string]struct{}{}
 		for _, domain := range input.PowerDomains {
 			if !slices.Contains(domainEntities(domain), carrier) {
 				continue
 			}
+			domains[domain.Name] = struct{}{}
 			for _, device := range domain.UPSDevices {
 				if device != "" {
 					devices[device] = struct{}{}
-					found = true
 				}
 			}
 		}
-		unknown = unknown || !found
+		constraints = append(constraints, CommunicationSupplyConstraint{
+			Carrier: carrier, PowerDomains: sortedSetKeys(domains), UPSDevices: sortedSetKeys(devices), UnknownSupply: len(devices) == 0,
+		})
+	}
+	return constraints
+}
+
+func communicationSupplySummary(constraints []CommunicationSupplyConstraint) ([]string, bool) {
+	devices := map[string]struct{}{}
+	unknown := false
+	for _, constraint := range constraints {
+		unknown = unknown || constraint.UnknownSupply
+		for _, device := range constraint.UPSDevices {
+			devices[device] = struct{}{}
+		}
 	}
 	return sortedSetKeys(devices), unknown
+}
+
+// CommunicationBudgetForInputs is shared by publication and execution. Pass
+// only the compiled actions so pruned work cannot expand the runtime envelope.
+func CommunicationBudgetForInputs(input StructuralInputs) *CommunicationBudget {
+	if len(input.CommunicationDependencies) == 0 {
+		return nil
+	}
+	var actions []string
+	for _, group := range input.Groups {
+		actions = append(actions, group.Name)
+	}
+	if len(input.Groups) == 0 {
+		for _, step := range input.Steps {
+			actions = append(actions, step.ID)
+		}
+	}
+	membership := groupNodeSets(input.GroupNodes)
+	consumers := map[string]struct{}{}
+	unresolved := map[string]struct{}{}
+	for _, action := range actions {
+		nodes := membership[action]
+		if len(nodes) == 0 {
+			unresolved[action] = struct{}{}
+		}
+		for node := range nodes {
+			consumers[node] = struct{}{}
+		}
+	}
+	if len(unresolved) > 0 {
+		for _, dependency := range input.CommunicationDependencies {
+			consumers[dependency.Dependent] = struct{}{}
+		}
+	}
+	constraints := communicationSupplyConstraints(input, sortedSetKeys(consumers))
+	names, _ := communicationSupplySummary(constraints)
+	return &CommunicationBudget{Scope: "WholePlan", UPSDevices: names, UnresolvedActions: sortedSetKeys(unresolved), Supplies: constraints}
 }
 
 func communicationDiagnostics(input StructuralInputs) []Diagnostic {

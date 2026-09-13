@@ -189,3 +189,40 @@ func TestCommunicationSupplyCompressesExecutorBudget(t *testing.T) {
 		t.Fatalf("switch's 60s supply must constrain the 100s wait after 20%% reserve, got %v", slept)
 	}
 }
+
+func TestPublishedCommunicationBudgetMatchesRuntimeSelection(t *testing.T) {
+	for _, mode := range []string{"resolved", "unknown-supply", "node-less", "linear"} {
+		t.Run(mode, func(t *testing.T) {
+			flow, bundle := communicationRuntimeFixture(t)
+			switch mode {
+			case "unknown-supply":
+				bundle.Topology.Domains = bundle.Topology.Domains[:1]
+			case "node-less":
+				flow.Spec.Groups = append(flow.Spec.Groups, power.ShutdownGroup{Name: "shared-api", Action: power.ShutdownStepNotify})
+			case "linear":
+				for _, index := range []int{1, 2, 0} {
+					g := flow.Spec.Groups[index]
+					flow.Spec.Steps = append(flow.Spec.Steps, power.ShutdownStep{ID: g.Name, Type: g.Action, Target: g.Target})
+				}
+				flow.Spec.Groups = nil
+			}
+			compiled := shutdownflow.CompileFlow(flow, bundle, power.PowerShutdownTierPolicySpec{})
+			if compiled.Artifact == nil || compiled.Artifact.CommunicationBudget == nil {
+				t.Fatalf("missing artifact: %+v", compiled.Diagnostics)
+			}
+			flow.Status.CompiledSteps = compiled.Steps
+			names, unknown := communicationBudgetDevices(flow, bundle)
+			published := compiled.Artifact.CommunicationBudget
+			publishedUnknown := false
+			for _, s := range published.Supplies {
+				publishedUnknown = publishedUnknown || s.UnknownSupply
+			}
+			if !slices.Equal(names, published.UPSDevices) || unknown != publishedUnknown {
+				t.Fatalf("runtime=%v/%v publication=%+v", names, unknown, published)
+			}
+			if mode == "node-less" && !slices.Equal(published.UnresolvedActions, []string{"shared-api"}) {
+				t.Fatalf("missing conservative coverage reason: %+v", published)
+			}
+		})
+	}
+}

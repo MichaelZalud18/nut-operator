@@ -36,25 +36,19 @@ func communicationBudgetDevices(flow *power.ShutdownFlow, bundle resolver.Struct
 		return nil, false
 	}
 	input := resolver.AttachResolvedInputHash(planner.StructuralInputs{}, bundle)
-	membership := map[string][]string{}
-	for _, entry := range shutdownflow.PlannerGroupNodes(flow, bundle) {
-		membership[entry.Group] = append(slices.Clone(entry.Acts), entry.Releases...)
-	}
-	var consumers []string
+	input.GroupNodes = shutdownflow.PlannerGroupNodes(flow, bundle)
 	for _, step := range flow.Status.CompiledSteps {
-		nodes := membership[step.ID]
-		if len(nodes) == 0 {
-			// A node-less action may use the shared API or NUT path. Until that
-			// coverage is more specific, budget against all modeled carriers.
-			for _, dependency := range input.CommunicationDependencies {
-				consumers = append(consumers, dependency.Dependent)
-			}
-			break
-		}
-		consumers = append(consumers, nodes...)
+		input.Groups = append(input.Groups, planner.Group{Name: step.ID})
 	}
-	sort.Strings(consumers)
-	return planner.CommunicationSupplyDevices(input, slices.Compact(consumers))
+	budget := planner.CommunicationBudgetForInputs(input)
+	if budget == nil {
+		return nil, false
+	}
+	unknown := false
+	for _, supply := range budget.Supplies {
+		unknown = unknown || supply.UnknownSupply
+	}
+	return budget.UPSDevices, unknown
 }
 
 // The full compiled plan defines a conservative supply envelope for this run.

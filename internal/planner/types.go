@@ -77,6 +77,22 @@ type CommunicationDependency struct {
 	Source    string `json:"source,omitempty"`
 }
 
+// CommunicationBudget publishes the structural inputs to live runtime reduction.
+// It contains no telemetry or calculated time-to-failure promise.
+type CommunicationBudget struct {
+	Scope             string                          `json:"scope"`
+	UPSDevices        []string                        `json:"upsDevices,omitempty"`
+	UnresolvedActions []string                        `json:"unresolvedActions,omitempty"`
+	Supplies          []CommunicationSupplyConstraint `json:"supplies,omitempty"`
+}
+
+type CommunicationSupplyConstraint struct {
+	Carrier       string   `json:"carrier"`
+	PowerDomains  []string `json:"powerDomains,omitempty"`
+	UPSDevices    []string `json:"upsDevices,omitempty"`
+	UnknownSupply bool     `json:"unknownSupply"`
+}
+
 // GroupNodeMembership is one group's relationship to real cluster nodes.
 // Linear flows use the step ID as Group for PL-21 order validation.
 //
@@ -247,16 +263,17 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 
 // Plan is the deterministic compiler output.
 type Plan struct {
-	Hash              string                `json:"hash,omitempty"`
-	StructuralHash    string                `json:"structuralHash,omitempty"`
-	Steps             []CompiledStep        `json:"steps,omitempty"`
-	Waves             []Wave                `json:"waves,omitempty"`
-	StartupWaves      []Wave                `json:"startupWaves,omitempty"`
-	Graph             Graph                 `json:"graph,omitempty"`
-	PowerDomains      []PowerDomainArtifact `json:"powerDomains,omitempty"`
-	Explanations      []Explanation         `json:"explanations,omitempty"`
-	Diagrams          DiagramExports        `json:"diagrams,omitempty"`
-	EstimatedDuration Duration              `json:"estimatedDuration,omitempty"`
+	Hash                string                `json:"hash,omitempty"`
+	StructuralHash      string                `json:"structuralHash,omitempty"`
+	Steps               []CompiledStep        `json:"steps,omitempty"`
+	Waves               []Wave                `json:"waves,omitempty"`
+	StartupWaves        []Wave                `json:"startupWaves,omitempty"`
+	Graph               Graph                 `json:"graph,omitempty"`
+	PowerDomains        []PowerDomainArtifact `json:"powerDomains,omitempty"`
+	CommunicationBudget *CommunicationBudget  `json:"communicationBudget,omitempty"`
+	Explanations        []Explanation         `json:"explanations,omitempty"`
+	Diagrams            DiagramExports        `json:"diagrams,omitempty"`
+	EstimatedDuration   Duration              `json:"estimatedDuration,omitempty"`
 	// ObservedDuration is the plan total recomputed from what previous executions
 	// actually took (EX-32). Zero when nothing has been observed. Deliberately not part
 	// of the plan hash: identity is about the plan, not about its current estimate.

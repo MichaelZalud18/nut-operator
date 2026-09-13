@@ -593,16 +593,35 @@ func APICompiledWaves(waves []planner.Wave) []powerv1alpha1.CompiledShutdownWave
 // APIPlannerArtifact converts the pure planner artifact into the compact ShutdownFlow status shape.
 func APIPlannerArtifact(plan planner.Plan) *powerv1alpha1.PublishedPlannerArtifactStatus {
 	return &powerv1alpha1.PublishedPlannerArtifactStatus{
-		Graph:        APIPlannerGraph(plan.Graph),
-		PowerDomains: APIPlannerPowerDomains(plan.PowerDomains),
-		StartupWaves: APICompiledWaves(plan.StartupWaves),
-		Explanations: APIPlannerExplanations(plan.Explanations),
+		Graph:               APIPlannerGraph(plan.Graph),
+		PowerDomains:        APIPlannerPowerDomains(plan.PowerDomains),
+		CommunicationBudget: APICommunicationBudget(plan.CommunicationBudget),
+		StartupWaves:        APICompiledWaves(plan.StartupWaves),
+		Explanations:        APIPlannerExplanations(plan.Explanations),
 		Diagrams: powerv1alpha1.PlannerDiagramExportsStatus{
 			Mermaid:     plan.Diagrams.Mermaid,
 			GraphvizDOT: plan.Diagrams.GraphvizDOT,
 			D2:          plan.Diagrams.D2,
 		},
 	}
+}
+
+// APICommunicationBudget copies the planner's runtime constraints into status.
+func APICommunicationBudget(budget *planner.CommunicationBudget) *powerv1alpha1.PublishedCommunicationBudgetStatus {
+	if budget == nil {
+		return nil
+	}
+	status := &powerv1alpha1.PublishedCommunicationBudgetStatus{
+		Scope: budget.Scope, UPSDevices: append([]string(nil), budget.UPSDevices...),
+		UnresolvedActions: append([]string(nil), budget.UnresolvedActions...),
+	}
+	for _, supply := range budget.Supplies {
+		status.Supplies = append(status.Supplies, powerv1alpha1.PublishedCommunicationSupplyStatus{
+			Carrier: supply.Carrier, PowerDomains: append([]string(nil), supply.PowerDomains...),
+			UPSDevices: append([]string(nil), supply.UPSDevices...), UnknownSupply: supply.UnknownSupply,
+		})
+	}
+	return status
 }
 
 // APIPlannerPowerDomains converts derived planner power domains into the published status shape.

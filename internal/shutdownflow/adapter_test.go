@@ -70,6 +70,35 @@ func TestCommunicationDependencyFromInventoryToPublishedPlan(t *testing.T) {
 	}
 }
 
+func TestAPICommunicationBudgetCopiesNestedFields(t *testing.T) {
+	budget := &planner.CommunicationBudget{Scope: "WholePlan", UPSDevices: []string{"ups"}, UnresolvedActions: []string{"shared"}, Supplies: []planner.CommunicationSupplyConstraint{
+		{Carrier: "switch", PowerDomains: []string{"network"}, UPSDevices: []string{"ups"}},
+		{Carrier: "unknown", UnknownSupply: true},
+	}}
+	status := APICommunicationBudget(budget)
+	if status.Scope != "WholePlan" || !status.Supplies[1].UnknownSupply {
+		t.Fatalf("conversion lost fields: %+v", status)
+	}
+	copy := status.DeepCopy()
+	copy.UPSDevices[0] = "changed"
+	copy.UnresolvedActions[0] = "changed"
+	copy.Supplies[0].PowerDomains[0] = "changed"
+	copy.Supplies[0].UPSDevices[0] = "changed"
+	if status.UPSDevices[0] != "ups" || status.UnresolvedActions[0] != "shared" || status.Supplies[0].PowerDomains[0] != "network" || status.Supplies[0].UPSDevices[0] != "ups" {
+		t.Fatal("status deepcopy aliases nested slices")
+	}
+	status.UPSDevices[0] = "changed"
+	status.UnresolvedActions[0] = "changed"
+	status.Supplies[0].PowerDomains[0] = "changed"
+	status.Supplies[0].UPSDevices[0] = "changed"
+	if budget.UPSDevices[0] != "ups" || budget.UnresolvedActions[0] != "shared" || budget.Supplies[0].PowerDomains[0] != "network" || budget.Supplies[0].UPSDevices[0] != "ups" {
+		t.Fatal("status conversion aliases planner input")
+	}
+	if APICommunicationBudget(nil) != nil {
+		t.Fatal("absent topology invented a budget")
+	}
+}
+
 func TestPlannerInputsResolveShutdownTierFromGroupAndTargetLabel(t *testing.T) {
 	explicitTier := int32(2)
 	flow := &powerv1alpha1.ShutdownFlow{

@@ -331,6 +331,21 @@ name, the UPS roots, the full member closure, and the node/infrastructure split.
 resolver-derived closure trigger evaluation uses; `UPSDevice.spec.powerDomains` remains the authored
 root label, not the subscriber-facing membership list.
 
+`status.publishedArtifact.communicationBudget` publishes the structural inputs used for
+communication-path runtime budgeting. Publication and execution use the same planner helper.
+
+- `scope: WholePlan` means supplies remain in the budget for the entire compiled execution.
+- `upsDevices` is the deduplicated carrier-supply set, separate from trigger-selected UPS devices.
+- `supplies` identifies each carrier, its supplying power domains and UPS roots, and whether
+  its supply is unknown.
+- `unresolvedActions` names compiled groups or linear steps without resolved node targets;
+  these cause conservative inclusion of all modeled carriers.
+
+These are structural constraints, not a telemetry snapshot or a predicted failure time.
+Live runtime and capability trust are evaluated at wave boundaries. Empty modeled coverage is
+not proof of reachability; complete service-path and unmodeled/exempt-path diagnostics remain
+tracked under `PL-21`.
+
 Examples:
 
 - Declared: `applications requires databases` because the `ShutdownFlow` author declared it.

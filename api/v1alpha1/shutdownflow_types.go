@@ -939,6 +939,11 @@ type PublishedPlannerArtifactStatus struct {
 	// +optional
 	PowerDomains []PublishedPowerDomainStatus `json:"powerDomains,omitempty"`
 
+	// communicationBudget identifies the carrier supplies used in live runtime reduction.
+	// It publishes structural constraints, not telemetry or a predicted failure time.
+	// +optional
+	CommunicationBudget *PublishedCommunicationBudgetStatus `json:"communicationBudget,omitempty"`
+
 	// startupWaves is the advisory reverse-order projection for subscriber-owned recovery.
 	// +optional
 	StartupWaves []CompiledShutdownWave `json:"startupWaves,omitempty"`
@@ -950,6 +955,35 @@ type PublishedPlannerArtifactStatus struct {
 	// diagrams are deterministic renderings generated from graph.
 	// +optional
 	Diagrams PlannerDiagramExportsStatus `json:"diagrams,omitempty"`
+}
+
+// PublishedCommunicationBudgetStatus describes the conservative communication supply envelope.
+type PublishedCommunicationBudgetStatus struct {
+	// scope is WholePlan: the supply set is retained for the entire execution.
+	Scope string `json:"scope"`
+	// upsDevices are the additional runtime inputs, separate from trigger selection.
+	// +optional
+	UPSDevices []string `json:"upsDevices,omitempty"`
+	// unresolvedActions have no resolved node targets and include all modeled carriers.
+	// +optional
+	UnresolvedActions []string `json:"unresolvedActions,omitempty"`
+	// supplies give per-carrier power-domain and UPS provenance, including unknown supply.
+	// +optional
+	Supplies []PublishedCommunicationSupplyStatus `json:"supplies,omitempty"`
+}
+
+// PublishedCommunicationSupplyStatus is one carrier's structural runtime constraint.
+type PublishedCommunicationSupplyStatus struct {
+	// carrier is the inventory entity carrying the communication path.
+	Carrier string `json:"carrier"`
+	// powerDomains are the carrier's resolved supplying domains.
+	// +optional
+	PowerDomains []string `json:"powerDomains,omitempty"`
+	// upsDevices are the resolved UPS roots supplying this carrier.
+	// +optional
+	UPSDevices []string `json:"upsDevices,omitempty"`
+	// unknownSupply means no supplying UPS root could be resolved.
+	UnknownSupply bool `json:"unknownSupply"`
 }
 
 // PublishedPowerDomainStatus is one resolver-derived power-domain closure.

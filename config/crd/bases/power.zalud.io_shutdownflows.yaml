@@ -1367,6 +1367,62 @@ spec:
                 description: publishedArtifact is the structured planner artifact
                   published for subscribers.
                 properties:
+                  communicationBudget:
+                    description: |-
+                      communicationBudget identifies the carrier supplies used in live runtime reduction.
+                      It publishes structural constraints, not telemetry or a predicted failure time.
+                    properties:
+                      scope:
+                        description: 'scope is WholePlan: the supply set is retained
+                          for the entire execution.'
+                        type: string
+                      supplies:
+                        description: supplies give per-carrier power-domain and UPS
+                          provenance, including unknown supply.
+                        items:
+                          description: PublishedCommunicationSupplyStatus is one carrier's
+                            structural runtime constraint.
+                          properties:
+                            carrier:
+                              description: carrier is the inventory entity carrying
+                                the communication path.
+                              type: string
+                            powerDomains:
+                              description: powerDomains are the carrier's resolved
+                                supplying domains.
+                              items:
+                                type: string
+                              type: array
+                            unknownSupply:
+                              description: unknownSupply means no supplying UPS root
+                                could be resolved.
+                              type: boolean
+                            upsDevices:
+                              description: upsDevices are the resolved UPS roots supplying
+                                this carrier.
+                              items:
+                                type: string
+                              type: array
+                          required:
+                          - carrier
+                          - unknownSupply
+                          type: object
+                        type: array
+                      unresolvedActions:
+                        description: unresolvedActions have no resolved node targets
+                          and include all modeled carriers.
+                        items:
+                          type: string
+                        type: array
+                      upsDevices:
+                        description: upsDevices are the additional runtime inputs,
+                          separate from trigger selection.
+                        items:
+                          type: string
+                        type: array
+                    required:
+                    - scope
+                    type: object
                   diagrams:
                     description: diagrams are deterministic renderings generated from
                       graph.

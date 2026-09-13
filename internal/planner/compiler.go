@@ -118,6 +118,7 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 		plan.EstimatedDuration = Duration{Duration: duration}
 	}
 	plan.PowerDomains = powerDomainArtifacts(scoped.PowerDomains)
+	plan.CommunicationBudget = CommunicationBudgetForInputs(scoped)
 	plan.BlockedNodes = blockedNodesFromInversions(detectTierInversions(scoped))
 	plan.Explanations = graphExplanations(plan.Graph, len(plan.Waves), len(plan.StartupWaves))
 	plan.Explanations = append(plan.Explanations, communicationExplanations(scoped)...)

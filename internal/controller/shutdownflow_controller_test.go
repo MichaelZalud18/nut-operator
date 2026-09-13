@@ -123,6 +123,11 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(degraded).NotTo(BeNil())
 			Expect(degraded.Status).To(Equal(metav1.ConditionTrue))
 			Expect(degraded.Message).To(ContainSubstring("no resolved supplying power domain"))
+			Expect(flow.Status.PublishedArtifact).NotTo(BeNil())
+			Expect(flow.Status.PublishedArtifact.CommunicationBudget).NotTo(BeNil())
+			Expect(flow.Status.PublishedArtifact.CommunicationBudget.Supplies).To(HaveLen(1))
+			Expect(flow.Status.PublishedArtifact.CommunicationBudget.Supplies[0].UnknownSupply).To(BeTrue())
+			Expect(flow.Status.PublishedArtifact.CommunicationBudget.UPSDevices).To(BeEmpty())
 		})
 
 		It("should successfully reconcile the resource against declarative inventory", func() {
@@ -163,6 +168,16 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.CompiledWaves[0].Groups).To(ConsistOf("applications"))
 			Expect(resource.Status.CompiledWaves[1].Groups).To(ConsistOf("databases"))
 			Expect(resource.Status.PublishedArtifact).NotTo(BeNil())
+			budget := resource.Status.PublishedArtifact.CommunicationBudget
+			Expect(budget).NotTo(BeNil())
+			Expect(budget.Scope).To(Equal("WholePlan"))
+			Expect(budget.UPSDevices).To(ConsistOf(shutdownFlowTestUPSName))
+			Expect(budget.UnresolvedActions).To(ConsistOf("applications", "databases"))
+			Expect(budget.Supplies).To(HaveLen(1))
+			Expect(budget.Supplies[0].Carrier).To(Equal(shutdownFlowTestSwitchName))
+			Expect(budget.Supplies[0].PowerDomains).To(ConsistOf("rack-a"))
+			Expect(budget.Supplies[0].UPSDevices).To(ConsistOf(shutdownFlowTestUPSName))
+			Expect(budget.Supplies[0].UnknownSupply).To(BeFalse())
 			Expect(resource.Status.PublishedArtifact.Graph.Vertices).To(HaveLen(2))
 			Expect(resource.Status.PublishedArtifact.Graph.Edges).To(HaveLen(1))
 			Expect(resource.Status.PublishedArtifact.StartupWaves).To(HaveLen(2))
