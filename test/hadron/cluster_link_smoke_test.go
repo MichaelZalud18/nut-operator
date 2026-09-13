@@ -109,22 +109,27 @@ func TestHadronClusterLinkConnectivity(t *testing.T) {
 	_, serverIface := linkLocalAddress(ctx, t, server.creds, serverMAC)
 	t.Logf("server cluster interface: %s", serverIface)
 
-	// This live environment's BusyBox ping applet (v1.37.0) has no IPv4/IPv6 selection logic at
-	// all -- confirmed from its own captured usage text (a minimal CONFIG_PING build, not the
-	// larger FEATURE_FANCY_PING/CONFIG_PING6 one), and a live run separately confirmed no ping6
-	// applet is compiled in either ("applet not found" from busybox's own dispatch). Two straight
-	// guesses about how to invoke IPv6 ping here -- a bare `ping6` command, then BusyBox's own
-	// applet dispatch -- were both wrong, so rather than guess a third mechanism blind, this run
-	// gathers what the environment's toolset actually offers first. Deliberately diagnostic only:
-	// no connectivity assertion is made here yet.
-	inventory, err := guestCommand(ctx, server.creds,
-		`busybox --list; echo ---candidates---; `+
-			`for c in nc ncat telnet wget curl socat openssl ssh; do `+
-			`command -v "$c" >/dev/null 2>&1 && echo "$c: present ($(command -v "$c"))" || echo "$c: absent"; done`)
-	if err != nil {
-		t.Fatalf("gathering server guest tool inventory failed: %v\n%s", err, inventory)
+	// This environment's BusyBox ping applet cannot address IPv6 at all -- confirmed two ways
+	// (its own usage text shows no -4/-6 selection, and a live run found no separate ping6 applet
+	// compiled in either), after two straight fix attempts wrongly assumed otherwise. Rather than
+	// guess a third ICMP mechanism, a diagnostic-only run inventoried the guest's actual toolset:
+	// nc/ncat/telnet/wget/socat are all absent, but curl, openssl, and ssh are present as real
+	// binaries (not busybox applets).
+	//
+	// curl gives a protocol-agnostic connectivity proof: its verbose output prints "Connected to"
+	// the instant its TCP handshake completes, independent of whatever happens at the HTTP layer
+	// afterward. Targeting port 22 needs no extra listener -- sshd is already guaranteed running
+	// on both guests, since the host itself depends on it for setup -- and receiving its SSH
+	// banner instead of an HTTP response is expected, not a failure: only "Connected to" being
+	// present or absent matters here. --interface binds the outgoing socket to the server's own
+	// cluster interface, the same source-scope association ping's -I flag would have given a
+	// link-local IPv6 destination.
+	out, _ := guestCommand(ctx, server.creds, fmt.Sprintf(
+		`curl -6 -v --interface %s --connect-timeout 5 "http://[%s]:22/" 2>&1`, serverIface, clientAddr))
+	if !strings.Contains(out, "Connected to") {
+		t.Fatalf("curl never reported a completed TCP connection over the cluster link:\n%s", out)
 	}
-	t.Logf("server guest tool inventory:\n%s", inventory)
+	t.Logf("cluster link connectivity confirmed via curl TCP connect:\n%s", out)
 }
 
 type bootedGuest struct {
