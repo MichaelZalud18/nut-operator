@@ -109,14 +109,21 @@ func TestHadronClusterLinkConnectivity(t *testing.T) {
 	_, serverIface := linkLocalAddress(ctx, t, server.creds, serverMAC)
 	t.Logf("server cluster interface: %s", serverIface)
 
-	// This live environment's ping is BusyBox (v1.37.0 in the first live run), built without the
-	// combined -4/-6 flags -- confirmed from the binary's own usage text, not assumed from
-	// BusyBox's general documentation, which describes a differently configured build and would
-	// have been the wrong thing to trust here. ping6 is BusyBox's standard alternate applet name
-	// for exactly this case; its own usage text showed the same -c/-W/-I flags used below.
-	out, err := guestCommand(ctx, server.creds, fmt.Sprintf("sudo ping6 -c 3 -W 5 -I %s %s", serverIface, clientAddr))
+	// This live environment's ping is BusyBox (v1.37.0), built without the combined -4/-6 flags.
+	// A prior version of this test called the separate `ping6` command directly, on the assumption
+	// that it was BusyBox's standard alternate applet name here -- that assumption was wrong: a
+	// live run found no `ping6` on PATH at all ("command not found"), even though `ping` itself
+	// resolves. Invoking the busybox binary's own multi-call dispatch instead of a symlinked name
+	// sidesteps that: BusyBox treats its first argument as the applet name when invoked as
+	// `busybox` itself, so this works whether or not a `ping6` symlink exists, and fails clearly
+	// (not silently) if this build has no ping6 applet compiled in at all.
+	out, err := guestCommand(ctx, server.creds, fmt.Sprintf("sudo busybox ping6 -c 3 -W 5 -I %s %s", serverIface, clientAddr))
 	if err != nil {
-		t.Fatalf("ping over the cluster link failed: %v\n%s", err, out)
+		diag, diagErr := guestCommand(ctx, server.creds, "busybox --list 2>&1 | grep -i ping; ls -la /bin/ping* /usr/bin/ping* 2>&1; readlink -f $(command -v ping)")
+		if diagErr != nil {
+			diag = fmt.Sprintf("(diagnostic command itself failed: %v)\n%s", diagErr, diag)
+		}
+		t.Fatalf("ping over the cluster link failed: %v\n%s\n--- diagnostics ---\n%s", err, out, diag)
 	}
 	if !strings.Contains(out, " 0% packet loss") {
 		t.Fatalf("expected 0%% packet loss over the cluster link, got:\n%s", out)
