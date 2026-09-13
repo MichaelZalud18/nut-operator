@@ -582,15 +582,20 @@ also an early implementation priority, not a finding that custom VM code is inhe
   **First milestone passed 2026-09-13** ([run 34777697857](https://github.com/MichaelZalud18/nut-operator/actions/runs/34777697857),
   262.16s, first attempt): `TestHadronOperatorManagerDeploys` (`test/hadron/operator_smoke_test.go`,
   `hadron-operator-smoke.yml`) gets the real CRDs/RBAC/manager Deployment running inside a Hadron
-  guest's k3s, before wiring any CRs or the outage flow itself -- via `config/byo-cert` and
-  `hack/webhook-cert.sh` (this repo's own no-cert-manager deploy path, chosen deliberately: "this
-  operator's job is to run correctly while the cluster is losing power," per that overlay's own
-  comment, so installing cert-manager into a throwaway guest just to get a serving certificate
-  would be a second, unrelated thing to prove reliable). Full rationale and evidence table in
+  guest's k3s -- via `config/byo-cert` and `hack/webhook-cert.sh` (this repo's own no-cert-manager
+  deploy path, chosen deliberately: "this operator's job is to run correctly while the cluster is
+  losing power," per that overlay's own comment, so installing cert-manager into a throwaway guest
+  just to get a serving certificate would be a second, unrelated thing to prove reliable).
+  **Second milestone built, not yet run live:** `TestHadronOperatorRunsRealUPSStack`
+  (`hadron-ups-stack-smoke.yml`) additionally builds/imports the real `nut-server` and
+  `upsmon-agent` images and applies a real `UPSDevice`/`NUTServer`/`NodePowerAgent` fixture --
+  the same shape `test/e2e`'s own signal-delivery spec already proves against Kind -- confirming
+  the real, operator-rendered `NodePowerAgent` DaemonSet reaches Ready on a real guest kernel,
+  `DryRun`/`Simulate` so nothing can halt the guest yet. Full rationale and evidence table in
   [hadron-vm-4-operator-2026-09-13.md](contributing/audits/hadron-vm-4-operator-2026-09-13.md).
-  Every CR (`NUTServer`/`UPSDevice`/`NodePowerAgent`/`ShutdownFlow`), the two-guest topology,
-  real drain/eviction against a live workload Pod, and the network-policy/audit assertions remain
-  open.
+  A `ShutdownFlow` trigger driving a real, operator-produced signal (not one hand-written, per
+  "manual signal injection alone is not this end-to-end test"), the two-guest topology, real
+  drain/eviction against a live workload Pod, and the network-policy/audit assertions remain open.
 - [ ] `VM-5` [Medium] integrate the proven harness as a separate, initially manually triggered
   Actions job. Consume images built from the exact revision under test, using the existing
   digest-based image workflow where applicable, rather than rebuilding while VMs run or pulling

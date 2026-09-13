@@ -1,0 +1,112 @@
+name: Hadron UPS Stack Smoke Test
+
+# VM-4's second milestone: manually triggered only. Boots one Hadron guest, deploys the real
+# operator manager (same path as hadron-operator-smoke.yml), builds and imports the real
+# nut-server, upsmon-agent, and node-actuator operand images, and applies a real dummy-ups-backed
+# UPSDevice/NUTServer/NodePowerAgent fixture -- the same minimal shape test/e2e's own
+# signal-delivery spec already proves against Kind -- confirming the real, operator-rendered
+# NodePowerAgent DaemonSet reaches Ready on a real guest kernel.
+#
+# Deliberately stops short of any outage: NodePowerAgent.spec.mode is DryRun and actuatorPolicy is
+# Simulate, so nothing here can actually halt the guest. See
+# docs/contributing/audits/hadron-vm-4-operator-2026-09-13.md for the design rationale, and
+# docs/tasks.md's VM-4 entry for what remains: a real ShutdownFlow trigger driving an actual
+# outage, rather than a signal this test or e2e hand-writes.
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  ups-stack-deploys:
+    permissions:
+      contents: read
+    name: Boot a Hadron guest and run the real UPS/NUTServer/NodePowerAgent stack in it
+    runs-on: ubuntu-latest
+    # Sum of bounded steps below is 51 minutes; reserve additional cancellation margin.
+    timeout-minutes: 58
+    steps:
+      - name: Clone the code
+        timeout-minutes: 2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        timeout-minutes: 5
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Record free disk before installing tooling
+        timeout-minutes: 1
+        run: df -h /
+
+      # Same install as the other Hadron smoke workflows. Docker itself is already present on this
+      # runner image and is not installed here.
+      - name: Install QEMU and genisoimage
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils acl genisoimage
+
+      # Same fix as hadron-vm-probe.yml: /dev/kvm is present but not group/user accessible by
+      # default on this runner image. See that workflow's own comment for the full finding.
+      - name: Grant KVM device access
+        timeout-minutes: 1
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-hadron-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo setfacl -m u:"$(whoami)":rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm && echo "/dev/kvm is read/write accessible"
+
+      - name: Allocate private smoke state
+        timeout-minutes: 1
+        run: echo "HADRON_STATE_ROOT=$(mktemp -d "$RUNNER_TEMP/hadron-smoke-XXXXXXXX")" >> "$GITHUB_ENV"
+
+      # GNU timeout bounds compilation, the four docker builds/saves and make install/
+      # deploy-byo-cert the test performs itself, and the test binary as a whole. TERM permits
+      # cooperative cancellation; KILL bounds a hung library call. The Go deadline reserves
+      # cleanup time.
+      - name: Boot a guest and run the real UPS/NUTServer/NodePowerAgent stack in it
+        timeout-minutes: 29
+        run: TMPDIR="$HADRON_STATE_ROOT" timeout --signal=TERM --kill-after=15s 28m go test -tags=hadron,hadron_smoke ./test/hadron -run TestHadronOperatorRunsRealUPSStack -v -timeout=26m
+
+      - name: Stop leftover guests owned by this run
+        id: cleanup
+        if: always() && env.HADRON_STATE_ROOT != ''
+        timeout-minutes: 1
+        run: python3 hack/hadron-cleanup.py "$HADRON_STATE_ROOT"
+
+      - name: Dump guest console log on failure
+        timeout-minutes: 1
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for dir in "$HADRON_STATE_ROOT"/nut-operator-hadron-*; do
+            echo "::group::$dir/stdout -- cloud-init/k3s/stage/error lines"
+            grep -iE 'cloud-init|k3s|provider-kairos|stage|error|fail|panic' "$dir/stdout" 2>/dev/null \
+              || echo "(no matching lines, or nothing captured)"
+            echo "::endgroup::"
+          done
+
+      - name: Upload full guest console log on failure
+        timeout-minutes: 3
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hadron-ups-stack-smoke-console
+          path: ${{ env.HADRON_STATE_ROOT }}/nut-operator-hadron-*/std*
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove stopped guest state
+        if: always() && steps.cleanup.outcome == 'success'
+        timeout-minutes: 1
+        run: rm -rf -- "$HADRON_STATE_ROOT"
+
+      - name: Record free disk after the run
+        timeout-minutes: 1
+        if: always()
+        run: df -h /

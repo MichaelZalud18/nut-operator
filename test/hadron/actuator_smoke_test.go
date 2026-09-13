@@ -664,23 +664,31 @@ func repoRootDir(t *testing.T) string {
 // context that could quietly diverge from images.yml's real build.
 func buildActuatorImageTarball(ctx context.Context, t *testing.T) (imageRef, tarPath string) {
 	t.Helper()
-	repoRoot := repoRootDir(t)
-	tag := fmt.Sprintf("nut-operator-hadron-actuator-test:%d", time.Now().UnixNano())
-	build := exec.CommandContext(ctx, "docker", "build",
-		"-f", filepath.Join(repoRoot, "images", "node-actuator", "Dockerfile"),
-		"-t", tag, repoRoot)
-	if buildOut, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("docker build node-actuator: %v\n%s", err, buildOut)
-	}
-	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", tag).Run() })
+	return buildOperandImageTarball(ctx, t, repoRootDir(t), "images/node-actuator/Dockerfile", "actuator")
+}
 
-	tarPath = filepath.Join(t.TempDir(), "node-actuator.tar")
-	save := exec.CommandContext(ctx, "docker", "save", "-o", tarPath, tag)
-	if saveOut, err := save.CombinedOutput(); err != nil {
-		t.Fatalf("docker save node-actuator: %v\n%s", err, saveOut)
+// buildOperandImageTarball builds one of this repository's own operand Dockerfiles
+// (images/<name>/Dockerfile) via a plain docker build and saves it to a local docker-save
+// tarball, so the guest imports the exact artifact this repository would ship -- not a stand-in
+// binary or a hand-rolled security context that could quietly diverge from images.yml's real
+// build. Tagged fully qualified (docker.io/library/...) from the start, the same reference used
+// to build, save, import into the guest's containerd, and reference in any manifest -- rather
+// than relying on docker's own implicit normalization of an unqualified tag to line up later.
+func buildOperandImageTarball(ctx context.Context, t *testing.T, repoRoot, dockerfileRelPath, namePrefix string) (imageRef, tarPath string) {
+	t.Helper()
+	imageRef = fmt.Sprintf("docker.io/library/nut-operator-hadron-%s-test:%d", namePrefix, time.Now().UnixNano())
+	build := exec.CommandContext(ctx, "docker", "build",
+		"-f", filepath.Join(repoRoot, dockerfileRelPath),
+		"-t", imageRef, repoRoot)
+	if buildOut, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("docker build %s: %v\n%s", dockerfileRelPath, err, buildOut)
 	}
-	// docker normalizes an unqualified local tag to this form on build (confirmed against this
-	// exact Dockerfile's own build output), and that is the reference docker save/ctr import carry
-	// through -- not the bare tag the build command was given.
-	return "docker.io/library/" + tag, tarPath
+	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", imageRef).Run() })
+
+	tarPath = filepath.Join(t.TempDir(), namePrefix+".tar")
+	save := exec.CommandContext(ctx, "docker", "save", "-o", tarPath, imageRef)
+	if saveOut, err := save.CombinedOutput(); err != nil {
+		t.Fatalf("docker save %s: %v\n%s", namePrefix, err, saveOut)
+	}
+	return imageRef, tarPath
 }

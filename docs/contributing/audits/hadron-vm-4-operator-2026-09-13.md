@@ -1,7 +1,7 @@
 # Hadron VM-4: the real operator on a real guest
 
-Status: design rationale and first milestone, 2026-09-13. See `docs/tasks.md`'s `VM-4` entry for
-current status.
+Status: design rationale and first two milestones, 2026-09-13. See `docs/tasks.md`'s `VM-4` entry
+for current status.
 
 ## Scope, and what this milestone deliberately does not attempt
 
@@ -76,21 +76,43 @@ this test simply exercises instead of the cert-manager one.
 - `.github/workflows/hadron-operator-smoke.yml`: `workflow_dispatch`-only, following the same
   per-step-timeout/cleanup-before-upload/state-removal-gated-on-cleanup pattern as the other three
   Hadron smoke workflows, checked by the same table-driven `TestSmokeWorkflowsReserveCleanupBudget`.
+- `buildActuatorImageTarball`'s raw `docker build` logic was generalized into
+  `buildOperandImageTarball(ctx, t, repoRoot, dockerfileRelPath, namePrefix)`, now shared by the
+  actuator, `nut-server`, and `upsmon-agent` image builds -- three real call sites, not a
+  speculative abstraction.
+- `TestHadronOperatorRunsRealUPSStack` (VM-4's second milestone) builds on the first: after the
+  same manager deploy, it also builds and imports `nut-server` and `upsmon-agent` (reusing
+  `buildOperandImageTarball`) alongside the already-proven `node-actuator`, then applies a real
+  `UPSDevice`/`NUTServer`/`NodePowerAgent` fixture -- the exact shape `test/e2e/e2e_test.go`'s own
+  `"delivers a projected Secret signal to the NodePowerAgent actuator..."` spec already proves
+  against Kind, with only image references substituted for this run's locally-built ones. Checked,
+  not assumed: `internal/controller/nodepoweragent_render.go`'s `renderImageReference` does not
+  default an empty tag to `latest`, it omits the `:tag` suffix entirely -- so `repository` and
+  `tag` are both set explicitly from the exact reference each image was actually imported under,
+  rather than relying on an implicit `:latest` that would not have matched. `NodePowerAgent.spec.mode`
+  is `DryRun` and `actuatorPolicy` is `Simulate`, matching that same e2e spec, since nothing in
+  this milestone should be able to halt the guest. `.github/workflows/hadron-ups-stack-smoke.yml`
+  follows the same pattern as the other three Hadron smoke workflows.
 
 ## Evidence
 
 | Run | Result | Finding |
 | --- | --- | --- |
 | [34777697857](https://github.com/MichaelZalud18/nut-operator/actions/runs/34777697857) | **pass** (262.16s, first attempt) | The real CRDs, RBAC, and controller-manager Deployment all deployed correctly on the first try: `make install` (~18s), `make deploy-byo-cert` including `hack/webhook-cert.sh`'s CA/serving-certificate generation and `caBundle` patching (~8.5s), then the real `nut-operator-controller-manager` Deployment reached `ReadyReplicas >= 1` within ~15s more -- a real image import, real webhook admission wiring, and a real controller-manager binary starting cleanly on a real guest kernel, none of it exercised in any Hadron test before this. |
+| _(second milestone not yet run live)_ | | |
 
 ## Open, deliberately not attempted here
 
-- Any `NUTServer`/`UPSDevice`/`NodePowerAgent`/`ShutdownFlow` CR, or anything about the actual
-  outage flow -- this milestone only proves the manager itself runs.
+- A `ShutdownFlow` CR, or anything about the actual outage flow -- the second milestone deploys
+  `UPSDevice`/`NUTServer`/`NodePowerAgent` and confirms the real steady-state DaemonSet, but never
+  wires a trigger, and its `NodePowerAgent` is deliberately `DryRun`/`Simulate` so nothing can halt
+  the guest yet.
+- A real, operator-produced signal, as opposed to one this test (or `test/e2e`) hand-writes into a
+  Secret -- `VM-4`'s own text: "manual signal injection alone is not this end-to-end test."
 - The two-guest topology `VM-4`'s own text implies ("assert survivor availability" needs at least
-  one node that stays up while another is powered off) -- this milestone is single-guest, since
-  proving the deployment mechanism at all does not need a second node yet. `VM-2`'s `ClusterLink`
-  is the established mechanism once a second guest is needed.
+  one node that stays up while another is powered off) -- both milestones so far are single-guest,
+  since proving deployment and steady-state reconciliation does not need a second node yet. `VM-2`'s
+  `ClusterLink` is the established mechanism once a second guest is needed.
 - Real drain/eviction against a live workload Pod (`internal/kubeactions/runner.go`'s
   `cordonNodes`/`drainNodes`/`evictPodsOnNode`) -- untested anywhere, Kind or Hadron, before this.
 - Enforced network policy and audit-record assertions named in `VM-4`'s own text.
