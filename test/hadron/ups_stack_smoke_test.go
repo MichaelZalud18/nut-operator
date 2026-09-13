@@ -257,14 +257,42 @@ spec:
 	// applied once, for the same reason e2e retries it.
 	t.Log("applying the real UPSDevice/NUTServer/NodePowerAgent fixture")
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, "fixture apply", func(ctx context.Context) error {
-		cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
+		// A prior run lost every attempt's real error but the last: pollGuest only keeps its
+		// check function's most recent return, and that last attempt's own command shares this
+		// same polling context, so it gets cancelled (not genuinely failed) the instant the
+		// overall wait's deadline lands mid-attempt -- discarding roughly twenty-three real,
+		// informative kubectl errors in favor of one "context deadline exceeded" artifact. Each
+		// attempt gets its own short-lived context and logs its own error immediately, so the
+		// real failure is visible even if a later attempt's own cancellation is what pollGuest
+		// ultimately sees.
+		attemptCtx, attemptCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer attemptCancel()
+		cmd := exec.CommandContext(attemptCtx, "kubectl", "apply", "-f", "-")
 		cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfigPath)
 		cmd.Stdin = strings.NewReader(manifest)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("kubectl apply: %w\n%s", err, out)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			wrapped := fmt.Errorf("kubectl apply: %w\n%s", err, out)
+			t.Logf("fixture apply attempt failed: %v", wrapped)
+			return wrapped
 		}
 		return nil
-	}, nil)
+	}, func(ctx context.Context) {
+		diagCtx, diagCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer diagCancel()
+		out := runKubectlOutput(diagCtx, t, kubeconfigPath, "get", "pods", "-A", "-o", "wide")
+		t.Logf("diagnostic pod listing while waiting for fixture apply:\n%s", out)
+		managerLogsCtx, managerLogsCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer managerLogsCancel()
+		managerCmd := exec.CommandContext(managerLogsCtx, "kubectl", "-n", operatorNamespace, "logs",
+			"deploy/"+operatorDeployment, "--tail=50")
+		managerCmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfigPath)
+		if managerOut, err := managerCmd.CombinedOutput(); err != nil {
+			t.Logf("diagnostic manager log fetch failed: %v\n%s", err, managerOut)
+		} else {
+			t.Logf("diagnostic manager log tail:\n%s", managerOut)
+		}
+	})
 
 	t.Log("waiting for the NodePowerAgent to report Ready")
 	waitForWithDiagnostics(t, ctx, 3*time.Minute, "NodePowerAgent Ready", func(ctx context.Context) error {
