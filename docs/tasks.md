@@ -200,6 +200,16 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
   partial-start/reload failures and readiness. Extraction alone does not complete this redesign.
   **Validated:** standalone race-enabled process tests and controller rendering regressions;
   full API/internal/command race sweep, shell syntax, and PostgreSQL-tagged repository lint passed.
+  **Actual-NUT slice (2026-09-13):** added `docker-smoke-nut-supervisor`, using the exact production
+  supervisor bytes and real NUT binaries in a non-root, read-only, network-isolated container.
+  It verifies empty startup, a failed definition beside a healthy driver, failed reload retries
+  and recovery, add/remove reloads,
+  unchanged worker and driver PIDs, two forced driver crashes and recovery, and termination with
+  no remaining NUT workers. Local execution passed against a cached operand image; the existing
+  image job now runs it against its freshly built native image. The harness has bounded runtime
+  and owned-container cleanup. **Remaining:** generic-supervisor design decision, actual-NUT
+  malformed-config injection, and final lifecycle review; this slice does not
+  establish the separate `F-97` root cause or replace Kind sidecar integration evidence.
 
 - `F-97` [High] find out why a driver `upsd` is still talking to fails a fresh `upsdrvctl status`
   connection, and only in the minutes after a pod start. The recovery half is done and measured in

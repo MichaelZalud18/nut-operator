@@ -364,6 +364,11 @@ docker-build-images: docker-build docker-build-operands ## Build the manager and
 .PHONY: docker-smoke-nut-server
 docker-smoke-nut-server: ## Smoke test that the NUT server image contains real NUT server tooling.
 	hack/smoke-image.sh $(CONTAINER_TOOL) nut-server $(NUT_SERVER_IMG)
+	bash hack/nut-supervisor-smoke.sh $(CONTAINER_TOOL) $(NUT_SERVER_IMG)
+
+.PHONY: docker-smoke-nut-supervisor
+docker-smoke-nut-supervisor: ## Exercise the supervisor with real NUT binaries, without Kubernetes.
+	bash hack/nut-supervisor-smoke.sh $(CONTAINER_TOOL) $(NUT_SERVER_IMG)
 
 .PHONY: docker-smoke-upsmon-agent
 docker-smoke-upsmon-agent: ## Smoke test that the upsmon image contains real NUT client tooling.

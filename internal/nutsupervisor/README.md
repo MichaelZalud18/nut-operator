@@ -51,3 +51,15 @@ choosing a replacement; extracting this package does not settle that broader red
 no API server, cluster, UPS, or Docker daemon. Controller tests separately verify the rendered
 command and security/resource configuration. Operand-image and Kind tests establish actual NUT
 binary behavior; process fixtures alone do not establish image compatibility or readiness timing.
+
+`make docker-smoke-nut-supervisor NUT_SERVER_IMG=<image>` runs the same supervisor bytes with
+actual NUT binaries from the selected operand image. It verifies idle startup, a failing driver
+alongside a healthy one, failed reload retries and recovery, add/remove reloads, preservation of both worker and driver PIDs, repeated
+driver-crash recovery, and graceful termination without remaining NUT workers. It uses dummy UPS
+data, a non-root read-only container, private temporary filesystems, no capabilities, and no
+external network. It requires neither Kubernetes nor physical equipment. The outer harness bounds
+the run and removes its owned container on failure or cancellation.
+
+The existing image workflow runs this check immediately after building its native NUT server
+image; `docker-smoke-nut-server` includes it too. This complements, rather than replaces, the
+process-fixture tests for deterministic failure injection and Kind's actual sidecar wiring.
