@@ -109,7 +109,9 @@ execution runs. After the trigger clears, the same plan may execute again for a 
 **EX-11 · Per-group timeouts are enforced as written.** Timeout expiry is a group failure, which
 engages abort policy — it is not an implicit success.
 
-The timeout becomes a context deadline on the action-runner call. A runner that returns success
+The timeout becomes a context deadline before any Wait sleep or action-runner call, including
+dry-run waits. The same deadline covers the entire group; finishing a wait does not reset it.
+A sleeper or runner that returns success
 against an expired deadline is still a timeout: it did not finish in the time the flow allowed, and
 reporting it as success would let the next wave start on work still in flight. A group with no
 declared timeout runs unbounded, since an undeclared limit is not a limit of zero.
@@ -125,6 +127,11 @@ enforce. It is served in the executor rather than the Kubernetes action runner b
 a cluster mutation, and it runs in dry-run because EX-5 makes dry-run a faithful rehearsal — a
 rehearsal that skips the waits reports a flow duration the real run will not reproduce, which is the
 number an operator is rehearsing to find.
+
+Wait durations contribute to compiled wave budgets and declared history fallbacks. A declared
+shorter timeout caps that contribution, but expiry still fails the group rather than completing
+the requested wait. Both the pause and its timeout use the same runtime compression ratio.
+Linear-step wave budgets are derived from successive compiled cumulative durations.
 
 **EX-23 · Power recovery is an observation, not a state the executor enters.** When the observation
 at a wave boundary shows mains restored, the executor records it and keeps going. It does not pause,

@@ -99,10 +99,6 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   heartbeats. **Testable now:** two simultaneous flows, a blocked action, ongoing status cadence,
   and cancellation. Preserve per-flow serialization and correct in-process progress reporting;
   restart/resume continuity is not part of this task (SB-1).
-- [ ] `F-138` [High] enforce Wait deadlines and account for waits in compiled runtime budgets.
-  Wait currently sleeps before its group timeout is created, and a one-hour Wait group can compile
-  to a zero-second estimate. **Testable now:** injected-clock timeout/compression tests for groups and
-  linear steps through the real planner-to-executor adapter, in dry-run and enforce modes.
 - [ ] `F-142` [Medium] honor the accepted abort-policy and `continueOnError` fields, or explicitly
   reject unsupported settings before v1. They currently do not reach execution, so a failure always
   stops the tail, including requested abort notifications. **Testable now:** failure-policy matrices

@@ -327,8 +327,8 @@ func compileGroups(groups []Group, graph Graph) ([]CompiledStep, []Wave, time.Du
 
 		var waveDuration time.Duration
 		for _, group := range waveGroups {
-			if group.Timeout.Duration > waveDuration {
-				waveDuration = group.Timeout.Duration
+			if duration := declaredGroupDuration(group); duration > waveDuration {
+				waveDuration = duration
 			}
 		}
 
@@ -372,7 +372,9 @@ func compileSteps(steps []Step) ([]CompiledStep, time.Duration) {
 	compiled := make([]CompiledStep, 0, len(steps))
 	var cumulative time.Duration
 	for i, step := range steps {
-		if step.Duration.Duration > 0 {
+		if step.Action == "Wait" {
+			cumulative += boundedWaitDuration(step.Duration.Duration, step.Timeout.Duration)
+		} else if step.Duration.Duration > 0 {
 			cumulative += step.Duration.Duration
 		}
 		if step.Timeout.Duration > 0 && step.Action != "Wait" {

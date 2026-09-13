@@ -269,6 +269,25 @@ to zero estimated duration. Both are deterministic and use no wall-clock hour-lo
 whole declared/effective timing path in dry-run and enforce modes, preserving warn-and-run for plans
 that genuinely do not fit.
 
+### F-138 Resolution (2026-09-12)
+
+Group deadlines now start before Wait sleeps, in dry-run and enforce modes. A single compressed
+deadline covers the wait and any subsequent runner call. Expiry records `TimedOut` and fails the
+group, including when a sleeper incorrectly returns success after its deadline; an expired wait
+cannot proceed to the action runner. Parent cancellation remains distinct from group timeout.
+
+Planner group budgets and declared history fallbacks now include Wait's parsed duration, capped
+by an explicit shorter timeout. Linear Wait estimates use the same cap, and the controller carries
+successive cumulative-duration differences into linear executor waves. Planning and execution
+share the duration parser, retaining zero-pause behavior for malformed or negative group values.
+
+`wait_budget_test.go` covers 16 group/linear and dry-run/enforce combinations through the real
+compiler, group adapter, wave adapter, and executor: an unbounded one-hour wait, a longer timeout,
+runtime compression, and deadline expiry with `TimedOut` audit evidence. Injected sleep/clock
+functions avoid long wall-clock waits; short deadline tests exercise real context cancellation.
+Additional executor coverage rejects false sleeper success after expiry. Race-enabled planner,
+executor, adapter, and full controller/envtest suites passed; lint passed.
+
 ## F-139: False Handoff Success Evidence
 
 **Medium.** [recordNodeReleases](../../../internal/executor/executor.go#L1079) derives accepted and

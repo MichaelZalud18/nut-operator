@@ -74,7 +74,7 @@ type GroupEstimate struct {
 // direction that costs nothing to be wrong about: over-estimating warns earlier
 // than necessary, under-estimating runs out of power mid-flow.
 func estimateGroupDuration(group Group, samples []time.Duration) GroupEstimate {
-	declared := group.Timeout.Duration
+	declared := declaredGroupDuration(group)
 	estimate := GroupEstimate{
 		Group:    group.Name,
 		Duration: Duration{Duration: declared},

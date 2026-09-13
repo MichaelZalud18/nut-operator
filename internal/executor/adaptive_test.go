@@ -459,6 +459,58 @@ func TestWaitIsHonoredInDryRun(t *testing.T) {
 	}
 }
 
+func TestWaitReceivesGroupDeadline(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		writer := &fakeAuditWriter{}
+		input := tieredInput(onBattery(1200))
+		input.Mode, input.Approved = ModeEnforce, true
+		if dryRun {
+			input.Mode = "DryRun"
+		}
+		input.Waves = input.Waves[:1]
+		input.Groups = []Group{{Name: "applications", Action: ActionWait, WaitDuration: time.Hour, Timeout: time.Minute}}
+		e := newExecutor(writer)
+		e.Runner = timedActionRunner(func(context.Context, Action) (ActionOutcome, error) {
+			return ActionOutcome{Outcome: OutcomeSucceeded}, nil
+		})
+		e.Sleep = func(ctx context.Context, _ time.Duration) error {
+			deadline, ok := ctx.Deadline()
+			if !ok || time.Until(deadline) > time.Minute {
+				t.Errorf("dryRun=%v: Wait has no bounded group deadline", dryRun)
+			}
+			return nil
+		}
+		if _, err := e.Execute(context.Background(), input); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestExpiredWaitCannotReportSuccessOrReachRunner(t *testing.T) {
+	for _, mode := range []string{ModeEnforce, ModeDryRun} {
+		writer := &fakeAuditWriter{}
+		input := tieredInput(onBattery(1200))
+		input.Mode, input.Approved = mode, true
+		input.Waves = input.Waves[:1]
+		input.Groups = []Group{{Name: "applications", Action: ActionWait, WaitDuration: time.Hour, Timeout: time.Millisecond}}
+		e := newExecutor(writer)
+		e.Runner = timedActionRunner(func(context.Context, Action) (ActionOutcome, error) {
+			t.Error("expired Wait reached action runner")
+			return ActionOutcome{Outcome: OutcomeSucceeded}, nil
+		})
+		e.Sleep = func(ctx context.Context, _ time.Duration) error {
+			<-ctx.Done()
+			return nil // Even a sleeper ignoring expiry cannot turn it into success.
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		result, err := e.Execute(ctx, input)
+		cancel()
+		if err == nil || result.Phase != PhaseAborted || len(writer.actionAttempts) != 1 || writer.actionAttempts[0].Outcome != OutcomeTimedOut {
+			t.Fatalf("mode=%s: invalid timeout evidence: %#v, %v, %#v", mode, result, err, writer.actionAttempts)
+		}
+	}
+}
+
 // A cancelled flow must stop waiting rather than holding the executor for a duration nobody is
 // going to use.
 func TestAnInterruptedWaitFailsTheGroup(t *testing.T) {

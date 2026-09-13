@@ -943,6 +943,12 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 	timingMode := waveState.Mode
 	effectiveTimeout := adaptive.ScaleDuration(group.Timeout, waveState.Budget)
 	effectiveWait := adaptive.ScaleDuration(group.WaitDuration, waveState.Budget)
+	groupCtx := actionCtx
+	if effectiveTimeout > 0 {
+		var cancel context.CancelFunc
+		groupCtx, cancel = context.WithTimeout(actionCtx, effectiveTimeout)
+		defer cancel()
+	}
 
 	startedAt := e.now()
 	outcome := ActionOutcome{
@@ -968,7 +974,7 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 	// reports a flow duration the real run will not reproduce -- which is the number
 	// an operator is rehearsing to find out.
 	if group.Action == ActionWait && actionErr == nil && effectiveWait > 0 {
-		if waitErr := e.sleep(actionCtx, effectiveWait); waitErr != nil {
+		if waitErr := e.sleep(groupCtx, effectiveWait); waitErr != nil {
 			actionErr = fmt.Errorf("wait group %q interrupted: %w", group.Name, waitErr)
 			outcome = ActionOutcome{Outcome: OutcomeBlocked, Error: actionErr.Error()}
 		} else {
@@ -980,6 +986,10 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 	}
 
 	shouldRunAction := !dryRun || group.Action == ActionRunHook
+	if actionErr == nil && groupCtx.Err() != nil {
+		actionErr = groupCtx.Err()
+		outcome = ActionOutcome{Outcome: OutcomeBlocked, Error: actionErr.Error()}
+	}
 	if shouldRunAction && actionErr == nil {
 		if e.Runner == nil {
 			actionErr = fmt.Errorf("enforce execution requires an action runner")
@@ -987,11 +997,6 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 		} else {
 			// EX-11: the declared timeout is enforced as written, and expiry is a group
 			// failure that engages abort policy rather than an implicit success.
-			groupCtx := actionCtx
-			var cancel context.CancelFunc
-			if effectiveTimeout > 0 {
-				groupCtx, cancel = context.WithTimeout(actionCtx, effectiveTimeout)
-			}
 			outcome, actionErr = e.Runner.RunAction(groupCtx, Action{
 				ExecutionID:        executionID,
 				ShutdownFlow:       input.ShutdownFlow,
@@ -1009,21 +1014,8 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 					RuntimeTrusted: waveState.Observation.RuntimeTrusted,
 				},
 			})
-			timedOut := effectiveTimeout > 0 && groupCtx.Err() != nil && actionCtx.Err() == nil
-			if cancel != nil {
-				cancel()
-			}
 			if outcome.Outcome == "" && actionErr == nil {
 				outcome.Outcome = OutcomeSucceeded
-			}
-			if timedOut {
-				// A runner that returned success against an expired deadline did not finish in
-				// the time the flow allowed. Reporting it as success would let the next wave
-				// start on work that is still in flight.
-				if actionErr == nil {
-					actionErr = fmt.Errorf("group %q exceeded its %s timeout", group.Name, effectiveTimeout)
-				}
-				outcome.Outcome = OutcomeTimedOut
 			}
 			if actionErr != nil && outcome.Outcome == "" {
 				outcome.Outcome = PhaseFailed
@@ -1034,6 +1026,13 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 		}
 	}
 
+	if effectiveTimeout > 0 && groupCtx.Err() != nil && actionCtx.Err() == nil {
+		if actionErr == nil {
+			actionErr = fmt.Errorf("group %q exceeded its %s timeout", group.Name, effectiveTimeout)
+		}
+		outcome.Outcome = OutcomeTimedOut
+		outcome.Error = actionErr.Error()
+	}
 	phase := PhaseCompleted
 	if actionErr != nil {
 		phase = PhaseFailed

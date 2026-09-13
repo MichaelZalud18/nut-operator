@@ -43,6 +43,7 @@ import (
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 	"github.com/MichaelZalud18/nut-operator/internal/nodeselector"
+	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
@@ -482,11 +483,15 @@ func executorWavesFromFlow(compiledWaves []powerv1alpha1.CompiledShutdownWave, c
 		return waves
 	}
 	waves := make([]executorpkg.Wave, 0, len(compiledSteps))
+	var previousDuration time.Duration
 	for _, step := range compiledSteps {
+		cumulative := durationOrZero(step.CumulativeDuration)
 		waves = append(waves, executorpkg.Wave{
-			Index:  step.Index,
-			Groups: []string{step.ID},
+			Index:    step.Index,
+			Groups:   []string{step.ID},
+			Duration: cumulative - previousDuration,
 		})
+		previousDuration = cumulative
 	}
 	return waves
 }
@@ -597,15 +602,7 @@ func copyInt32Ptr(value *int32) *int32 {
 // cluster's shutdown offline for a typo in an advisory pause; leaving the wait at
 // zero skips the pause and runs everything else, which is the safer direction.
 func waitDurationFromParams(params map[string]string) time.Duration {
-	raw, present := params["duration"]
-	if !present {
-		return 0
-	}
-	parsed, err := time.ParseDuration(raw)
-	if err != nil || parsed < 0 {
-		return 0
-	}
-	return parsed
+	return planner.WaitDurationFromParams(params)
 }
 
 // blockedNodeNames indexes the nodes the compiled plan declined to power off.
