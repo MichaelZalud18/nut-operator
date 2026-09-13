@@ -549,12 +549,13 @@ also an early implementation priority, not a finding that custom VM code is inhe
   deploy path, chosen deliberately: "this operator's job is to run correctly while the cluster is
   losing power," per that overlay's own comment, so installing cert-manager into a throwaway guest
   just to get a serving certificate would be a second, unrelated thing to prove reliable).
-  **Second milestone built, not yet run live:** `TestHadronOperatorRunsRealUPSStack`
-  (`hadron-ups-stack-smoke.yml`) additionally builds/imports the real `nut-server` and
-  `upsmon-agent` images and applies a real `UPSDevice`/`NUTServer`/`NodePowerAgent` fixture --
-  the same shape `test/e2e`'s own signal-delivery spec already proves against Kind -- confirming
-  the real, operator-rendered `NodePowerAgent` DaemonSet reaches Ready on a real guest kernel,
-  `DryRun`/`Simulate` so nothing can halt the guest yet. Full rationale and evidence table in
+  **Second milestone passed 2026-09-13** ([run 34781621589](https://github.com/MichaelZalud18/nut-operator/actions/runs/34781621589),
+  547.22s): `TestHadronOperatorRunsRealUPSStack` (`hadron-ups-stack-smoke.yml`) additionally
+  builds/imports the real `nut-server` and `upsmon-agent` images and applies a real
+  `UPSDevice`/`NUTServer`/`NodePowerAgent` fixture -- the same shape `test/e2e`'s own
+  signal-delivery spec already proves against Kind -- confirming the real, operator-rendered
+  `NodePowerAgent` DaemonSet reaches Ready on a real guest kernel, `DryRun`/`Simulate` so nothing
+  can halt the guest yet. Full rationale and evidence table in
   [hadron-vm-4-operator-2026-09-13.md](contributing/audits/hadron-vm-4-operator-2026-09-13.md).
   A `ShutdownFlow` trigger driving a real, operator-produced signal (not one hand-written, per
   "manual signal injection alone is not this end-to-end test"), the two-guest topology, real

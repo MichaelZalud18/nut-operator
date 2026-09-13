@@ -1,7 +1,7 @@
 # Hadron VM-4: the real operator on a real guest
 
-Status: design rationale and first two milestones, 2026-09-13. See `docs/tasks.md`'s `VM-4` entry
-for current status.
+Status: first two milestones closed, 2026-09-13. See `docs/tasks.md`'s `VM-4` entry for current
+status.
 
 ## Scope, and what this milestone deliberately does not attempt
 
@@ -105,7 +105,13 @@ Fixed the diagnostic gap, not (yet) a root cause: each apply attempt now gets it
 context and logs its own error immediately, and a diagnose callback dumps a full pod listing and
 the manager's own log tail. Every kind in this fixture has a mutating webhook (`test/e2e`'s own
 comment on this exact fixture shape), so the manager's own webhook-server readiness is the most
-likely place the next run's real error points to. Not yet re-run live.
+likely place the next run's real error points to.
+
+| [34780155358](https://github.com/MichaelZalud18/nut-operator/actions/runs/34780155358) | fail (`fixture apply`), diagnostics worked as designed | The new per-attempt logging immediately found the real cause instead of a timeout artifact: `Error from server: error when creating "STDIN": admission webhook "mnutserver-v1alpha1.kb.io" denied the request: json: cannot unmarshal number into Go struct field ImageReference.spec.image.tag of type string`. This test's image tags are pure-digit Unix-nanosecond timestamps, and an unquoted numeric-looking YAML scalar is parsed as a JSON number, not a string, even though `ImageReference.Tag` is a Go string field. Not a fixture-schema or webhook problem -- the admission webhooks did exactly their job, rejecting a malformed request. |
+
+Fixed: quoted all three tag fields in the manifest template.
+
+| [34781621589](https://github.com/MichaelZalud18/nut-operator/actions/runs/34781621589) | **pass** (547.22s) | The real `UPSDevice`/`NUTServer`/`NodePowerAgent` fixture applied cleanly, the `NodePowerAgent` reported `Ready`, and the real, operator-rendered DaemonSet pod (`hadron-agent-node-power-agent-58mz5`) was confirmed running on a real guest kernel -- the first time any Hadron test has run the real rendered manifest rather than a bare test-authored Pod, closing VM-4's second milestone. |
 
 ## Open, deliberately not attempted here
 
