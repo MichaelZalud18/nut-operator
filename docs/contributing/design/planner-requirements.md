@@ -286,6 +286,22 @@ while later waves still require orchestration. Hard constraint. This is the mech
 **PL-24** · Enforce explicit control-plane ordering. Control-plane nodes carry explicit late
 dependencies rather than relying on a low tier number alone. Reject or warn when they do not.
 
+Control-plane identity and quorum membership come from the inventory's `controlPlane` and
+`controlPlaneQuorumMember` roles, across either inventory provider. They participate in plan
+identity. This is a declared membership model, not etcd discovery. An HA control-plane release
+before terminal handoff requires declared quorum members; missing membership is not permission to
+assume quorum. Grouped and linear plans count cumulative releases, including every group in a
+wave, and reject losing the declared majority or the last control-plane node before completion.
+Grouped releases without explicit incoming `requires`, `after`, or predecessor `before` relations
+receive `ControlPlaneLateDependencyMissing`; existing tier ordering remains enforced independently.
+
+The terminal exception is a sole `AgentShutdown` group in the final wave. A control-plane terminal
+group must use one `NodePowerAgent`, because the runner publishes its entire signal batch in one
+Secret update. Put ordinary work and releases on other agent channels before this group, retaining
+quorum until it runs. Multiple terminal agent channels are rejected rather than assuming the API
+will survive between writes. Undeclared control-plane roles cannot be protected by this model;
+declare the relevant nodes before enabling actuation.
+
 **PL-25** · *Retired 2026-08-17, never implemented — the failure it described cannot happen.* It
 required detecting "co-wave contention": two groups sharing a wave, both targeting workloads on the
 same node, where concurrent draining was said to risk violating a PodDisruptionBudget or overwhelming

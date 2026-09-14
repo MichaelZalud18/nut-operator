@@ -65,7 +65,8 @@ type StructuralInputs struct {
 	// NodeTiers is the shutdown tier declared for each node in inventory. It is
 	// what makes tier inversion detectable: a node scheduled to power off before
 	// the workloads still running on it (OD-18).
-	NodeTiers []NodeTier `json:"nodeTiers,omitempty"`
+	NodeTiers         []NodeTier         `json:"nodeTiers,omitempty"`
+	ControlPlaneNodes []ControlPlaneNode `json:"controlPlaneNodes,omitempty"`
 	// HookDigests carries resolved ShutdownHook specs into plan identity. A hook
 	// URL, credential reference, or rehearsal change is failure-path behavior and
 	// must move the plan hash even though hooks live outside ShutdownFlow.
@@ -81,6 +82,11 @@ type ExecutionScope struct {
 type NodeTier struct {
 	Name string `json:"name"`
 	Tier int32  `json:"tier"`
+}
+
+type ControlPlaneNode struct {
+	Name         string `json:"name"`
+	QuorumMember bool   `json:"quorumMember,omitempty"`
 }
 
 type CommunicationDependency struct {

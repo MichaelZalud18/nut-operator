@@ -92,6 +92,9 @@ func (r *ShutdownFlowReconciler) ValidateNodeRelease(ctx context.Context, releas
 	if !cleared {
 		return fmt.Errorf("node clearance refused: %s (%v)", reason, workloads)
 	}
+	if err := r.validateControlPlaneRelease(ctx, release); err != nil {
+		return err
+	}
 	return r.ValidateNodeReleaseAuthorization(ctx, release)
 }
 

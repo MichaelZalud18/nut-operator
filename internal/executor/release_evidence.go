@@ -5,6 +5,11 @@ import (
 	"fmt"
 )
 
+func terminalHandoffWave(input Input, index int, groups map[string]Group) bool {
+	wave := input.Waves[index]
+	return index == len(input.Waves)-1 && len(wave.Groups) == 1 && groups[wave.Groups[0]].Action == ActionAgentShutdown
+}
+
 func (e Executor) refreshReleaseEvidence(ctx context.Context, group Group) (Group, error) {
 	if e.RefreshNodeRelease == nil {
 		return group, nil
@@ -19,6 +24,9 @@ func (e Executor) refreshReleaseEvidence(ctx context.Context, group Group) (Grou
 		if err != nil {
 			return group, fmt.Errorf("refresh node %q evidence: %w", selected.NodeName, err)
 		}
+		fresh.TerminalHandoff = selected.TerminalHandoff
+		fresh.ControlPlaneNodes = append([]string(nil), selected.ControlPlaneNodes...)
+		fresh.QuorumMembers = append([]string(nil), selected.QuorumMembers...)
 		if fresh.NodeName != selected.NodeName || fresh.NodePowerAgent != selected.NodePowerAgent ||
 			fresh.AgentUID != selected.AgentUID || fresh.AgentGeneration != selected.AgentGeneration ||
 			fresh.ActuatorPolicy != selected.ActuatorPolicy || fresh.SignalPath != selected.SignalPath ||

@@ -158,12 +158,23 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   wave/guard/publication regression matrix; planner and adapter race suites; lint.
   Guard refresh preserves selected release membership rather than silently replanning. Hadron
   cross-checks remain independently owned by VM-4, not an unfinished F-127 implementation step.
-- [ ] `F-128` [High] implement the documented control-plane quorum and late-ordering checks
-  (`PL-23`, `PL-24`, `EX-18`). A plan currently accepts releasing all three control-plane nodes before
-  later API work. **Testable now:** synthetic HA membership, readiness loss between releases,
-  unsafe-wave rejection, and an explicitly terminal release after orchestration finishes. Not
-  covered by `VM-4` as scoped (one control-plane guest, no quorum to test against); would need a
-  three-control-plane Hadron topology beyond `VM-2`'s current one-control-plane/one-worker scope.
+- [x] `F-128` [High] enforce control-plane quorum and terminal ordering (`PL-23`, `PL-24`, `EX-18`)
+  (2026-09-14). Inventory roles reach the pure planner and execution guards across providers;
+  membership participates in plan identity. Grouped/linear compilation rejects cumulative quorum
+  loss before completion, missing HA quorum declarations, and terminal control-plane groups with
+  multiple agent channels. Explicit late dependencies are checked independently of tier ordering.
+  Each ordinary control-plane publication rechecks uncached Node readiness and pending signals;
+  serialized, cancelable publication prevents concurrent agents consuming the same quorum margin.
+  A sole final handoff waits for all overlapped work and publishes all validated node signals in
+  one Secret mutation. Authority comes from execution position, not a supplied flag. Atomic
+  publication is not a simultaneous-projection or physical-halt guarantee; see EX-18.
+  **Validated:** synthetic quorum/order/hash matrices, inventory adapter propagation, unavailable
+  peers, pending signals, per-write and concurrent-agent races, terminal overlap failure, batch
+  create/update/failure, and canceled lock acquisition; ten race-enabled repetitions of the
+  focused matrix, broad planner/resolver/adapter/controller/executor/runner/command race suites,
+  and lint passed. Component proof requires no hardware.
+  A three-control-plane guest topology would provide additional OS/delivery qualification;
+  `VM-4`'s current one-control-plane scope does not claim that coverage.
 - [x] `F-129` [High] restrict execution to actually eligible power domains (2026-09-13).
   Validate the configured preflight plan, then compile grouped or linear execution against the
   evaluator's eligible UPS roots. Preserve mixed, unmapped, partially unresolved agent, and

@@ -243,6 +243,26 @@ PL-22 are hard: the executor never releases a node carrying a must-stay role whi
 role protects is incomplete. Quorum constraints (PL-23) are checked at each control-plane release,
 not assumed from compile time.
 
+For each nonterminal control-plane signal, the publication gate re-reads Node readiness and pending
+agent signal Secrets through the uncached API reader. Missing, deleting, and non-Ready nodes do not
+count; a node with a published signal is already unavailable for quorum budgeting even while it
+still reports Ready. Failed reads and malformed pending signal data refuse release. Ready status
+is Kubernetes readiness evidence against declared membership, not a direct etcd-health probe.
+The active manager serializes validation plus Secret mutation across agent channels, with
+context-cancelable acquisition, so overlapped actions cannot spend the same quorum margin twice.
+This is not a distributed lock for independently active managers.
+
+Before a sole final handoff wave, all overlapped work must complete successfully. The executor
+assigns terminal authority from execution position, never from a caller-supplied flag or a wave's
+numeric index. All ordinary readiness, telemetry, clearance, and approval checks still apply.
+The terminal control-plane batch requires distinct node keys on one agent channel; every node is
+validated before one Secret create/update publishes the complete batch. Validation failure writes
+nothing, and a successful response yields a publication receipt for every node. Atomic publication
+does not guarantee simultaneous kubelet projection, receipt by every guest, or physical power-off;
+those remain delivery and guest-actuation boundaries. Final audit/status reporting is best effort
+once the control plane is intentionally released. Release audit details include the declared
+membership and whether terminal handoff was used.
+
 ---
 
 ## Evidence

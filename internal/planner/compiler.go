@@ -121,6 +121,10 @@ func CompileWithHistory(structural StructuralInputs, telemetry TelemetryInputs, 
 		plan.EstimatedDuration = Duration{Duration: duration}
 	}
 	plan.PowerDomains = powerDomainArtifacts(scoped.PowerDomains)
+	diagnostics = append(diagnostics, controlPlaneDiagnostics(scoped, plan)...)
+	if hasError(diagnostics) {
+		return Plan{}, diagnostics, ErrRejected
+	}
 	plan.CommunicationBudget = CommunicationBudgetForInputs(scoped)
 	plan.BlockedNodes = blockedNodesFromInversions(detectTierInversions(scoped))
 	plan.Explanations = graphExplanations(plan.Graph, len(plan.Waves), len(plan.StartupWaves))
@@ -538,11 +542,15 @@ func normalizeStructuralInputs(input StructuralInputs) (StructuralInputs, error)
 		InventoryEntities:         sortedUnique(input.InventoryEntities),
 		GroupNodes:                append([]GroupNodeMembership(nil), input.GroupNodes...),
 		NodeTiers:                 append([]NodeTier(nil), input.NodeTiers...),
+		ControlPlaneNodes:         append([]ControlPlaneNode(nil), input.ControlPlaneNodes...),
 		HookDigests:               append([]HookDigest(nil), input.HookDigests...),
 	}
 	if input.ExecutionScope != nil {
 		normalized.ExecutionScope = &ExecutionScope{UPSDevices: sortedUnique(input.ExecutionScope.UPSDevices)}
 	}
+	sort.Slice(normalized.ControlPlaneNodes, func(i, j int) bool {
+		return normalized.ControlPlaneNodes[i].Name < normalized.ControlPlaneNodes[j].Name
+	})
 	sort.SliceStable(normalized.NodeTiers, func(left, right int) bool {
 		return normalized.NodeTiers[left].Name < normalized.NodeTiers[right].Name
 	})

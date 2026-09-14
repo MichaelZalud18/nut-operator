@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/semaphore"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -971,6 +972,9 @@ func (r Runner) agentShutdownHandoff(ctx context.Context, action executor.Action
 		err := fmt.Errorf("AgentShutdown requires execution ID, shutdown flow, and plan config hash")
 		return blocked(err), err
 	}
+	if terminalControlPlaneHandoff(action) {
+		return r.terminalControlPlaneHandoff(ctx, action)
+	}
 	observedAt := r.now()
 	updatedSecrets := map[string]struct{}{}
 	var results []executor.NodeSignalResult
@@ -1036,7 +1040,15 @@ func (r Runner) agentShutdownHandoff(ctx context.Context, action executor.Action
 	}, nil
 }
 
+// Different agents use different Secrets, so API resource-version conflicts alone
+// cannot serialize their quorum check and publication. The active manager owns this gate.
+var signalPublicationGate = semaphore.NewWeighted(1)
+
 func (r Runner) upsertSignalSecret(ctx context.Context, action executor.Action, release executor.NodeRelease, payload []byte) error {
+	if err := signalPublicationGate.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer signalPublicationGate.Release(1)
 	if r.ValidateNodeRelease == nil {
 		return fmt.Errorf("AgentShutdown requires a live node release validator")
 	}

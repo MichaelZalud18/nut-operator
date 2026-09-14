@@ -198,6 +198,10 @@ type Target struct {
 
 // NodeRelease describes a terminal node-agent handoff candidate.
 type NodeRelease struct {
+	// TerminalHandoff is set only for a sole final-wave handoff after pending work drains.
+	TerminalHandoff   bool
+	ControlPlaneNodes []string
+	QuorumMembers     []string
 	// Bind authorization to the selected agent instance and specification. A live
 	// handoff check must not silently adopt a replacement object or changed policy.
 	AgentUID              string
@@ -453,7 +457,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	}
 
 	for waveIndex, wave := range input.Waves {
-		if wave.CommunicationBarrier {
+		if wave.CommunicationBarrier || terminalHandoffWave(input, waveIndex, groups) {
 			pendingErr, failedGroup, pendingRecordErr := waitForPending()
 			recordErr = errors.Join(recordErr, pendingRecordErr)
 			if pendingErr != nil {
@@ -511,6 +515,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			go func(window tierOverrunWindow) {
 				runCh <- e.runWave(ctx, waveRunConfig{
 					Writer:        writer,
+					TerminalWave:  waveIndex == len(input.Waves)-1,
 					Input:         input,
 					Groups:        groups,
 					ExecutionID:   executionID,
@@ -550,6 +555,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			}
 			run := e.runWave(ctx, waveRunConfig{
 				Writer:        writer,
+				TerminalWave:  waveIndex == len(input.Waves)-1,
 				Input:         input,
 				Groups:        groups,
 				ExecutionID:   executionID,
@@ -647,6 +653,7 @@ func (e Executor) recordAborted(ctx context.Context, writer audit.Writer, input 
 }
 
 type waveRunConfig struct {
+	TerminalWave  bool
 	Writer        audit.Writer
 	Input         Input
 	Groups        map[string]Group
@@ -701,6 +708,12 @@ func (e Executor) runWave(ctx context.Context, cfg waveRunConfig, wave Wave, wav
 			break
 		}
 		group := resolved[groupName]
+		if group.Action == ActionAgentShutdown {
+			group.NodeReleases = append([]NodeRelease(nil), group.NodeReleases...)
+			for i := range group.NodeReleases {
+				group.NodeReleases[i].TerminalHandoff = len(wave.Groups) == 1 && cfg.TerminalWave
+			}
+		}
 		if e.recordResumedGroup(&run, cfg.ResumedGroups, wave.Index, groupName) {
 			continue
 		}
@@ -1210,6 +1223,9 @@ func (e Executor) recordNodeReleases(ctx context.Context, writer audit.Writer, i
 			},
 			Details: map[string]any{
 				"readinessMessage":       release.ReadinessMessage,
+				"terminalHandoff":        release.TerminalHandoff,
+				"controlPlaneNodes":      append([]string(nil), release.ControlPlaneNodes...),
+				"quorumMembers":          append([]string(nil), release.QuorumMembers...),
 				"signalPublicationError": publication.Error,
 				"signalResultReported":   reported,
 				"selectedUPSDevices":     append([]string(nil), input.SelectedUPSDevices...),

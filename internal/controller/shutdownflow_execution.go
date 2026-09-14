@@ -266,6 +266,17 @@ func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flo
 	if err != nil {
 		return executorpkg.Input{}, err
 	}
+	controlPlane := resolver.AttachResolvedInputHash(planner.StructuralInputs{}, bundle).ControlPlaneNodes
+	for i := range groups {
+		for j := range groups[i].NodeReleases {
+			for _, node := range controlPlane {
+				groups[i].NodeReleases[j].ControlPlaneNodes = append(groups[i].NodeReleases[j].ControlPlaneNodes, node.Name)
+				if node.QuorumMember {
+					groups[i].NodeReleases[j].QuorumMembers = append(groups[i].NodeReleases[j].QuorumMembers, node.Name)
+				}
+			}
+		}
+	}
 	observation := adaptive.PowerObservation{
 		RuntimeTrusted: runtimeIsTrustedForFlow(bundle.CapabilityMatches, evaluation.SelectedUPSDevices),
 	}
