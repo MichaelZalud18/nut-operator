@@ -13,9 +13,10 @@ import (
 // Every workflow that boots a real guest and tears it down shares the same safety invariants:
 // every step bounded, cleanup unconditional, cleanup precedes artifact upload, and state removal
 // gated on cleanup succeeding. Table-driven so a new smoke workflow (like
-// hadron-cluster-link-smoke.yml, hadron-actuator-smoke.yml, hadron-operator-smoke.yml, or
-// hadron-ups-stack-smoke.yml, added alongside hadron-vm-boot-smoke.yml) is checked by
-// construction rather than by remembering to copy this test too.
+// hadron-cluster-link-smoke.yml, hadron-actuator-smoke.yml, hadron-operator-smoke.yml,
+// hadron-ups-stack-smoke.yml, or hadron-outage-flow-smoke.yml, added alongside
+// hadron-vm-boot-smoke.yml) is checked by construction rather than by remembering to copy this
+// test too.
 func TestSmokeWorkflowsReserveCleanupBudget(t *testing.T) {
 	for _, tc := range []struct {
 		file string
@@ -26,6 +27,7 @@ func TestSmokeWorkflowsReserveCleanupBudget(t *testing.T) {
 		{"../../.github/workflows/hadron-actuator-smoke.yml", "actuator-arms"},
 		{"../../.github/workflows/hadron-operator-smoke.yml", "operator-deploys"},
 		{"../../.github/workflows/hadron-ups-stack-smoke.yml", "ups-stack-deploys"},
+		{"../../.github/workflows/hadron-outage-flow-smoke.yml", "outage-flow-produces-signal"},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			data, err := os.ReadFile(tc.file)
