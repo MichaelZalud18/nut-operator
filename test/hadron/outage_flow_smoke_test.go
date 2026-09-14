@@ -63,6 +63,13 @@ const outageFlowNamespace = "power-outage-hadron"
 // else is running there, so AgentShutdown does not need a prior drain step to succeed. The
 // two-guest survivor topology VM-4's own text names remains open for a later milestone that
 // actually asserts survivor availability, which a single guest cannot.
+//
+// The dummy-ups device declares no model, so it matches no product capability profile and Enforce
+// mode is blocked by default (internal/controller/upsdevice_identity.go's own unidentified-device
+// gate). spec.safety.allowUnidentifiedDevices is the documented, deliberate escape hatch for
+// exactly this case (api/v1alpha1/shutdownflow_types.go: "an operator states, in Git, that they
+// accept it") -- this milestone is proving trigger evaluation and signal delivery, not capability
+// profile matching, which is a separate, already-tested subsystem.
 func TestHadronShutdownFlowProducesRealSignal(t *testing.T) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -313,6 +320,7 @@ spec:
   safety:
     requireManualApproval: true
     approvalAnnotation: power.zalud.io/hadron-outage-flow-approved
+    allowUnidentifiedDevices: true
 `, outageFlowNamespace,
 		nutServerRepo, nutServerTag, nodeName,
 		upsmonRepo, upsmonTag,
