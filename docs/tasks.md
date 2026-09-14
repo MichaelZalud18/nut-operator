@@ -7,7 +7,7 @@ Open work is grouped by owning component. Keep rationale in the design docs, set
 `docs/contributing/audits/`. Completed work is represented by the implemented docs/code, not repeated
 here. Work deliberately deferred beyond v1 lives in [tasks-post-v1.md](tasks-post-v1.md).
 
-Last reviewed: 2026-09-13 (component modularity and test boundaries; earlier findings retain their recorded review dates).
+Last reviewed: 2026-09-14 (modular deployment story investigations; earlier findings retain their recorded review dates).
 
 The [2026-09-04 fresh review](contributing/audits/fresh-review-2026-09-04.md) records evidence for
 `F-126` through `F-143`, including later scope corrections. Open findings are listed below; withdrawn
@@ -26,6 +26,57 @@ Testability labels used below:
 ---
 
 ## Components
+
+### Modular Deployment Profiles
+
+Owns: installation and API boundaries across components, based on
+[US-1 through US-3](contributing/design/user-stories.md). These are current investigation tasks,
+not approval to implement new profiles or a commitment to ship them in v1. Record conclusions in
+the owning design contracts and assign any resulting implementation work explicitly. Medium denotes
+product priority here, not a demonstrated security vulnerability. Reuse existing components before
+introducing new services or APIs.
+
+- [ ] `MOD-1` [Medium] investigate the minimum agents-only installation (`US-1`). Compare reusing
+  the shipped operand images with standalone manifests against a selectively enabled, lightweight
+  operator. The existing DaemonSet has separate upsmon and actuator containers; copying one image
+  does not supply configuration, credential separation, signal delivery, or lifecycle management.
+  Trace required controllers, CRDs, admission/certificates, RBAC, projected Secrets, inventory,
+  telemetry, and audit dependencies. Determine whether existing NUT endpoints can be consumed
+  directly without a managed relay. Define who authorizes shutdown and through what supported API;
+  do not promote internal signal Secrets to a public API or enable autonomous fallback implicitly
+  (OD-37). **Testable now:** isolated render/startup experiments for both candidates, measured
+  resource/dependency comparison, dry-run and unauthorized/stale-request rejection. Recommend the
+  smallest maintainable option with explicit security and upgrade tradeoffs. Guest power-off
+  qualification reuses the separate actuator test boundary; packaging tests do not prove it.
+- [ ] `MOD-2` [Medium] verify orchestration with an existing host-shutdown system (`US-2`) before
+  designing another actuator mechanism. Build a public-safe example and component fixture using
+  authored inventory, `ShutdownHook`, and `ShutdownFlow` `RunHook`, with a fake HTTP receiver and
+  explicit rehearsal invocation. Verify a mixed flow can use built-in agents for some nodes and
+  hooks for others without requiring an agent for hook-only work. `PowerInventoryNode.nodeName`
+  identifies a Kubernetes Node, not an arbitrary external host; establish how external-host
+  identity, UPS scope, and communication dependencies are represented without fabricated Nodes.
+  `RunHook` does not enumerate node targets: verify explicit per-host/group hook declarations and
+  static request data before claiming automatic per-host dispatch. **Testable now:** request
+  targeting, Secret-backed authentication, endpoint allowlisting, dry-run with/without rehearsal,
+  repeat-safe receiver behavior, timeout/failure evidence, and ordering against surrounding work.
+  Distinguish delivery from completed shutdown: hooks remain advisory under OD-33/OD-34. Document
+  which story outcomes already work and only open implementation tasks for demonstrated gaps;
+  stronger completion/abort semantics require an explicit design decision.
+- [ ] `MOD-3` [Medium] investigate aggregation with external planning (`US-3`), reusing `MOD-1`'s
+  dependency comparison. Separate aggregation-only from aggregation-plus-agents requirements.
+  Establish what runs today with no `ShutdownFlow`, whether planning controllers can be omitted,
+  and which install/runtime dependencies remain mandatory. Identify existing NUT/telemetry
+  interfaces and the missing, if any, supported boundary for externally ordered execution.
+  Compare existing resource composition, selective operator settings, and standalone operands;
+  do not require clients to synthesize compiled plans or write internal halt Secrets.
+  **Testable now:** isolated startup and telemetry consumption without planning, followed by
+  contract tests for whichever request boundary the investigation recommends, including approval,
+  targeting, stale requests, and cancellation. Prove execution safeguards remain enforced when
+  planning is external. Produce a supported/proposed capability matrix and a scoped implementation
+  recommendation; no new network service is assumed. Future profile tests should run conditionally
+  on their owning components, APIs, and packaging, independently of Hadron qualification.
+
+---
 
 ### Inventory System
 

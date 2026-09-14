@@ -1,10 +1,50 @@
 # FAQ
 
 Components: Cross-cutting.
-Audience: contributors.
+Audience: users and contributors.
 
 Answers to the questions the design most often prompts. Internal identifiers (SB-n, GP-n, etc.)
 reference the design documents; users can ignore them.
+
+## What if I only want the DaemonSet for my cluster?
+
+A supported agents-only installation is being investigated, not yet a documented install profile.
+The DaemonSet uses separate upsmon and actuator images plus operator-rendered configuration and
+signal Secrets. Reusing an image alone does not provide a supported shutdown-control API: the
+actuator has no network listener and consumes an operator-issued projected Secret.
+
+`MOD-1` compares standalone manifests using those images with a lightweight operator configuration,
+including direct use of existing NUT servers and the minimum permissions and dependencies. See
+[modular deployment tasks](../../tasks.md#modular-deployment-profiles) and the
+[current agent contract](node-agent-operand.md). Local NUT events are not an authorized autonomous
+fallback under the current contract.
+
+## What if I don't want the DaemonSet to shut down a host?
+
+You can invoke your existing shutdown system through a `ShutdownHook` referenced by a flow's
+`RunHook` action. That invocation does not need a node agent. HTTP hooks support Secret-backed
+authentication and static request data, and can declare a separate rehearsal request.
+
+The important limitation is completion: successful delivery does not prove that the host stopped.
+Hooks are advisory; failed or timed-out delivery degrades the flow rather than stopping subsequent
+waves. They are not a drop-in replacement for confirmed host-release evidence.
+
+`MOD-2` will verify a mixed agent/hook example and the inventory/targeting details before proposing
+new machinery. Manual inventory is available, but `PowerInventoryNode` specifically describes
+Kubernetes nodes and `RunHook` does not automatically dispatch once per selected host. See
+[shutdown hooks](shutdown-hooks.md) and
+[the investigation](../../tasks.md#modular-deployment-profiles).
+
+## Can I use NUT aggregation and agents without the planner?
+
+Existing NUT servers can be relayed through the [upstream NUT integration](upstream-nut-relay.md).
+That is distinct from a supported planner-free installation with external shutdown control: the
+current authorized agent-release path runs through the flow executor.
+
+`MOD-3` investigates aggregation-only and aggregation-plus-agents profiles, which dependencies can
+be omitted, and how an external planner can request execution while preserving safety checks.
+See [modular deployment tasks](../../tasks.md#modular-deployment-profiles). Internal compiled plans
+and halt Secrets are not supported external-control interfaces.
 
 ## Does this replace Kured?
 

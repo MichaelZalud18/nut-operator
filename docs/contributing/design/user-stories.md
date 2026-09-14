@@ -3,9 +3,9 @@
 Audience: product design and contributors.
 
 These stories capture requested user outcomes, not approved implementation designs or supported
-installation profiles. The modularity stories below are recorded for architectural review;
-they do not authorize changes to the existing task list or override current safety contracts.
-They are not assigned to a release yet.
+installation profiles. Investigations are tracked as `MOD-1` through `MOD-3` in
+[project tasks](../../tasks.md#modular-deployment-profiles). Implementation and release placement
+remain undecided; the stories do not override current safety contracts.
 
 ## US-1: Existing NUT, Shutdown Agents Only
 
@@ -42,8 +42,12 @@ Desired outcomes:
 - Support integration without granting arbitrary host privileges to the orchestration component.
 
 Current context: built-in policies cover Linux PowerOff, TalosShutdown, Simulate, and Disabled.
-ShutdownHooks offer HTTP and Kubernetes integration points, but are not a first-class host
-actuator contract. Exactly-once delivery and restart/resume continuity are not implied by this story.
+ShutdownHooks already offer HTTP and Kubernetes integration points for calling an existing shutdown
+system without a DaemonSet. Start by verifying that composition, not assuming a new actuator API is
+needed. Hooks report bounded delivery, not confirmed shutdown, and failures are advisory.
+`PowerInventoryNode` describes Kubernetes nodes; arbitrary external-host mapping and per-host hook
+dispatch need verification rather than assuming manual inventory provides them. Exactly-once
+delivery and restart/resume continuity are not implied by this story.
 
 ## US-3: NUT Aggregation and Agents With External Planning
 
