@@ -157,6 +157,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		),
 		ApprovalChecker:    r.approvalChecker(flow),
 		RefreshNodeRelease: r.refreshNodeReleaseEvidence,
+		ResolveTargets:     r.waveTargetResolver(flow, bundle),
 	}.Execute(ctx, input)
 	executionMode := "Enforce"
 	if input.DryRun {
@@ -261,7 +262,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, dedupeKey string, bundle resolver.StructuralBundle, rehearsal bool, resume shutdownExecutionResumeEvidence) (executorpkg.Input, error) {
 	waves := executorWavesFromFlow(flow.Status.CompiledWaves, flow.Status.CompiledSteps)
 	applyCommunicationBarriers(waves, flow.Status.PublishedArtifact)
-	groups, err := r.executorGroupsFromFlow(ctx, flowForCompiledExecution(flow))
+	groups, err := r.executorGroups(ctx, flowForCompiledExecution(flow), false)
 	if err != nil {
 		return executorpkg.Input{}, err
 	}
@@ -543,6 +544,10 @@ func executorWavesFromFlow(compiledWaves []powerv1alpha1.CompiledShutdownWave, c
 }
 
 func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flow *powerv1alpha1.ShutdownFlow) ([]executorpkg.Group, error) {
+	return r.executorGroups(ctx, flow, true)
+}
+
+func (r *ShutdownFlowReconciler) executorGroups(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, resolveTargets bool) ([]executorpkg.Group, error) {
 	blocked := blockedNodeNames(flow.Status.BlockedNodeReleases)
 	cluster, err := r.getManagementCluster(ctx, flow)
 	if err != nil {
@@ -552,7 +557,7 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 	if len(flow.Spec.Groups) > 0 {
 		groups := make([]executorpkg.Group, 0, len(flow.Spec.Groups))
 		for _, group := range flow.Spec.Groups {
-			targets, err := r.executorTargetsForAction(ctx, group.Action, group.Target)
+			targets, err := r.initialExecutionTargets(ctx, group.Action, group.Target, resolveTargets)
 			if err != nil {
 				return nil, err
 			}
@@ -589,7 +594,7 @@ func (r *ShutdownFlowReconciler) executorGroupsFromFlow(ctx context.Context, flo
 	}
 	groups := make([]executorpkg.Group, 0, len(flow.Spec.Steps))
 	for _, step := range flow.Spec.Steps {
-		targets, err := r.executorTargetsForAction(ctx, step.Type, step.Target)
+		targets, err := r.initialExecutionTargets(ctx, step.Type, step.Target, resolveTargets)
 		if err != nil {
 			return nil, err
 		}
@@ -1015,6 +1020,13 @@ func (r *ShutdownFlowReconciler) executorTargetsForAction(ctx context.Context, a
 	}
 }
 
+func (r *ShutdownFlowReconciler) initialExecutionTargets(ctx context.Context, action powerv1alpha1.ShutdownStepType, target powerv1alpha1.ShutdownStepTarget, resolve bool) ([]executorpkg.Target, error) {
+	if !resolve {
+		return nil, nil
+	}
+	return r.executorTargetsForAction(ctx, action, target)
+}
+
 func executorHookReference(ref *powerv1alpha1.NamespacedNameReference) *executorpkg.HookReference {
 	if ref == nil {
 		return nil
@@ -1078,6 +1090,9 @@ func (r *ShutdownFlowReconciler) scaleWorkloadTargets(ctx context.Context, targe
 		return nil, err
 	}
 	if len(namespaces) == 0 {
+		if hasNamespaceConstraint {
+			return dedupeExecutorTargets(targets), nil
+		}
 		workloadTargets, err := r.listScalableWorkloads(ctx, "", selector)
 		if err != nil {
 			return nil, err
@@ -1103,7 +1118,7 @@ func (r *ShutdownFlowReconciler) listScalableWorkloads(ctx context.Context, name
 	targets := make([]executorpkg.Target, 0)
 
 	var deployments appsv1.DeploymentList
-	if err := r.List(ctx, &deployments, options...); err != nil {
+	if err := r.reader().List(ctx, &deployments, options...); err != nil {
 		return nil, fmt.Errorf("list Deployments for shutdown execution: %w", err)
 	}
 	for _, item := range deployments.Items {
@@ -1111,7 +1126,7 @@ func (r *ShutdownFlowReconciler) listScalableWorkloads(ctx context.Context, name
 	}
 
 	var statefulSets appsv1.StatefulSetList
-	if err := r.List(ctx, &statefulSets, options...); err != nil {
+	if err := r.reader().List(ctx, &statefulSets, options...); err != nil {
 		return nil, fmt.Errorf("list StatefulSets for shutdown execution: %w", err)
 	}
 	for _, item := range statefulSets.Items {
@@ -1119,7 +1134,7 @@ func (r *ShutdownFlowReconciler) listScalableWorkloads(ctx context.Context, name
 	}
 
 	var replicaSets appsv1.ReplicaSetList
-	if err := r.List(ctx, &replicaSets, options...); err != nil {
+	if err := r.reader().List(ctx, &replicaSets, options...); err != nil {
 		return nil, fmt.Errorf("list ReplicaSets for shutdown execution: %w", err)
 	}
 	for _, item := range replicaSets.Items {
@@ -1138,7 +1153,7 @@ func (r *ShutdownFlowReconciler) nodeTargets(ctx context.Context, target powerv1
 		return nil, fmt.Errorf("parse node selector for shutdown execution: %w", err)
 	}
 	var nodes corev1.NodeList
-	if err := r.List(ctx, &nodes, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+	if err := r.reader().List(ctx, &nodes, client.MatchingLabelsSelector{Selector: selector}); err != nil {
 		return nil, fmt.Errorf("list Nodes for shutdown execution: %w", err)
 	}
 	targets := make([]executorpkg.Target, 0, len(nodes.Items))
@@ -1156,7 +1171,7 @@ func (r *ShutdownFlowReconciler) selectedTargetNamespaces(ctx context.Context, t
 			return nil, fmt.Errorf("parse namespace selector for shutdown execution: %w", err)
 		}
 		var namespaceList corev1.NamespaceList
-		if err := r.List(ctx, &namespaceList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		if err := r.reader().List(ctx, &namespaceList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
 			return nil, fmt.Errorf("list Namespaces for shutdown execution: %w", err)
 		}
 		for _, namespace := range namespaceList.Items {

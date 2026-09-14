@@ -87,6 +87,10 @@ type Executor struct {
 	// Nil preserves supplied evidence for standalone deterministic execution.
 	RefreshNodeRelease func(context.Context, NodeRelease) (NodeRelease, error)
 
+	// ResolveTargets enumerates concrete instances before any action in a wave.
+	// Nil uses the supplied targets for standalone execution.
+	ResolveTargets func(context.Context, Group) ([]Target, error)
+
 	// Sleep implements the Wait action. Nil uses a context-aware timer.
 	Sleep Sleeper
 }
@@ -687,9 +691,16 @@ func (e Executor) runWave(ctx context.Context, cfg waveRunConfig, wave Wave, wav
 		}),
 	}))
 
+	resolved, failedGroup, resolveErr := e.resolveWaveTargets(cfg.ActionContext, cfg.Groups, wave, waveState)
+	if resolveErr != nil {
+		run.Err, run.FailedGroup = resolveErr, failedGroup
+	}
 	preempted := false
 	for _, groupName := range wave.Groups {
-		group := cfg.Groups[groupName]
+		if run.Err != nil {
+			break
+		}
+		group := resolved[groupName]
 		if e.recordResumedGroup(&run, cfg.ResumedGroups, wave.Index, groupName) {
 			continue
 		}
@@ -722,6 +733,9 @@ func (e Executor) runWave(ctx context.Context, cfg waveRunConfig, wave Wave, wav
 
 	waveCompletedAt := e.now()
 	wavePhase := PhaseCompleted
+	if run.Err != nil {
+		wavePhase = PhaseFailed
+	}
 	if preempted {
 		wavePhase = PhaseAborted
 	}
@@ -733,6 +747,10 @@ func (e Executor) runWave(ctx context.Context, cfg waveRunConfig, wave Wave, wav
 		"effectiveTierSeconds":  durationSeconds(cfg.Window.EffectiveDuration),
 		"tierTransitionPending": cfg.LowerTierDue,
 	})
+	if resolveErr != nil {
+		waveDetails["targetResolutionError"] = resolveErr.Error()
+		waveDetails["failedGroup"] = failedGroup
+	}
 	if overrun := tierOverrunRecord(wave, cfg.Window, cfg.TierPolicy, tierOverrunAction(cfg.TierPolicy, preempted), cfg.LowerTierDue, waveCompletedAt); overrun != nil {
 		run.TierOverrun = overrun
 		waveDetails["tierOverrun"] = tierOverrunDetails(*overrun)

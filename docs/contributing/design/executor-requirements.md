@@ -81,6 +81,21 @@ execution record with the hash pair.
 instances per wave, at the time the wave starts. Enumerated instances are recorded so the audit
 trail shows what the selectors actually matched, not what they were expected to match.
 
+Production resolves all groups in a wave through the uncached API reader before starting any of
+that wave's actions. A failed or canceled resolution fails the wave, records the failing group and
+error, and follows normal abort handling. Resolution has its own per-group deadline of 30 seconds
+or the compressed action timeout, whichever is shorter; action execution retains its own timeout.
+The wave-local target snapshot is immutable and is the snapshot passed to actions and group audit
+records. Overlapped waves keep separate snapshots; communication barriers still precede resolution.
+
+New workload instances matching authored selectors are included, removed matches are omitted, and
+a namespace selector matching nothing selects no workloads (explicit workload references remain
+explicit). Node selectors and agent coverage cannot expand beyond the compiled group membership:
+that would require recompilation to establish power-domain scope and communication ordering.
+Such changes fail visibly rather than silently extending the plan. Node selectors attached to
+workload actions receive the same membership check. Pruned groups are never resolved. The planner
+continues to own structural ordering, not runtime Kubernetes enumeration.
+
 **EX-9 · Node-clearance revalidation** (PL-43). Before any `AgentShutdown` action, the executor
 re-derives that node's clearance against current placement. Compile-time clearance edges are the
 plan; execution-time clearance is the proof. The two are not interchangeable, because OD-11 resolves

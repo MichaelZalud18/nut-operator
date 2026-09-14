@@ -119,22 +119,20 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   and Talos revocation. The controller suite and repeated focused tests passed with the race
   detector; other packages passed in the broad sweep, and repository lint passed.
   The agent read and Secret write remain separate API requests, not an atomic transaction.
-  Fresh placement/readiness/telemetry and wave target resolution remain `F-127`.
-- [ ] `F-127` [High] resolve targets at wave start and refresh node clearance, readiness, and telemetry
-  before each halt signal. Wave targets and initial guard evidence are captured before the whole
-  execution; a node drained by an earlier wave can remain falsely blocked.
+  Fresh placement/readiness/telemetry and wave target resolution are covered by `F-127` below.
+- [x] `F-127` [High] resolve targets at wave start and refresh node clearance, readiness, and telemetry
+  before each halt signal (2026-09-14). Wave-local resolution, pre-action guard refresh, and the
+  independent per-write validation gate now cover the full execution path.
   **Testable now:** placement changes, drain-to-release transitions, and stale-agent simulations.
   Real-guest cross-check once built: `VM-4` (Hadron VM Test Coverage).
-  **Implementation context (2026-09-13):** make wave-target resolution and per-node release
-  validation explicit, independently testable contracts between controller wiring, executor, and
-  action runner. `shutdownExecutionInput`/`executorGroupsFromFlow` currently assemble release
-  evidence before `Executor.Execute`; existing power-observer and approval-checker callbacks show
-  the intended direction for refreshing live state. Keep the planner deterministic and separate
-  from Kubernetes reads. Re-read authoritative state immediately before signal publication and
-  refuse release on unavailable or invalid evidence. Coordinate the agent-authorization check with
-  `F-126`, rather than implementing competing gates. Acceptance includes a Pod arriving between
-  waves, an earlier drain clearing a later release, target membership changing, readiness loss,
-  read failure, and cancellation; verify the production adapter as well as fake executor inputs.
+  **Wave resolution (2026-09-14):** production defers concrete instance enumeration until each
+  wave starts, resolving all groups before any action through the uncached API reader. Grouped
+  and linear flows use the same adapter and immutable wave-local target snapshots. New workload
+  matches are included and removed matches disappear; empty namespace selection no longer falls
+  back to all namespaces. Node/agent membership expansion beyond the compiled group fails with a
+  recompile-required error, preserving power-domain and communication-ordering constraints.
+  Pruned groups remain excluded. Resolution failure, cancellation, or deadline expiry fails the
+  wave with explicit audit evidence and no actions from that wave. See EX-8 for deadline semantics.
   **Publication gate (2026-09-13):** the production runner now re-reads agent generation/status,
   signal destination, the actual Pod's node/readiness and actuator mode/policy, reported UPS phase,
   and current blocking Pods before its final authorization check and Secret mutation. Tests use
@@ -154,10 +152,12 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   per-write safety/authorization gate remains independent. Regression coverage drives the production
   adapter through an earlier drain and later release, plus newly arrived workloads, readiness and
   selection loss, identity changes, failed reads, cancellation, and refresh timeout.
-  **Still open:** wave-start target resolution (EX-8), including selector membership and placement
-  changes without expanding affected-domain scope or bypassing compiled communication ordering.
-  Guard refresh deliberately preserves selected release membership rather than silently replanning.
-  These changes do not implement the new user stories.
+  **Validated:** controller/envtest, executor, action-runner, and command race suites; wave snapshot
+  and audit assertions; grouped/linear production-adapter fixtures; scope expansion and pruned-group
+  rejection; read/cancellation/deadline failures; ten race-enabled repetitions of the focused
+  wave/guard/publication regression matrix; planner and adapter race suites; lint.
+  Guard refresh preserves selected release membership rather than silently replanning. Hadron
+  cross-checks remain independently owned by VM-4, not an unfinished F-127 implementation step.
 - [ ] `F-128` [High] implement the documented control-plane quorum and late-ordering checks
   (`PL-23`, `PL-24`, `EX-18`). A plan currently accepts releasing all three control-plane nodes before
   later API work. **Testable now:** synthetic HA membership, readiness loss between releases,
