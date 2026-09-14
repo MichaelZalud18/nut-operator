@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	power "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/executor"
@@ -16,7 +17,7 @@ import (
 )
 
 func TestLiveReleaseSafetyBeforePublication(t *testing.T) {
-	for _, scenario := range []string{"ready", "fresh telemetry", "new workload", "unready pod", "missing pod", "wrong node", "old actuator policy", "ambiguous actuator policy", "unobserved generation", "stale telemetry", "list failure", "canceled", "changed destination"} {
+	for _, scenario := range []string{"ready", "fresh telemetry", "expired telemetry", "missing timestamp", "future timestamp", "new workload", "unready pod", "missing pod", "wrong node", "old actuator policy", "ambiguous actuator policy", "unobserved generation", "stale telemetry", "list failure", "canceled", "changed destination"} {
 		t.Run(scenario, func(t *testing.T) {
 			scheme, agent, release := authorizedReleaseFixture(t)
 			agent.Status.ObservedGeneration = agent.Generation
@@ -46,14 +47,24 @@ func TestLiveReleaseSafetyBeforePublication(t *testing.T) {
 				pod.Spec.Containers[0].Env[1].Value = "Simulate"
 			case "unobserved generation":
 				agent.Status.ObservedGeneration--
-			case "stale telemetry", "fresh telemetry":
+			case "stale telemetry", "fresh telemetry", "expired telemetry", "missing timestamp", "future timestamp":
 				requireFresh = true
 				agent.Spec.NUTServerRefs = []power.ObjectNameReference{{Name: "server"}}
 				phase := power.UPSDevicePhaseStale
-				if scenario == "fresh telemetry" {
+				if scenario != "stale telemetry" {
 					phase = power.UPSDevicePhaseOnline
 				}
-				objects = append(objects, &power.NUTServer{ObjectMeta: metav1.ObjectMeta{Name: "server"}, Status: power.NUTServerStatus{SelectedDevices: []string{"ups"}}}, &power.UPSDevice{ObjectMeta: metav1.ObjectMeta{Name: "ups"}, Status: power.UPSDeviceStatus{Phase: phase}})
+				polled := metav1.NewTime(time.Now().Add(-time.Second))
+				device := &power.UPSDevice{ObjectMeta: metav1.ObjectMeta{Name: "ups"}, Status: power.UPSDeviceStatus{Phase: phase, LastPollTime: &polled}}
+				switch scenario {
+				case "expired telemetry":
+					polled = metav1.NewTime(time.Now().Add(-time.Hour))
+				case "future timestamp":
+					polled = metav1.NewTime(time.Now().Add(time.Hour))
+				case "missing timestamp":
+					device.Status.LastPollTime = nil
+				}
+				objects = append(objects, &power.NUTServer{ObjectMeta: metav1.ObjectMeta{Name: "server"}, Status: power.NUTServerStatus{SelectedDevices: []string{"ups"}}}, device)
 			case "changed destination":
 				release.SignalSecretName = "old-channel"
 			}
@@ -85,6 +96,36 @@ func TestLiveReleaseSafetyBeforePublication(t *testing.T) {
 			}
 			if len(secrets.Items) != want {
 				t.Fatalf("published %d Secrets, want %d", len(secrets.Items), want)
+			}
+		})
+	}
+}
+
+func TestNodeReleaseTelemetryAge(t *testing.T) {
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name            string
+		age             time.Duration
+		phase           power.UPSDevicePhase
+		threshold, poll *metav1.Duration
+		want            bool
+	}{
+		{name: "online within default", age: 90*time.Second - time.Nanosecond, phase: power.UPSDevicePhaseOnline, want: true},
+		{name: "online at expiry", age: 90 * time.Second, phase: power.UPSDevicePhaseOnline},
+		{name: "battery at expiry", age: 30 * time.Second, phase: power.UPSDevicePhaseOnBattery},
+		{name: "low battery within default", age: 29 * time.Second, phase: power.UPSDevicePhaseLowBattery, want: true},
+		{name: "custom threshold within", age: time.Minute - time.Nanosecond, threshold: &metav1.Duration{Duration: time.Minute}, want: true},
+		{name: "custom threshold expiry", age: time.Minute, threshold: &metav1.Duration{Duration: time.Minute}},
+		{name: "invalid threshold", threshold: &metav1.Duration{}},
+		{name: "negative threshold", threshold: &metav1.Duration{Duration: -time.Second}},
+		{name: "custom polling", age: 2 * time.Minute, poll: &metav1.Duration{Duration: time.Minute}, want: true},
+		{name: "future", age: -time.Nanosecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			polled := metav1.NewTime(now.Add(-tc.age))
+			device := &power.UPSDevice{Spec: power.UPSDeviceSpec{Thresholds: power.UPSThresholdsSpec{StaleAfter: tc.threshold}, Telemetry: power.UPSTelemetrySpec{PollInterval: tc.poll}}, Status: power.UPSDeviceStatus{Phase: tc.phase, LastPollTime: &polled}}
+			if got := nodeReleaseTelemetryRecent(device, now); got != tc.want {
+				t.Fatalf("recent=%v, want %v", got, tc.want)
 			}
 		})
 	}

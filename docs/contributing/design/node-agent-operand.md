@@ -45,6 +45,16 @@ actuator the all-method `os:admin` role.
 
 ## The signal lifecycle
 
+When `spec.shutdown.requireFreshTelemetry` is enabled (the default), the operator checks each
+monitored UPS's reported phase and `status.lastPollTime` before publishing a node release. Missing,
+zero, future, or expired poll timestamps refuse release even if the reported phase still looks
+healthy. `UPSDevice.spec.thresholds.staleAfter` sets the expiry; when omitted, the release gate
+allows less than three effective polling intervals (normal while Online, alert otherwise).
+An explicit nonpositive expiry fails closed. This age check protects against a stalled poller;
+it does not depend on that poller first changing the phase to Stale. Explicitly disabling
+`requireFreshTelemetry` retains its existing opt-out behavior. These are release-gate semantics,
+not a change to UPS phase publication or trigger evaluation.
+
 **NA-3 · Absence is the record (`F-87`).** The operator writes a node's key into the signal Secret to
 actuate it and **deletes that key** when the actuation completes or the flow's episode ends. The
 signal does not outlive the actuation it authorized.

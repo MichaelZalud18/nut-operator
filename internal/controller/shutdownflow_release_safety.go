@@ -3,12 +3,27 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	power "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/executor"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+func nodeReleaseTelemetryRecent(device *power.UPSDevice, now time.Time) bool {
+	polled := device.Status.LastPollTime
+	if polled == nil || polled.IsZero() || polled.After(now) {
+		return false
+	}
+	age := now.Sub(polled.Time)
+	if threshold := device.Spec.Thresholds.StaleAfter; threshold != nil {
+		return threshold.Duration > 0 && age < threshold.Duration
+	}
+	degraded := device.Status.Phase != power.UPSDevicePhaseOnline
+	// Division avoids overflow for unusually large configured poll intervals.
+	return age/telemetryPollInterval(device, degraded) < 3
+}
 
 // ValidateNodeRelease checks live safety evidence, then authorization, at the write boundary.
 func (r *ShutdownFlowReconciler) ValidateNodeRelease(ctx context.Context, release executor.NodeRelease) error {

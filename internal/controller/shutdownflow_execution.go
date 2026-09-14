@@ -925,8 +925,8 @@ func isMirrorPod(pod corev1.Pod) bool {
 // agent's monitored devices, any device this agent depends on with no status yet, and any device
 // reporting Stale/Unavailable/Unknown telemetry are all treated as not fresh, consistent with
 // resiliency-and-partitions.md's "lost connectivity degrades certainty, never grants optimistic
-// action." Checked once per agent, not per node: the set of UPS devices an agent depends on for
-// telemetry is fleet-wide, not per selected node.
+// action." Evidence is collected for initial guards and refreshed before each signal publication.
+// The monitored UPS set is agent-wide, not per selected node.
 func (r *ShutdownFlowReconciler) nodePowerAgentTelemetryFreshness(ctx context.Context, agent *powerv1alpha1.NodePowerAgent) (bool, string, error) {
 	if agent.Spec.Shutdown.RequireFreshTelemetry != nil && !*agent.Spec.Shutdown.RequireFreshTelemetry {
 		return true, "", nil
@@ -961,7 +961,9 @@ func (r *ShutdownFlowReconciler) nodePowerAgentTelemetryFreshness(ctx context.Co
 		}
 		switch device.Status.Phase {
 		case powerv1alpha1.UPSDevicePhaseOnline, powerv1alpha1.UPSDevicePhaseOnBattery, powerv1alpha1.UPSDevicePhaseLowBattery:
-			continue
+			if !nodeReleaseTelemetryRecent(&device, time.Now()) {
+				return false, "AgentTelemetryStale", nil
+			}
 		default:
 			return false, "AgentTelemetryStale", nil
 		}

@@ -141,9 +141,15 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   stale cached objects plus an independent fresh reader and assert that no signal is written for
   new workloads, missing/unready Pods, stale policy, stale telemetry phase, read failure, or
   cancellation. Affected controller/executor/runner/manager race suites and repeated gate tests
-  passed. **Still open:** wave-start target resolution, refreshing the executor's initial guard
-  evidence so an earlier drain can clear a later release, and timestamp-age telemetry expiry
-  rather than only re-reading reported phase. These changes do not implement the new user stories.
+  passed. **Telemetry age gate (2026-09-14):** initial collection and pre-publication validation
+  now reject missing, zero, future, or expired last-poll timestamps, even with a healthy reported
+  phase. Honor device `staleAfter`; otherwise expire after three effective polling intervals.
+  The explicit freshness opt-out remains supported. Controller, action-runner, and executor race
+  suites passed, including envtest; publication regressions and deterministic expiry-boundary tests
+  cover stale timestamps and configured/default thresholds. See the node-agent design contract.
+  **Still open:** wave-start target resolution and refreshing the executor's initial guard
+  evidence so an earlier drain can clear a later release. These changes do not implement the new
+  user stories.
 - [ ] `F-128` [High] implement the documented control-plane quorum and late-ordering checks
   (`PL-23`, `PL-24`, `EX-18`). A plan currently accepts releasing all three control-plane nodes before
   later API work. **Testable now:** synthetic HA membership, readiness loss between releases,

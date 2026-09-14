@@ -1240,7 +1240,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(powerv1alpha1.AddToScheme(scheme)).To(Succeed())
 			freshDevice := &powerv1alpha1.UPSDevice{
 				ObjectMeta: metav1.ObjectMeta{Name: "rack-a-ups"},
-				Status:     powerv1alpha1.UPSDeviceStatus{Phase: powerv1alpha1.UPSDevicePhaseOnline},
+				Status:     powerv1alpha1.UPSDeviceStatus{Phase: powerv1alpha1.UPSDevicePhaseOnline, LastPollTime: &metav1.Time{Time: time.Now()}},
 			}
 			staleDevice := &powerv1alpha1.UPSDevice{
 				ObjectMeta: metav1.ObjectMeta{Name: "rack-b-ups"},
