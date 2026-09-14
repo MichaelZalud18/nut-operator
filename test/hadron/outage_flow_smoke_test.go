@@ -293,6 +293,8 @@ apiVersion: power.zalud.io/v1alpha1
 kind: ShutdownFlow
 metadata:
   name: hadron-outage-flow
+  annotations:
+    power.zalud.io/hadron-outage-flow-approved: "true"
 spec:
   mode: Enforce
   triggers:
@@ -309,7 +311,8 @@ spec:
           - name: hadron-outage-agent
       timeout: 2m
   safety:
-    requireManualApproval: false
+    requireManualApproval: true
+    approvalAnnotation: power.zalud.io/hadron-outage-flow-approved
 `, outageFlowNamespace,
 		nutServerRepo, nutServerTag, nodeName,
 		upsmonRepo, upsmonTag,
