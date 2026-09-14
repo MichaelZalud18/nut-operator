@@ -147,9 +147,17 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   The explicit freshness opt-out remains supported. Controller, action-runner, and executor race
   suites passed, including envtest; publication regressions and deterministic expiry-boundary tests
   cover stale timestamps and configured/default thresholds. See the node-agent design contract.
-  **Still open:** wave-start target resolution and refreshing the executor's initial guard
-  evidence so an earlier drain can clear a later release. These changes do not implement the new
-  user stories.
+  **Guard refresh (2026-09-14):** the production executor refreshes release evidence before each
+  AgentShutdown group's guards, inside its timeout. Agent reads use the uncached reader. The
+  selected node/agent identity, generation, policy, and signal destination cannot change during
+  refresh; input evidence remains immutable and compile-withheld nodes stay withheld. The final
+  per-write safety/authorization gate remains independent. Regression coverage drives the production
+  adapter through an earlier drain and later release, plus newly arrived workloads, readiness and
+  selection loss, identity changes, failed reads, cancellation, and refresh timeout.
+  **Still open:** wave-start target resolution (EX-8), including selector membership and placement
+  changes without expanding affected-domain scope or bypassing compiled communication ordering.
+  Guard refresh deliberately preserves selected release membership rather than silently replanning.
+  These changes do not implement the new user stories.
 - [ ] `F-128` [High] implement the documented control-plane quorum and late-ordering checks
   (`PL-23`, `PL-24`, `EX-18`). A plan currently accepts releasing all three control-plane nodes before
   later API work. **Testable now:** synthetic HA membership, readiness loss between releases,

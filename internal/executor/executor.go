@@ -83,6 +83,10 @@ type Executor struct {
 	// executor's behavior before F-126.
 	ApprovalChecker ApprovalChecker
 
+	// RefreshNodeRelease refreshes guard evidence before an AgentShutdown group.
+	// Nil preserves supplied evidence for standalone deterministic execution.
+	RefreshNodeRelease func(context.Context, NodeRelease) (NodeRelease, error)
+
 	// Sleep implements the Wait action. Nil uses a context-aware timer.
 	Sleep Sleeper
 }
@@ -985,7 +989,11 @@ func (e Executor) executeGroup(recordCtx, actionCtx context.Context, writer audi
 	}
 	var actionErr error
 	if group.Action == ActionAgentShutdown {
-		if readinessErr := agentShutdownReadinessError(dryRun, group); readinessErr != nil {
+		group, actionErr = e.refreshReleaseEvidence(groupCtx, group)
+		if actionErr != nil {
+			outcome = ActionOutcome{Outcome: OutcomeBlocked, Error: actionErr.Error()}
+		}
+		if readinessErr := agentShutdownReadinessError(dryRun, group); actionErr == nil && readinessErr != nil {
 			actionErr = readinessErr
 			outcome = ActionOutcome{
 				Outcome: OutcomeBlocked,

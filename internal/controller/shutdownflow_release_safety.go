@@ -25,6 +25,21 @@ func nodeReleaseTelemetryRecent(device *power.UPSDevice, now time.Time) bool {
 	return age/telemetryPollInterval(device, degraded) < 3
 }
 
+func (r *ShutdownFlowReconciler) refreshNodeReleaseEvidence(ctx context.Context, selected executor.NodeRelease) (executor.NodeRelease, error) {
+	releases, err := r.nodeReleasesForTarget(ctx, power.ShutdownStepTarget{
+		AgentRefs: []power.ObjectNameReference{{Name: selected.NodePowerAgent}},
+	})
+	if err != nil {
+		return executor.NodeRelease{}, err
+	}
+	for _, release := range releases {
+		if release.NodeName == selected.NodeName {
+			return release, nil
+		}
+	}
+	return executor.NodeRelease{}, fmt.Errorf("node %q is no longer selected by agent %q", selected.NodeName, selected.NodePowerAgent)
+}
+
 // ValidateNodeRelease checks live safety evidence, then authorization, at the write boundary.
 func (r *ShutdownFlowReconciler) ValidateNodeRelease(ctx context.Context, release executor.NodeRelease) error {
 	if err := ctx.Err(); err != nil {

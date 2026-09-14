@@ -155,7 +155,8 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 			flow, bundle, executionEvaluation.SelectedUPSDevices,
 			input.Adaptive.Observation,
 		),
-		ApprovalChecker: r.approvalChecker(flow),
+		ApprovalChecker:    r.approvalChecker(flow),
+		RefreshNodeRelease: r.refreshNodeReleaseEvidence,
 	}.Execute(ctx, input)
 	executionMode := "Enforce"
 	if input.DryRun {
@@ -749,7 +750,7 @@ func (r *ShutdownFlowReconciler) nodeReleasesForTarget(ctx context.Context, targ
 	}
 	for _, ref := range target.AgentRefs {
 		var agent powerv1alpha1.NodePowerAgent
-		if err := r.Get(ctx, client.ObjectKey{Name: ref.Name}, &agent); err != nil {
+		if err := r.reader().Get(ctx, client.ObjectKey{Name: ref.Name}, &agent); err != nil {
 			return nil, fmt.Errorf("get NodePowerAgent %q for shutdown execution: %w", ref.Name, err)
 		}
 		cluster, err := r.getNodePowerAgentManagementCluster(ctx, &agent)

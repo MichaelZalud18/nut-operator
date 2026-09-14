@@ -98,6 +98,15 @@ The pod list is read straight from the API server rather than the informer cache
 check before power is cut, and a cache a few seconds behind is exactly long enough to miss a pod that
 just landed. An unreadable list fails closed: it is not evidence the node is empty.
 
+The production executor refreshes each selected node's clearance, agent readiness, and telemetry
+before evaluating an `AgentShutdown` group's guards. This refresh runs inside the group's timeout,
+so an earlier successful drain can clear a later release without retaining the execution-start
+blocking snapshot. Refresh failures block the action and follow normal abort handling. The selected
+node, agent UID/generation, actuator policy, and signal destination must remain unchanged; refresh
+does not add nodes or reinstate nodes withheld by compilation. The runner independently validates
+live safety and authorization again before each signal write. Pure executor tests may supply fixed
+evidence without the production callback. Per-wave selector enumeration is a separate EX-8 contract.
+
 ---
 
 ## Wave Execution
