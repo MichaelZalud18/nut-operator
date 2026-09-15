@@ -220,6 +220,7 @@ Start at **[docs/](docs/README.md)** — it carries a first-hour path and a map 
   [decision index](docs/contributing/design/decision-index.md).
 - **[Project tasks](docs/tasks.md)** — active v1 engineering and investigations.
 - **[Release tasks](docs/tasks-v1-release.md)** — v1 readiness, qualification, and publishing.
+- **[Completed tasks](docs/tasks-completed.md)** — completion records and validation evidence.
 
 ## Community and Project Info
 

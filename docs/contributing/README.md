@@ -40,6 +40,18 @@ and never renumbered.
   workflows own it, and what nothing yet proves.
 - [FAQ](design/faq.md)
 
+## Research and Proposals
+
+Detailed rationale and acceptance contracts, separate from current task status and settled
+decisions. Consult the linked engineering tasks before implementing a proposal.
+
+- [Modular deployment proposals](design/modular-deployment-proposals.md) — minimum-install
+  alternatives, authorization decisions, and profile acceptance criteria.
+- [NUT supervisor migration](design/nut-supervisor-migration.md) — proposed Go replacement,
+  upstream compatibility gate, lifecycle invariants, and migration test matrix.
+- [VM test research](audits/vm-test-research-2026-09-15.md) — shared harness decisions, guest
+  qualification criteria, milestone history, and links to the original experiment reports.
+
 ## Audits
 
 Dated findings and evidence, `F-n` identifiers. Design documents state the contract; audits record
@@ -62,3 +74,4 @@ what was inspected or tested and where the implementation differs.
 - [tasks.md](../tasks.md) — active v1 engineering and investigations, by component.
 - [tasks-v1-release.md](../tasks-v1-release.md) — release readiness, gates, and publishing.
 - [tasks-post-v1.md](../tasks-post-v1.md) — deliberately deferred.
+- [tasks-completed.md](../tasks-completed.md) — completed records with dates and validation limits.

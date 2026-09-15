@@ -87,7 +87,12 @@ to make a change land.
 - `docs/tasks.md`: active v1 engineering/component work and scoped investigations.
 - `docs/tasks-v1-release.md`: v1 release readiness, validation gates, and publishing mechanics.
 - `docs/tasks-post-v1.md`: real work deliberately deferred by scope or upstream gates.
+- `docs/tasks-completed.md`: completed task records with original dates, evidence, and scope limits.
 - `docs/contributing/audits/`: dated evidence and finding history.
+
+Keep active task entries focused on remaining work and acceptance. Move completed entries to the
+completed tracker; link substantial research and milestone history from the owning design/audit
+document. Proposals belong in clearly labeled research, not the settled decision registry.
 
 Do not place private infrastructure details, private hostnames, private IPs, credentials, or
 site-specific topology in public docs.

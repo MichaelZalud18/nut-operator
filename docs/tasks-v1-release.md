@@ -3,6 +3,7 @@
 This tracker owns v1 release readiness, validation gates, publishing mechanics, and release-only
 checks. Active engineering work lives in [tasks.md](tasks.md); intentionally deferred work lives in
 [tasks-post-v1.md](tasks-post-v1.md). Task IDs and prior evidence are preserved when moved here.
+Completed task records live in [tasks-completed.md](tasks-completed.md).
 
 Last reviewed: 2026-09-15 (tracker split; historical validation below was transferred, not rerun).
 Refresh dated security and compatibility evidence against the release candidate before signing off.

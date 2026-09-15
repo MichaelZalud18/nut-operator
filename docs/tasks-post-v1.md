@@ -5,6 +5,7 @@ Work that is real and intended, but deliberately not part of v1.
 This file keeps [tasks.md](tasks.md) focused on v1. Items belong here only when a recorded scope
 decision or upstream dependency blocks them from closing before v1.
 Release readiness and publishing are tracked in [tasks-v1-release.md](tasks-v1-release.md).
+Completed records live in [tasks-completed.md](tasks-completed.md).
 
 - **Scope**, where `scope-boundaries.md` places the work beyond v1. Reversing that means reopening
   the decision, not quietly re-planning.

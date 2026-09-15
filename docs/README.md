@@ -54,4 +54,5 @@ tier-overrun policy, actuation, NetBox import, and unknown UPS profiling.
 **[Troubleshooting](troubleshooting.md)** — symptoms and causes.
 
 **[Contributing](contributing/README.md)** — the design set and the audits behind it, plus
-[engineering tasks](tasks.md) and [v1 release readiness](tasks-v1-release.md).
+[engineering tasks](tasks.md), [v1 release readiness](tasks-v1-release.md), and
+[completed work](tasks-completed.md).

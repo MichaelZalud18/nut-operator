@@ -4,12 +4,13 @@ This is the public v1 engineering and component tracker for `nut-operator`.
 
 Open work is grouped by owning component. Keep rationale in the design docs, settled decisions in
 [scope-boundaries.md](contributing/design/scope-boundaries.md), and evidence in
-`docs/contributing/audits/`. Completed work is represented by the implemented docs/code, not repeated
-here. Release readiness and publishing live in [tasks-v1-release.md](tasks-v1-release.md).
+`docs/contributing/audits/`. Completed records live in [tasks-completed.md](tasks-completed.md);
+active entries keep the remaining work and link to detailed research or acceptance contracts.
+Release readiness and publishing live in [tasks-v1-release.md](tasks-v1-release.md).
 Work deliberately deferred beyond v1 lives in [tasks-post-v1.md](tasks-post-v1.md).
 
-Last reviewed: 2026-09-15 (researched task transfer and scope reconciliation; earlier validation
-entries retain their recorded dates and are not fresh test results).
+Last reviewed: 2026-09-15 (completed work and research extracted; task scope and recorded test
+results preserved). Proposed designs are not settled decisions or evidence of implementation.
 
 The [2026-09-04 fresh review](contributing/audits/fresh-review-2026-09-04.md) records evidence for
 `F-126` through `F-143`, including later scope corrections. Open findings are listed below; withdrawn
@@ -43,112 +44,39 @@ Record conclusions in the owning design contracts and assign implementation work
 Medium denotes product priority here, not a demonstrated security vulnerability. Reuse existing components before
 introducing new services or APIs.
 
-- [ ] `MOD-1` [Medium] investigate the minimum agents-only installation (`US-1`). Compare reusing
-  the shipped operand images with standalone manifests against a selectively enabled, lightweight
-  operator. The existing DaemonSet has separate upsmon and actuator containers; copying one image
-  does not supply configuration, credential separation, signal delivery, or lifecycle management.
-  Trace required controllers, CRDs, admission/certificates, RBAC, projected Secrets, inventory,
-  telemetry, and audit dependencies. Determine whether existing NUT endpoints can be consumed
-  directly without a managed relay. Define who authorizes shutdown and through what supported API;
-  do not promote internal signal Secrets to a public API or enable autonomous fallback implicitly
-  (OD-37). **Testable now:** isolated render/startup experiments for both candidates, measured
-  resource/dependency comparison, dry-run and unauthorized/stale-request rejection. Recommend the
-  smallest maintainable option with explicit security and upgrade tradeoffs. Guest power-off
-  qualification reuses the separate actuator test boundary; packaging tests do not prove it.
-  **Research transferred 2026-09-15:** the current renderer already uses `MODE=netclient`,
-  `MONITOR ... secondary`, and the project-owned `power-signal-writer` as `SHUTDOWNCMD`.
-  Reuse that upstream netclient model rather than adding a second trigger service. Compare a typed
-  external NUT target (UPS name, host/port, Secret-backed credentials, TLS trust) against current
-  NUTServer-only refs; reuse upsmon rendering/readiness without fake NUTServer/UPSDevice objects.
-  Investigate mutually exclusive `Operator` and `LocalNUT` authorization modes: Operator keeps
-  the executor-issued projected Secret; LocalNUT would explicitly authorize the local upsmon
-  signal. No implicit fallback or combined Operator-or-LocalNUT mode. Keep LocalNUT a proposal
-  until OD-37/SB-3 and sequencing scope are deliberately revised and its approval/identity contract
-  is defined; existing flow-binding safeguards cannot simply be disabled to make it work.
-  **Security prerequisites:** upsmon must not acquire `CAP_SYS_BOOT`, host PID access, Talos
-  credentials, or host-actuation code. Only the actuator may halt a host. Revisit the deferred
-  `F-45` multi-supply assumptions before any LocalNUT implementation: hardcoded `MONITOR` power
-  and `MINSUPPLIES` stop being inert when local signals are authorized. Keep the existing `OD-19`
-  outbound FSD broadcast decision separate from consuming upstream FSD in this proposed mode.
-  Prefer a selectively enabled agents-only manager unless comparison shows disproportionate cost;
-  its current inventory coverage and ShutdownFlow rollout-hold dependencies must become optional,
-  not merely unused CRDs left installed. **Acceptance after design approval:** real external upsd
-  without managed NUTServer; real OB+LB/FSD reaches Simulate only in LocalNUT; Operator ignores
-  local signals; no mode fallback; stale/wrong-node/unauthorized requests refused; no planner,
-  inventory, PostgreSQL, or ShutdownFlow dependency in the agents-only package.
-- [ ] `MOD-2` [Medium] verify orchestration with an existing host-shutdown system (`US-2`) before
-  designing another actuator mechanism. Build a public-safe example and component fixture using
-  authored inventory, `ShutdownHook`, and `ShutdownFlow` `RunHook`, with a fake HTTP receiver and
-  explicit rehearsal invocation. Verify a mixed flow can use built-in agents for some nodes and
-  hooks for others without requiring an agent for hook-only work. `PowerInventoryNode.nodeName`
-  identifies a Kubernetes Node, not an arbitrary external host; establish how external-host
-  identity, UPS scope, and communication dependencies are represented without fabricated Nodes.
-  `RunHook` does not enumerate node targets: verify explicit per-host/group hook declarations and
-  static request data before claiming automatic per-host dispatch. **Testable now:** request
-  targeting, Secret-backed authentication, endpoint allowlisting, dry-run with/without rehearsal,
-  repeat-safe receiver behavior, timeout/failure evidence, and ordering against surrounding work.
-  Distinguish delivery from completed shutdown: hooks remain advisory under OD-33/OD-34. Document
-  which story outcomes already work and only open implementation tasks for demonstrated gaps;
-  stronger completion/abort semantics require an explicit design decision.
-- [ ] `MOD-3` [Medium] investigate aggregation with external planning (`US-3`), reusing `MOD-1`'s
-  dependency comparison. Separate aggregation-only from aggregation-plus-agents requirements.
-  Establish what runs today with no `ShutdownFlow`, whether planning controllers can be omitted,
-  and which install/runtime dependencies remain mandatory. Identify existing NUT/telemetry
-  interfaces and the missing, if any, supported boundary for externally ordered execution.
-  Compare existing resource composition, selective operator settings, and standalone operands;
-  do not require clients to synthesize compiled plans or write internal halt Secrets.
-  **Testable now:** isolated startup and telemetry consumption without planning, followed by
-  contract tests for whichever request boundary the investigation recommends, including approval,
-  targeting, stale requests, and cancellation. Prove execution safeguards remain enforced when
-  planning is external. Produce a supported/proposed capability matrix and a scoped implementation
-  recommendation; no new network service is assumed. Future profile tests should run conditionally
-  on their owning components, APIs, and packaging, independently of Hadron qualification.
-- [ ] `MOD-4` [Medium] define and implement a managed NUT-only profile (`US-4`), distinct from
-  aggregation with external planning (`MOD-3`). Support operator-managed `UPSDevice`/`NUTServer`
-  rather than making users reconstruct a working operand from a raw nut-server image.
-  **Existing basis:** NUTServer can omit `managementClusterRef`, select UPSDevices, create its
-  standalone namespace, and render configuration, auth, TLS, Deployment, Service, NetworkPolicy,
-  readiness, and PodDisruptionBudget; currently this path needs `spec.image.repository`.
-  The operand is one upsd plus a separate driver-supervisor sharing `/etc/nut` and `/run/nut`.
-  Direct image use remains a low-level development/diagnostic building block, not the primary
-  supported install: otherwise users must reimplement config/credential generation, sidecar
-  lifecycle, TLS mounts, exposure, policy, readiness, reload/restart, and upgrade behavior.
-  **Profile decisions first:** compare NUTServer plus UPSDevice/NUTServer admission against that
-  set plus the UPSDevice reconciler. NUTServer reads and validates selected device specs itself;
-  useful device status/telemetry must justify the reconciler's capability/telemetry dependencies.
-  Inspect admission dependencies too. Prefer the existing manager binary with explicit controller
-  selection and profile-scoped CRDs, admission, RBAC, and manifests over a second operator binary
-  unless measurements justify one. Do not start unused controllers or grant their permissions.
-  No PowerManagementCluster, NodePowerAgent, ShutdownFlow, planner/executor, actuation, inventory,
-  or PostgreSQL dependency. Record the profile-specific exception to full-product SB-11 rather
-  than implying PostgreSQL is optional for the existing full installation.
-  **Usability/API work:** provide a release-owned operand image default. Retain OperatorManaged
-  admin/monitor credentials and ExistingSecret support. Keep TLS Required and provide or document
-  certificate bootstrap; do not weaken TLS for convenience. Current generated ingress permits
-  same-namespace clients and the manager, not generic clients elsewhere. Add explicit reviewable
-  namespace/pod selectors and/or CIDRs for cross-namespace or external clients; NodePort or
-  LoadBalancer exposure alone is not permission under an enforcing CNI. Account for actual source
-  identity after service routing rather than promising CIDR behavior without testing it.
-  **Testable now; Conditional:** install into a clean cluster with only this profile's resources;
-  a real dummy-ups fixture must produce a Ready two-container operand and queryable upsd Service.
-  Prove approved cross-namespace/external access and denied unapproved access under enforced
-  policy; auth/TLS, device add/remove/config changes, isolated driver restart, reconcile and upgrade
-  behavior use the same contracts as the full product. Assert both absent controller watches and
-  RBAC inability to mutate planner/host-actuation resources. Profile testing follows `MOD-5`.
-- [ ] `MOD-5` [Medium] add representative acceptance coverage for each supported deployment
-  profile, after the owning MOD decision approves it. This is a conditional follow-up, not approval
-  of every proposed profile or a combinatorial matrix of component subsets.
-  **US-1:** existing NUT with no managed NUTServer or built-in planner; preserve approved-mode
-  authorization, dry-run, targeting, stale-request rejection, and privilege separation (`MOD-1`).
-  **US-2:** a real ShutdownFlow combining agents with ShutdownHook external actuation, including
-  authentication, explicit targeting, timeout/failure evidence, repeat-safe delivery, and ordering.
-  Delivery is not evidence that a host stopped; preserve the existing advisory hook contract.
-  **US-3:** aggregation/telemetry without the built-in planner/ShutdownFlow path; exercise the
-  authorized external execution boundary selected by `MOD-3`, including approval, targeting,
-  stale requests, and cancellation. **US-4:** the clean managed-NUT-only install in `MOD-4`.
-  **Testable now once selected; Conditional:** reuse component/Kind tests; run on owning API,
-  component, and packaging changes. Reuse VM Linux/Talos qualification instead of re-proving host
-  power-off in every package test. Only profiles selected for v1 become v1 release gates.
+- [ ] `MOD-1` [Medium] investigate the minimum agents-only install for existing NUT endpoints.
+  Compare standalone operands with a selectively enabled manager; measure dependencies and resource
+  cost. Evaluate typed external targets and mutually exclusive Operator/LocalNUT authority.
+  LocalNUT requires explicit OD-37/SB-3 and multi-supply F-45 decisions, never automatic fallback.
+  Preserve approval, dry-run, stale/wrong-node rejection, and credential/privilege separation.
+  **Testable now:** isolated render/startup and real-NUT-to-Simulate experiments.
+  [Research, alternatives, and acceptance](contributing/design/modular-deployment-proposals.md#mod-1).
+- [ ] `MOD-2` [Medium] verify mixed built-in and custom host actuation using authored inventory,
+  ShutdownFlow, and ShutdownHook before adding a new actuator API. Demonstrate explicit host/group
+  targeting without fabricated Kubernetes Nodes or an assumed automatic RunHook fanout.
+  **Testable now:** fake receiver and public example covering auth/allowlisting, rehearsal/dry-run,
+  repeat safety, timeouts, and ordering. Preserve advisory delivery, distinct from confirmed halt.
+  [Research and detailed acceptance](contributing/design/modular-deployment-proposals.md#mod-2).
+- [ ] `MOD-3` [Medium] investigate aggregation with external planning, separating aggregation-only
+  from aggregation-plus-agents. Reuse MOD-1's dependency comparison; identify a supported telemetry
+  and authorized execution boundary without clients synthesizing plans or writing halt Secrets.
+  **Testable now:** startup without planning and request-contract tests for approval, targeting,
+  stale requests, and cancellation. Deliver a capability matrix and scoped implementation proposal.
+  [Research and detailed acceptance](contributing/design/modular-deployment-proposals.md#mod-3).
+- [ ] `MOD-4` [Medium] define and implement the managed NUT-only profile for US-4.
+  Reuse the manager binary and NUTServer operand; settle the minimal controller/admission set,
+  profile-scoped CRDs/RBAC, image default, TLS bootstrap, and explicit client-ingress policy.
+  No planner, agents, inventory, PowerManagementCluster, or PostgreSQL dependency; document the
+  profile-specific storage exception without changing the full-install contract implicitly.
+  **Testable now; Conditional:** clean-cluster real dummy-ups, auth/TLS and allowed/denied traffic,
+  device changes, driver isolation, upgrade/reconcile, and absent unrelated watches/permissions.
+  [Research, alternatives, and acceptance](contributing/design/modular-deployment-proposals.md#mod-4).
+- [ ] `MOD-5` [Medium] add representative acceptance for each approved modular deployment profile.
+  Prove intentionally omitted components are unnecessary; reuse existing component/Kind/VM tests
+  instead of a component-subset matrix or repeated physical-halt qualification.
+  **Testable now once selected; Conditional:** exercise the specific authorization, targeting,
+  ordering, failure, and packaging contract of each profile selected for v1.
+  [Per-story acceptance criteria](contributing/design/modular-deployment-proposals.md#mod-5).
 
 ---
 
@@ -207,87 +135,6 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 `executor-requirements.md`, `shutdown-flow.md`, `adaptive-execution-tier-pointer.md`,
 `settled-questions.md`. Audit: `docs/contributing/audits/planner-code-quality.md`.
 
-- [x] `F-126` [High] independently recheck flow and agent authorization (2026-09-13).
-  Flow approval is re-read through the uncached reader at every wave and remains sticky-dry-run
-  after revocation. The Kubernetes runner now requires a node release validator immediately
-  before each signal Secret create/update. Production wiring re-reads the specific agent's current
-  approval, mode, and node coverage; the selected UID, generation, and actuator policy must match.
-  Missing approval, read failure, deletion/replacement, and changed policy refuse the handoff.
-  A rejected node follows the existing `HaltAndSurface` policy; earlier successful publications
-  retain their receipts. Linux PowerOff and TalosShutdown use the same independent approval gate.
-  **Validated:** stale-cache/fresh-reader matrix; revocation between writes through both Secret
-  create and update paths; cancellation, missing validator, identity/specification changes,
-  and Talos revocation. The controller suite and repeated focused tests passed with the race
-  detector; other packages passed in the broad sweep, and repository lint passed.
-  The agent read and Secret write remain separate API requests, not an atomic transaction.
-  Fresh placement/readiness/telemetry and wave target resolution are covered by `F-127` below.
-- [x] `F-127` [High] resolve targets at wave start and refresh node clearance, readiness, and telemetry
-  before each halt signal (2026-09-14). Wave-local resolution, pre-action guard refresh, and the
-  independent per-write validation gate now cover the full execution path.
-  **Testable now:** placement changes, drain-to-release transitions, and stale-agent simulations.
-  Real-guest cross-check once built: `VM-4` (VM Test Coverage).
-  **Wave resolution (2026-09-14):** production defers concrete instance enumeration until each
-  wave starts, resolving all groups before any action through the uncached API reader. Grouped
-  and linear flows use the same adapter and immutable wave-local target snapshots. New workload
-  matches are included and removed matches disappear; empty namespace selection no longer falls
-  back to all namespaces. Node/agent membership expansion beyond the compiled group fails with a
-  recompile-required error, preserving power-domain and communication-ordering constraints.
-  Pruned groups remain excluded. Resolution failure, cancellation, or deadline expiry fails the
-  wave with explicit audit evidence and no actions from that wave. See EX-8 for deadline semantics.
-  **Publication gate (2026-09-13):** the production runner now re-reads agent generation/status,
-  signal destination, the actual Pod's node/readiness and actuator mode/policy, reported UPS phase,
-  and current blocking Pods before its final authorization check and Secret mutation. Tests use
-  stale cached objects plus an independent fresh reader and assert that no signal is written for
-  new workloads, missing/unready Pods, stale policy, stale telemetry phase, read failure, or
-  cancellation. Affected controller/executor/runner/manager race suites and repeated gate tests
-  passed. **Telemetry age gate (2026-09-14):** initial collection and pre-publication validation
-  now reject missing, zero, future, or expired last-poll timestamps, even with a healthy reported
-  phase. Honor device `staleAfter`; otherwise expire after three effective polling intervals.
-  The explicit freshness opt-out remains supported. Controller, action-runner, and executor race
-  suites passed, including envtest; publication regressions and deterministic expiry-boundary tests
-  cover stale timestamps and configured/default thresholds. See the node-agent design contract.
-  **Guard refresh (2026-09-14):** the production executor refreshes release evidence before each
-  AgentShutdown group's guards, inside its timeout. Agent reads use the uncached reader. The
-  selected node/agent identity, generation, policy, and signal destination cannot change during
-  refresh; input evidence remains immutable and compile-withheld nodes stay withheld. The final
-  per-write safety/authorization gate remains independent. Regression coverage drives the production
-  adapter through an earlier drain and later release, plus newly arrived workloads, readiness and
-  selection loss, identity changes, failed reads, cancellation, and refresh timeout.
-  **Validated:** controller/envtest, executor, action-runner, and command race suites; wave snapshot
-  and audit assertions; grouped/linear production-adapter fixtures; scope expansion and pruned-group
-  rejection; read/cancellation/deadline failures; ten race-enabled repetitions of the focused
-  wave/guard/publication regression matrix; planner and adapter race suites; lint.
-  Guard refresh preserves selected release membership rather than silently replanning. Hadron
-  cross-checks remain independently owned by VM-4, not an unfinished F-127 implementation step.
-- [x] `F-128` [High] enforce control-plane quorum and terminal ordering (`PL-23`, `PL-24`, `EX-18`)
-  (2026-09-14). Inventory roles reach the pure planner and execution guards across providers;
-  membership participates in plan identity. Grouped/linear compilation rejects cumulative quorum
-  loss before completion, missing HA quorum declarations, and terminal control-plane groups with
-  multiple agent channels. Explicit late dependencies are checked independently of tier ordering.
-  Each ordinary control-plane publication rechecks uncached Node readiness and pending signals;
-  serialized, cancelable publication prevents concurrent agents consuming the same quorum margin.
-  A sole final handoff waits for all overlapped work and publishes all validated node signals in
-  one Secret mutation. Authority comes from execution position, not a supplied flag. Atomic
-  publication is not a simultaneous-projection or physical-halt guarantee; see EX-18.
-  **Validated:** synthetic quorum/order/hash matrices, inventory adapter propagation, unavailable
-  peers, pending signals, per-write and concurrent-agent races, terminal overlap failure, batch
-  create/update/failure, and canceled lock acquisition; ten race-enabled repetitions of the
-  focused matrix, broad planner/resolver/adapter/controller/executor/runner/command race suites,
-  and lint passed. Component proof requires no hardware.
-  A three-control-plane guest topology would provide additional OS/delivery qualification;
-  `VM-4`'s current one-control-plane scope does not claim that coverage.
-- [x] `F-129` [High] restrict execution to actually eligible power domains (2026-09-13).
-  Validate the configured preflight plan, then compile grouped or linear execution against the
-  evaluator's eligible UPS roots. Preserve mixed, unmapped, partially unresolved agent, and
-  communication-dependent membership; an empty affected node set cannot admit healthy actions.
-  Hold expiry expands the selected scope and plan identity; history, published artifacts, and
-  execution use the same scoped hash. Resolve only compiled actions, including agent/hook reads.
-  Empty execution selections and fully pruned plans fail explicitly rather than activating a
-  broad plan or ignored linear fallback. With no eligible trigger, status retains preflight scope.
-  **Validated:** controller-to-executor grouped/linear scenarios, real API status round trips,
-  hold expiry, history identity, unknown/partial coverage, pruned agent references, empty-domain
-  and fallback regressions; full API/internal/command race sweep and repository lint. Independent
-  review findings received regression tests and fixes; the focused matrix passed ten repetitions.
 - [ ] `F-132` [High] keep long-running executions from monopolizing reconciliation. The entire flow
   runs synchronously on the sole ShutdownFlow worker, delaying other flows and active status
   heartbeats. **Testable now:** two simultaneous flows, a blocked action, ongoing status cadence,
@@ -306,28 +153,9 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   not an untracked background goroutine. Coordinate audit ownership (`ENG-3`) and removal of
   resume-only machinery (`ENG-4`) without weakening trigger-episode deduplication or fresh per-write
   authorization. This is the existing finding, not a second concurrency task.
-- [x] `F-142` [Medium] reject unsupported failure-policy settings before v1 (2026-09-13).
-  Admission, CRD validation, and pure compilation accept only `HaltAndSurface`, abort `notify: false`,
-  and `continueOnError: false`. Normal Notify actions and settled advisory-hook behavior remain
-  unchanged. Defaults, samples, generated installers, and the owning design contracts agree.
-  The upgrade guide covers explicitly clearing previously defaulted abort notification settings.
-  **Validated:** rejection matrices through create/update admission and API-to-planner conversion;
-  API-server default/update checks; full API/internal/command race suite and repository lint.
 
 Remaining default-calibration evidence (`OD-27`) lives in the
 [release qualification checklist](tasks-v1-release.md#qualification).
-
-- [x] `PL-21` [High] implement communication-path dependencies in v1 planning and execution
-  (2026-09-13). Node `carries` paths and explicit shared `OperatorAPI`/`NUT` service declarations
-  drive outage scope, carrier-release ordering, and UPS runtime budgets, including node-less
-  actions. Publication and execution share supply selection; artifacts distinguish modeled,
-  unmodeled, exempt, and unknown-supply coverage. Carrier releases wait for overlapped work and
-  surface its failures. CRDs and installers include the API; the topology guide covers authoring.
-  **Validated:** race-enabled API, internal, and command package sweep, including controller
-  API-schema/status envtest and webhook suites; repeated overlap/failure/cancellation
-  and inventory-to-executor service-path tests; clean repository lint. These component tests
-  require no physical switches. Modeled paths are not reachability or redundancy guarantees;
-  physical halt acknowledgement and control-plane quorum remain separate contracts.
 
 - [ ] `ENG-2` [Medium] tighten the pure planner without redesigning it. Move normalization,
   base structural validation, and related setup out of `CompileWithHistory` into focused helpers
@@ -369,29 +197,14 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`, `F-124`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
-- [ ] `ENG-1` [Medium] replace the custom shell driver supervisor with a small Go supervisor,
-  preserving the stable singleton upsd plus driver-supervisor pod and every meaningful `F-144`
-  lifecycle contract. The motivation is maintainable ownership of processes and reloads, not a
-  new defect claim or a replacement for NUT driver semantics. Detailed migration acceptance follows
-  the existing findings below. `F-97` remains an independent High-priority root-cause investigation.
-
-- [x] `F-144` [Medium] isolate and harden NUT supervision (2026-09-13).
-  Runtime shell, configuration, and process tests now belong to `internal/nutsupervisor`;
-  the controller embeds the same bytes without source rewriting. Its README compares upstream
-  service management, s6, runit, and per-device containers. Retain named upstream `upsdrvctl`
-  workers plus the small configuration adapter for v1, with existing credential/privilege boundaries.
-  Malformed enumeration preserves working drivers and server configuration; empty startup,
-  per-driver failure isolation, PID preservation, reload retry, and restart cadence are covered.
-  Workers receive TERM, then KILL after a five-second grace period and are reaped. Shutdown starts
-  all worker grace periods together; polling sleeps are interruptible and NUT control commands
-  have five-second bounds. Unrelated workers survive removal of a stuck peer.
-  **Validated:** full API/internal/command race suite, repository lint, repeated stuck-worker
-  regressions, and a stalled named-stop helper. The real-NUT image harness passed normal lifecycle
-  tests and killed/reaped a STOP-frozen driver within its bound using the cached ARM64 operand.
-  Image CI runs the harness against its newly built native image. Cancellation cleanup is separately
-  regression-tested. The container remains the final boundary for unexpected descendants and
-  userspace deadlines cannot resolve kernel-level uninterruptible I/O. This closes the modularity
-  and lifecycle task, not `F-97`'s intermittent readiness root cause or Kind/hardware qualification.
+- [ ] `ENG-1` [Medium] replace shell driver supervision with Go while preserving singleton upsd,
+  the stable sidecar, upstream NUT semantics, and F-144 lifecycle/privilege contracts.
+  Start with stable-NUT compatibility verification; use owned foreground processes, serialized
+  reconciliation, NUT reload-or-exit decisions, bounded concurrent cleanup, and no extra privileges.
+  **Testable now; Conditional:** behavioral parity, unaffected PIDs, malformed config, reload retry,
+  child reaping, real-NUT image/race tests, renderer/binary assertions, and F-97 before/after stress.
+  Remove shell/embed code only after parity. F-97 needs its own root-cause evidence.
+  [Detailed design, migration order, and test matrix](contributing/design/nut-supervisor-migration.md).
 
 - `F-97` [High] find out why a driver `upsd` is still talking to fails a fresh `upsdrvctl status`
   connection, and only in the minutes after a pod start. The recovery half is done and measured in
@@ -417,81 +230,6 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
   used the cached ARM64 operand image. The original intermittent root cause remains open. One
   image architecture and dummy data do not establish Kind or hardware compatibility.
 
-#### ENG-1 Migration Constraints and Acceptance
-
-**Upstream gate:** recheck official NUT releases and source downloads before implementation. The
-transferred research recorded 2.8.5 as stable and 2.8.6 as planned; this is not a current upstream
-verification. Select a stable release, never an unreleased snapshot just because it is newer.
-If a newer stable exists, update `NUT_VERSION`, tarball checksum, signing-key verification, image
-assertions, and version-sensitive tests in a clearly separated change. Preserve both source-tarball
-checksum and upstream-signature verification. Prove that release's `upsdrvctl list`,
-`upsdrvctl -FF start <ups>`, `upsdrvctl -c reload-or-exit <ups>`, `upsdrvctl status`, and
-`upsd -c reload` behavior; record differences rather than emulating an older NUT in project code.
-
-**Pod and binary:** keep replicas at one and a stable container list. Adding/removing UPSDevice
-must not restart upsd or change the pod shape just to update driver membership. Preserve
-`shareProcessNamespace`: cross-container `upsd -c reload` still uses its PID file. Add a dedicated
-binary such as `cmd/nut-driver-supervisor`, reusable logic in `internal/nutsupervisor`, and the same
-pinned Go builder/static-binary pattern as other project operand helpers. Ship it in nut-server;
-render only its direct invocation and bounded runtime configuration. The server entrypoint should
-validate configuration and exec `upsd -FF`. No systemd, s6, runit, network service, queue, or new CRD
-for this replacement. NUT owns enumeration, driver semantics, and driver-control commands.
-
-**State and concurrency:** one serialized event/reconciliation loop owns membership, config
-reloads, child exits, and shutdown. An in-memory UPS-name map owns each foreground upsdrvctl
-process, termination/cancellation state, and last exit result. Use `exec.Cmd.Wait`, not `kill -0`
-polling, and do not recreate shell `.pid`, `.exit`, or per-device `.digest` bookkeeping. Unexpected
-exit reports UPS name and outcome and retries no faster than the existing fixed interval: no tight
-respawn loop or added exponential delay during an outage.
-
-**Projected configuration:** bounded periodic whole-file comparison handles atomic projected
-ConfigMap/Secret replacement without requiring fsnotify. Standard-library SHA-256 is change
-detection, not a security boundary. Zero-byte rendered `ups.conf` means intentional zero devices;
-nonempty files must enumerate through NUT. Failed enumeration retains workers, last good server
-reload state, and the unapplied new digest for retry; error-string matching must not turn malformed
-input into an empty device set. Obtain a valid desired set before changing membership or reloading.
-Remove owned workers; add new ones only after corresponding server configuration is accepted.
-Unrelated adds/removes/edits must not restart surviving drivers.
-
-**Reload semantics:** for surviving drivers on a valid ups.conf change, use NUT's
-`reload-or-exit` decision rather than parsing individual sections or hashing per-driver config.
-If NUT requires exit, observe the foreground worker exit and restart only that UPS. An
-`upsd.users`-only change reloads upsd without touching drivers. Failed server reload is retried
-without claiming adoption. Preserve validation/ordering that protects a working device set.
-Listener/port, TLS certificate, and client-CA changes remain controller-owned pod replacements;
-do not widen reload support beyond what the actual NUT release proves.
-
-**Cleanup and security:** own the full process lifecycle using Linux process groups appropriate
-to the operand. TERM, wait the existing bounded grace period, KILL remaining owned processes,
-and Wait/reap; no orphaned upsdrvctl children or drivers. Start all shutdown grace periods together,
-not one full period per UPS. Bound one-shot NUT control commands independently. Verify whether the
-old best-effort named `upsdrvctl stop` after terminating an owned worker provides necessary cleanup;
-retain it only for a demonstrated purpose. Keep non-root, read-only root filesystem, zero added
-capabilities, RuntimeDefault seccomp, and existing config/credential/runtime mounts. No Kubernetes
-token/RBAC, host namespace, hostPath, or network listener. The container remains the final cleanup
-boundary; userspace deadlines cannot solve kernel uninterruptible I/O.
-
-**Testable now; Conditional:** preserve or replace every meaningful F-144 regression. Deterministic
-Go tests with fake NUT commands must cover isolated crashes and fixed restart cadence; unaffected
-worker PIDs across add/remove; live reload with unchanged PID; NUT-requested restart of only the
-affected driver; malformed/non-enumerable input retaining working workers/server state; empty
-configuration converging to zero; users-only reload; failed reload retry; canceled/stalled commands;
-owned-child reaping; TERM-ignoring workers; and shared rather than serial multi-worker grace periods.
-Keep real dummy-ups/upsd/authenticated-secondary-upsmon image tests against the exact image/version
-to ship: idle startup, mixed healthy/failing drivers, add/remove, crashes, reloads, unaffected
-worker and driver PIDs, and no residual workers after termination. Run affected Go tests with the
-race detector and retain the image workflow smoke gate. Renderer tests must prove direct execution
-of the shipped binary; image assertions prove it exists and is executable. Shell source-text checks
-can go only after equivalent behavioral coverage exists.
-
-**Migration order:** verify stable NUT and any separate version update; build Go logic/tests while
-shell remains a behavioral reference; compare real-NUT image contracts; switch rendered command
-and run controller/image/Kind component/race coverage; then remove `supervisor.sh`, embed wrapper,
-shell-only state and injection code. Update operand, image, contributor, and supervisor docs to one
-implementation, retaining historical audit evidence as historical. Capture before/after
-`docker-stress-nut-readiness` results for F-97; changed reproduction frequency is evidence, not a
-root-cause conclusion or permission to weaken readiness.
-
 ---
 
 ### Node Agent / DaemonSet
@@ -504,10 +242,9 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 `docs/contributing/audits/node-agent-daemonset-audit.md` (`F-8`–`F-14`,
 `F-33`–`F-36`, `F-54`–`F-92`, `OD-37`) and `operator-maturity-benchmarks.md` (`F-94`).
 
-Execution-side actuation safety findings are owned by Planning & Execution Logic: `F-126`
-(independent agent authorization), `F-127` (fresh release evidence), and `F-128` (quorum ordering).
-This review found no separate actuator implementation task. Additional Linux guest actuation
-coverage is tracked under `VM-3`/`VM-4` below; it does not introduce a new actuator policy.
+Completed execution-side safety work (`F-126`, `F-127`, `F-128`) is recorded in
+[tasks-completed.md](tasks-completed.md). Remaining guest qualification is owned by VM-3/VM-4/VM-7
+below; it does not introduce a new actuator policy.
 
 ---
 
@@ -517,15 +254,8 @@ Owns: the published planner artifact contract (compiled plan, dependency graph, 
 diagram exports) and the CR-status-as-interface model — the "what gets exported and how" surface.
 Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts section (`GP-6`/`GP-7`).
 
-- [x] [Medium] publish v1 communication-ordering artifacts alongside `PL-21` (2026-09-13): derived dependencies,
-  their communication-path and power-supply provenance, resulting ordering/timing constraints,
-  and unresolved-path diagnostics. Publishing topology alone is not the completed ordering feature.
-  **Testable now:** deterministic planner artifact and controller-status fixtures matching the
-  dependencies actually used by planning; no switch or PDU actuation is required.
-  **Implemented:** derived node/shared-service ordering edges, path-source provenance,
-  explanations, diagrams, and structured runtime-budget inputs with unknown supplies,
-  unresolved actions, and explicit modeled/unmodeled/exempt coverage. API round-trip tests
-  verify service references and coverage survive storage; runtime and artifact fixtures agree.
+No open work. Communication-ordering artifact completion is in
+[tasks-completed.md](tasks-completed.md).
 
 ---
 
@@ -533,46 +263,6 @@ Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts sec
 
 Owns: the PostgreSQL audit schema, storage backend resolution, retention, and the shutdown-time
 spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
-
-- [x] `F-145` [Medium] add an isolated real-PostgreSQL component test suite for audit persistence
-  (2026-09-13).
-  **Evidence (2026-09-13):** inspected audit/storage tests exercise SQL and connection interfaces
-  through fakes; the inspected CI/e2e harnesses provide no real PostgreSQL test dependency.
-  These tests cannot establish server acceptance of migrations, queries, or database semantics.
-  Keep the fast fake-based tests and add a disposable PostgreSQL instance using established
-  container tooling, with explicit isolated connection configuration and cleanup ownership.
-  **Testable now; Conditional:** verify fresh and repeated migrations, custom schema quoting,
-  all record write/read paths, uniqueness/upsert behavior, retention, history queries, and spool
-  replay. Exercise connection failure and bounded stalled I/O alongside `F-131`, preserving
-  action-outcome versus evidence-failure separation. Assert replay repeat safety, not executor
-  crash-resume guarantees. Run for audit/storage/schema/dependency/harness changes; no UPS or
-  Kubernetes cluster is needed. PostgreSQL coverage does not claim CNPG failover qualification.
-  **First component slice (2026-09-13):** `make test-postgres` runs the tagged audit suite against
-  a digest-pinned disposable PostgreSQL image, private Docker network, and ephemeral loopback port;
-  its trap removes owned resources. Verified fresh/repeated migrations with quoted schema names,
-  execution/group persistence, plan-hash and dry-run history filtering, retention cascades, recent
-  JSON payload preservation, and deadline cancellation of a real stalled query with subsequent
-  pool usability. The explicit DSN entry point is for disposable databases only; tests create and
-  remove their own schema. **Completed follow-up:** every Writer record family is persisted and
-  counted, all production reader methods run against PostgreSQL, progress upserts are checked,
-  and unavailable-database spool capture, failed replay retention, and repeated journal delivery
-  are exercised. A real regression reproduced duplicate-key failures for nine immutable record
-  families; their inserts now ignore conflicts on their own identity while unrelated integrity
-  errors still surface. The repeated-journal test checks database row counts and journal removal.
-  `.github/workflows/test-postgres.yml` adds bounded, path-filtered CI plus manual dispatch using
-  the same local harness. Local race-enabled database and audit/storage regressions passed;
-  hosted execution is verified by the workflow after publication. This does not close `F-131`
-  or establish full storage-failure resilience.
-
-- [x] `F-131` [High] make configured audit fallback available during startup storage outages
-  (2026-09-13). Unready storage and failed connections reach the spool-backed execution writer.
-  Connection, history, replay, and execution writes have context deadlines; a timed-out writer
-  latches failure for the reconcile to avoid repeatedly consuming the shutdown window.
-  **Validated:** enforced-flow component tests execute actions with unavailable storage; cancellation
-  and stalled-writer tests cover fallback; a real PostgreSQL table-lock test proves bounded write
-  failure and successful recovery replay. Full API/internal/command race tests passed. Existing
-  approval checks remain in force, and evidence failures stay separate from action outcomes.
-  Local filesystem stalls are not covered by database deadlines; durable resume remains outside SB-1.
 
 - [ ] `ENG-3` [Medium] separate execution ownership from audit orchestration, preserving `F-131`.
   `recordShutdownFlowAudit` still sets up the writer and calls `recordShutdownFlowExecution`;
@@ -629,32 +319,14 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   **Testable now; Conditional:** comment-only diff review and affected checks; no behavior change.
   Coordinate with ENG-2/ENG-6/ENG-9 so file extraction and comment cleanup do not compete.
 
-- [ ] `F-146` [Medium, investigation] assess Kind suite setup costs and component-test boundaries
-  before deciding whether any restructuring is warranted.
-  **Confirmed context (2026-09-13):** `test/e2e/e2e_suite_test.go`'s shared `BeforeSuite` resolves
-  and loads five images and sets up cert-manager even for a focused spec run. This does not mean
-  every CI run rebuilds all production images: `.github/workflows/test-e2e.yml` builds from the
-  checkout for PR/local runs, while the image-promotion caller passes four published operand/manager
-  digests; the test-only SNMP fixture still builds on both paths. Shared setup can amortize costs
-  across the full suite and protects production-artifact wiring. Its existence is not a defect.
-  **Investigate:** inventory each scenario's real prerequisites and measure build/pull/load,
-  cluster/CNI/certificate setup, scenario execution, and teardown separately. Compare focused versus
-  full runs and PR versus promotion paths, including cache state, failures, retries, cancellations,
-  and runner resource use. Keep unsuccessful timings visible and distinguish canceled observations
-  from completed durations. Use existing timing evidence where available; record sample dates and
-  counts rather than inferring savings from source alone.
-  **Acceptance:** document a measured keep/change decision. Compare shared setup with selective
-  fixtures or narrow component-image tests, including duplicated startup and maintenance costs.
-  Preserve full Kind coverage, exact promoted-image testing, network-policy enforcement, cleanup,
-  and required-check semantics. No suite split, fewer checks, or CI rewrite is approved by this task.
-  Priority reflects developer feedback/test isolation, not a demonstrated shutdown-safety defect.
-  **Investigated (2026-09-13):** a timestamped successful promotion job shows shared BeforeSuite
-  taking 47.004s of a 14m23s job; four production-image pull/load operations account for 16.188s.
-  The roughly 9m50s scenario interval includes deployment, waits and cleanup, not just assertions.
-  Current recommendation is to retain shared setup and the exact-image gate. See
-  [the evidence and dependency map](contributing/audits/kind-modularity-2026-09-13.md).
-  Controlled focused/full, PR/promotion, cache-state, failure/retry and resource-use comparisons
-  remain open; this single success does not establish average costs or a justified suite split.
+- [ ] `F-146` [Medium, investigation] finish controlled Kind setup/cost comparisons before any
+  restructuring. Measure focused/full, PR/promotion, cache states, failures/retries/cancellations,
+  resource use, and setup/scenario/teardown separately; retain unsuccessful observations.
+  The existing single successful trace supports retaining shared setup, not an average or savings
+  claim. Compare selective fixtures and component tests against duplicated setup/maintenance costs.
+  **Acceptance:** a measured keep/change decision preserving full coverage, exact promoted images,
+  network-policy enforcement, cleanup, and required-check semantics. No suite split is approved.
+  [Evidence, dependency map, and measurement criteria](contributing/audits/kind-modularity-2026-09-13.md).
 
 - [ ] `TEST-1` [Low] deduplicate the Kind scenario layer and split materially different scenarios
   out of `test/e2e/e2e_test.go`. Extract recurring setup into focused fixtures/helpers using the
@@ -695,251 +367,63 @@ Release tasks and acceptance gates live in [tasks-v1-release.md](tasks-v1-releas
 
 ### VM Test Coverage
 
-Owns: the generic PEG/QEMU-backed VM harness, Hadron Linux + k3s and Talos guest qualification,
-VM-boundary acceptance tests, and their GitHub Actions integration in this development repository.
-Talos is proposed coverage under VM-7, not an already-qualified guest. Keep this separate from Kind and
-site deployment configuration, and keep its own scope narrow: a real guest kernel proves things a
-Kind node (a container, not a VM) cannot -- real `reboot(2)`, a capability that survived the image
-build and registry round trip, genuine host PID namespace membership, real kubelet Pod Security
-Admission. Keep logical drain/sequencing/quorum/policy matrices in component and Kind coverage;
-do not assume that a full logical ShutdownFlow Kind scenario already exists (TEST-2 investigates
-that boundary). VM-4 still connects production orchestration to a real guest halt. Avoid replicating
-the whole logical matrix in VMs. Start with one control-plane VM and one disposable worker; 6 GiB
-combined guest RAM is an initial estimate, not a measured minimum. No physical UPS is
-required. `VM-1` found GitHub-hosted runner KVM feasibility usable; see
-`docs/contributing/audits/hadron-vm-1-feasibility-2026-09-11.md`. `VM-2` has verified a real single
-Hadron guest boots to a Ready k3s node; the two-node harness, kubeconfig wiring, and `VM-3` through
-`VM-6` remain unfinished. A single-guest boot is not guest-boot-under-load or shutdown acceptance
-coverage.
+Owns: the generic PEG/QEMU harness and Hadron/k3s and Talos guest qualification, separate from
+Kind and site deployment. Keep logical matrices in component/Kind tests and real guest shutdown
+proof at this boundary. Talos is proposed qualification, not a demonstrated pass.
+[VM research, decisions, and dated evidence](contributing/audits/vm-test-research-2026-09-15.md)
+own detailed prerequisites and prior milestones; the remaining work is below.
 
-For these tasks, High denotes isolation or shutdown-evidence risk, Medium denotes feasibility or
-integration work, and Low denotes optional tooling or documentation. Evaluating upstream reuse is
-also an early implementation priority, not a finding that custom VM code is inherently unsafe.
+- [ ] `VM-8` [Medium] extract shared guest/cluster fixtures from Hadron actuator, manager, and
+  UPS-stack scenarios. Own startup/readiness, clients, image import, process evidence, and cleanup;
+  keep scenario assertions visible and SSH/Kairos/k3s or Talos provisioning behind guest adapters.
+  **Testable now; Conditional:** component failure/cancellation tests and existing live scenarios
+  must retain isolation, artifacts, and shutdown-cause checks. Keep Kind separate; defer a standalone
+  library until varied scenarios justify it. This fixture boundary precedes VM-7.
+  [Detailed criteria](contributing/audits/vm-test-research-2026-09-15.md#vm-8).
+- [ ] `VM-7` [Medium bring-up; High shutdown evidence] qualify Talos on the existing VM harness.
+  First pin/verify artifacts, provision with supported Talos tooling, reach its API, bootstrap one
+  node, fetch kubeconfig, verify Ready from the host, and prove owned teardown with secret-safe logs.
+  Then run shipped TalosShutdown: negative signals and revoked/missing approval must leave the guest
+  running; positive evidence must distinguish guest shutdown from crash, host kill, or lost access.
+  **Testable now; Conditional:** component tests followed by real guest qualification. Preserve
+  targeting, privilege boundaries, cleanup, and VM-3 evidence standards; coordinate VM-5/VM-6.
+  [Milestones and constraints](contributing/audits/vm-test-research-2026-09-15.md#vm-7).
 
-- [ ] `VM-8` [Medium] extract reusable guest/cluster fixtures from repeated Hadron actuator,
-  manager, and UPS-stack scenario setup. Own boot/start, readiness, client/kubeconfig acquisition,
-  image import where applicable, guest process-exit verification, and bounded teardown in the
-  fixture; individual scenarios keep their behavior/assertions visible. Preserve cancellation,
-  resource ownership, failure artifacts, and independent shutdown-cause evidence.
-  Put guest-specific provisioning behind adapters: Hadron can use SSH/Kairos/k3s; Talos uses machine
-  config, Talos API/talosctl, and Kubernetes. The generic layer must not assume SSH exists.
-  **Testable now; Conditional:** reuse component failure/cancellation tests plus existing live
-  Hadron scenarios after extraction. This cleanup has value independently of Talos and is VM-7's
-  prerequisite. Keep it separate from TEST-1's Kind helpers. Defer a standalone library until
-  Hadron/k3s, Talos, actuator, and manager/UPS scenarios establish a useful shared contract.
-- [ ] `VM-7` [Medium bring-up; High shutdown evidence] qualify a Talos guest using the existing
-  PEG/QEMU harness, not a parallel Talos framework. Build on VM-8's generic fixture and preserve
-  artifact verification, loopback-only management, networking, process ownership, evidence capture,
-  and bounded cleanup. **Milestone 1:** pin Talos image/version/checksum; use supported tooling to
-  generate/apply machine configuration through a guest adapter; reach the Talos API from the host;
-  bootstrap one Kubernetes node; obtain kubeconfig and verify actual Node Ready from the host;
-  prove clean owned teardown. Keep Talos credentials isolated and out of logs/artifacts.
-  **Milestone 2, only after deterministic bring-up:** run the shipped TalosShutdown path with the
-  same missing/expired/wrong-node signal, authorization/revocation, targeting, and privilege-boundary
-  standards as the Linux VM tests. Negative cases leave the guest running; positive evidence comes
-  from outside the guest and distinguishes guest-requested shutdown from QEMU crash, forced kill,
-  connection loss, or timeout. Reuse VM-3's evidence checks and negative controls.
-  **Testable now; Conditional:** fake/component provisioning/cancellation tests first, then actual
-  disposable Talos guest API and shutdown qualification. No physical UPS or site cluster needed;
-  a passing Hadron test cannot close Talos acceptance. Coordinate image/job wiring with VM-5 and
-  public instructions with VM-6; only gate on repeated, bounded, reproducible guest success.
-
-- [ ] `VM-2` [High] implement a reproducible two-node VM harness using established virtualization
-  tooling and declarative Kairos configuration. Pin OS/k3s artifacts, checksums, and test image
-  identities; give each run private networking, fresh credentials/storage, and an explicit
-  kubeconfig. Refuse mutations unless cluster identity and target VM/node mapping match; do not
-  change the user's default context or mount host block devices. Keep the manager, PostgreSQL,
-  and simulated UPS on the surviving node, with observation outside the target guests. Teardown
-  must be bounded, run on failure/cancellation, and remove only resources owned by that run.
-  **Testable now; Conditional:** leave Kind helpers and `make test-e2e` unchanged; explicitly
-  scope the isolated VM entry point in contributor guidance when it is implemented.
-  **Upstream reuse check: done.** PEG evaluated and adopted via a thin adapter (`test/hadron`,
-  build-tag-gated); see `docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md` for the
-  license/maintenance/dependency/KVM/SSH-exposure/cleanup findings and how each is closed at the
-  adapter layer. Remaining for `VM-2` itself: the actual two-node topology, pinned Hadron + k3s
-  artifact, kubeconfig wiring, and the multi-VM teardown/mutation-refusal safety checks below.
-  **Adapter hardening (2026-09-11):** regression tests cover process-exit confirmation independent
-  of PEG's deleted PID file [High], strict SHA-256 validation [Medium], and bounded/cancellable
-  downloads that return errors and remove partial state [Medium]. Existing unit CI runs the tagged
-  component tests without KVM; this is not the `VM-5` guest-test job. See the PEG evaluation for
-  the reproduced failures, fixes, and remaining harness boundaries.
-  **Single-guest boot: verified live (2026-09-12).** `kairos-hadron-v0.5.1-standard-amd64-generic-v4.3.0-k3sv1.36.4+k3s1.iso`
-  (`sha256:1488c390e91128e6d8e1f6c2258c3e32881b3ff44de17a700134e2f671f3575c`, cross-checked against
-  both GitHub's asset digest and the release's own `.sha256` sidecar) — "Hadron" names a real
-  upstream project (`kairos-io/hadron`, a minimal from-scratch Linux distro Kairos combines with a
-  Kubernetes distro to build release artifacts), not a project codename. `test/hadron/cloudinit.go`
-  builds a cloud-init NoCloud seed ISO carrying an unattended-install cloud-config with the
-  adapter's fresh per-run credentials and `k3s.enabled: true`, attached via PEG's `DataSource`, with
-  the install device `/dev/vda` (PEG attaches disks as `virtio-blk-pci`, not the `/dev/sda` generic
-  Kairos docs assume). `hadron-vm-boot-smoke.yml` (`workflow_dispatch`-only, following `VM-1`'s
-  pattern) booted the pinned artifact, ran the unattended install, and confirmed a genuinely Ready
-  k3s node via `kubectl get nodes -o json` in 103.83s
-  ([run 34705344528](https://github.com/MichaelZalud18/nut-operator/actions/runs/34705344528)).
-  Three earlier live runs each found one real, distinct gap before this passed — see
-  `docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md` for the full sequence — most
-  notably that the `provider-kairos.bootstrap.after.k3s-ready` cloud-config stage Kairos's own docs
-  document never fires on this version; k3s itself was healthy well before that was diagnosed, so
-  readiness is polled via `kubectl` directly, not that stage's marker file. This proves one
-  disposable guest boots and reaches a working k3s node; the two-node topology, kubeconfig wiring,
-  and multi-VM safety checks below remain open.
-  **Inter-guest networking, component-tested but not yet boot-verified (2026-09-12):** the single
-  verified boot above proves one guest works in isolation, not that two can talk to each other --
-  PEG's own networking (already replaced once, for the management NIC) gives each guest an
-  isolated user-mode NAT stack with no path to any other guest, which is the actual precondition
-  for a k3s agent ever joining a k3s server. `test/hadron/network.go` adds `ClusterLink` /
-  `ClusterNIC`: a private, host-only virtio-net segment between exactly two guests over a raw QEMU
-  socket netdev on `127.0.0.1` (`listen=`/`connect=`, not a bridge or tap device, so no elevated
-  runner privileges are needed). Point-to-point rather than multicast, deliberately: this only
-  ever needs to serve the "one control-plane VM and one disposable worker" scope stated above, and
-  a point-to-point TCP-backed socket is less likely to hit CI-runner-specific multicast/IGMP
-  restrictions than `-netdev socket,mcast=...` would. Each side gets its own fresh, randomly
-  generated locally-administered MAC (`RandomClusterMAC`, `52:54:00:` OUI) — the two peers only
-  need to differ from each other, since the segment reaches nothing else, but this still never
-  reuses a static value, consistent with every other credential in this package. Component tests
-  cover role/port/MAC wiring and rejection of invalid MACs or an unconstructed `Link`.
-  `hadron-cluster-link-smoke.yml` (`workflow_dispatch`-only) boots two live-installer guests over
-  this link and pings between their kernel-assigned IPv6 link-local addresses — no install, no
-  k3s, isolating exactly this one new mechanism from everything the single-guest workflow already
-  proved. `TestSmokeWorkflowsReserveCleanupBudget` (`workflow_test.go`) now checks both smoke
-  workflows, not just the first, and caught this new one's own step-timeout-vs-job-timeout budget
-  being wrong before any live run. **Passed 2026-09-13** ([run 34766743049](https://github.com/MichaelZalud18/nut-operator/actions/runs/34766743049),
-  42.39s): a real SSH banner read back between two independently booted guests over the raw QEMU
-  socket netdev link. Full evidence table, including the seven host-side tooling failures along the
-  way (guest login, a missing package, BusyBox's `ping` applet having no IPv6 support at all, a
-  curl-version log-wording mismatch) — never the `ClusterLink` mechanism itself — in
-  [hadron-vm-2-peg-evaluation-2026-09-11.md](contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md).
-  The raw L2 segment still carries no DHCP of its own — a future harness needing static or
-  negotiated addressing on it (rather than the IPv6 link-local addresses this test used
-  deliberately) still needs its own mechanism.
-  Checked, not assumed: Kairos's own reference docs do not show a clear, reliable static-network
-  cloud-config mechanism, and this project already has one direct cautionary tale about trusting an
-  apparently-documented Kairos cloud-config feature that silently did not fire (the `k3s-ready`
-  stage, above) — writing speculative network-config YAML now, with no way to verify it live, risks
-  repeating that. Left open rather than guessed at.
-  **Host-side kube API access: verified live (2026-09-12).** `Config.ForwardKubeAPI` forwards a
-  second loopback-bound port to the guest's k3s API server (`Credentials.KubeAPIPort`), and
-  `test/hadron/kubeconfig.go`'s `Kubeconfig` fetches the guest's own k3s-generated kubeconfig over
-  SSH and rewrites only its server URL's port to match — not the host, which VM-2's own successful
-  live run already proved is `127.0.0.1` by default, so the certificate's Subject Alternative Name
-  check (which only inspects the host/IP, never the port) needs no changes. Needed regardless of
-  whether the eventual harness ends up single- or two-node: something outside any guest needs API
-  access either way.
-  [Run 34712598425](https://github.com/MichaelZalud18/nut-operator/actions/runs/34712598425)
-  fetched the kubeconfig, built a real `client-go` clientset from it, and listed nodes through the
-  forwarded port from outside the guest entirely — passed on the first attempt, no iteration
-  needed. This is the actual "kubeconfig wiring" `VM-2`'s own text names as open work, not a proxy
-  for it.
-  **High-severity safety checks:** mismatched cluster/VM identity must refuse mutation; partial
-  startup and cancellation must clean up only the current run. Bind forwarded management ports to
-  loopback (done in `test/hadron`) and prove concurrent runs cannot target or delete each other's
-  resources. Private state-directory allocation is covered by `test/hadron`; a sampled free SSH
-  port is not a reservation or proof of concurrent-run isolation. Missing PID evidence fails closed;
-  the future harness must separately track never-started VMs and verify target/process ownership.
-  **Timeout/cleanup hardening (2026-09-12): locally component-tested; live cancellation rehearsal
-  pending.** [Medium] SSH handshake, session creation, commands, polling, and diagnostics now honor
-  cancellation/deadlines. [High] The workflow reserves job-level cleanup margin, bounds compilation
-  and execution externally, and replaces broad QEMU killing with run-directory-scoped pidfd cleanup
-  before artifact upload. State deletion requires successful process cleanup. In-process failure
-  cleanup confirms exit without deleting diagnostic evidence; cleanup errors fail the smoke test.
-  [Medium] Readiness checks parse the single node's actual Ready condition rather than accepting
-  the substring in NotReady. Regression coverage includes stuck SSH phases, cancellation, workflow
-  budget/order, process ownership, repeated cleanup, and negative readiness cases.
-  **Remaining limits:** PEG startup/seed tooling is not fully context-aware; external workflow
-  deadlines remain necessary. A forcibly lost runner cannot execute cleanup; local component tests
-  do not prove hosted cancellation behavior. Full VM/node identity and port-collision guards below
-  remain open; the cleanup ownership test does not close the two-node harness acceptance criteria.
-  **Open — not yet applicable to the single-guest smoke test, but real, specific work once the
-  two-node harness exists (do not close as N/A without building these):**
-
-  1. **Mismatched cluster/VM identity must refuse mutation.** No pre-existing cluster exists for
-     the current smoke test to target, so there is nothing to mismatch against yet. The harness
-     needs an explicit identity check (expected cluster/kubeconfig identity vs. actual, expected
-     VM/node mapping vs. actual) before any mutating action, refusing rather than proceeding on a
-     mismatch.
-  2. **Concurrent runs must not target or delete each other's resources.** Each `workflow_dispatch`
-     run of the current smoke test gets its own dedicated GitHub-hosted runner, so there is nothing
-     to collide with yet. Once the two-node harness runs multiple VMs within one job -- and once
-     more than one harness run can execute concurrently (e.g., two manually triggered runs, or a
-     future automated trigger) -- state directories, forwarded ports, and any shared identifiers
-     must be run-scoped and verified not to collide, not merely assumed unique the way a single
-     `os.MkdirTemp`/`freeport.GetFreePort()` call already is today.
-- [ ] `VM-3` [High] test the shipped Linux actuator on Hadron, including missing/expired/
-  wrong-node signals and absent or revoked approval. Negative cases must leave the guest running;
-  the approved positive case must stop only the intended disposable VM, confirmed through the
-  hypervisor rather than Kubernetes `NotReady` alone. Preserve the existing security context and
-  approval gates; do not grant blanket privileges. **Testable now; Conditional:** real guest
-  OS-boundary coverage, separate from Talos API and physical-machine qualification.
-  **High-severity evidence check:** distinguish guest-initiated shutdown from QEMU crash, forced
-  termination, lost SSH, or timeout. Capture the shutdown cause and process outcome outside the
-  guest before teardown; process disappearance alone is insufficient. PEG's `Stop()` is host-driven
-  termination, not actuator success ([QEMU implementation](https://github.com/spectrocloud/peg/blob/d8627da0983c42bde4d5b21dee650205fd1fb3b7/pkg/machine/qemu.go)).
-  Add negative controls proving these failure modes cannot satisfy the shutdown assertion, and
-  reuse the same evidence checks in `VM-4`. A false pass would hide a broken shutdown path.
-  **First three milestones closed 2026-09-13** ([run 34775970876](https://github.com/MichaelZalud18/nut-operator/actions/runs/34775970876),
-  all pass): the real, shipped `node-actuator` image arms correctly (`CAP_SYS_BOOT` survives a
-  real kubelet/containerd round trip), correctly rejects wrong-node and stale signals without ever
-  halting the guest, and correctly halts the guest on a real accepted signal -- full gate chain
-  captured (`SignalAccepted` -> `FlowBinding` -> `ModeAuthorized` -> `Sync` -> `CapabilityEffective`
-  -> `SyscallIssued`) and independently corroborated by the guest's own QEMU process exiting on its
-  own, without the test ever calling `SafeStop`/`SafeTeardown`. Three real, distinct bugs were
-  found and fixed along the way (a wrong assumption about capturing a racy pod log, and a genuine
-  k3s default-ServiceAccount startup race) -- full history and evidence table in
-  [hadron-vm-3-actuator-2026-09-13.md](contributing/audits/hadron-vm-3-actuator-2026-09-13.md)
-  (`test/hadron/actuator_smoke_test.go`, `hadron-actuator-smoke.yml`).
-  Revoked approval and the full DaemonSet/RBAC remain open.
-- [ ] `VM-4` [Medium] drive a simulated UPS outage through actual NUT telemetry, trigger evaluation,
-  planning, execution, draining, signal delivery, and guest power-off. Assert survivor availability,
-  current authorization/release evidence (`F-126`/`F-127`), enforced network policy, and audit results;
-  manual signal injection alone is not this end-to-end test. Add a second worker for ordered and
-  concurrent release scenarios only after measuring capacity. **Testable now; Conditional:**
-  retain logs and hypervisor evidence outside stopped guests; harness-owned reset is not operator
-  recovery, and restart/resume continuity remains outside scope (SB-1).
-  **Checked, not assumed (2026-09-13): `test/e2e` does not already cover this end to end.** It
-  drives real telemetry transitions from a scripted `dummy-ups` fixture and separately hand-writes
-  a shutdown signal into a projected Secret to prove the actuator accepts it, but nothing there
-  creates a `ShutdownFlow`, waits for trigger evaluation, and asserts execution/drain/poweroff --
-  this is genuinely new ground, not a Hadron variant of an existing Kind test.
-  **First milestone passed 2026-09-13** ([run 34777697857](https://github.com/MichaelZalud18/nut-operator/actions/runs/34777697857),
-  262.16s, first attempt): `TestHadronOperatorManagerDeploys` (`test/hadron/operator_smoke_test.go`,
-  `hadron-operator-smoke.yml`) gets the real CRDs/RBAC/manager Deployment running inside a Hadron
-  guest's k3s -- via `config/byo-cert` and `hack/webhook-cert.sh` (this repo's own no-cert-manager
-  deploy path, chosen deliberately: "this operator's job is to run correctly while the cluster is
-  losing power," per that overlay's own comment, so installing cert-manager into a throwaway guest
-  just to get a serving certificate would be a second, unrelated thing to prove reliable).
-  **Second milestone passed 2026-09-13** ([run 34781621589](https://github.com/MichaelZalud18/nut-operator/actions/runs/34781621589),
-  547.22s): `TestHadronOperatorRunsRealUPSStack` (`hadron-ups-stack-smoke.yml`) additionally
-  builds/imports the real `nut-server` and `upsmon-agent` images and applies a real
-  `UPSDevice`/`NUTServer`/`NodePowerAgent` fixture -- the same shape `test/e2e`'s own
-  signal-delivery spec already proves against Kind -- confirming the real, operator-rendered
-  `NodePowerAgent` DaemonSet reaches Ready on a real guest kernel, `DryRun`/`Simulate` so nothing
-  can halt the guest yet. Full rationale and evidence table in
-  [hadron-vm-4-operator-2026-09-13.md](contributing/audits/hadron-vm-4-operator-2026-09-13.md).
-  A `ShutdownFlow` trigger driving a real, operator-produced signal (not one hand-written, per
-  "manual signal injection alone is not this end-to-end test"), the two-guest topology, real
-  drain/eviction against a live workload Pod, and the network-policy/audit assertions remain open.
-- [ ] `VM-5` [Medium] integrate the proven harness as a separate, initially manually triggered
-  Actions job. Consume images built from the exact revision under test, using the existing
-  digest-based image workflow where applicable, rather than rebuilding while VMs run or pulling
-  an unrelated `main` image. After successful repeated runs, add component-based triggers for
-  actuator, planner/executor, NUT integration, policy, packaging, and harness changes. Bound job
-  time/concurrency and artifact retention, use minimal token permissions, and require no site
-  secrets or access to a persistent private environment. **Conditional:** make it a required
-  check only after runner feasibility, resource use, and test reliability are demonstrated.
-  **Upstream workflow check: done (2026-09-12), not reusable.** Kairos's own
-  [reusable QEMU workflow](https://github.com/kairos-io/kairos/blob/master/.github/workflows/reusable-qemu-test.yaml)
-  needs `QUAY_USERNAME`/`QUAY_PASSWORD` registry secrets this project has no reason to hold, and
-  runs on self-hosted `fast`-labeled runners for nearly every test -- the opposite of what `VM-1`
-  proved usable (standard GitHub-hosted `ubuntu-latest`). Its diagnostic patterns are still worth
-  knowing: the same KVM ACL+udev fix this project found independently, and a libvirt-bridge
-  (`virbr0`) approach to VM-to-VM networking, an alternative to `network.go`'s own point-to-point
-  `ClusterLink` worth revisiting only if that turns out not to work live or a future harness needs
-  more than two nodes. See `docs/contributing/audits/hadron-vm-2-peg-evaluation-2026-09-11.md`.
-  **Image-build check: done (2026-09-12), not needed.** The pinned Hadron artifact already meets
-  every `VM-2` requirement, and all customization so far (credentials, install target, k3s
-  enablement) happens at boot time through the cloud-config `DataSource`, not at image-build time
-  -- exactly the "pinned published artifact" case this check's own text says to prefer. Kairos's
-  [Factory workflow](https://github.com/kairos-io/kairos/blob/master/.github/workflows/reusable-factory.yaml)
-  stays unevaluated further unless that changes.
+- [ ] `VM-2` [High] finish the reproducible two-guest Hadron/k3s harness. Single-guest boot,
+  host-side kubeconfig access, and basic inter-guest connectivity have dated evidence; they do not
+  prove a joined two-node cluster. Establish reliable cluster-link addressing and server/worker join.
+  Pin artifacts and images; use private networking, fresh credentials/storage, and explicit context.
+  Keep manager, PostgreSQL, and simulated UPS on the survivor; observe outside stopped guests.
+  **Testable now; Conditional:** refuse mismatched cluster/VM/node identity before mutation;
+  verify port-collision handling and concurrent-run isolation, partial/never-started VM cleanup,
+  process ownership before deleting state, and bounded cancellation. Run live cancellation rehearsal.
+  Preserve external workflow deadlines for PEG/seed tooling and reserve cleanup margin; runner loss
+  cannot guarantee cleanup. Six GiB combined RAM remains an estimate, not a demonstrated minimum.
+  Keep Kind helpers and make test-e2e separate.
+  [Evidence and full safety criteria](contributing/audits/vm-test-research-2026-09-15.md#vm-2).
+- [ ] `VM-3` [High] finish shipped Linux actuator qualification through the real rendered
+  DaemonSet/RBAC, including missing/expired/wrong-node signals and absent/revoked approval.
+  Prior bare-pod milestones are not full acceptance. Negative cases leave the guest running;
+  the approved case halts only its target with host-side shutdown-cause and process evidence.
+  **Testable now; Conditional:** negative controls must reject QEMU crashes, forced termination,
+  lost SSH, and timeout as successful shutdown. Capture evidence before bounded cleanup and reuse
+  it in VM-4; do not broaden privileges or substitute NotReady for actual guest shutdown.
+  [Milestone history and evidence contract](contributing/audits/vm-test-research-2026-09-15.md#vm-3).
+- [ ] `VM-4` [Medium] finish production outage-to-halt acceptance: real NUT telemetry, trigger,
+  planner/executor, live workload drain, operator-produced signal, and guest-initiated power-off.
+  Prove survivor availability, current authorization/release evidence, enforced network policy,
+  and audit results in the two-guest topology. Measure capacity before adding another worker.
+  **Testable now; Conditional:** retain logs/hypervisor evidence outside the guest; manual signal
+  injection or a healthy UPS stack is not this end-to-end proof. Reuse VM-3's false-pass controls.
+  Harness reset is not operator recovery; restart/resume continuity remains outside SB-1.
+  [Prior milestones and remaining acceptance](contributing/audits/vm-test-research-2026-09-15.md#vm-4).
+- [ ] `VM-5` [Medium] integrate the proven harness into bounded, initially manual Actions jobs.
+  Consume exact-revision immutable images built before guests run; keep minimal token permissions,
+  cleanup/time/concurrency bounds, artifact retention, and zero site-secret dependencies.
+  **Conditional:** after repeated reliable runs and resource measurements, add component triggers
+  for actuation, planning/execution, NUT, policy, packaging, and harness changes; only then consider
+  a required check. Reuse the pinned published OS artifact unless customization needs change.
+  [Upstream workflow/image-build decisions](contributing/audits/vm-test-research-2026-09-15.md#vm-5).
 
 ---
 
