@@ -44,10 +44,7 @@ import (
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 )
 
-// nodePowerAgentFinalizer mirrors nutServerFinalizer's reasoning (F-1): owner-reference garbage
-// collection already reliably deletes the rendered DaemonSet/ConfigMap/Secret/ServiceAccount/
-// NetworkPolicy; this makes deletion an explicit, blocking step with a Kubernetes Event instead of a
-// silent one.
+// nodePowerAgentFinalizer is retained only to retire the legacy Event-only deletion gate.
 const nodePowerAgentFinalizer = "power.zalud.io/nodepoweragent-cleanup"
 
 // nodePowerAgentPodLabelKey is set on every Pod rendered for a NodePowerAgent (labelsForNodePowerAgent
@@ -91,17 +88,13 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		return ctrl.Result{}, err
 	}
-	base := agent.DeepCopy()
-
+	if controllerutil.ContainsFinalizer(&agent, nodePowerAgentFinalizer) {
+		return retireOperandFinalizer(ctx, r.Client, &agent, nodePowerAgentFinalizer)
+	}
 	if !agent.DeletionTimestamp.IsZero() {
-		return r.finalizeNodePowerAgent(ctx, &agent)
+		return ctrl.Result{}, nil
 	}
-	if !controllerutil.ContainsFinalizer(&agent, nodePowerAgentFinalizer) {
-		controllerutil.AddFinalizer(&agent, nodePowerAgentFinalizer)
-		if err := r.Update(ctx, &agent); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
+	base := agent.DeepCopy()
 
 	result := validateNodePowerAgent(&agent)
 	reconcileResult := ctrl.Result{}
@@ -227,25 +220,6 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	return reconcileResult, nil
-}
-
-// finalizeNodePowerAgent runs when a NodePowerAgent is being deleted. See finalizeNUTServer's comment
-// for the same reasoning: owner-reference garbage collection already handles the rendered child
-// resources correctly; this adds an observable Event and a blocking deletion step where there was
-// previously none (F-1).
-func (r *NodePowerAgentReconciler) finalizeNodePowerAgent(ctx context.Context, agent *powerv1alpha1.NodePowerAgent) (ctrl.Result, error) {
-	if !controllerutil.ContainsFinalizer(agent, nodePowerAgentFinalizer) {
-		return ctrl.Result{}, nil
-	}
-	if r.Recorder != nil {
-		r.Recorder.Eventf(agent, nil, corev1.EventTypeNormal, "OperandTeardown", "Delete",
-			"NodePowerAgent deleted; rendered operands are being garbage-collected via owner references")
-	}
-	controllerutil.RemoveFinalizer(agent, nodePowerAgentFinalizer)
-	if err := r.Update(ctx, agent); err != nil {
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

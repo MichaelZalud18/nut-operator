@@ -67,7 +67,10 @@ type NodePowerAgentCustomDefaulter struct {
 }
 
 // Default implements webhook.CustomDefaulter so a webhook will be registered for the Kind NodePowerAgent.
-func (d *NodePowerAgentCustomDefaulter) Default(_ context.Context, obj *powerv1alpha1.NodePowerAgent) error {
+func (d *NodePowerAgentCustomDefaulter) Default(ctx context.Context, obj *powerv1alpha1.NodePowerAgent) error {
+	if legacyOperandFinalizerRemovalRequest(ctx, &powerv1alpha1.NodePowerAgent{}, obj, "power.zalud.io/nodepoweragent-cleanup") {
+		return nil
+	}
 	nodepoweragentlog.Info("Defaulting for NodePowerAgent", "name", obj.GetName())
 
 	defaultNodePowerAgent(obj)
@@ -94,6 +97,9 @@ func (v *NodePowerAgentCustomValidator) ValidateCreate(_ context.Context, obj *p
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type NodePowerAgent.
 func (v *NodePowerAgentCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj *powerv1alpha1.NodePowerAgent) (admission.Warnings, error) {
+	if legacyOperandFinalizerRemoval(oldObj, newObj, "power.zalud.io/nodepoweragent-cleanup") {
+		return nil, nil
+	}
 	nodepoweragentlog.Info("Validation for NodePowerAgent upon update", "name", newObj.GetName())
 
 	return nil, validateNodePowerAgentAdmission(newObj)

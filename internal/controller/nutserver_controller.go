@@ -37,11 +37,7 @@ import (
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 )
 
-// nutServerFinalizer blocks NUTServer deletion until finalizeNUTServer records that teardown
-// happened. Owner-reference garbage collection already reliably deletes the rendered child resources
-// for a cluster-scoped owner with namespaced dependents (verified, not a gap); what deletion never had
-// is any observable record it happened at all -- this operator's whole interface model is status,
-// Events, and audit records (GP-7), and a deleted NUTServer previously left none of the three (F-1).
+// nutServerFinalizer is retained only to retire the legacy Event-only deletion gate.
 const nutServerFinalizer = "power.zalud.io/nutserver-cleanup"
 
 // NUTServerReconciler reconciles a NUTServer object
@@ -76,17 +72,13 @@ func (r *NUTServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return ctrl.Result{}, err
 	}
-	base := server.DeepCopy()
-
+	if controllerutil.ContainsFinalizer(&server, nutServerFinalizer) {
+		return retireOperandFinalizer(ctx, r.Client, &server, nutServerFinalizer)
+	}
 	if !server.DeletionTimestamp.IsZero() {
-		return r.finalizeNUTServer(ctx, &server)
+		return ctrl.Result{}, nil
 	}
-	if !controllerutil.ContainsFinalizer(&server, nutServerFinalizer) {
-		controllerutil.AddFinalizer(&server, nutServerFinalizer)
-		if err := r.Update(ctx, &server); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
+	base := server.DeepCopy()
 
 	result := validateNUTServer(&server)
 	reconcileResult := ctrl.Result{}
@@ -165,27 +157,6 @@ func (r *NUTServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	return reconcileResult, nil
-}
-
-// finalizeNUTServer runs when a NUTServer is being deleted. It does not need to explicitly delete the
-// rendered child resources (Deployment, ConfigMap, Secrets, Service, NetworkPolicy, PDB) -- owner
-// reference garbage collection already does that correctly for a cluster-scoped owner with namespaced
-// dependents. What it adds: a Kubernetes Event recording that teardown happened at all, and a blocking
-// point in the deletion path instead of a silent one -- previously a deleted NUTServer left no status,
-// Event, or audit trace of ever having existed (F-1).
-func (r *NUTServerReconciler) finalizeNUTServer(ctx context.Context, server *powerv1alpha1.NUTServer) (ctrl.Result, error) {
-	if !controllerutil.ContainsFinalizer(server, nutServerFinalizer) {
-		return ctrl.Result{}, nil
-	}
-	if r.Recorder != nil {
-		r.Recorder.Eventf(server, nil, corev1.EventTypeNormal, "OperandTeardown", "Delete",
-			"NUTServer deleted; rendered operands are being garbage-collected via owner references")
-	}
-	controllerutil.RemoveFinalizer(server, nutServerFinalizer)
-	if err := r.Update(ctx, server); err != nil {
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, nil
 }
 
 func upstreamStatusDegraded(statuses []powerv1alpha1.NUTUpstreamStatus) bool {

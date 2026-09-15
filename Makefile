@@ -118,6 +118,10 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 test-postgres: ## Run audit component tests against an isolated disposable PostgreSQL container.
 	bash hack/test-postgres.sh
 
+.PHONY: test-operand-deletion
+test-operand-deletion: ## Verify operand deletion and real GC in an owned disposable Kind cluster.
+	bash hack/test-operand-deletion.sh
+
 .PHONY: cover
 cover: ## Report coverage per function and in total from the profile `make test` wrote.
 	@test -f "$(COVERAGE_PROFILE)" || { \

@@ -94,6 +94,12 @@ Keep active task entries focused on remaining work and acceptance. Move complete
 completed tracker; link substantial research and milestone history from the owning design/audit
 document. Proposals belong in clearly labeled research, not the settled decision registry.
 
+Task prefixes follow the owning component/section, not the type of work. Reuse its established
+namespace and related requirement ID where applicable; do not introduce project-wide prefixes
+such as `ENG` or `TEST` merely to distinguish coding from testing. Consult the
+[decision index](docs/contributing/design/decision-index.md) before assigning an ID. Preserve
+existing identifiers and historical references; renaming them requires an explicit migration.
+
 Do not place private infrastructure details, private hostnames, private IPs, credentials, or
 site-specific topology in public docs.
 

@@ -26,9 +26,11 @@ Testability labels used below:
 - **Real-resource** means some final confidence still needs physical hardware, an external service,
   or a real operating-system boundary that simulation cannot honestly prove.
 
-`ENG-*` identifies scoped engineering work and `TEST-*` identifies test/harness work, rather than
-new audit findings or design requirements. Severity on cleanup/research tasks denotes priority;
-an implementation risk is not evidence that the current behavior is defective.
+Task IDs follow their owning component/section and established requirement namespace; testing
+belongs alongside that component's implementation work. Existing `ENG-*` and `TEST-*` IDs are
+legacy references retained for continuity, not prefixes to extend. See the
+[component/namespace index](contributing/design/decision-index.md). Severity on cleanup/research
+tasks denotes priority; an implementation risk is not evidence that current behavior is defective.
 
 ---
 
@@ -289,15 +291,6 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   Coordinate NUT supervision changes with ENG-1 rather than maintaining two refactor branches.
   **Testable now; Conditional:** unchanged rendered workload/config/security objects, owner refs,
   hashes/rollout behavior, readiness, and controller tests. File movement must not change behavior.
-- [ ] `ENG-7` [Medium] re-evaluate NUTServer and NodePowerAgent finalizers. Current finalizers
-  rely on owner-reference garbage collection for rendered children and primarily delay deletion
-  to emit a teardown Event. Determine whether any concrete durable cleanup obligation remains.
-  If not, remove the finalizer dependency; an Event alone should not require an available manager
-  to delete a resource. Retain only finalizers protecting a demonstrated teardown contract.
-  **Testable now; Conditional:** deletion and owned-resource cleanup, manager-unavailable behavior,
-  and upgrade cleanup for objects already carrying the old finalizer. Simply stopping addition of
-  finalizers would strand existing objects; define a safe removal path and test it. Keep signal and
-  credential cleanup obligations explicit before deciding garbage collection is sufficient.
 - [ ] `ENG-8` [Low] trim audit-history narration from production planner, controller, executor,
   kubeactions, renderer, webhook, and related runtime code. Remove F-number/review chronology and
   prior-bug storytelling only where it does not explain current behavior. Preserve non-obvious

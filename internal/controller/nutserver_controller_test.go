@@ -105,7 +105,7 @@ var _ = Describe("NUTServer Controller", func() {
 				By("Cleanup the specific resource instance NUTServer")
 				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 
-				By("Reconciling to process the finalizer")
+				By("Reconciling a deleted resource remains harmless")
 				controllerReconciler := &NUTServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
 				_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 				Expect(err).NotTo(HaveOccurred())
@@ -139,7 +139,7 @@ var _ = Describe("NUTServer Controller", func() {
 
 			resource := &powerv1alpha1.NUTServer{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
-			Expect(controllerutil.ContainsFinalizer(resource, nutServerFinalizer)).To(BeTrue())
+			Expect(controllerutil.ContainsFinalizer(resource, nutServerFinalizer)).To(BeFalse())
 			condition := meta.FindStatusCondition(resource.Status.Conditions, powerv1alpha1.ConditionAccepted)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
@@ -379,28 +379,46 @@ var _ = Describe("NUTServer Controller", func() {
 			Expect(deployment.Spec.Template.Annotations["power.zalud.io/config-hash"]).To(Equal(annotationBefore))
 		})
 
-		It("should finalize and actually delete on deletion", func() {
+		It("deletes operands without an operator deletion reconcile", func() {
 			controllerReconciler := &NUTServerReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
 
-			By("Reconciling once to add the finalizer")
+			By("Reconciling once to render owned operands")
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			resource := &powerv1alpha1.NUTServer{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
-			Expect(controllerutil.ContainsFinalizer(resource, nutServerFinalizer)).To(BeTrue())
+			Expect(controllerutil.ContainsFinalizer(resource, nutServerFinalizer)).To(BeFalse())
+			assertOperandOwnership(resource, resource.Status.ManagedResources)
 
 			By("Deleting the resource")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 
-			By("Reconciling again to process the finalizer")
+			Expect(errors.IsNotFound(k8sClient.Get(ctx, typeNamespacedName, &powerv1alpha1.NUTServer{}))).To(BeTrue())
+			assertOperandGarbageCollection(resource.Status.ManagedResources)
+		})
+
+		It("retires legacy finalizers on live and terminating objects", func() {
+			resource := &powerv1alpha1.NUTServer{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			resource.Finalizers = []string{nutServerFinalizer, "example.org/foreign-cleanup"}
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+			controllerReconciler := &NUTServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(resource.Finalizers).To(Equal([]string{"example.org/foreign-cleanup"}))
+
+			resource.Finalizers = []string{nutServerFinalizer}
+			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
-
-			Expect(k8sClient.Get(ctx, typeNamespacedName, &powerv1alpha1.NUTServer{})).To(HaveOccurred())
+			Expect(errors.IsNotFound(k8sClient.Get(ctx, typeNamespacedName, &powerv1alpha1.NUTServer{}))).To(BeTrue())
 		})
 	})
 })

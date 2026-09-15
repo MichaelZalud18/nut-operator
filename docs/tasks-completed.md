@@ -29,6 +29,29 @@ status across trackers. Historical run output and longer investigations remain i
   review found no actionable regressions.
   See [the adapter boundary](../internal/kubeinventory/README.md).
 
+## Operator Maturity & Hardening
+
+- [x] `ENG-7` [Medium] retire Event-only NUTServer and NodePowerAgent finalizers (2026-09-15).
+  No external teardown obligation was present. New resources receive no cleanup finalizer;
+  live and terminating legacy resources retire only the operator's key through an optimistic
+  metadata patch. Foreign finalizers, concurrent metadata, and resource specifications are
+  preserved. Admission permits exact retirement on invalid legacy objects without allowing
+  unrelated changes; defaulting must preserve that exact cleanup request.
+  Kubernetes garbage collection owns rendered workloads, generated credentials, and signal
+  Secrets. Shared namespaces and external credential/TLS Secrets remain unowned. Deletion is not
+  immediate cancellation of an already projected halt signal; existing authorization and expiry
+  semantics remain unchanged. Upgrade/uninstall documentation records the migration and limits.
+  **Validated:** component migration/error/conflict tests and controller envtest passed. The
+  isolated `make test-operand-deletion` Kind run passed all four focused specs, proving real owned
+  resource garbage collection without an operator deletion reconcile, migration of terminating
+  objects, and preservation of shared namespaces and an external credential Secret. The runner
+  uses a private kubeconfig and removes its test cluster. An intermediate run was invalidated by
+  editing the active runner; cleanup succeeded and the fixed runner passed on repeat.
+  Broad Go tests passed. Final controller/admission suites, including envtest, passed under the
+  race detector; the admission regression exercises Default -> ValidateUpdate on invalid legacy
+  resources and rejects mixed changes. Repository lint reported zero issues and added-code
+  scanning found no credential assignments or unsafe execution patterns.
+
 ## Planning & Execution Logic
 
 - [x] `F-126` [High] independently recheck flow and agent authorization (2026-09-13).

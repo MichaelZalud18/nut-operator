@@ -58,7 +58,10 @@ type NUTServerCustomDefaulter struct {
 }
 
 // Default implements webhook.CustomDefaulter so a webhook will be registered for the Kind NUTServer.
-func (d *NUTServerCustomDefaulter) Default(_ context.Context, obj *powerv1alpha1.NUTServer) error {
+func (d *NUTServerCustomDefaulter) Default(ctx context.Context, obj *powerv1alpha1.NUTServer) error {
+	if legacyOperandFinalizerRemovalRequest(ctx, &powerv1alpha1.NUTServer{}, obj, "power.zalud.io/nutserver-cleanup") {
+		return nil
+	}
 	nutserverlog.Info("Defaulting for NUTServer", "name", obj.GetName())
 
 	defaultNUTServer(obj)
@@ -85,6 +88,9 @@ func (v *NUTServerCustomValidator) ValidateCreate(_ context.Context, obj *powerv
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type NUTServer.
 func (v *NUTServerCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj *powerv1alpha1.NUTServer) (admission.Warnings, error) {
+	if legacyOperandFinalizerRemoval(oldObj, newObj, "power.zalud.io/nutserver-cleanup") {
+		return nil, nil
+	}
 	nutserverlog.Info("Validation for NUTServer upon update", "name", newObj.GetName())
 
 	return nil, validateNUTServerAdmission(newObj)

@@ -37,6 +37,11 @@ build tag keeps this separate from `make test`; direct tagged runs require an ex
 `AUDIT_TEST_POSTGRES_DSN` pointing at a disposable database where a test-owned schema may be created
 and dropped. This suite tests PostgreSQL behavior, not CNPG failover or full outage orchestration.
 
+`make test-operand-deletion` creates a disposable, single-node Kind cluster with a private
+kubeconfig, runs focused controller deletion/migration specs, and removes that cluster on exit.
+It proves real Kubernetes garbage collection without installing the operator or exercising host
+actuation. Ordinary envtest tests verify owner references and API deletion but do not run GC.
+
 Inspect build tags and test entry points when selecting narrower checks. Component tests,
 Kind suites, and opt-in VM tests have different prerequisites and prove different things.
 Read the relevant workflow before running infrastructure tests, and use isolated resources,
