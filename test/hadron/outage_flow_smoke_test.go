@@ -199,10 +199,16 @@ func TestHadronShutdownFlowProducesRealSignal(t *testing.T) {
 	upsmonRepo, upsmonTag := splitImageRef(t, upsmonImage)
 	actuatorRepo, actuatorTag := splitImageRef(t, actuatorImage)
 
-	// The .seq fixture and its timing are copied from test/e2e/e2e_test.go's own scripted-
-	// transition spec verbatim (dummy-loop mode, each state held ~40s with an explicit trailing
-	// TIMER so no state's window is only one ~2s driver poll wide) -- a proven-correct fixture,
-	// not a guess at NUT's own scripting syntax. Tag values are quoted for the same reason as
+	// The .seq fixture's shape (dummy-loop mode, an explicit trailing TIMER on every state so no
+	// state's window is only one ~2s driver poll wide) is the same proven-correct mechanism as
+	// test/e2e/e2e_test.go's own scripted-transition spec, not a guess at NUT's own scripting
+	// syntax. The OB hold duration deliberately differs from e2e's: e2e only watches
+	// UPSDevice.status.phase directly, so its ~40s OB window is plenty. This test also has to
+	// survive the real ShutdownFlow controller's own watch-latency + 1s eligibility hold before it
+	// even starts executing, and a live run caught the fixture wrapping back to OL before that
+	// finished inside a 40s window (docs/contributing/audits/hadron-vm-4-operator-2026-09-13.md).
+	// OB holds for 600s here -- comfortably longer than any step budget in this test -- so nothing
+	// here is racing the fixture's own loop. Tag values are quoted for the same reason as
 	// TestHadronOperatorRunsRealUPSStack found live: they are pure-digit timestamps, and an
 	// unquoted numeric-looking YAML scalar parses as a JSON number, not the string
 	// ImageReference.Tag actually is.
@@ -234,7 +240,7 @@ data:
     battery.runtime: 600
     ups.load: 10
 
-    TIMER 40
+    TIMER 600
 ---
 apiVersion: power.zalud.io/v1alpha1
 kind: UPSDevice
