@@ -59,5 +59,6 @@ what was inspected or tested and where the implementation differs.
 
 ## Tracking
 
-- [tasks.md](../tasks.md) — what is left before v1, by component.
+- [tasks.md](../tasks.md) — active v1 engineering and investigations, by component.
+- [tasks-v1-release.md](../tasks-v1-release.md) — release readiness, gates, and publishing.
 - [tasks-post-v1.md](../tasks-post-v1.md) — deliberately deferred.

@@ -3,9 +3,10 @@
 Audience: product design and contributors.
 
 These stories capture requested user outcomes, not approved implementation designs or supported
-installation profiles. Investigations are tracked as `MOD-1` through `MOD-3` in
-[project tasks](../../tasks.md#modular-deployment-profiles). Implementation and release placement
-remain undecided; the stories do not override current safety contracts.
+installation profiles. Investigations (`MOD-1` through `MOD-3`), the requested managed-NUT profile
+(`MOD-4`), and conditional profile acceptance (`MOD-5`) live in
+[project tasks](../../tasks.md#modular-deployment-profiles). Their entries own implementation and
+release decisions; these stories do not override current safety contracts.
 
 ## US-1: Existing NUT, Shutdown Agents Only
 
@@ -65,6 +66,29 @@ Desired outcomes:
 Current context: upstream NUT relaying exists, but the authorized shutdown path is coupled to
 ShutdownFlow/executor operation. The needed boundaries are telemetry, planning, execution, and
 actuation; these stories do not prescribe separate microservices or a new public resource schema.
+
+## US-4: Managed NUT Server Only
+
+As a Kubernetes administrator who only needs a managed NUT server, I want to install UPSDevice
+and NUTServer management without node agents, the planner/executor, or shutdown orchestration,
+so I can serve existing NUT clients without deploying the rest of the power-management stack.
+
+Desired outcomes:
+
+- Install a supported operator-managed NUT-only profile with narrowly scoped controllers,
+  admission, CRDs, and RBAC.
+- Create UPSDevice and NUTServer resources without PowerManagementCluster, NodePowerAgent,
+  ShutdownFlow, power inventory, actuation, or PostgreSQL dependencies.
+- Reuse the full product's configuration, credentials/TLS, readiness, driver lifecycle, and upgrade
+  contracts, with explicit policy for authorized in-cluster or external NUT clients.
+- Receive a release-owned image default and a clear certificate bootstrap path without weakening
+  authentication or TLS defaults.
+
+Current context: standalone NUTServer rendering already supports an omitted managementClusterRef
+with an explicit image repository. The managed operand includes upsd and a separate driver
+supervisor; a bare image is not a complete supported deployment. MOD-4 owns controller-set
+evaluation, packaging, ingress, and clean-cluster acceptance. The full installation's existing
+storage requirement is unchanged until a profile-specific scope exception is recorded.
 
 See [scope boundaries](scope-boundaries.md), [node agent](node-agent-operand.md),
 [upstream relay](upstream-nut-relay.md), and [shutdown hooks](shutdown-hooks.md) for existing contracts.

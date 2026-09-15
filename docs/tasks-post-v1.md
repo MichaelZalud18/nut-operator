@@ -4,6 +4,7 @@ Work that is real and intended, but deliberately not part of v1.
 
 This file keeps [tasks.md](tasks.md) focused on v1. Items belong here only when a recorded scope
 decision or upstream dependency blocks them from closing before v1.
+Release readiness and publishing are tracked in [tasks-v1-release.md](tasks-v1-release.md).
 
 - **Scope**, where `scope-boundaries.md` places the work beyond v1. Reversing that means reopening
   the decision, not quietly re-planning.
@@ -119,6 +120,11 @@ devices shuts down when either one goes critical rather than when it actually lo
 plans from inventory, which already models a node in more than one power domain (`IN-11`). The
 hardcoded values are inert while the scaffold is disabled, and become real again only if it is ever
 unlocked.
+
+The proposed LocalNUT mode in [MOD-1](tasks.md#modular-deployment-profiles) would reopen this
+assumption. Keep this item deferred while that mode is only an investigation; if selected, move the
+necessary multi-supply work into its implementation prerequisites before authorizing local signals.
+Consuming upstream FSD in that profile is distinct from OD-19's additional outbound release signal.
 
 Testability: **Testable now** for inventory-to-`MONITOR` rendering and multi-supply decision math;
 **Real-resource** only if local `upsmon` shutdown is re-enabled and a dual-UPS host claim must be

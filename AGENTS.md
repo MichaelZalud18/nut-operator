@@ -84,7 +84,8 @@ to make a change land.
 - Root `README.md`: product shape, safety model, install entry point.
 - `docs/`: public-safe concepts, installation, guides, reference, examples, troubleshooting, and
   contributing docs.
-- `docs/tasks.md`: open v1 work only.
+- `docs/tasks.md`: active v1 engineering/component work and scoped investigations.
+- `docs/tasks-v1-release.md`: v1 release readiness, validation gates, and publishing mechanics.
 - `docs/tasks-post-v1.md`: real work deliberately deferred by scope or upstream gates.
 - `docs/contributing/audits/`: dated evidence and finding history.
 
