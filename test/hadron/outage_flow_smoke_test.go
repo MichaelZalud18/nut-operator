@@ -470,15 +470,38 @@ spec:
 	// opened a connection to the DSN and applied the audit schema (ensureAuditStore in
 	// internal/controller/powermanagementcluster_controller.go) -- a config check alone would not
 	// prove the ShutdownFlow can actually reach the database it depends on for Enforce execution.
+	//
+	// The official postgres image restarts once internally after first-boot init (a temporary
+	// bootstrap instance runs init scripts, stops, then the real long-running instance starts), and
+	// a live run caught the readinessProbe marking the Pod Ready during that temporary instance's
+	// window: the connection attempt right after failed with "connection refused", a transient
+	// condition that clears in seconds once the real instance is listening. Each attempt gets its
+	// own short-lived context and logs its own error immediately for the same reason the fixture
+	// apply wait does (docs/contributing/audits/hadron-vm-4-operator-2026-09-13.md): sharing the
+	// outer polling context let the very last attempt's own kubectl call get cancelled by the
+	// budget's own deadline rather than genuinely failing, and runKubectlOutput calls t.Fatalf
+	// unconditionally on any error, turning that cancellation into a hard test failure instead of
+	// giving the transient restart window the rest of its budget to clear.
 	t.Log("waiting for the PowerManagementCluster to report its PostgreSQL audit store ready")
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, "PowerManagementCluster storage Ready", func(ctx context.Context) error {
-		ready := runKubectlOutput(ctx, t, kubeconfigPath, "get", "powermanagementcluster", "hadron-outage-cluster", "-o", "jsonpath={.status.storage.ready}")
-		if ready != "true" {
+		attemptCtx, attemptCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer attemptCancel()
+		cmd := exec.CommandContext(attemptCtx, "kubectl", "get", "powermanagementcluster", "hadron-outage-cluster", "-o", "jsonpath={.status.storage.ready}")
+		cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfigPath)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			wrapped := fmt.Errorf("kubectl get powermanagementcluster: %w\n%s", err, out)
+			t.Logf("PowerManagementCluster storage-ready attempt failed: %v", wrapped)
+			return wrapped
+		}
+		if ready := strings.TrimSpace(string(out)); ready != "true" {
 			return fmt.Errorf("PowerManagementCluster storage.ready=%q, not true yet", ready)
 		}
 		return nil
 	}, func(ctx context.Context) {
-		out := runKubectlOutput(ctx, t, kubeconfigPath, "get", "powermanagementcluster", "hadron-outage-cluster", "-o", "yaml")
+		diagCtx, diagCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer diagCancel()
+		out := runKubectlOutput(diagCtx, t, kubeconfigPath, "get", "powermanagementcluster", "hadron-outage-cluster", "-o", "yaml")
 		t.Logf("diagnostic PowerManagementCluster state:\n%s", out)
 	})
 
