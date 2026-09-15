@@ -42,6 +42,10 @@ import (
 // runs them in the same job.
 const outageFlowNamespace = "power-outage-hadron"
 
+// postgresImage is the real audit-store PostgreSQL this milestone stands up, pinned by digest like
+// every other externally-sourced base image in this repo (images/*/Dockerfile).
+const postgresImage = "docker.io/library/postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+
 // TestHadronShutdownFlowProducesRealSignal is VM-4's third milestone: a real ShutdownFlow trigger,
 // driven by a real scripted UPS telemetry transition, producing a real operator-written signal --
 // the exact thing VM-4's own text says a hand-written signal cannot stand in for ("manual signal
@@ -70,6 +74,19 @@ const outageFlowNamespace = "power-outage-hadron"
 // exactly this case (api/v1alpha1/shutdownflow_types.go: "an operator states, in Git, that they
 // accept it") -- this milestone is proving trigger evaluation and signal delivery, not capability
 // profile matching, which is a separate, already-tested subsystem.
+//
+// Enforce-mode execution also requires a ready PostgreSQL audit store: SB-11
+// (docs/contributing/design/scope-boundaries.md) makes PostgreSQL "a required production
+// component," and shutdownflow_controller.go's recordShutdownFlowAudit blocks ExecutionReady on
+// it (found live: a run reached TriggerEligible=true and then stalled on
+// AuditStoreUnavailable/"shutdown flow execution requires a ready PostgreSQL audit store"). The
+// audit spool (spec.storage.auditSpool) only cushions a PostgreSQL outage once a real backend is
+// already configured -- resolveAuditSpool rejects pairing it with storage mode Disabled -- so
+// there is no way to satisfy this gate without a real, reachable PostgreSQL. This test stands one
+// up itself: a real postgres:16-alpine server (pinned by digest, the same convention every
+// externally-sourced base image in images/*/Dockerfile already follows), referenced by a real
+// PowerManagementCluster with storage mode ExternalPostgres, which the ShutdownFlow's
+// managementClusterRef points at.
 func TestHadronShutdownFlowProducesRealSignal(t *testing.T) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -84,6 +101,7 @@ func TestHadronShutdownFlowProducesRealSignal(t *testing.T) {
 	nutServerImage, nutServerTar := buildOperandImageTarball(ctx, t, repoRoot, "images/nut-server/Dockerfile", "nutserver")
 	upsmonImage, upsmonTar := buildOperandImageTarball(ctx, t, repoRoot, "images/upsmon-agent/Dockerfile", "upsmon")
 	actuatorImage, actuatorTar := buildOperandImageTarball(ctx, t, repoRoot, "images/node-actuator/Dockerfile", "actuator")
+	postgresRunImage, postgresTar := pullOperandImageTarball(ctx, t, postgresImage, "postgres")
 
 	m, creds, err := NewSafeMachineContext(ctx, Config{
 		Memory:         "4096",
@@ -167,7 +185,7 @@ func TestHadronShutdownFlowProducesRealSignal(t *testing.T) {
 	}, nil)
 
 	t.Log("importing the real manager and operand images into the guest's own containerd")
-	for _, tarPath := range []string{managerTar, nutServerTar, upsmonTar, actuatorTar} {
+	for _, tarPath := range []string{managerTar, nutServerTar, upsmonTar, actuatorTar, postgresTar} {
 		importImageTarball(ctx, t, creds, tarPath)
 	}
 
@@ -302,6 +320,74 @@ spec:
     signalTTL: 2m
     requireFreshTelemetry: false
 ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hadron-outage-postgres
+  namespace: %[1]s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hadron-outage-postgres
+  template:
+    metadata:
+      labels:
+        app: hadron-outage-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: %[9]s
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: nutoperator
+            - name: POSTGRES_PASSWORD
+              value: hadron-outage-test
+            - name: POSTGRES_DB
+              value: nutoperator
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "nutoperator"]
+            initialDelaySeconds: 2
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hadron-outage-postgres
+  namespace: %[1]s
+spec:
+  selector:
+    app: hadron-outage-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hadron-outage-postgres-dsn
+  namespace: %[1]s
+stringData:
+  dsn: postgres://nutoperator:hadron-outage-test@hadron-outage-postgres.%[1]s.svc.cluster.local:5432/nutoperator?sslmode=disable
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerManagementCluster
+metadata:
+  name: hadron-outage-cluster
+spec:
+  storage:
+    mode: ExternalPostgres
+    externalPostgres:
+      dsnSecretKeyRef:
+        namespace: %[1]s
+        name: hadron-outage-postgres-dsn
+        key: dsn
+      requireTLS: false
+---
 apiVersion: power.zalud.io/v1alpha1
 kind: ShutdownFlow
 metadata:
@@ -309,6 +395,8 @@ metadata:
   annotations:
     power.zalud.io/hadron-outage-flow-approved: "true"
 spec:
+  managementClusterRef:
+    name: hadron-outage-cluster
   mode: Enforce
   triggers:
     - type: OnBattery
@@ -330,7 +418,8 @@ spec:
 `, outageFlowNamespace,
 		nutServerRepo, nutServerTag, nodeName,
 		upsmonRepo, upsmonTag,
-		actuatorRepo, actuatorTag)
+		actuatorRepo, actuatorTag,
+		postgresRunImage)
 
 	// Every kind here has a mutating webhook (the same reason test/e2e's own signal-delivery
 	// fixture retries its apply): failing outright with a connection error until the manager's
@@ -364,6 +453,34 @@ spec:
 		}
 		return nil
 	}, nil)
+
+	t.Log("waiting for the real PostgreSQL Deployment to become Ready")
+	waitForWithDiagnostics(t, ctx, 3*time.Minute, "PostgreSQL Ready", func(ctx context.Context) error {
+		dep, err := clientset.AppsV1().Deployments(outageFlowNamespace).Get(ctx, "hadron-outage-postgres", metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if dep.Status.ReadyReplicas < 1 {
+			return fmt.Errorf("postgres not ready yet: readyReplicas=%d", dep.Status.ReadyReplicas)
+		}
+		return nil
+	}, nil)
+
+	// The PowerManagementCluster controller only reports storage as ready once it has actually
+	// opened a connection to the DSN and applied the audit schema (ensureAuditStore in
+	// internal/controller/powermanagementcluster_controller.go) -- a config check alone would not
+	// prove the ShutdownFlow can actually reach the database it depends on for Enforce execution.
+	t.Log("waiting for the PowerManagementCluster to report its PostgreSQL audit store ready")
+	waitForWithDiagnostics(t, ctx, 2*time.Minute, "PowerManagementCluster storage Ready", func(ctx context.Context) error {
+		ready := runKubectlOutput(ctx, t, kubeconfigPath, "get", "powermanagementcluster", "hadron-outage-cluster", "-o", "jsonpath={.status.storage.ready}")
+		if ready != "true" {
+			return fmt.Errorf("PowerManagementCluster storage.ready=%q, not true yet", ready)
+		}
+		return nil
+	}, func(ctx context.Context) {
+		out := runKubectlOutput(ctx, t, kubeconfigPath, "get", "powermanagementcluster", "hadron-outage-cluster", "-o", "yaml")
+		t.Logf("diagnostic PowerManagementCluster state:\n%s", out)
+	})
 
 	// Fixture and dwell times copied from test/e2e's own spec: OL held ~40s, then OB. This
 	// Eventually window is sized past a full OL dwell plus telemetry-poll latency, not raced
@@ -407,4 +524,30 @@ spec:
 		t.Logf("diagnostic ShutdownFlow state:\n%s", out)
 	})
 	t.Log("confirmed: the real actuator accepted a real, operator-written signal -- produced by a real trigger evaluation and execution, not hand-written")
+}
+
+// pullOperandImageTarball pulls a public image reference and re-tags it under this test's own
+// fully-qualified tag before saving, the same tagging discipline buildOperandImageTarball uses for
+// locally built images -- so nothing downstream (import, splitImageRef, the rendered manifest) has
+// to reason about two different tagging conventions depending on where an image came from.
+func pullOperandImageTarball(ctx context.Context, t *testing.T, sourceRef, namePrefix string) (imageRef, tarPath string) {
+	t.Helper()
+	pull := exec.CommandContext(ctx, "docker", "pull", sourceRef)
+	if out, err := pull.CombinedOutput(); err != nil {
+		t.Fatalf("docker pull %s: %v\n%s", sourceRef, err, out)
+	}
+
+	imageRef = fmt.Sprintf("docker.io/library/nut-operator-hadron-%s-test:%d", namePrefix, time.Now().UnixNano())
+	tag := exec.CommandContext(ctx, "docker", "tag", sourceRef, imageRef)
+	if out, err := tag.CombinedOutput(); err != nil {
+		t.Fatalf("docker tag %s: %v\n%s", sourceRef, err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", imageRef).Run() })
+
+	tarPath = filepath.Join(t.TempDir(), namePrefix+".tar")
+	save := exec.CommandContext(ctx, "docker", "save", "-o", tarPath, imageRef)
+	if out, err := save.CombinedOutput(); err != nil {
+		t.Fatalf("docker save %s: %v\n%s", namePrefix, err, out)
+	}
+	return imageRef, tarPath
 }
