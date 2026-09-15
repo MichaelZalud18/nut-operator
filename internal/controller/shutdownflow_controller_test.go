@@ -50,6 +50,7 @@ import (
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
+	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 )
 
@@ -750,7 +751,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			// Seed evidence for the execution subgraph, not its configured preview.
 			bundle, _, err := resolveDeclarativeStructuralBundle(ctx, k8sClient)
 			Expect(err).NotTo(HaveOccurred())
-			executionPlan := compileShutdownFlowForEvaluation(resource, bundle, shutdownFlowTierPolicy(cluster), nil, nil, evaluation)
+			executionPlan := shutdownflowadapter.CompileForEvaluation(resource, bundle, shutdownFlowTierPolicy(cluster), nil, nil, evaluation)
 			Expect(executionPlan.ConfigHash).NotTo(BeEmpty())
 			resource.Status.ConfigHash = executionPlan.ConfigHash
 			dedupeKey := shutdownExecutionDeduplicationKey(resource, evaluation, resource.Status.ConfigHash)

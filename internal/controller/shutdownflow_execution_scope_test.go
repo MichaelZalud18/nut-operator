@@ -28,6 +28,7 @@ import (
 	"github.com/MichaelZalud18/nut-operator/internal/inventory"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
+	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -102,7 +103,7 @@ func TestEligibleDomainSelectionReachesExecutor(t *testing.T) {
 				if err != nil || !evaluation.Eligible {
 					t.Fatalf("evaluation: %+v %v", evaluation, err)
 				}
-				compiled := compileShutdownFlowForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, evaluation)
+				compiled := shutdownflowadapter.CompileForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, evaluation)
 				if compiled.ConfigHash == "" {
 					t.Fatalf("compile: %+v", compiled.Diagnostics)
 				}
@@ -138,7 +139,7 @@ func TestEligibleDomainSelectionReachesExecutor(t *testing.T) {
 					if err != nil || !slices.Equal(next.SelectedUPSDevices, []string{"ups-a", "ups-b"}) {
 						t.Fatalf("hold expansion: %+v %v", next, err)
 					}
-					expanded := compileShutdownFlowForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, next)
+					expanded := shutdownflowadapter.CompileForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, next)
 					if len(expanded.Steps) != 5 || expanded.ConfigHash == compiled.ConfigHash {
 						t.Fatal("eligible scope expansion lost work or identity")
 					}
@@ -150,10 +151,10 @@ func TestEligibleDomainSelectionReachesExecutor(t *testing.T) {
 
 func TestExecutionScopeHistoryUsesExecutedPlanHash(t *testing.T) {
 	_, flow, bundle := executionScopeFixture(t)
-	preview := compileShutdownFlowWithHistory(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil)
+	preview := shutdownflowadapter.CompileWithHistoryLookup(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil)
 	evaluation := &power.ShutdownTriggerEvaluationStatus{Eligible: true, SelectedUPSDevices: []string{"ups-a"}}
 	var lookup string
-	compiled := compileShutdownFlowForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, func(hash string) planner.HistoryInputs {
+	compiled := shutdownflowadapter.CompileForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, func(hash string) planner.HistoryInputs {
 		lookup = hash
 		return planner.HistoryInputs{GroupDurations: map[string][]time.Duration{"a": {time.Second}}}
 	}, nil, evaluation)
@@ -165,7 +166,7 @@ func TestExecutionScopeHistoryUsesExecutedPlanHash(t *testing.T) {
 func TestScopedExecutionStillValidatesConfiguredPlan(t *testing.T) {
 	_, flow, bundle := executionScopeFixture(t)
 	flow.Spec.Groups[1].After = []string{"b"}
-	compiled := compileShutdownFlowForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, &power.ShutdownTriggerEvaluationStatus{Eligible: true, SelectedUPSDevices: []string{"ups-a"}})
+	compiled := shutdownflowadapter.CompileForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, &power.ShutdownTriggerEvaluationStatus{Eligible: true, SelectedUPSDevices: []string{"ups-a"}})
 	if compiled.ConfigHash != "" {
 		t.Fatal("inactive scope hid an invalid configured dependency")
 	}
@@ -177,7 +178,7 @@ func TestPrunedAgentReferenceIsNotResolvedForExecution(t *testing.T) {
 	flow.Spec.Groups[1].Target = power.ShutdownStepTarget{AgentRefs: []power.ObjectNameReference{{Name: "missing-agent"}}}
 	bundle.AgentCoverage = []resolver.AgentCoverage{{Name: "missing-agent", Nodes: []string{"b"}}}
 	evaluation := &power.ShutdownTriggerEvaluationStatus{Eligible: true, SelectedUPSDevices: []string{"ups-a"}}
-	compiled := compileShutdownFlowForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, evaluation)
+	compiled := shutdownflowadapter.CompileForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, evaluation)
 	if compiled.ConfigHash == "" {
 		t.Fatalf("compile: %+v", compiled.Diagnostics)
 	}
@@ -202,7 +203,7 @@ func TestPartiallyUnresolvedAgentTargetRemainsInScope(t *testing.T) {
 			flow.Spec.Steps = []power.ShutdownStep{{ID: g.Name, Type: g.Action, Target: g.Target}}
 			flow.Spec.Groups = nil
 		}
-		compiled := compileShutdownFlowForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, &power.ShutdownTriggerEvaluationStatus{Eligible: true, SelectedUPSDevices: []string{"ups-a"}})
+		compiled := shutdownflowadapter.CompileForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, &power.ShutdownTriggerEvaluationStatus{Eligible: true, SelectedUPSDevices: []string{"ups-a"}})
 		if compiled.ConfigHash == "" || len(compiled.Steps) != 1 {
 			t.Fatalf("partly unresolved target lost linear=%v: %+v", linear, compiled.Diagnostics)
 		}

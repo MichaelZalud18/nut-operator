@@ -18,7 +18,16 @@ failure modes live, and its central obligation is converting unreliable external
 reliable, hashed, structural input bundles the planner requires — or into loud, attributable
 failures.
 
-The planner's purity (PL-1 through PL-4) is purchased entirely by the resolver doing all I/O here.
+Here, "resolver" denotes the input-resolution stage, not a single Go package. Input-side I/O
+belongs to integration adapters: `internal/kubeinventory` reads and converts Kubernetes inventory,
+while the existing NUT, provider, and storage integrations retain their own I/O. The
+`internal/resolver` package only assembles already-read inputs and remains pure. Controllers own
+reconciliation, status/conditions, metrics, and orchestration entrypoints; `internal/shutdownflow`
+normalizes resolved inputs for the pure planner and compiles the eligible scope with history.
+
+This separation preserves planner purity (PL-1 through PL-4) without introducing one integration
+package that owns every external system. See the
+[Kubernetes inventory adapter](../../../internal/kubeinventory/README.md).
 
 ---
 
@@ -27,8 +36,10 @@ The planner's purity (PL-1 through PL-4) is purchased entirely by the resolver d
 *Components: Cross-cutting (resolver-wide).*
 
 **RS-1 · The resolver owns all input-side I/O.** Kubernetes reads, NUT telemetry collection,
-topology provider queries, capability profile loading, and probe operations. Nothing downstream
-performs input I/O. (Counterpart of PL-4.)
+topology provider queries, capability profile loading, and probe operations belong to this stage's
+integration adapters. The pure resolver and planner do not perform input I/O. Execution-time
+uncached authorization, target, readiness, telemetry, and quorum checks remain separate: compiled
+snapshots cannot substitute for fresh wave/release evidence. (Counterpart of PL-4.)
 
 **RS-2 · The resolver produces the two planner input bundles** defined in `planner-requirements.md`:
 the structural bundle (flow specs, topology edges, matched capability profiles, node and workload

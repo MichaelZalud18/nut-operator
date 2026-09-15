@@ -10,6 +10,25 @@ fresh test results. Current behavior is owned by code and design contracts. Open
 Move completed entries here with their date and evidence; do not renumber task IDs or duplicate
 status across trackers. Historical run output and longer investigations remain in the linked audits.
 
+## Inventory System
+
+- [x] `ENG-9` [Medium] extract the remaining controller inventory/resolution integration
+  (2026-09-15). `internal/kubeinventory` owns Kubernetes inventory reads, API conversions,
+  device-scoped capability lookup, and the existing inventory/profile validation needed by both
+  resolution and reconciliation. Controllers retain metrics/status publication and lifecycle;
+  `internal/shutdownflow` owns eligible-scope compilation and history lookup by execution-plan hash.
+  `internal/resolver` remains pure, and uncached wave/per-release safety gates remain unchanged.
+  The bounded validation extraction does not complete ENG-5's separate admission unification.
+  **Validated:** adapter tests cover all seven read failures, cancellation/deadline propagation,
+  diagnostic attribution, inventory identity, node roles, power domains, communication provenance,
+  list-order determinism, profile fallback, scoped history identity, and full-plan validation before
+  pruning. `go test ./api/... ./internal/... ./cmd/... -count=1` passed with local envtest assets.
+  Race-enabled kubeinventory/shutdownflow/resolver/planner/executor/controller component tests
+  passed (the controller envtest suite ran in the broad non-race pass). Existing F-127/F-128/F-129
+  and PL-21 regression tests passed; repository lint reported zero issues. Independent source
+  review found no actionable regressions.
+  See [the adapter boundary](../internal/kubeinventory/README.md).
+
 ## Planning & Execution Logic
 
 - [x] `F-126` [High] independently recheck flow and agent authorization (2026-09-13).

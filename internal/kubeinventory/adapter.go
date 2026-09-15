@@ -14,12 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package kubeinventory
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -95,7 +92,8 @@ func inventoryRelationFromAPI(relation powerv1alpha1.PowerInventoryEdgeRelation)
 	}
 }
 
-func capabilityProfileFromUPSCapabilityProfile(obj *powerv1alpha1.UPSCapabilityProfile) capability.Profile {
+// UPSCapabilityProfile copies an API profile into the provider-neutral matcher contract.
+func UPSCapabilityProfile(obj *powerv1alpha1.UPSCapabilityProfile) capability.Profile {
 	selector := obj.Spec.Selector
 	return capability.Profile{
 		ID:      obj.Name,
@@ -116,8 +114,8 @@ func capabilityProfileFromUPSCapabilityProfile(obj *powerv1alpha1.UPSCapabilityP
 	}
 }
 
-// pduCapabilityProfileFromCRD converts the PDU kind into the matcher's shape.
-func pduCapabilityProfileFromCRD(obj *powerv1alpha1.PDUCapabilityProfile) capability.PDUProfile {
+// PDUCapabilityProfile converts the PDU kind into the matcher's shape.
+func PDUCapabilityProfile(obj *powerv1alpha1.PDUCapabilityProfile) capability.PDUProfile {
 	selector := obj.Spec.Selector
 	return capability.PDUProfile{
 		ID:      obj.Name,
@@ -175,13 +173,4 @@ func copyStringMap(values map[string]string) map[string]string {
 
 func boolPointerValue(value *bool) bool {
 	return value != nil && *value
-}
-
-func hashJSON(value any) (string, error) {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return "", fmt.Errorf("controller value could not be encoded for hashing: %w", err)
-	}
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:]), nil
 }

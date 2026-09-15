@@ -44,6 +44,7 @@ import (
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
+	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 	triggerpkg "github.com/MichaelZalud18/nut-operator/internal/trigger"
 )
@@ -179,7 +180,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{}, fmt.Errorf("evaluate ShutdownFlow %q triggers: %w", flow.Name, err)
 		}
 		compileStart := time.Now()
-		compiledFlow := compileShutdownFlowForEvaluation(&flow, bundle, shutdownFlowTierPolicy(managementCluster), func(hash string) planner.HistoryInputs {
+		compiledFlow := shutdownflowadapter.CompileForEvaluation(&flow, bundle, shutdownFlowTierPolicy(managementCluster), func(hash string) planner.HistoryInputs {
 			return r.flowExecutionHistory(ctx, managementCluster, &flow, hash)
 		}, hookDigests, triggerEvaluation)
 		compiled = compiledFlow.Steps

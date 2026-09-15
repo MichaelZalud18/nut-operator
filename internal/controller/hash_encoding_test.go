@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	power "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/kubeinventory"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -96,8 +97,8 @@ func TestHookDigestReturnsEncodingError(t *testing.T) {
 
 func TestControllerHashEncodingCompatibility(t *testing.T) {
 	for _, value := range []any{
-		capabilityProfileFromUPSCapabilityProfile(&power.UPSCapabilityProfile{}),
-		pduCapabilityProfileFromCRD(&power.PDUCapabilityProfile{}),
+		kubeinventory.UPSCapabilityProfile(&power.UPSCapabilityProfile{}),
+		kubeinventory.PDUCapabilityProfile(&power.PDUCapabilityProfile{}),
 		power.ShutdownHookSpec{Invocation: power.ShutdownHookInvocationSpec{
 			KubernetesObject: &power.ShutdownHookKubernetesObjectSpec{
 				Object: runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"example"}}`)},

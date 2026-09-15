@@ -35,6 +35,7 @@ import (
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
+	"github.com/MichaelZalud18/nut-operator/internal/kubeinventory"
 	"github.com/MichaelZalud18/nut-operator/internal/polling"
 	storageconfig "github.com/MichaelZalud18/nut-operator/internal/storage"
 )
@@ -134,7 +135,7 @@ func (r *UPSCapabilityProbeReconciler) runProbe(ctx context.Context, probe *powe
 	// today, and the verification record compares that same profile against
 	// this same read. Resolving twice could report a match in status that the
 	// verification row disagrees with.
-	match, _, matchErr := resolveDeviceCapabilityMatch(ctx, r.Client, &device)
+	match, _, matchErr := kubeinventory.ResolveDeviceCapabilityMatch(ctx, r.Client, &device)
 
 	r.recordDraft(probe, &device, pollResult, match, matchErr)
 	r.recordVerification(ctx, probe, &device, pollResult, match, matchErr, resolution.ManagementClusterName)

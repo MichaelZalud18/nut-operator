@@ -31,6 +31,7 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
+	"github.com/MichaelZalud18/nut-operator/internal/kubeinventory"
 )
 
 // PDUCapabilityProfileReconciler reconciles a PDUCapabilityProfile object.
@@ -63,7 +64,7 @@ func (r *PDUCapabilityProfileReconciler) Reconcile(ctx context.Context, req ctrl
 	var profileHash string
 	if result.accepted {
 		var err error
-		profileHash, err = hashJSON(pduCapabilityProfileFromCRD(&profile))
+		profileHash, err = hashJSON(kubeinventory.PDUCapabilityProfile(&profile))
 		if err != nil {
 			result = rejected("ProfileHashEncodingFailed", "%v", err)
 		}
@@ -142,10 +143,10 @@ func (r *PDUCapabilityProfileReconciler) pduProfileSetConflict(ctx context.Conte
 		if obj.Name != profile.Name && !validatePDUCapabilityProfile(obj).accepted {
 			continue
 		}
-		profiles = append(profiles, pduCapabilityProfileFromCRD(obj))
+		profiles = append(profiles, kubeinventory.PDUCapabilityProfile(obj))
 	}
 
-	subject := pduCapabilityProfileFromCRD(profile).ID
+	subject := kubeinventory.PDUCapabilityProfile(profile).ID
 	for _, diagnostic := range capability.ValidatePDUProfileSet(profiles) {
 		if diagnostic.Severity != capability.DiagnosticError {
 			continue

@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/kubeinventory"
 )
 
 const defaultUpstreamNUTProbeTimeout = 2 * time.Second
@@ -119,7 +120,7 @@ func upstreamNUTProbeTargets(devices []powerv1alpha1.UPSDevice) []upstreamNUTPro
 			Host:        upstream.Host,
 			Port:        upstreamNUTPort(device),
 			UPSName:     upstream.UPSName,
-			AuthMode:    upstreamAuthMode(upstream),
+			AuthMode:    kubeinventory.UpstreamAuthMode(upstream),
 			StrictStart: upstreamNUTStrictStart(device),
 		})
 	}

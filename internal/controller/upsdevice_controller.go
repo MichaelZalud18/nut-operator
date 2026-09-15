@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/kubeinventory"
 	"github.com/MichaelZalud18/nut-operator/internal/metrics"
 	"github.com/MichaelZalud18/nut-operator/internal/nut"
 	"github.com/MichaelZalud18/nut-operator/internal/polling"
@@ -100,7 +101,7 @@ func (r *UPSDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// it is published whether or not a NUTServer is serving it yet and whether or not telemetry is
 	// flowing. A device sitting unserved still has a profile, and that is exactly when someone is
 	// looking at it.
-	capabilityMatch, capabilityDiagnostics, capabilityErr := resolveDeviceCapabilityMatch(ctx, r.Client, &device)
+	capabilityMatch, capabilityDiagnostics, capabilityErr := kubeinventory.ResolveDeviceCapabilityMatch(ctx, r.Client, &device)
 	recordCapabilityMatchMetric(capabilityMatch, capabilityErr)
 	device.Status.Capability = capabilityStatusFromMatch(capabilityMatch, capabilityDiagnostics, capabilityErr)
 	reconcileResult := ctrl.Result{}
@@ -316,7 +317,7 @@ func (r *UPSDeviceReconciler) resolveTelemetryTarget(ctx context.Context, device
 		// from Reconcile, because it depends on the device's identity and not
 		// on whether a NUTServer is serving it yet -- doing it here left every
 		// device without a ready telemetry target reporting no profile at all.
-		if match, _, err := resolveDeviceCapabilityMatch(ctx, r.Client, device); err == nil {
+		if match, _, err := kubeinventory.ResolveDeviceCapabilityMatch(ctx, r.Client, device); err == nil {
 			target.TelemetryAliases = telemetryAliasesFromMatch(match)
 		}
 		return target, telemetryTargetResolution{

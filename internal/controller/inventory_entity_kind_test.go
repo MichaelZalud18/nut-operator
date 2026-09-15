@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/kubeinventory"
 )
 
 // entityKindEnumPattern extracts the CRD-enforced entity kinds straight from the
@@ -71,12 +72,12 @@ func TestControllerAcceptsExactlyTheDeclaredInventoryEntityKinds(t *testing.T) {
 	kinds := declaredInventoryEntityKinds(t, "../../api/v1alpha1/powerinventoryedge_types.go")
 
 	for _, kind := range kinds {
-		if !isSupportedInventoryEntityKind(powerv1alpha1.PowerInventoryEntityKind(kind)) {
+		if !kubeinventory.IsSupportedEntityKind(powerv1alpha1.PowerInventoryEntityKind(kind)) {
 			t.Errorf("entity kind %q is accepted by the CRD schema but rejected by the controller", kind)
 		}
 	}
 	for _, rejected := range []string{"", "Switch", "PDU", "node"} {
-		if isSupportedInventoryEntityKind(powerv1alpha1.PowerInventoryEntityKind(rejected)) {
+		if kubeinventory.IsSupportedEntityKind(powerv1alpha1.PowerInventoryEntityKind(rejected)) {
 			t.Errorf("entity kind %q is not in the CRD schema but the controller accepts it", rejected)
 		}
 	}

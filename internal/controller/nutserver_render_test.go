@@ -30,6 +30,10 @@ import (
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 )
 
+func objectMeta(name string) metav1.ObjectMeta {
+	return metav1.ObjectMeta{Name: name}
+}
+
 func TestRenderUPSConfRendersUpstreamNUTRepeater(t *testing.T) {
 	port := int32(3493)
 	strictStart := false

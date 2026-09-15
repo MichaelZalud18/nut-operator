@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/MichaelZalud18/nut-operator/internal/kubeinventory"
 	"github.com/MichaelZalud18/nut-operator/internal/nutsupervisor"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -631,7 +632,7 @@ func upstreamNUTStrictStart(device powerv1alpha1.UPSDevice) bool {
 }
 
 func upstreamNUTAuthConf(device powerv1alpha1.UPSDevice) string {
-	switch upstreamAuthMode(device.Spec.UpstreamNUT) {
+	switch kubeinventory.UpstreamAuthMode(device.Spec.UpstreamNUT) {
 	case powerv1alpha1.UPSUpstreamNUTAuthDefault:
 		return "default"
 	case powerv1alpha1.UPSUpstreamNUTAuthSecret:
@@ -716,7 +717,7 @@ func upstreamNUTAuthProjections(devices []powerv1alpha1.UPSDevice, namespace str
 	projections := make([]corev1.VolumeProjection, 0)
 	for _, device := range devices {
 		if device.Spec.UpstreamNUT == nil ||
-			upstreamAuthMode(device.Spec.UpstreamNUT) != powerv1alpha1.UPSUpstreamNUTAuthSecret {
+			kubeinventory.UpstreamAuthMode(device.Spec.UpstreamNUT) != powerv1alpha1.UPSUpstreamNUTAuthSecret {
 			continue
 		}
 		ref := device.Spec.UpstreamNUT.Auth.SecretKeyRef

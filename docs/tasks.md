@@ -86,19 +86,6 @@ Owns: the topology and power-domain data model — `UPSDevice`, `PowerInfrastruc
 `PowerInventoryNode`, `PowerInventoryEdge`, the `internal/inventory` compiler, and the declarative
 resolver/adapter that feeds it into reconciliation. Design contract: `docs/contributing/design/inventory-provider-contract.md` (`IN-n`).
 
-- [ ] `ENG-9` [Medium] finish the integration/resolution boundary outside `internal/controller`.
-  Review `declarative_inventory_adapter.go`, `declarative_inventory_resolver.go`, and
-  `planner_adapter.go`; move fact gathering and planner-input normalization into existing
-  integration-facing packages or a narrow adapter boundary. Preserve the pure no-I/O contract of
-  `internal/resolver`: Kubernetes readers do not belong in it. Controllers should own reconciliation,
-  desired-resource lifecycle, status/conditions, and orchestration entrypoints; integrations gather
-  and normalize external/cluster facts. Keep the existing runtime -> resolution -> pure planner
-  architecture, avoid a new integration monolith, and limit package churn to the responsibilities
-  needed to make that boundary legible.
-  **Testable now; Conditional:** adapter/resolver/controller tests preserve inventory identity,
-  power-domain scoping, communication paths, role propagation, diagnostics, and deterministic
-  planner inputs. Re-run affected F-127/F-128/F-129 and PL-21 boundaries after extraction; preserve
-  uncached wave/release reads rather than turning compile-time snapshots into live safety evidence.
 - [ ] `TEST-4` [Medium] add a disposable real-NetBox integration test for the shipped
   `netbox-inventory-sync` workflow. Fake-HTTP tests remain valuable but do not establish real API
   serialization, pagination, authentication, or DCIM relationship compatibility.
@@ -317,7 +304,8 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   invariants, protocol constraints, and safety reasoning. Move useful historical detail to existing
   audit documentation or regression tests; do not delete the regression itself.
   **Testable now; Conditional:** comment-only diff review and affected checks; no behavior change.
-  Coordinate with ENG-2/ENG-6/ENG-9 so file extraction and comment cleanup do not compete.
+  Coordinate with ENG-2/ENG-6 and the completed ENG-9 boundary so file extraction and comment
+  cleanup do not compete.
 
 - [ ] `F-146` [Medium, investigation] finish controlled Kind setup/cost comparisons before any
   restructuring. Measure focused/full, PR/promotion, cache states, failures/retries/cancellations,

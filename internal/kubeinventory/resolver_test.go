@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package kubeinventory
 
 import (
 	"context"
@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
@@ -51,7 +52,7 @@ func TestResolveDeclarativeStructuralBundleUsesBundledProfiles(t *testing.T) {
 				ObjectMeta: objectMeta("node-a"),
 				Spec: powerv1alpha1.PowerInventoryNodeSpec{
 					NodeName:                "node-a",
-					CommunicationPathExempt: boolPtr(true),
+					CommunicationPathExempt: ptr.To(true),
 				},
 			},
 			&powerv1alpha1.PowerInventoryEdge{
@@ -72,7 +73,7 @@ func TestResolveDeclarativeStructuralBundleUsesBundledProfiles(t *testing.T) {
 		).
 		Build()
 
-	bundle, diagnostics, err := resolveDeclarativeStructuralBundle(context.Background(), reader)
+	bundle, diagnostics, err := ResolveStructuralBundle(context.Background(), reader)
 	if err != nil {
 		t.Fatalf("expected bundled profile resolution to succeed, got %v with diagnostics %#v", err, diagnostics)
 	}
@@ -106,7 +107,7 @@ func TestResolveDeclarativeStructuralBundleMapsLastDitchRoleToTierOne(t *testing
 		}).
 		Build()
 
-	bundle, diagnostics, err := resolveDeclarativeStructuralBundle(context.Background(), reader)
+	bundle, diagnostics, err := ResolveStructuralBundle(context.Background(), reader)
 	if err != nil {
 		t.Fatalf("expected inventory resolution to succeed, got %v with diagnostics %#v", err, diagnostics)
 	}

@@ -12,6 +12,7 @@ import (
 	power "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	"github.com/MichaelZalud18/nut-operator/internal/executor"
+	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -41,7 +42,7 @@ func TestShutdownFlowSpoolsWhenDatabaseCannotOpen(t *testing.T) {
 			})
 			r.StorageConnector = &fakeAuditConnector{err: errors.New("database unreachable")}
 			evaluation := &power.ShutdownTriggerEvaluationStatus{Eligible: true, SelectedUPSDevices: []string{"ups-a"}}
-			compiled := compileShutdownFlowForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, evaluation)
+			compiled := shutdownflowadapter.CompileForEvaluation(flow, bundle, power.PowerShutdownTierPolicySpec{}, nil, nil, evaluation)
 			flow.Status.CompiledSteps, flow.Status.CompiledWaves = compiled.Steps, compiled.Waves
 			if err := r.recordShutdownFlowAudit(ctx, flow, accepted("test"), nil, nil, bundle, compiled.Waves, compiled.Artifact, compiled.ConfigHash, evaluation); err != nil {
 				t.Fatal(err)

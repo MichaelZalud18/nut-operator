@@ -26,6 +26,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/kubeinventory"
 )
 
 // UPSCapabilityProfileReconciler reconciles a UPSCapabilityProfile object
@@ -55,7 +56,7 @@ func (r *UPSCapabilityProfileReconciler) Reconcile(ctx context.Context, req ctrl
 	var profileHash string
 	if result.accepted {
 		var err error
-		profileHash, err = hashJSON(capabilityProfileFromUPSCapabilityProfile(&profile))
+		profileHash, err = hashJSON(kubeinventory.UPSCapabilityProfile(&profile))
 		if err != nil {
 			result = rejected("ProfileHashEncodingFailed", "%v", err)
 		}

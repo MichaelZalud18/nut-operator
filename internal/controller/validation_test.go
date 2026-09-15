@@ -27,6 +27,7 @@ import (
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
 	"github.com/MichaelZalud18/nut-operator/internal/inventory"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
+	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
 )
 
 func TestValidateUPSDeviceRejectsLocalUSBDriver(t *testing.T) {
@@ -478,7 +479,7 @@ func TestCompileShutdownGroupsAllowsIndependentConcurrentWave(t *testing.T) {
 		t.Fatalf("expected flow to be accepted, got %s: %s", result.reason, result.message)
 	}
 
-	_, waves, _, configHash := compileShutdownFlow(flow)
+	_, waves, _, configHash := shutdownflowadapter.Compile(flow)
 	if len(waves) != 2 {
 		t.Fatalf("expected 2 compiled waves, got %d", len(waves))
 	}
