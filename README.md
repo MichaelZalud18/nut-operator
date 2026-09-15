@@ -218,7 +218,8 @@ Start at **[docs/](docs/README.md)** — it carries a first-hour path and a map 
   [scope boundaries](docs/contributing/design/scope-boundaries.md),
   [settled questions](docs/contributing/design/settled-questions.md),
   [decision index](docs/contributing/design/decision-index.md).
-- **[Project tasks](docs/tasks.md)** — what is left before v1.
+- **[Project tasks](docs/tasks.md)** — active v1 engineering and investigations.
+- **[Release tasks](docs/tasks-v1-release.md)** — v1 readiness, qualification, and publishing.
 
 ## Community and Project Info
 

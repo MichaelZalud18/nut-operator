@@ -313,22 +313,10 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
   The upgrade guide covers explicitly clearing previously defaulted abort notification settings.
   **Validated:** rejection matrices through create/update admission and API-to-planner conversion;
   API-server default/update checks; full API/internal/command race suite and repository lint.
-- `OD-27` [Medium] confirm the reserve and minimum-compression defaults against a real outage.
-  Simulation coverage is done —
-  `internal/controller/adaptive_boundary_simulation_test.go` compiles a real plan through
-  `planner.CompileWithHistory`, crosses the actual production boundary
-  (`shutdownflow.APICompiledWaves` → `executorWavesFromFlow`), and drives it through
-  `Executor.Execute` with a genuine multi-reading power curve. It asserts the 20% reserve and 10%
-  minimum compression against that real compiled plan's own durations, the "plan does not fit"
-  verdict surfacing in both the audit record and the event log, replan behavior as this codebase
-  implements it (`PointerState.Ascend` into a second `Execute` that re-descends and is reported as
-  re-execution — there is no mid-flow recompilation to test, by design), that execution-history
-  samples inform `Plan.GroupEstimates` but never leak into the live wave duration the executor
-  compresses against, and a calibration check that the fixed reserve comfortably covers a
-  representative synthetic halt-duration sample. See `operator-maturity-benchmarks.md`'s
-  2026-09-04 pass for what each test proved. What remains is what always remained: the reserve and
-  minimum stand in for a handoff tail and a fitness floor nobody has measured against a real
-  outage, and simulation is calibration evidence for that, not a substitute for it.
+
+Remaining default-calibration evidence (`OD-27`) lives in the
+[release qualification checklist](tasks-v1-release.md#qualification).
+
 - [x] `PL-21` [High] implement communication-path dependencies in v1 planning and execution
   (2026-09-13). Node `carries` paths and explicit shared `OperatorAPI`/`NUT` service declarations
   drive outage scope, carrier-release ordering, and UPS runtime budgets, including node-less
@@ -970,14 +958,9 @@ None.
 Owns: scaffold, docs upkeep, examples, and decision-registry maintenance — glue work not owned by one
 component.
 
-- [ ] `VM-6` [Low] prepare a public-safe Hadron test guide once the harness contract is established.
-  Separate portable test instructions from local deployment material; remove private paths,
-  hostnames, addresses, credentials, and operational history. Document measured versus estimated
-  resource needs, isolation and shutdown safeguards, Kind/Talos boundaries, and conditional CI
-  behavior. Review and scan before deciding whether to migrate the draft into contributor docs;
-  this task does not publish the draft or assert that compatibility tests have passed.
-  Cover the generic fixture and guest-specific Hadron/Talos adapters as they become qualified;
-  keep estimates and proposed support distinct from measured resource use and test evidence.
+The public VM test guide (`VM-6`) lives in the
+[release qualification checklist](tasks-v1-release.md#qualification).
+
 - [ ] `ENG-10` [Low, research] evaluate whether a first-time setup wizard improves usability after
   the quick-start/examples in `REL-5` are available. Compare Kubernetes-native authored CRs with a
   wizard generating the same standard resources, not a second configuration model. Evaluate the

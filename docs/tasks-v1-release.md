@@ -70,6 +70,38 @@ registry cleanup, and publishing require explicit authorization; this checklist 
   references, not real secrets, and keep actual actuation an explicit separate decision. The guide
   must stand on its own; the optional wizard research is ENG-10 in the engineering tracker.
 
+## Qualification
+
+Owns: remaining release-facing evidence and public test documentation. Building the component
+suites and VM/CI harnesses remains in [engineering tasks](tasks.md). OD-27's evidence target does
+not settle the separate, still-open decision below about making a physical plug-pull a v1 gate.
+
+- [ ] `OD-27` [Medium] confirm the reserve and minimum-compression defaults against a real outage.
+  Simulation coverage is done —
+  `internal/controller/adaptive_boundary_simulation_test.go` compiles a real plan through
+  `planner.CompileWithHistory`, crosses the actual production boundary
+  (`shutdownflow.APICompiledWaves` → `executorWavesFromFlow`), and drives it through
+  `Executor.Execute` with a genuine multi-reading power curve. It asserts the 20% reserve and 10%
+  minimum compression against that real compiled plan's own durations, the "plan does not fit"
+  verdict surfacing in both the audit record and the event log, replan behavior as this codebase
+  implements it (`PointerState.Ascend` into a second `Execute` that re-descends and is reported as
+  re-execution — there is no mid-flow recompilation to test, by design), that execution-history
+  samples inform `Plan.GroupEstimates` but never leak into the live wave duration the executor
+  compresses against, and a calibration check that the fixed reserve comfortably covers a
+  representative synthetic halt-duration sample. See `operator-maturity-benchmarks.md`'s
+  2026-09-04 pass for what each test proved. What remains is what always remained: the reserve and
+  minimum stand in for a handoff tail and a fitness floor nobody has measured against a real
+  outage, and simulation is calibration evidence for that, not a substitute for it.
+
+- [ ] `VM-6` [Low] prepare a public-safe Hadron test guide once the harness contract is established.
+  Separate portable test instructions from local deployment material; remove private paths,
+  hostnames, addresses, credentials, and operational history. Document measured versus estimated
+  resource needs, isolation and shutdown safeguards, Kind/Talos boundaries, and conditional CI
+  behavior. Review and scan before deciding whether to migrate the draft into contributor docs;
+  this task does not publish the draft or assert that compatibility tests have passed.
+  Cover the generic fixture and guest-specific Hadron/Talos adapters as they become qualified;
+  keep estimates and proposed support distinct from measured resource use and test evidence.
+
 ## Validation Gates
 
 Testability labels are defined in [tasks.md](tasks.md). Dated scan/test results below are historical
