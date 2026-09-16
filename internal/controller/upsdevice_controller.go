@@ -343,7 +343,25 @@ type telemetryEndpoint struct {
 	Port int
 }
 
+// firstTelemetryEndpoint resolves the host this reconciler polls a NUTServer's telemetry at.
+//
+// The ClusterIP is preferred over the DNS name when the server publishes one, the same F-71
+// preference nodePowerAgentTargets.go's nutServerDNSName already applies to the agent's own MONITOR
+// target: CoreDNS is an ordinary workload inside the flow's own path, and a manager that cannot
+// resolve svc.cluster.local during a CoreDNS outage would stop polling telemetry at exactly the
+// moment a real power event needs it most. F-71's own audit finding scoped its fix to the agent's
+// MONITOR line and readiness probe and never touched this reconciler's own polling target, leaving
+// this one path still DNS-first until now.
+//
+// The DNS name remains the fallback rather than being removed: a server that has not yet published
+// an endpoint still has to be addressable, and a name that resolves later beats no target at all.
 func firstTelemetryEndpoint(server *powerv1alpha1.NUTServer) (telemetryEndpoint, bool) {
+	for _, endpoint := range server.Status.ServiceEndpoints {
+		if endpoint.ClusterIP == "" {
+			continue
+		}
+		return telemetryEndpoint{Host: endpoint.ClusterIP, Port: telemetryEndpointPort(endpoint)}, true
+	}
 	for _, endpoint := range server.Status.ServiceEndpoints {
 		host := endpoint.DNSName
 		if host == "" && endpoint.Name != "" && endpoint.Namespace != "" {
@@ -352,13 +370,16 @@ func firstTelemetryEndpoint(server *powerv1alpha1.NUTServer) (telemetryEndpoint,
 		if host == "" {
 			continue
 		}
-		port := int(endpoint.Port)
-		if port == 0 {
-			port = nut.DefaultPort
-		}
-		return telemetryEndpoint{Host: host, Port: port}, true
+		return telemetryEndpoint{Host: host, Port: telemetryEndpointPort(endpoint)}, true
 	}
 	return telemetryEndpoint{}, false
+}
+
+func telemetryEndpointPort(endpoint powerv1alpha1.ServiceEndpointStatus) int {
+	if endpoint.Port != 0 {
+		return int(endpoint.Port)
+	}
+	return nut.DefaultPort
 }
 
 func nutServerManagementClusterName(server *powerv1alpha1.NUTServer) string {
