@@ -95,7 +95,7 @@ func TestSignalSurvivesWhileItsEpisodeIsStillLive(t *testing.T) {
 	}
 }
 
-// The window recordShutdownFlowExecution leaves open: the runner writes the signal Secret, the whole
+// The window executeShutdownFlow leaves open: the runner writes the signal Secret, the whole
 // executor runs, and only then does LastExecution land. A reconcile in between sees an execution
 // record older than the signal in front of it.
 func TestSignalNewerThanTheExecutionRecordSurvives(t *testing.T) {

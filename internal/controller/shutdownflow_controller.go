@@ -328,8 +328,8 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if !r.runs.submit(&flow, reconcileResult.RequeueAfter, func(runCtx context.Context, owned *powerv1alpha1.ShutdownFlow, publish func()) {
 		worker := *r
 		worker.executionProgress = publish
-		if err := worker.recordShutdownFlowAudit(runCtx, owned, result, resolverDiagnostics, plannerDiagnostics, bundle, compiledWaves, publishedArtifact, configHash, triggerEvaluation); err != nil {
-			log.Error(err, "Failed to record ShutdownFlow audit records", "shutdownflow", owned.Name)
+		if err := worker.runShutdownFlow(runCtx, owned, result, resolverDiagnostics, plannerDiagnostics, bundle, compiledWaves, publishedArtifact, configHash, triggerEvaluation); err != nil {
+			log.Error(err, "ShutdownFlow worker returned an execution or evidence error", "shutdownflow", owned.Name)
 		}
 	}) {
 		return ctrl.Result{RequeueAfter: time.Second}, nil
@@ -383,39 +383,12 @@ func (r *ShutdownFlowReconciler) shutdownFlowRequestsForInventoryChange(ctx cont
 	return requests
 }
 
-func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, result validationResult, diagnostics []resolver.Diagnostic, plannerDiagnostics []planner.Diagnostic, bundle resolver.StructuralBundle, compiledWaves []powerv1alpha1.CompiledShutdownWave, publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus, configHash string, triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
-	if flow == nil {
+// recordShutdownFlowAudit records compilation and decision evidence only. Its
+// caller owns the writer lifetime and independently decides whether to execute.
+func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, writer audit.Writer, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, result validationResult, diagnostics []resolver.Diagnostic, plannerDiagnostics []planner.Diagnostic, bundle resolver.StructuralBundle, compiledWaves []powerv1alpha1.CompiledShutdownWave, publishedArtifact *powerv1alpha1.PublishedPlannerArtifactStatus, configHash string, triggerEvaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus) error {
+	if flow == nil || writer == nil {
 		return nil
 	}
-	cluster, err := r.getManagementCluster(ctx, flow)
-	if err != nil || cluster == nil || (!managementClusterStorageReady(cluster) && !cluster.Spec.Storage.AuditSpool.Enabled) {
-		if result.accepted && triggerEvaluation != nil && triggerEvaluation.Eligible {
-			setExecutionReadyCondition(
-				&flow.Status.Conditions,
-				flow.Generation,
-				false,
-				"AuditStoreUnavailable",
-				"shutdown flow execution requires a ready PostgreSQL audit store",
-			)
-		}
-		return err
-	}
-
-	store, err := r.openExecutionAuditStore(ctx, cluster)
-	if err != nil {
-		return err
-	}
-	writer, spoolWriter, err := shutdownAuditWriter(cluster, store)
-	if err != nil {
-		closeErr := store.Close()
-		return errors.Join(err, closeErr)
-	}
-
-	// The store opened, so PostgreSQL is reachable: return anything the spool
-	// captured while it was not, before writing this reconcile's own records.
-	r.drainAuditSpool(ctx, cluster, store)
-
-	observedAt := r.now()
 	recordErr := writer.RecordShutdownFlowCompilation(ctx, audit.ShutdownFlowCompilation{
 		CompilationID:      uuid.NewString(),
 		ObservedAt:         observedAt,
@@ -458,16 +431,8 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, fl
 			}
 		}
 		recordErr = errors.Join(recordErr, recordShutdownFlowDecisions(ctx, writer, flow, observedAt, configHash, triggerEvaluation))
-		recordErr = errors.Join(recordErr, r.recordShutdownFlowExecution(ctx, writer, store, flow, observedAt, bundle.Hash, configHash, triggerEvaluation, bundle))
 	}
-	if spoolWriter != nil {
-		r.reportAuditSpoolFallback(flow, spoolWriter.Stats(), triggerEvaluation)
-	}
-	closeErr := store.Close()
-	if recordErr != nil || closeErr != nil {
-		return errors.Join(recordErr, closeErr)
-	}
-	return nil
+	return recordErr
 }
 
 func shutdownAuditWriter(cluster *powerv1alpha1.PowerManagementCluster, store audit.Store) (audit.Writer, *audit.SpoolWriter, error) {

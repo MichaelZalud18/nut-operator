@@ -143,7 +143,7 @@ func (r *NodePowerAgentReconciler) shutdownFlowForSignal(ctx context.Context, na
 // decides whether a signal is still speaking for a live one. Two things have to hold, and the order
 // matters:
 //
-// The signal must not be newer than the execution record. recordShutdownFlowExecution runs the whole
+// The signal must not be newer than the execution record. executeShutdownFlow runs the whole
 // executor synchronously and only then writes LastExecution, so between the runner putting a signal
 // in the Secret and the status landing there is a window where the freshest signal in the cluster
 // belongs to an execution the flow has not admitted to yet. Comparing timestamps closes that window

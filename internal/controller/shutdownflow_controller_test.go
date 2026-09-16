@@ -1013,7 +1013,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				},
 			}
 
-			err := reconciler.recordShutdownFlowAudit(
+			err := reconciler.runShutdownFlow(
 				context.Background(),
 				flow,
 				accepted("compiled"),
@@ -1369,7 +1369,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				},
 			}
 
-			err := reconciler.recordShutdownFlowAudit(
+			err := reconciler.runShutdownFlow(
 				context.Background(),
 				flow,
 				rejected("PlannerRejected", "cycle detected"),

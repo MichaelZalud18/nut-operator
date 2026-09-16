@@ -143,10 +143,19 @@ When configured, the spool is also available if storage readiness is false or op
 fails before execution starts. The controller supplies an explicitly unavailable primary writer;
 it does not substitute successful empty reads. Approval and action safety checks still apply.
 Database connection, execution-history reads, and journal replay have one-second context budgets.
-Execution writes use a one-second deadline and latch a timeout for the rest of that reconcile, so
+Execution writes use a one-second deadline and latch a timeout for the rest of that worker run, so
 later records immediately use fallback instead of each spending another timeout. The production
 SQL driver honors these contexts; these bounds do not guarantee progress through a stalled local
 filesystem. Storage evidence failures remain separate from action outcomes.
+
+The manager-owned ShutdownFlow worker owns the store, spool writer, and their lifetime.
+It records compilation/decision evidence and independently enters execution for accepted flows;
+audit recording itself cannot start actions. Trigger/rehearsal eligibility, approval, and fresh
+target checks remain in the execution path. An evidence-write error is reported alongside any
+execution error, rather than becoming an execution-eligibility decision. The worker reports spool
+degradation and closes storage only after execution and overlapped action cleanup have returned,
+including cancellation. Storage setup still requires ready PostgreSQL or an explicitly configured
+spool; this separation does not make a no-spool deployment fail open when storage cannot open.
 
 The journal is bounded by `spec.storage.auditSpool.maxSize` (default `64Mi`, minimum `1Mi`). A
 PostgreSQL outage has no bounded duration, so an uncapped journal grows until the durable volume is

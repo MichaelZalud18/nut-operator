@@ -10,7 +10,7 @@ import (
 )
 
 // Database evidence must not consume an unbounded part of a shutdown window.
-// The bounded store latches a timed-out operation until this reconcile ends.
+// The bounded store latches a timed-out operation until this worker run ends.
 const shutdownAuditIOTimeout = time.Second
 
 func (r *ShutdownFlowReconciler) openExecutionAuditStore(ctx context.Context, cluster *powerv1alpha1.PowerManagementCluster) (audit.Store, error) {

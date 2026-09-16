@@ -151,7 +151,8 @@ Remaining default-calibration evidence (`OD-27`) lives in the
   authorization, signal expiry/withdrawal, audit history, and repeat-safe actions. Repeated effects
   after interruption must be safe; precise checkpoint restoration and proof of skipped work are not
   required. Distinguish unused resume persistence from ordinary historical execution evidence.
-  Coordinate with `F-132` and `ENG-3`; do not delete shared state before its in-process owner exists.
+  Preserve the in-process ownership established by completed `F-132` and `ENG-3` before deleting
+  shared state.
   **Testable now; Conditional:** repeated-action and episode-boundary tests, adaptive progression,
   fresh approval/targeting and stale-signal regressions, audit/history tests, and affected race suites.
   Define an explicit schema/upgrade strategy for resume-only tables without deleting unrelated
@@ -239,23 +240,8 @@ No open work. Communication-ordering artifact completion is in
 Owns: the PostgreSQL audit schema, storage backend resolution, retention, and the shutdown-time
 spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 
-- [ ] `ENG-3` [Medium] separate execution ownership from audit orchestration, preserving `F-131`.
-  `recordShutdownFlowAudit` still sets up the writer and calls `recordShutdownFlowExecution`;
-  make the eligible, authorized execution path independently explicit, with audit as an attached
-  bounded evidence sink. Preserve the manager-owned worker's writer/store lifetime established by
-  `F-132`; reconciliation cannot close storage underneath running work. This is a remaining
-  orchestration-boundary improvement, not
-  a reopened claim that unavailable PostgreSQL always blocks shutdown.
-  **Reconciled 2026-09-15:** `openExecutionAuditStore` already returns an unavailable bounded store
-  for configured spool fallback; `TestShutdownFlowSpoolsWhenDatabaseCannotOpen` covers unready
-  storage and connection failure while Enforce actions complete. Preserve this behavior, storage
-  I/O bounds, evidence degradation, spool replay, and separation of action/evidence outcomes.
-  SB-11's configured-spool condition remains authoritative; do not silently make a no-spool setup
-  fail-open or remove full-product storage requirements during structural cleanup.
-  **Testable now; Conditional:** unavailable/stalled database, startup/connection failures,
-  cancellation, spool full/write failures and replay, correct execution/store cleanup, and
-  concurrent-flow ownership. Keep approval gates independent of audit availability. Reuse real
-  PostgreSQL coverage from F-145; distinguish filesystem stalls from bounded database I/O.
+No open work. Execution/audit ownership separation (`ENG-3`) and database component coverage
+(`F-145`) are recorded in [completed tasks](tasks-completed.md#storage--audit).
 
 ---
 
@@ -424,8 +410,8 @@ Kind fixture/safety work and TEST-2 feasibility, real NetBox coverage, then acce
 profiles. Talos provisioning follows VM-8; TalosShutdown follows deterministic Talos bring-up.
 This is dependency guidance, not a requirement to serialize independent component work.
 ENG-1 begins with its stable-NUT gate and preserves F-97's separate investigation. MOD-4 is a
-distinct managed-NUT profile, not an implicit expansion of MOD-3. Coordinate F-132/ENG-3/ENG-4 on
-execution ownership before deleting resume state, and complete REL-5 before evaluating ENG-10.
+distinct managed-NUT profile, not an implicit expansion of MOD-3. ENG-4 must preserve the execution
+ownership established by F-132/ENG-3 when deleting resume state. Complete REL-5 before evaluating ENG-10.
 
 ---
 

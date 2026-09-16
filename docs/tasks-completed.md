@@ -250,6 +250,26 @@ status across trackers. Historical run output and longer investigations remain i
 
 ## Storage & Audit
 
+- [x] `ENG-3` [Medium] separate execution ownership from audit recording (2026-09-15).
+  The manager-owned `runShutdownFlow` worker owns bounded storage, spool replay/reporting, and
+  cleanup. `recordShutdownFlowAudit` only records compilation/decision evidence; the worker
+  independently calls `executeShutdownFlow` for accepted flows. Trigger/rehearsal eligibility,
+  fresh authorization, claims, and target gates remain in execution. Evidence and execution errors
+  are joined without turning write failures into eligibility decisions. Deferred cleanup closes
+  the store after execution and overlapped action cleanup, including cancellation and writer-setup
+  failure. Configured spool fallback and the no-spool storage-open gate retain SB-11/F-131 behavior;
+  resume-only machinery remains ENG-4's separate scope.
+  **Validated:** evidence-only recording cannot open/close storage or run actions; a twelve-case
+  matrix covers successful execution, write/close failures, cancellation, rejected/ineligible
+  flows, no-spool unavailability/connection failure, joined failures, and writer-setup cleanup.
+  Focused tests passed ten race-enabled
+  repetitions. Controller/envtest, audit, and executor race suites passed, including existing
+  concurrent-worker lifetime, cancellation, approval, spool-full/failure/replay regressions.
+  The full API/internal/command suite and the disposable real-PostgreSQL suite passed, including
+  bounded locked-writer fallback. Lint reported zero issues; targeted credential/unsafe-execution
+  scanning found no matches, and independent review found no security or logic regressions.
+  Database bounds do not claim stalled-filesystem protection.
+
 - [x] `F-145` [Medium] add an isolated real-PostgreSQL component test suite for audit persistence
   (2026-09-13).
   **Evidence (2026-09-13):** inspected audit/storage tests exercise SQL and connection interfaces

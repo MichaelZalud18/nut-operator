@@ -55,7 +55,7 @@ const (
 	triggerNotEligibleMessage = "shutdown flow execution has not started because no trigger is eligible"
 )
 
-func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context, writer audit.Writer, resumeReader audit.ResumeReader, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, bundle resolver.StructuralBundle) error {
+func (r *ShutdownFlowReconciler) executeShutdownFlow(ctx context.Context, writer audit.Writer, resumeReader audit.ResumeReader, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, bundle resolver.StructuralBundle) error {
 	if writer == nil || flow == nil || evaluation == nil {
 		return nil
 	}
