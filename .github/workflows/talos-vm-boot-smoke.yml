@@ -1,0 +1,116 @@
+name: Talos VM Boot Smoke Test
+
+# VM-7's first milestone: manually triggered only. Boots one real Talos guest on the same
+# PEG/QEMU harness test/hadron's own VM-2 already proved on this runner class -- "qualify a Talos
+# guest using the existing PEG/QEMU harness, not a parallel Talos framework" (docs/tasks.md's VM-7
+# entry) -- generates and applies machine configuration over Talos's own API, bootstraps one
+# Kubernetes node, and confirms real Node Ready from the host. Downloads a real ISO and performs a
+# full unattended install and reboot, so this must never become a required or automatic check, and
+# must never run on every push. Unverified against a real guest as of this writing; see
+# test/talos/boot_smoke_test.go's own doc comment.
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  boot:
+    permissions:
+      contents: read
+    name: Boot one Talos guest and confirm a real Node comes up Ready
+    runs-on: ubuntu-latest
+    # Sum of bounded steps below is 54 minutes; reserve additional cancellation margin.
+    timeout-minutes: 58
+    steps:
+      - name: Clone the code
+        timeout-minutes: 2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        timeout-minutes: 5
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Record free disk before installing tooling
+        timeout-minutes: 1
+        run: df -h /
+
+      - name: Install QEMU
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+
+      # Pinned against the release's own sha256sum.txt sidecar, the same amd64 build (v1.12.9) the
+      # test's own pinned metal-amd64.iso ships, so talosctl and the guest speak the same protocol
+      # version.
+      - name: Install talosctl
+        timeout-minutes: 3
+        run: |
+          curl -fsSL -o /usr/local/bin/talosctl \
+            "https://github.com/siderolabs/talos/releases/download/v1.12.9/talosctl-linux-amd64"
+          echo "096edfaea9b5bda6858751d1623a72e017e97f2656772cba0344a752ffc6a572  /usr/local/bin/talosctl" | sha256sum -c -
+          chmod +x /usr/local/bin/talosctl
+
+      # Same fix as hadron-vm-probe.yml/hadron-vm-boot-smoke.yml: /dev/kvm is present but not
+      # group/user accessible by default on this runner image.
+      - name: Grant KVM device access
+        timeout-minutes: 1
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-talos-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo setfacl -m u:"$(whoami)":rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm && echo "/dev/kvm is read/write accessible"
+
+      - name: Allocate private smoke state
+        timeout-minutes: 1
+        run: echo "TALOS_STATE_ROOT=$(mktemp -d "$RUNNER_TEMP/talos-smoke-XXXXXXXX")" >> "$GITHUB_ENV"
+
+      # GNU timeout bounds compilation as well as the test binary. TERM permits cooperative
+      # cancellation; KILL bounds a hung library call. The Go deadline reserves cleanup time.
+      - name: Boot the pinned Talos artifact and bootstrap a node
+        timeout-minutes: 29
+        run: TMPDIR="$TALOS_STATE_ROOT" timeout --signal=TERM --kill-after=15s 28m go test -tags=talos,talos_smoke ./test/talos -run TestTalosNodeBootstraps -v -timeout=26m
+
+      # Stop before uploading artifacts, so slow diagnostics cannot delay process cleanup.
+      - name: Stop leftover guests owned by this run
+        id: cleanup
+        if: always() && env.TALOS_STATE_ROOT != ''
+        timeout-minutes: 1
+        run: python3 hack/talos-cleanup.py "$TALOS_STATE_ROOT"
+
+      - name: Dump guest console log on failure
+        timeout-minutes: 1
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for dir in "$TALOS_STATE_ROOT"/nut-operator-talos-*; do
+            echo "::group::$dir/stdout"
+            grep -iE 'error|fail|panic|talos' "$dir/stdout" 2>/dev/null \
+              || echo "(no matching lines, or nothing captured)"
+            echo "::endgroup::"
+          done
+
+      - name: Upload full guest console log on failure
+        timeout-minutes: 3
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: talos-boot-smoke-console
+          path: ${{ env.TALOS_STATE_ROOT }}/nut-operator-talos-*/std*
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove stopped guest state
+        if: always() && steps.cleanup.outcome == 'success'
+        timeout-minutes: 1
+        run: rm -rf -- "$TALOS_STATE_ROOT"
+
+      - name: Record free disk after the run
+        timeout-minutes: 1
+        if: always()
+        run: df -h /
