@@ -95,7 +95,15 @@ func TestTalosNodeBootstraps(t *testing.T) {
 	}
 
 	t.Logf("waiting for the Talos maintenance API on %s", TalosAPIAddr)
-	waitForWithDiagnostics(t, ctx, 3*time.Minute, "Talos maintenance API", func(ctx context.Context) error {
+	// 2026-09-16 first live run: the metal ISO's isolinux menu mirrors to the captured serial
+	// console (SeaBIOS's own display-to-serial mirroring when no VGA display is attached), but the
+	// Talos kernel itself does not -- its default boot entry has no console=ttyS0, so nothing
+	// further appears on that console even on a successful boot. That run's own guest never opened
+	// port 50000 within a 3-minute budget; CD-ROM-backed ISO boot under nested KVM plus Talos's own
+	// first-boot initialization is the likely cause, not a wiring defect (no connection-refused
+	// evidence, only deadline-exceeded). Widened budget, still comfortably inside the 26m go test
+	// deadline alongside the other three waits (5m + 3m + 5m).
+	waitForWithDiagnostics(t, ctx, 8*time.Minute, "Talos maintenance API", func(ctx context.Context) error {
 		return talosMaintenanceAPIReachable(ctx)
 	}, nil)
 

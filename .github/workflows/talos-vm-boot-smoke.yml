@@ -19,8 +19,8 @@ jobs:
       contents: read
     name: Boot one Talos guest and confirm a real Node comes up Ready
     runs-on: ubuntu-latest
-    # Sum of bounded steps below is 54 minutes; reserve additional cancellation margin.
-    timeout-minutes: 58
+    # Sum of bounded steps below is 57 minutes; reserve additional cancellation margin.
+    timeout-minutes: 62
     steps:
       - name: Clone the code
         timeout-minutes: 2
@@ -72,9 +72,12 @@ jobs:
 
       # GNU timeout bounds compilation as well as the test binary. TERM permits cooperative
       # cancellation; KILL bounds a hung library call. The Go deadline reserves cleanup time.
+      # Widened alongside the maintenance-API wait budget (see boot_smoke_test.go's own comment on
+      # the 2026-09-16 first live run): 8m + 5m + 3m + 5m of explicit waits plus small talosctl call
+      # overhead comfortably fits a 30m test deadline.
       - name: Boot the pinned Talos artifact and bootstrap a node
-        timeout-minutes: 29
-        run: TMPDIR="$TALOS_STATE_ROOT" timeout --signal=TERM --kill-after=15s 28m go test -tags=talos,talos_smoke ./test/talos -run TestTalosNodeBootstraps -v -timeout=26m
+        timeout-minutes: 32
+        run: TMPDIR="$TALOS_STATE_ROOT" timeout --signal=TERM --kill-after=15s 31m go test -tags=talos,talos_smoke ./test/talos -run TestTalosNodeBootstraps -v -timeout=30m
 
       # Stop before uploading artifacts, so slow diagnostics cannot delay process cleanup.
       - name: Stop leftover guests owned by this run

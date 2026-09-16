@@ -378,7 +378,18 @@ func writeRealSignal(ctx context.Context, t *testing.T, guest actuatorDaemonSetG
 func waitForActuatorPodLog(ctx context.Context, t *testing.T, clientset *kubernetes.Clientset, podName, what, want string) string {
 	t.Helper()
 	var log string
-	waitForWithDiagnostics(t, ctx, 2*time.Minute, what, func(ctx context.Context) error {
+	// 2026-09-16 first live run: three of five negative-signal subtests timed out at the previous
+	// 2-minute budget, each one immediately following another subtest's own writeRealSignal call.
+	// The actuator log itself proved why: it kept re-logging the *prior* subtest's own rejection
+	// reason for over a minute after the new signal was patched in, because this is a real
+	// Kubernetes projected-Secret-volume propagation delay, not a test or actuator bug -- Kubernetes'
+	// own documentation states the total delay from a Secret update to it appearing in a mounted
+	// volume can be as long as the kubelet sync period (1m default) plus the secret cache TTL (1m
+	// default), i.e. up to 2 minutes in the worst case
+	// (https://kubernetes.io/docs/concepts/configuration/secret/). Back-to-back subtests in the same
+	// pod can land unluckily in that cycle. Widened past the documented worst case, with margin for
+	// the actuator's own poll interval and API latency on top.
+	waitForWithDiagnostics(t, ctx, 4*time.Minute, what, func(ctx context.Context) error {
 		current, err := clientset.CoreV1().Pods(actuatorDaemonSetNamespace).Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
 			return err
@@ -506,7 +517,12 @@ spec:
 	if err == nil {
 		t.Fatalf("expected admission to reject a PowerOff NodePowerAgent with no approvalAnnotation, but apply succeeded:\n%s", out)
 	}
-	if !strings.Contains(string(out), "requires spec.shutdown.approvalAnnotation") {
+	// 2026-09-16 first live run: admission did reject the request, but this assertion's expected
+	// substring was stale -- internal/resourcevalidation/nodepoweragent.go actually raises
+	// field.Required(specPath.Child("approvalAnnotation"), "required for "+policy+" actuation"),
+	// which apimachinery renders as "<path>: Required value: <detail>", confirmed against that
+	// source and the live error text below, not guessed.
+	if !strings.Contains(string(out), "approvalAnnotation: Required value: required for PowerOff actuation") {
 		t.Fatalf("apply failed, but not for the expected reason:\n%s", out)
 	}
 	t.Logf("confirmed: admission rejected the unapproved PowerOff NodePowerAgent:\n%s", out)
