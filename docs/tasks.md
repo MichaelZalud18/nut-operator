@@ -331,10 +331,10 @@ own detailed prerequisites and prior milestones; the remaining work is below.
   lost SSH, and timeout as successful shutdown. Capture evidence before bounded cleanup and reuse
   it in VM-4; do not broaden privileges or substitute NotReady for actual guest shutdown.
   [Milestone history and evidence contract](contributing/audits/vm-test-research-2026-09-15.md#vm-3).
-- [ ] `VM-4` [Medium] finish production outage-to-halt acceptance: real NUT telemetry, trigger,
-  planner/executor, live workload drain, operator-produced signal, and guest-initiated power-off.
-  Prove survivor availability, current authorization/release evidence, enforced network policy,
-  and audit results in the two-guest topology. Measure capacity before adding another worker.
+- [ ] `VM-4` [Medium] finish production outage-to-halt acceptance: live workload drain and
+  guest-initiated power-off in the two-guest topology. Prove survivor availability, current
+  authorization/release evidence, enforced network policy, and audit results. Measure capacity
+  before adding another worker.
   **Testable now; Conditional:** retain logs/hypervisor evidence outside the guest; manual signal
   injection or a healthy UPS stack is not this end-to-end proof. Reuse VM-3's false-pass controls.
   Harness reset is not operator recovery; restart/resume continuity remains outside SB-1.
