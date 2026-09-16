@@ -18,19 +18,15 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
-	"net"
-	"path"
-	"time"
 
+	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
+	"github.com/MichaelZalud18/nut-operator/internal/resourcevalidation"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
-
-	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 )
 
 // nolint:unused
@@ -38,15 +34,6 @@ import (
 var nodepoweragentlog = logf.Log.WithName("nodepoweragent-resource")
 
 const defaultNodePowerAgentPriorityClassName = "system-node-critical"
-
-// minimumSignalTTL is derived from the delivery bound rather than chosen beside it (F-70).
-//
-// A shutdown signal reaches the actuator through a projected Secret, and this project's own
-// measurement put that at ~44 seconds; kubelet's sync period and cache TTL push the worst case
-// higher. A TTL below that window does not make the system stricter, it makes every correctly
-// delivered signal arrive already expired -- rejected as SignalStale on every node at once, at the
-// moment the flow needed them. 90s is the measured bound with room for the sync period on top.
-const minimumSignalTTL = 90 * time.Second
 
 // SetupNodePowerAgentWebhookWithManager registers the webhook for NodePowerAgent in the manager.
 func SetupNodePowerAgentWebhookWithManager(mgr ctrl.Manager) error {
@@ -203,130 +190,9 @@ func hasToleration(tolerations []corev1.Toleration, candidate corev1.Toleration)
 }
 
 func validateNodePowerAgentAdmission(obj *powerv1alpha1.NodePowerAgent) error {
-	var errs field.ErrorList
-	specPath := field.NewPath("spec")
-
-	errs = append(errs, validateOptionalObjectNameReference(specPath.Child("managementClusterRef"), obj.Spec.ManagementClusterRef)...)
-	errs = append(errs, validateOptionalNamespace(specPath.Child("namespace"), obj.Spec.Namespace)...)
-	if len(obj.Spec.NUTServerRefs) == 0 {
-		errs = append(errs, field.Required(specPath.Child("nutServerRefs"), "requires at least one NUTServer reference"))
-	}
-	for i, ref := range obj.Spec.NUTServerRefs {
-		errs = append(errs, validateObjectNameReference(specPath.Child("nutServerRefs").Index(i), ref)...)
-	}
-	errs = append(errs, validateOptionalObjectNameReference(specPath.Child("shutdownFlowRef"), obj.Spec.ShutdownFlowRef)...)
-	errs = append(errs, validateNodePowerAgentMode(specPath.Child("mode"), obj.Spec.Mode)...)
-	errs = append(errs, validateUpsmonConfig(specPath.Child("upsmon"), obj.Spec.Upsmon)...)
-	errs = append(errs, validateAgentShutdown(specPath.Child("shutdown"), obj)...)
-	errs = append(errs, validatePodHardening(specPath.Child("hardening"), obj.Spec.Hardening)...)
-
-	return newInvalidAdmissionError("NodePowerAgent", obj, errs)
+	return newInvalidAdmissionError("NodePowerAgent", obj, validateNodePowerAgentFields(obj))
 }
 
-func validateNodePowerAgentMode(path *field.Path, mode powerv1alpha1.NodePowerAgentMode) field.ErrorList {
-	switch mode {
-	case "", powerv1alpha1.NodePowerAgentModeMonitorOnly, powerv1alpha1.NodePowerAgentModeDryRun, powerv1alpha1.NodePowerAgentModeActuate:
-		return nil
-	default:
-		return field.ErrorList{field.NotSupported(path, mode, []string{
-			string(powerv1alpha1.NodePowerAgentModeMonitorOnly),
-			string(powerv1alpha1.NodePowerAgentModeDryRun),
-			string(powerv1alpha1.NodePowerAgentModeActuate),
-		})}
-	}
-}
-
-func validateUpsmonConfig(path *field.Path, config powerv1alpha1.UpsmonConfigSpec) field.ErrorList {
-	var errs field.ErrorList
-	errs = append(errs, validatePositiveDuration(path.Child("pollFrequency"), config.PollFrequency)...)
-	errs = append(errs, validatePositiveDuration(path.Child("alertPollFrequency"), config.AlertPollFrequency)...)
-	errs = append(errs, validatePositiveDuration(path.Child("deadTime"), config.DeadTime)...)
-	errs = append(errs, validatePositiveDuration(path.Child("hostSync"), config.HostSync)...)
-	errs = append(errs, validatePositiveDuration(path.Child("finalDelay"), config.FinalDelay)...)
-	return errs
-}
-
-func validateAgentShutdown(pathField *field.Path, obj *powerv1alpha1.NodePowerAgent) field.ErrorList {
-	var errs field.ErrorList
-	shutdown := obj.Spec.Shutdown
-	switch shutdown.ActuatorPolicy {
-	case "", powerv1alpha1.ActuatorPolicyDisabled, powerv1alpha1.ActuatorPolicySimulate:
-	case powerv1alpha1.ActuatorPolicyPowerOff, powerv1alpha1.ActuatorPolicyTalosShutdown:
-		policy := string(shutdown.ActuatorPolicy)
-		if obj.Spec.Mode != powerv1alpha1.NodePowerAgentModeActuate {
-			errs = append(errs, field.Invalid(pathField.Child("actuatorPolicy"), shutdown.ActuatorPolicy, policy+" requires spec.mode Actuate"))
-		}
-		if shutdown.ApprovalAnnotation == "" {
-			errs = append(errs, field.Required(pathField.Child("approvalAnnotation"), "required for "+policy+" actuation"))
-		} else if obj.Annotations[shutdown.ApprovalAnnotation] != "true" {
-			errs = append(errs, field.Invalid(field.NewPath("metadata").Child("annotations").Key(shutdown.ApprovalAnnotation), obj.Annotations[shutdown.ApprovalAnnotation], "must be set to \"true\" for "+policy+" actuation"))
-		}
-		if shutdown.ActuatorPolicy == powerv1alpha1.ActuatorPolicyTalosShutdown {
-			errs = append(errs, validateTalosShutdown(pathField.Child("talos"), shutdown.Talos)...)
-		}
-	default:
-		errs = append(errs, field.NotSupported(pathField.Child("actuatorPolicy"), shutdown.ActuatorPolicy, []string{
-			string(powerv1alpha1.ActuatorPolicyDisabled),
-			string(powerv1alpha1.ActuatorPolicySimulate),
-			string(powerv1alpha1.ActuatorPolicyPowerOff),
-			string(powerv1alpha1.ActuatorPolicyTalosShutdown),
-		}))
-	}
-	if shutdown.SignalPath != "" {
-		if containsControlCharacter(shutdown.SignalPath) {
-			errs = append(errs, field.Invalid(pathField.Child("signalPath"), shutdown.SignalPath, "must not contain control characters"))
-		}
-		if !path.IsAbs(shutdown.SignalPath) {
-			errs = append(errs, field.Invalid(pathField.Child("signalPath"), shutdown.SignalPath, "must be an absolute in-pod path"))
-		}
-	}
-	errs = append(errs, validatePositiveDuration(pathField.Child("signalTTL"), shutdown.SignalTTL)...)
-
-	// F-70: the TTL has to cover how long delivery actually takes.
-	//
-	// The measured projected-Secret delivery on this project's own smoke run was ~44s, and kubelet
-	// sync period plus cache TTL push the worst case above that. A TTL under the delivery bound
-	// means the actuator rejects operator-issued signals as SignalStale fleet-wide, evidenced only
-	// by a container log line -- so it is refused here rather than discovered during an outage.
-	if shutdown.SignalTTL != nil && shutdown.SignalTTL.Duration > 0 && shutdown.SignalTTL.Duration < minimumSignalTTL {
-		errs = append(errs, field.Invalid(pathField.Child("signalTTL"), shutdown.SignalTTL.Duration.String(),
-			fmt.Sprintf("must be at least %s: projected Secret delivery was measured at ~44s and kubelet sync period plus cache TTL push the worst case higher, so a shorter TTL rejects signals that arrived correctly", minimumSignalTTL)))
-	}
-	errs = append(errs, validateAnnotationKey(pathField.Child("approvalAnnotation"), shutdown.ApprovalAnnotation)...)
-	return errs
-}
-
-func validateTalosShutdown(pathField *field.Path, talos *powerv1alpha1.TalosShutdownSpec) field.ErrorList {
-	if talos == nil {
-		return field.ErrorList{field.Required(pathField, "required when actuatorPolicy is TalosShutdown")}
-	}
-	var errs field.ErrorList
-	errs = append(errs, validateSecretKeyReference(pathField.Child("talosConfigSecretKeyRef"), talos.TalosConfigSecretKeyRef)...)
-	if len(talos.Endpoints) == 0 {
-		errs = append(errs, field.Required(pathField.Child("endpoints"), "requires at least one Talos API endpoint IP"))
-	}
-	for i, endpoint := range talos.Endpoints {
-		endpointPath := pathField.Child("endpoints").Index(i)
-		if endpoint == "" {
-			errs = append(errs, field.Required(endpointPath, "requires a Talos API endpoint IP"))
-			continue
-		}
-		if containsControlCharacter(endpoint) {
-			errs = append(errs, field.Invalid(endpointPath, endpoint, "must not contain control characters"))
-			continue
-		}
-		if net.ParseIP(endpoint) == nil {
-			errs = append(errs, field.Invalid(endpointPath, endpoint, "must be an IP literal so the generated NetworkPolicy can allow only that Talos API endpoint"))
-		}
-	}
-	switch talos.NodeAddressSource {
-	case "", powerv1alpha1.TalosNodeAddressSourceHostIP, powerv1alpha1.TalosNodeAddressSourceNodeName:
-	default:
-		errs = append(errs, field.NotSupported(pathField.Child("nodeAddressSource"), talos.NodeAddressSource, []string{
-			string(powerv1alpha1.TalosNodeAddressSourceHostIP),
-			string(powerv1alpha1.TalosNodeAddressSourceNodeName),
-		}))
-	}
-	errs = append(errs, validatePositiveDuration(pathField.Child("shutdownTimeout"), talos.ShutdownTimeout)...)
-	return errs
+func validateNodePowerAgentFields(obj *powerv1alpha1.NodePowerAgent) field.ErrorList {
+	return resourcevalidation.ValidateNodePowerAgentFields(obj)
 }

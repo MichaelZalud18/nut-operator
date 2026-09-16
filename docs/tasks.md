@@ -250,13 +250,6 @@ No open work. Execution/audit ownership separation (`ENG-3`) and database compon
 Owns: reconciler correctness, RBAC scope, leader election, metrics infrastructure, and
 image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity-benchmarks.md` (`F-1`–`F-7`).
 
-- [ ] `ENG-5` [Medium] unify shared static validation for admission and reconciliation,
-  especially NodePowerAgent and ShutdownFlow. Keep both enforcement boundaries, but extract pure
-  per-resource rules with adapters for admission field errors versus status/conditions. Avoid a
-  generic validation framework and do not confuse static validation with fresh runtime authorization.
-  **Testable now; Conditional:** shared accept/reject matrices, create/update admission and
-  controller-condition tests, defaulting and bypassed-admission cases; preserve independent
-  execution/publication gates and useful field-specific errors.
 - [ ] `ENG-8` [Low] trim audit-history narration from production planner, controller, executor,
   kubeactions, renderer, webhook, and related runtime code. Remove F-number/review chronology and
   prior-bug storytelling only where it does not explain current behavior. Preserve non-obvious

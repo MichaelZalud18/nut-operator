@@ -31,6 +31,17 @@ status across trackers. Historical run output and longer investigations remain i
 
 ## Operator Maturity & Hardening
 
+- [x] `ENG-5` [Medium] unify static admission/reconciliation validation (2026-09-15).
+  `internal/resourcevalidation` owns pure NodePowerAgent and ShutdownFlow rules and shared field
+  checks. Admission retains API field errors/warnings and controllers adapt errors to conditions;
+  defaulting and fresh execution/publication authorization remain separate. Both boundaries now
+  reject agent `Always` pull policies and apply the full static rules to bypassed-admission objects.
+  Reserved operand namespaces share one owner; map validation produces stable error ordering.
+  **Validated:** 64 raw/defaulted create/update/controller parity cases, non-mutation and
+  bypassed-admission rejection conditions, deterministic error ordering, full controller/admission
+  suites and race runs. Manifest generation retained identical webhook/CRD/RBAC outputs; lint
+  reported zero issues. Independent review found no blocking security or correctness findings.
+
 - [x] `TEST-3` implementation/component slice (2026-09-15). `hack/test-kind.py` owns a unique
   Docker-backed Kind cluster and private temporary kubeconfig, refusing existing-cluster reuse.
   Context/cluster-UID checks precede CNI setup and direct Go suite entry; cleanup deletes only

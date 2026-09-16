@@ -17,19 +17,16 @@ limitations under the License.
 package controller
 
 import (
-	"errors"
 	"fmt"
-	"net"
 	"sort"
 	"strings"
 
-	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/kubeinventory"
-	"github.com/MichaelZalud18/nut-operator/internal/planner"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
-	shutdownflowadapter "github.com/MichaelZalud18/nut-operator/internal/shutdownflow"
+	"github.com/MichaelZalud18/nut-operator/internal/resourcevalidation"
 )
 
 type validationResult struct {
@@ -153,137 +150,23 @@ func validateNUTServer(obj *powerv1alpha1.NUTServer) validationResult {
 }
 
 func validateNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) validationResult {
-	if len(obj.Spec.NUTServerRefs) == 0 {
-		return rejected("NUTServerRefsRequired", "spec.nutServerRefs requires at least one NUTServer reference")
-	}
-	// F-73: PullPolicy Always makes the agent unable to start at the moment it is needed.
-	//
-	// The hazard is specific to this operand. The images may live in a registry running inside the
-	// cluster being shut down, so Always turns the one workload that must survive a power event into
-	// one that cannot start without the thing the power event is taking away. IfNotPresent is the
-	// default and the only safe value here; the image is pinned by tag or digest either way.
-	for name, image := range map[string]powerv1alpha1.ImageReference{
-		"upsmon":   obj.Spec.Images.Upsmon,
-		"actuator": obj.Spec.Images.Actuator,
-	} {
-		if image.PullPolicy == corev1.PullAlways {
-			return rejected("AgentImagePullPolicyAlways",
-				"spec.images.%s.pullPolicy cannot be Always: the agent may need to start while the registry serving its image is itself being shut down", name)
-		}
-	}
-	if nodePowerAgentActuatorPolicyRequiresApproval(obj.Spec.Shutdown.ActuatorPolicy) {
-		policy := string(obj.Spec.Shutdown.ActuatorPolicy)
-		if obj.Spec.Mode != powerv1alpha1.NodePowerAgentModeActuate {
-			return rejected("ActuationModeRequired", "%s actuation requires spec.mode Actuate", policy)
-		}
-		if obj.Spec.Shutdown.ApprovalAnnotation == "" {
-			return rejected("ApprovalAnnotationRequired", "%s actuation requires spec.shutdown.approvalAnnotation", policy)
-		}
-		if obj.Annotations[obj.Spec.Shutdown.ApprovalAnnotation] != "true" {
-			return rejected("ActuationNotApproved", "%s actuation requires approval annotation %q=true", policy, obj.Spec.Shutdown.ApprovalAnnotation)
-		}
-	}
-	if obj.Spec.Shutdown.ActuatorPolicy == powerv1alpha1.ActuatorPolicyTalosShutdown {
-		if obj.Spec.Shutdown.Talos == nil {
-			return rejected("TalosShutdownConfigRequired", "TalosShutdown actuation requires spec.shutdown.talos")
-		}
-		talos := obj.Spec.Shutdown.Talos
-		if talos.TalosConfigSecretKeyRef.Namespace == "" ||
-			talos.TalosConfigSecretKeyRef.Name == "" ||
-			talos.TalosConfigSecretKeyRef.Key == "" {
-			return rejected("TalosConfigSecretRequired", "TalosShutdown actuation requires spec.shutdown.talos.talosConfigSecretKeyRef")
-		}
-		if len(talos.Endpoints) == 0 {
-			return rejected("TalosEndpointsRequired", "TalosShutdown actuation requires spec.shutdown.talos.endpoints")
-		}
-		for _, endpoint := range talos.Endpoints {
-			if endpoint == "" || net.ParseIP(endpoint) == nil {
-				return rejected("TalosEndpointInvalid", "TalosShutdown endpoint %q must be an IP literal", endpoint)
-			}
-		}
-		switch talos.NodeAddressSource {
-		case "", powerv1alpha1.TalosNodeAddressSourceHostIP, powerv1alpha1.TalosNodeAddressSourceNodeName:
-		default:
-			return rejected("TalosNodeAddressSourceInvalid", "unsupported TalosShutdown nodeAddressSource %q", talos.NodeAddressSource)
-		}
-		if talos.ShutdownTimeout != nil && talos.ShutdownTimeout.Duration <= 0 {
-			return rejected("TalosShutdownTimeoutInvalid", "TalosShutdown shutdownTimeout must be greater than zero")
-		}
-	}
-
-	return accepted("node power agent contract accepted")
+	return staticValidationResult(resourcevalidation.ValidateNodePowerAgentFields(obj), "node power agent contract accepted")
 }
 
 func validateShutdownFlow(obj *powerv1alpha1.ShutdownFlow) validationResult {
-	if result := validateShutdownFlowHooks(obj); !result.accepted {
-		return result
-	}
-	inputs, err := shutdownflowadapter.PlannerInputs(obj)
-	if err != nil {
-		return rejected("InputHashEncodingFailed", "shutdown flow input conversion failed: %v", err)
-	}
-	_, diagnostics, err := planner.Compile(inputs, planner.TelemetryInputs{})
-	if err != nil {
-		for _, diagnostic := range diagnostics {
-			if diagnostic.Severity == planner.DiagnosticError {
-				return rejected(diagnostic.Reason, "%s", diagnostic.Message)
-			}
-		}
-		if errors.Is(err, planner.ErrRejected) {
-			return rejected("PlannerRejected", "shutdown flow planner rejected structural inputs")
-		}
-		return rejected("PlannerFailed", "shutdown flow planner failed: %v", err)
-	}
-
-	if obj.Spec.Mode == powerv1alpha1.ShutdownFlowModeEnforce {
-		approvalAnnotation := obj.Spec.Safety.ApprovalAnnotation
-		if approvalAnnotation == "" {
-			return rejected("ApprovalAnnotationRequired", "Enforce mode requires spec.safety.approvalAnnotation")
-		}
-		if obj.Annotations[approvalAnnotation] != "true" {
-			return rejected("FlowNotApproved", "Enforce mode requires approval annotation %q=true", approvalAnnotation)
-		}
-	}
-
-	return accepted("shutdown flow contract accepted")
+	_, errs := resourcevalidation.ValidateShutdownFlowFields(obj)
+	return staticValidationResult(errs, "shutdown flow contract accepted")
 }
 
-func validateShutdownFlowHooks(obj *powerv1alpha1.ShutdownFlow) validationResult {
-	usesHook := false
-	validate := func(action powerv1alpha1.ShutdownStepType, ref *powerv1alpha1.NamespacedNameReference, params map[string]string) validationResult {
-		if action != powerv1alpha1.ShutdownStepRunHook {
-			for key := range params {
-				if strings.HasPrefix(key, "workflow.") {
-					return rejected("WorkflowParamsRemoved", "workflow.* params belonged to the removed RunWorkflow action; use action RunHook with spec.hookRef")
-				}
-			}
-			return accepted("shutdown hook contract accepted")
-		}
-		usesHook = true
-		if ref == nil || ref.Namespace == "" || ref.Name == "" {
-			return rejected("HookRefRequired", "RunHook requires hookRef.namespace and hookRef.name")
-		}
-		for key := range params {
-			if strings.HasPrefix(key, "workflow.") {
-				return rejected("WorkflowParamsRemoved", "RunHook does not accept workflow.* params; put the invocation in the referenced ShutdownHook")
-			}
-		}
-		return accepted("shutdown hook contract accepted")
+func staticValidationResult(errs field.ErrorList, message string) validationResult {
+	if len(errs) == 0 {
+		return accepted(message)
 	}
-	for _, group := range obj.Spec.Groups {
-		if result := validate(group.Action, group.HookRef, group.Params); !result.accepted {
-			return result
-		}
+	reason := errs[0].Origin
+	if reason == "" {
+		reason = "InvalidSpec"
 	}
-	for _, step := range obj.Spec.Steps {
-		if result := validate(step.Type, step.HookRef, step.Params); !result.accepted {
-			return result
-		}
-	}
-	if usesHook && (obj.Spec.ManagementClusterRef == nil || obj.Spec.ManagementClusterRef.Name == "") {
-		return rejected("ManagementClusterRequired", "RunHook requires spec.managementClusterRef so outbound endpoint policy can be enforced")
-	}
-	return accepted("shutdown hook contract accepted")
+	return rejected(reason, "%s", errs[0].Error())
 }
 
 // validateShutdownFlowDeviceIdentification blocks Enforce mode when a UPS the
@@ -352,21 +235,8 @@ func shutdownFlowDeviceScope(obj *powerv1alpha1.ShutdownFlow, bundle resolver.St
 	return scope
 }
 
-// reservedOperandNamespaces mirrors internal/webhook/v1alpha1's list of namespaces this operator must
-// never be pointed at as an operand namespace (F-4). Duplicated rather than imported: the webhook
-// package depends on the API/controller packages, not the reverse, and this is the same small,
-// controlled duplication already accepted elsewhere in this codebase (isSupportedInventoryEntityKind).
-// The webhook is the primary defense (rejects the request at admission time); this is belt-and-
-// suspenders for objects that predate the webhook or reach the controller with it bypassed.
-var reservedOperandNamespaces = map[string]bool{
-	"default":         true,
-	"kube-system":     true,
-	"kube-public":     true,
-	"kube-node-lease": true,
-}
-
 func rejectReservedOperandNamespace(name string) error {
-	if reservedOperandNamespaces[name] {
+	if resourcevalidation.IsReservedOperandNamespace(name) {
 		return fmt.Errorf("operand namespace %q is a reserved Kubernetes system namespace", name)
 	}
 	return nil
