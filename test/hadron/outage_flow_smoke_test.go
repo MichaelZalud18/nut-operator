@@ -467,17 +467,8 @@ spec:
 	}, nil)
 	t.Log("confirmed: real telemetry transitioned the UPSDevice to OnBattery")
 
+	agentPodName := waitForExactlyOneRunningAgentPod(ctx, t, clientset, outageFlowNamespace)
 	t.Log("waiting for the real actuator to observe a real, operator-written signal")
-	agentPods, err := clientset.CoreV1().Pods(outageFlowNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "power.zalud.io/nodepoweragent=hadron-outage-agent",
-	})
-	if err != nil {
-		t.Fatalf("listing NodePowerAgent DaemonSet pods: %v", err)
-	}
-	if len(agentPods.Items) != 1 {
-		t.Fatalf("expected exactly one NodePowerAgent DaemonSet pod, got %d", len(agentPods.Items))
-	}
-	agentPodName := agentPods.Items[0].Name
 
 	waitForWithDiagnostics(t, ctx, 3*time.Minute, "actuator observes real signal", func(ctx context.Context) error {
 		logCtx, logCancel := context.WithTimeout(ctx, 15*time.Second)
@@ -498,10 +489,37 @@ spec:
 	t.Log("confirmed: the real actuator accepted a real, operator-written signal -- produced by a real trigger evaluation and execution, not hand-written")
 }
 
-// pullOperandImageTarball pulls a public image reference and re-tags it under this test's own
-// fully-qualified tag before saving, the same tagging discipline buildOperandImageTarball uses for
-// locally built images -- so nothing downstream (import, splitImageRef, the rendered manifest) has
-// to reason about two different tagging conventions depending on where an image came from.
+// waitForExactlyOneRunningAgentPod waits for exactly one Running, non-terminating pod matching the
+// NodePowerAgent DaemonSet's selector and returns its name. A one-shot List call right after
+// NodePowerAgent reports Ready can still catch a DaemonSet rollout mid-transition -- a live run saw
+// one Running pod alongside one Terminating pod from an earlier generation of the rendered
+// template, both matching the same selector -- so this waits out that window instead of asserting
+// on whatever the very first List call happened to return.
+func waitForExactlyOneRunningAgentPod(ctx context.Context, t *testing.T, clientset *kubernetes.Clientset, namespace string) string {
+	t.Helper()
+	var agentPodName string
+	waitForWithDiagnostics(t, ctx, 2*time.Minute, "exactly one NodePowerAgent DaemonSet pod", func(ctx context.Context) error {
+		agentPods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "power.zalud.io/nodepoweragent=hadron-outage-agent",
+		})
+		if err != nil {
+			return fmt.Errorf("listing NodePowerAgent DaemonSet pods: %w", err)
+		}
+		var running []corev1.Pod
+		for _, pod := range agentPods.Items {
+			if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning {
+				running = append(running, pod)
+			}
+		}
+		if len(running) != 1 {
+			return fmt.Errorf("expected exactly one Running NodePowerAgent DaemonSet pod, got %d Running of %d total", len(running), len(agentPods.Items))
+		}
+		agentPodName = running[0].Name
+		return nil
+	}, nil)
+	return agentPodName
+}
+
 // applyPowerManagementClusterAndWaitReady applies the real PowerManagementCluster and waits for
 // its PostgreSQL audit store to report ready. The caller must only invoke this once PostgreSQL
 // itself is already confirmed Ready: checked live, for storage mode ExternalPostgres (unlike
@@ -579,6 +597,10 @@ spec:
 	})
 }
 
+// pullOperandImageTarball pulls a public image reference and re-tags it under this test's own
+// fully-qualified tag before saving, the same tagging discipline buildOperandImageTarball uses for
+// locally built images -- so nothing downstream (import, splitImageRef, the rendered manifest) has
+// to reason about two different tagging conventions depending on where an image came from.
 func pullOperandImageTarball(ctx context.Context, t *testing.T, sourceRef, namePrefix string) (imageRef, tarPath string) {
 	t.Helper()
 	pull := exec.CommandContext(ctx, "docker", "pull", sourceRef)
