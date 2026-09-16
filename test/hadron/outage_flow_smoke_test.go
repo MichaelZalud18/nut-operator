@@ -483,8 +483,32 @@ spec:
 		}
 		return nil
 	}, func(ctx context.Context) {
-		out := runKubectlOutput(ctx, t, kubeconfigPath, "get", "shutdownflow", "hadron-outage-flow", "-o", "yaml")
+		diagCtx, diagCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer diagCancel()
+		out := runKubectlOutput(diagCtx, t, kubeconfigPath, "get", "shutdownflow", "hadron-outage-flow", "-o", "yaml")
 		t.Logf("diagnostic ShutdownFlow state:\n%s", out)
+
+		// A live run reached phase Aborted with reason AlreadyExecuted -- a dedup guard reporting
+		// that a matching execution already has evidence, not the abort's own root cause
+		// (internal/controller/shutdownflow_resume.go's markExecutionAlreadyRecorded only ever
+		// reports an existing LastExecution status, it never sets Phase itself). The real reason the
+		// first, genuine execution attempt aborted has to be in the manager's own log, since nothing
+		// in ShutdownFlow.status names it.
+		managerPods, listErr := clientset.CoreV1().Pods(operatorNamespace).List(diagCtx, metav1.ListOptions{
+			LabelSelector: "control-plane=controller-manager",
+		})
+		if listErr != nil || len(managerPods.Items) != 1 {
+			t.Logf("diagnostic manager log: could not identify manager pod (err=%v, pods=%d)", listErr, len(managerPods.Items))
+			return
+		}
+		logCtx, logCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer logCancel()
+		raw, logErr := clientset.CoreV1().Pods(operatorNamespace).GetLogs(managerPods.Items[0].Name, &corev1.PodLogOptions{}).DoRaw(logCtx)
+		if logErr != nil {
+			t.Logf("diagnostic manager log: fetching failed: %v", logErr)
+			return
+		}
+		t.Logf("diagnostic manager log:\n%s", raw)
 	})
 	t.Log("confirmed: the real actuator accepted a real, operator-written signal -- produced by a real trigger evaluation and execution, not hand-written")
 }
