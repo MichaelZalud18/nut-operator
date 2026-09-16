@@ -183,6 +183,11 @@ Full prerequisites, the Kustomize path, network and firewall requirements, a con
 walkthrough, upgrade and uninstall order, and troubleshooting are in
 [docs/installation/](docs/installation/README.md).
 
+The [configuration quick start](docs/installation/configuration.md) follows three domains:
+**UPS devices and NUT** (including Secrets and profiles), **topology**, then **shutdown flow**.
+Shared installation settings and node-agent prerequisites support those domains rather than
+turning the guide into a flat list of resource kinds.
+
 ## Development
 
 Start with [CONTRIBUTING.md](CONTRIBUTING.md) for checks and contribution workflow, and

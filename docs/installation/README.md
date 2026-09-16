@@ -175,7 +175,7 @@ kubectl label ns monitoring metrics=enabled
 
 ## Next
 
-- [Configuration](configuration.md) — the resources to apply, in order, and how to read the
-  compiled plan.
+- [Configuration quick start](configuration.md) — UPS devices and NUT, topology, then shutdown
+  flow. Each domain groups its supporting resources and ends with a check.
 - [Upgrade and uninstall](upgrade-and-uninstall.md) — and why deletion order matters.
 - [Troubleshooting](../troubleshooting.md) — symptoms and causes.

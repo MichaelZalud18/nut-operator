@@ -49,8 +49,13 @@ registry cleanup, and publishing require explicit authorization; this checklist 
 
 - [ ] `REL-5` [Medium] deliver a concise first-time-user quick-start before v1. Build on existing
   installation/configuration guides and examples instead of a parallel configuration reference.
+  **Organization implemented (2026-09-15):** the
+  [configuration quick start](installation/configuration.md) and documentation entry points now
+  follow UPS devices/NUT, topology, and shutdown flow, with their sub-components grouped together.
+  The minimal two-UPS example and disposable install-to-plan validation below remain open.
   Explain three user-facing configuration domains, not a flat list of CRDs:
-  **UPS/NUT integration:** UPSDevice, connection/credential Secrets, capability matching, and a
+  **UPS/NUT integration:** UPSDevice, connection/credential and TLS Secrets, capability/behavior
+  profiles and matching, device polling/thresholds, and a
   NUTServer selecting one or more UPS devices. One NUTServer produces one managed pod with one
   upsd process plus the selected devices' driver processes, owned by the supervisor sidecar.
   Multiple physical UPS devices may share a capability profile; it is not a per-device object.

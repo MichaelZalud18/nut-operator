@@ -14,17 +14,16 @@ last-ditch workloads, and node actuation policy are operator decisions. Start wi
 
 ## First hour
 
-In order. Each step is verifiable before the next one matters, and nothing here can power off a node.
+First [install the operator](installation/README.md) and configure its shared cluster settings.
+Then follow the [configuration quick start](installation/configuration.md) in three domains:
 
-1. **[Install the operator](installation/README.md).** Everything defaults to dry-run.
-2. **[Configure the resources](installation/configuration.md)**, in the order they depend on
-   each other.
-3. **[Model one UPS](guides/model-your-topology.md)** and the equipment it feeds — needed once a
-   machine has two supplies or something sits between the UPS and the host, skippable while one UPS
-   feeds everything.
-4. **[Assign shutdown tiers](guides/assign-shutdown-tiers.md)** to a handful of workloads.
-5. **Compile a plan and read it.** `kubectl get shutdownflow -o yaml` — the compiled waves, the
-   estimated duration, and the feasibility verdict against your UPS's reported runtime.
+1. **[UPS devices and NUT](installation/configuration.md#1-ups-devices-and-nut).** Devices,
+   NUT servers, credential/TLS Secrets, capability and behavior profiles, polling, and thresholds.
+2. **[Topology](installation/configuration.md#2-topology).** Hosts and supporting infrastructure,
+   power feeds, supply inputs, communication paths, and roles.
+3. **[Shutdown flow](installation/configuration.md#3-shutdown-flow).** Triggers, targets, tiers,
+   ordering, and actions. Configure supporting node agents where needed and review the compiled
+   plan in `DryRun` before enabling effects.
 
 At the end of that you have a reviewable plan and have changed nothing about how your cluster
 behaves. Going further — actually letting it stop a machine — is
@@ -39,7 +38,7 @@ placement.
 
 **[Installation](installation/README.md)** — prerequisites and the install itself, the
 [webhook certificate decision](installation/webhook-certificate.md),
-[configuration](installation/configuration.md) in dependency order, and
+[configuration](installation/configuration.md) organized by those three domains, and
 [upgrade and uninstall](installation/upgrade-and-uninstall.md).
 
 **[Guides](guides/README.md)** — hardware prep, topology modeling, tiers, last-ditch workloads,

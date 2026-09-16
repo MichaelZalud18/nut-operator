@@ -71,8 +71,9 @@ to scope to, and `OD-14`'s partial-domain pruning has no membership to prune aga
 run without modeling topology; it just cannot answer "which nodes does this outage affect."
 
 `Carries` edges model how a node is reached. Omitting them is a warning
-(`CommunicationPathUnmodeled`), never an error, because an unmodeled communication path costs only
-communication ordering — which `PL-21` defers past v1 anyway. Missing `Feeds` coverage is the error
+(`CommunicationPathUnmodeled`), never an error. Modeled communication paths participate in current
+planning: dependent work must precede carrier release, and carrier supply can constrain scope and
+runtime. See the [topology guide](../../guides/model-your-topology.md). Missing `Feeds` coverage is the error
 (`PowerPlanningOrphan`), because a node no UPS reaches cannot be planned for at all.
 
 ## Ordering versus membership
@@ -101,9 +102,9 @@ someone reading the labels.
 
 ## The dependency graph is the source of truth
 
-Ordering comes from two places and no others: the numbered tier a group declares, and the `before` /
-`after` edges it writes. Everything else about the compiled shape — which groups share a wave, how
-long each wave costs — is derived. Here the chain is:
+This example makes ordering explicit through tiers and `before` / `after` edges. The planner also
+honors dependency, node-clearance, and modeled communication constraints. Which groups share a wave
+and how long each wave costs are derived. Here the authored chain is:
 
 ```text
 burst-capacity -> application-workloads -> data-workloads -> storage-services -> standard-nodes -> controller-node
