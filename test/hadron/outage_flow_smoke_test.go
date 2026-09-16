@@ -368,14 +368,6 @@ spec:
     - port: 5432
       targetPort: 5432
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: hadron-outage-postgres-dsn
-  namespace: %[1]s
-stringData:
-  dsn: postgres://nutoperator:hadron-outage-test@hadron-outage-postgres.%[1]s.svc.cluster.local:5432/nutoperator?sslmode=disable
----
 apiVersion: power.zalud.io/v1alpha1
 kind: ShutdownFlow
 metadata:
@@ -454,6 +446,7 @@ spec:
 		return nil
 	}, nil)
 
+	createPostgresDSNSecret(ctx, t, kubeconfigPath, clientset, outageFlowNamespace)
 	applyPowerManagementClusterAndWaitReady(ctx, t, kubeconfigPath, outageFlowNamespace)
 
 	// Fixture and dwell times copied from test/e2e's own spec: OL held ~40s, then OB. This
@@ -515,11 +508,19 @@ spec:
 	t.Log("confirmed: the real actuator accepted a real, operator-written signal -- produced by a real trigger evaluation and execution, not hand-written")
 }
 
-// removeUnneededKubeSystemWorkloads deletes the stock k3s Deployments this test does not exercise
-// (local-path-provisioner: no PersistentVolumeClaim anywhere in this fixture; metrics-server: no
-// HPA or resource-metrics query; traefik: no Ingress). CoreDNS is deliberately left alone --
-// PostgreSQL is reached by its Service DNS name, hadron-outage-postgres.<namespace>.svc.cluster.
-// local, so this test depends on it.
+// removeUnneededKubeSystemWorkloads deletes every stock k3s Deployment: local-path-provisioner (no
+// PersistentVolumeClaim anywhere in this fixture), metrics-server (no HPA or resource-metrics
+// query), traefik (no Ingress), and coredns.
+//
+// CoreDNS is deliberately included, not kept: a live run still hit NodeNotCleared after the other
+// three were removed, because this test's own PostgreSQL DSN resolved a cluster DNS name
+// (hadron-outage-postgres.<namespace>.svc.cluster.local). Checked before assuming CoreDNS had to
+// stay for the operator's own components: nutserver_render.go's ServiceEndpoints already carries
+// the Service's ClusterIP precisely so agents can reach it "without cluster DNS (F-71)" -- this
+// project's own components never depended on CoreDNS in the first place, matching its "must
+// survive while the cluster is losing power" design principle
+// (docs/contributing/design/scope-boundaries.md). createPostgresDSNSecret uses that same
+// ClusterIP for the one DNS dependency this test itself introduced, so CoreDNS can go too.
 //
 // Found live: the executor's AgentShutdown readiness check (internal/executor/executor.go's
 // agentShutdownReadinessError, EX-9) refuses to proceed unless a node's non-exempt, non-DaemonSet
@@ -534,7 +535,7 @@ spec:
 // genuinely, accurately clear rather than working around the check.
 func removeUnneededKubeSystemWorkloads(ctx context.Context, t *testing.T, kubeconfigPath string, clientset *kubernetes.Clientset) {
 	t.Helper()
-	names := []string{"local-path-provisioner", "metrics-server", "traefik"}
+	names := []string{"local-path-provisioner", "metrics-server", "traefik", "coredns"}
 	t.Logf("removing unneeded kube-system Deployments so AgentShutdown's node-clearance check can pass: %s", strings.Join(names, ", "))
 	for _, name := range names {
 		runKubectl(ctx, t, kubeconfigPath, "-n", "kube-system", "delete", "deployment", name, "--ignore-not-found")
@@ -584,6 +585,39 @@ func waitForExactlyOneRunningAgentPod(ctx context.Context, t *testing.T, clients
 		return nil
 	}, nil)
 	return agentPodName
+}
+
+// createPostgresDSNSecret creates the DSN Secret PowerManagementCluster's ExternalPostgres storage
+// mode reads, using the PostgreSQL Service's ClusterIP rather than its cluster DNS name. This
+// cannot be part of the main combined manifest: a Service's ClusterIP is server-assigned, not
+// known until after the Service itself is created, so it has to be read back with its own kubectl
+// call rather than templated in ahead of time. See removeUnneededKubeSystemWorkloads for why
+// avoiding DNS here matters: it is what lets CoreDNS be removed too.
+func createPostgresDSNSecret(ctx context.Context, t *testing.T, kubeconfigPath string, clientset *kubernetes.Clientset, namespace string) {
+	t.Helper()
+	service, err := clientset.CoreV1().Services(namespace).Get(ctx, "hadron-outage-postgres", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting the PostgreSQL Service's ClusterIP: %v", err)
+	}
+	if service.Spec.ClusterIP == "" {
+		t.Fatalf("PostgreSQL Service %s/hadron-outage-postgres has no ClusterIP assigned", namespace)
+	}
+	manifest := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hadron-outage-postgres-dsn
+  namespace: %[1]s
+stringData:
+  dsn: postgres://nutoperator:hadron-outage-test@%[2]s:5432/nutoperator?sslmode=disable
+`, namespace, service.Spec.ClusterIP)
+	t.Log("creating the PostgreSQL DSN Secret from the Service's ClusterIP")
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
+	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfigPath)
+	cmd.Stdin = strings.NewReader(manifest)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("kubectl apply DSN secret: %v\n%s", err, out)
+	}
 }
 
 // applyPowerManagementClusterAndWaitReady applies the real PowerManagementCluster and waits for
