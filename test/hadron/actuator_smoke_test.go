@@ -323,22 +323,20 @@ func TestHadronActuatorArmsWithNoSignal(t *testing.T) {
 // gateModeAuthorized inside powerOffActuator itself. So proving the guest survives each of these
 // is a direct, load-bearing consequence of that gate ordering holding on a real kernel, not a
 // coincidence of nothing having gone wrong yet.
-func TestHadronActuatorRejectsInvalidSignals(t *testing.T) {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	if deadline, ok := t.Deadline(); ok {
-		var deadlineCancel context.CancelFunc
-		ctx, deadlineCancel = context.WithDeadline(ctx, deadline.Add(-time.Minute))
-		defer deadlineCancel()
-	}
+// invalidActuatorSignalCase is one negative-signal scenario shared by every test that exercises
+// InspectSignal's own rejection gates (cmd/node-actuator's own gate logic) -- the validation logic
+// itself does not depend on which Pod is running it, so the same cases apply unchanged whether the
+// actuator container came from a bare test-authored Pod (TestHadronActuatorRejectsInvalidSignals)
+// or the real NodePowerAgent-rendered DaemonSet (actuator_daemonset_smoke_test.go's
+// TestHadronActuatorDaemonSetRejectsInvalidSignals).
+type invalidActuatorSignalCase struct {
+	name       string
+	wantReason string
+	signal     func(nodeName string) nodeagent.ShutdownSignal
+}
 
-	guest := bootActuatorReadyGuest(ctx, t)
-
-	cases := []struct {
-		name       string
-		wantReason string
-		signal     func(nodeName string) nodeagent.ShutdownSignal
-	}{
+func invalidActuatorSignalCases() []invalidActuatorSignalCase {
+	return []invalidActuatorSignalCase{
 		{
 			name:       "wrong-node",
 			wantReason: "SignalWrongNode",
@@ -414,6 +412,20 @@ func TestHadronActuatorRejectsInvalidSignals(t *testing.T) {
 			},
 		},
 	}
+}
+
+func TestHadronActuatorRejectsInvalidSignals(t *testing.T) {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	if deadline, ok := t.Deadline(); ok {
+		var deadlineCancel context.CancelFunc
+		ctx, deadlineCancel = context.WithDeadline(ctx, deadline.Add(-time.Minute))
+		defer deadlineCancel()
+	}
+
+	guest := bootActuatorReadyGuest(ctx, t)
+
+	cases := invalidActuatorSignalCases()
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

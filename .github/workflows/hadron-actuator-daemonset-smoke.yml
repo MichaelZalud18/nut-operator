@@ -1,0 +1,127 @@
+name: Hadron Actuator DaemonSet Smoke Test
+
+# VM-3's "full DaemonSet/RBAC" requirement, named as still open in hadron-actuator-smoke.yml's own
+# comment: actuator_smoke_test.go's three tests all run the real actuator image in a hand-built,
+# test-authored Pod (actuatorPodSpec) -- proving the binary and its security context work under a
+# real kernel, but never through the real NodePowerAgent-rendered DaemonSet, ServiceAccount, and
+# RBAC an operator user actually gets. This workflow re-runs the same signal-validation scenarios
+# against that real rendered manifest instead, reusing the real-operator-deploy path
+# hadron-ups-stack-smoke.yml and hadron-outage-flow-smoke.yml already proved.
+#
+# TestHadronActuatorDaemonSetRejectsInvalidSignals: the same five negative-signal cases
+# actuator_smoke_test.go already proved (wrong-node, stale, future, malformed-timestamp,
+# missing-fields; shared via invalidActuatorSignalCases, not duplicated), injected into the real
+# Secret the NodePowerAgent's own render owns instead of a hand-created one.
+#
+# TestHadronActuatorDaemonSetRejectsAbsentApproval: a PowerOff NodePowerAgent with no
+# approvalAnnotation set is rejected at admission, never reaching a running DaemonSet at all.
+#
+# TestHadronActuatorDaemonSetHaltsOnAcceptedSignal: the actual high-severity core, through the real
+# DaemonSet this time -- a real accepted signal, a real reboot(2), and hypervisor-confirmed
+# evidence (the QEMU process this workflow never stops itself exiting on its own).
+#
+# Each test boots and deploys its own guest independently (no shared state between them), so this
+# workflow's own timeout budget below is unverified against a real guest as of this writing --
+# expect it to need adjustment after a first live run, the same as every other Hadron smoke
+# workflow's own initial budget did.
+#
+# Deliberately not attempted here: revoked approval (whether removing an already-approved
+# annotation is itself rejected by the same admission gate, or takes effect some other way, has no
+# live evidence yet -- see actuator_daemonset_smoke_test.go's own doc comment), and the two-guest
+# survivor topology VM-4 also still needs.
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  actuator-daemonset:
+    permissions:
+      contents: read
+    name: Boot Hadron guests and confirm the real rendered DaemonSet arms, rejects, and halts correctly
+    runs-on: ubuntu-latest
+    # Sum of bounded steps below is 84 minutes; reserve additional cancellation margin.
+    timeout-minutes: 92
+    steps:
+      - name: Clone the code
+        timeout-minutes: 2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        timeout-minutes: 5
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Record free disk before installing tooling
+        timeout-minutes: 1
+        run: df -h /
+
+      - name: Install QEMU and genisoimage
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils acl genisoimage
+
+      # Same fix as every other Hadron smoke workflow: /dev/kvm is present but not group/user
+      # accessible by default on this runner image.
+      - name: Grant KVM device access
+        timeout-minutes: 1
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-hadron-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo setfacl -m u:"$(whoami)":rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm && echo "/dev/kvm is read/write accessible"
+
+      - name: Allocate private smoke state
+        timeout-minutes: 1
+        run: echo "HADRON_STATE_ROOT=$(mktemp -d "$RUNNER_TEMP/hadron-smoke-XXXXXXXX")" >> "$GITHUB_ENV"
+
+      # GNU timeout bounds compilation, the four docker builds/saves and make install/
+      # deploy-byo-cert each test performs itself (three times over, once per test -- each test
+      # boots its own independent guest), and the test binary as a whole. TERM permits cooperative
+      # cancellation; KILL bounds a hung library call. The Go deadline reserves cleanup time.
+      - name: Boot guests and confirm the real rendered DaemonSet arms, rejects, and halts correctly
+        timeout-minutes: 62
+        run: TMPDIR="$HADRON_STATE_ROOT" timeout --signal=TERM --kill-after=15s 61m go test -tags=hadron,hadron_smoke ./test/hadron -run '^TestHadronActuatorDaemonSet' -v -timeout=59m
+
+      - name: Stop leftover guests owned by this run
+        id: cleanup
+        if: always() && env.HADRON_STATE_ROOT != ''
+        timeout-minutes: 1
+        run: python3 hack/hadron-cleanup.py "$HADRON_STATE_ROOT"
+
+      - name: Dump guest console log on failure
+        timeout-minutes: 1
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for dir in "$HADRON_STATE_ROOT"/nut-operator-hadron-*; do
+            echo "::group::$dir/stdout -- cloud-init/k3s/stage/error lines"
+            grep -iE 'cloud-init|k3s|provider-kairos|stage|error|fail|panic|halt gate' "$dir/stdout" 2>/dev/null \
+              || echo "(no matching lines, or nothing captured)"
+            echo "::endgroup::"
+          done
+
+      - name: Upload full guest console log on failure
+        timeout-minutes: 3
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hadron-actuator-daemonset-smoke-console
+          path: ${{ env.HADRON_STATE_ROOT }}/nut-operator-hadron-*/std*
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove stopped guest state
+        if: always() && steps.cleanup.outcome == 'success'
+        timeout-minutes: 1
+        run: rm -rf -- "$HADRON_STATE_ROOT"
+
+      - name: Record free disk after the run
+        timeout-minutes: 1
+        if: always()
+        run: df -h /
