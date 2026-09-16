@@ -124,25 +124,6 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 `executor-requirements.md`, `shutdown-flow.md`, `adaptive-execution-tier-pointer.md`,
 `settled-questions.md`. Audit: `docs/contributing/audits/planner-code-quality.md`.
 
-- [ ] `F-132` [High] keep long-running executions from monopolizing reconciliation. The entire flow
-  runs synchronously on the sole ShutdownFlow worker, delaying other flows and active status
-  heartbeats. **Testable now:** two simultaneous flows, a blocked action, ongoing status cadence,
-  and cancellation. Preserve per-flow serialization and correct in-process progress reporting;
-  restart/resume continuity is not part of this task (SB-1).
-  **Modularity context (2026-09-13):** `recordShutdownFlowExecution` directly calls
-  `Executor.Execute` inside reconciliation. Separate bounded in-process execution ownership from
-  reconciliation/status publication; keep executor policy independently runnable through its
-  existing action, observation, approval, and audit interfaces. Define cancellation and manager
-  shutdown cleanup, duplicate-reconcile behavior, per-flow serialization, and handling of two
-  flows targeting overlapping resources. Merely increasing worker count does not settle these
-  contracts. Acceptance must demonstrate a blocked flow cannot starve another flow or progress
-  updates, repeated reconciles cannot start duplicate work, and canceled work releases its owned
-  resources. A new network service, durable queue, or crash-resume subsystem is not required.
-  **2026-09-15 proposal merged here:** long Wait/drain/hook actions need tracked, bounded ownership,
-  not an untracked background goroutine. Coordinate audit ownership (`ENG-3`) and removal of
-  resume-only machinery (`ENG-4`) without weakening trigger-episode deduplication or fresh per-write
-  authorization. This is the existing finding, not a second concurrency task.
-
 Remaining default-calibration evidence (`OD-27`) lives in the
 [release qualification checklist](tasks-v1-release.md#qualification).
 
@@ -256,8 +237,9 @@ spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 - [ ] `ENG-3` [Medium] separate execution ownership from audit orchestration, preserving `F-131`.
   `recordShutdownFlowAudit` still sets up the writer and calls `recordShutdownFlowExecution`;
   make the eligible, authorized execution path independently explicit, with audit as an attached
-  bounded evidence sink. Coordinate writer/store lifetime with `F-132`'s execution owner so a
-  reconcile cannot close storage underneath running work. This is an ownership improvement, not
+  bounded evidence sink. Preserve the manager-owned worker's writer/store lifetime established by
+  `F-132`; reconciliation cannot close storage underneath running work. This is a remaining
+  orchestration-boundary improvement, not
   a reopened claim that unavailable PostgreSQL always blocks shutdown.
   **Reconciled 2026-09-15:** `openExecutionAuditStore` already returns an unavailable bounded store
   for configured spool fallback; `TestShutdownFlowSpoolsWhenDatabaseCannotOpen` covers unready

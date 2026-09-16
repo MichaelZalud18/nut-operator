@@ -258,6 +258,11 @@ func (w *SpoolWriter) append(ctx context.Context, kind, key string, primaryErr e
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	spoolFiles.Lock()
+	defer spoolFiles.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(w.directory, 0o700); err != nil {
 		return fmt.Errorf("create audit spool directory: %w", err)

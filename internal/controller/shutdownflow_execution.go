@@ -143,11 +143,19 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowExecution(ctx context.Context
 		input.RehearsalRequest = rehearsal.Token
 		input.RehearsalReason = rehearsal.Reason
 	}
+	if r.runs != nil {
+		if err := r.runs.claim(flow.Name, executionResourceClaims(flow, input, bundle)); err != nil {
+			setExecutionReadyCondition(&flow.Status.Conditions, flow.Generation, false, "ExecutionConflict", err.Error())
+			return err
+		}
+	}
+	progress := r.startExecutionProgress(flow, input, executionEvaluation)
 	executeStart := time.Now()
 	result, err := executorpkg.Executor{
-		Writer: writer,
-		Runner: r.ExecutorRunner,
-		Clock:  r.now,
+		Progress: progress,
+		Writer:   writer,
+		Runner:   r.ExecutorRunner,
+		Clock:    r.now,
 		// Re-read at each wave boundary rather than closing over the trigger-time
 		// snapshot: the whole reason to evaluate at boundaries is that power may have
 		// moved since the last one.
@@ -912,6 +920,9 @@ func (r *ShutdownFlowReconciler) approvalChecker(flow *powerv1alpha1.ShutdownFlo
 		var current powerv1alpha1.ShutdownFlow
 		if err := r.reader().Get(ctx, key, &current); err != nil {
 			return false, err
+		}
+		if current.UID != flow.UID || current.Generation != flow.Generation || !current.DeletionTimestamp.IsZero() {
+			return false, nil
 		}
 		return effectiveShutdownFlowMode(current.Spec.Mode) == powerv1alpha1.ShutdownFlowModeEnforce, nil
 	}

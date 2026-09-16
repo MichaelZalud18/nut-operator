@@ -157,7 +157,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 					}
 					Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
 				}
-				_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				_, err := r.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
 				Expect(meta.FindStatusCondition(flow.Status.Conditions, powerv1alpha1.ConditionAccepted).Status).To(Equal(metav1.ConditionTrue))
@@ -193,7 +193,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			flow.Spec.CommunicationPaths = []powerv1alpha1.FlowCommunicationPath{{Service: "NUT", Exempt: true}}
 			Expect(k8sClient.Update(ctx, flow)).To(Succeed())
 			r := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := r.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
 			Expect(meta.FindStatusCondition(flow.Status.Conditions, powerv1alpha1.ConditionAccepted).Status).To(Equal(metav1.ConditionTrue))
@@ -212,7 +212,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			flow.Spec.CommunicationPaths[0].Entities = []string{"missing-service-carrier"}
 			Expect(k8sClient.Update(ctx, flow)).To(Succeed())
 			r := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := r.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
 			Expect(meta.FindStatusCondition(flow.Status.Conditions, powerv1alpha1.ConditionAccepted).Status).To(Equal(metav1.ConditionFalse))
@@ -223,7 +223,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 		It("should accept but degrade inventory with unknown communication supply", func() {
 			Expect(k8sClient.Delete(ctx, &powerv1alpha1.PowerInventoryEdge{ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestSwitchFeedsEdgeName}})).To(Succeed())
 			reconciler := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := reconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			flow := &powerv1alpha1.ShutdownFlow{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, flow)).To(Succeed())
@@ -253,7 +253,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			compileDurationSamplesBefore := histogramSampleCount(metrics.ShutdownFlowCompileDurationSeconds.WithLabelValues(shutdownFlowTestResourceName))
 			triggerEvaluationsBefore := testutil.ToFloat64(metrics.ShutdownFlowTriggerEvaluationsTotal.WithLabelValues(shutdownFlowTestResourceName, "false"))
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -305,16 +305,19 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.CapabilityMatchCount).To(Equal(int32(1)))
 		})
 
-		It("tolerates the object advancing between Get and the status write (F-31)", func() {
+		It("retries an advancing object before starting execution (F-31, F-132)", func() {
 			By("Reconciling through a client that simulates a concurrent external write landing between the reconciler's Get and its status write")
 			controllerReconciler := &ShutdownFlowReconciler{
 				Client: &resourceVersionRaceInjectingClient{Client: k8sClient, key: typeNamespacedName},
 				Scheme: k8sClient.Scheme(),
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
+			Expect(apierrors.IsConflict(err)).To(BeTrue())
+			Expect(controllerReconciler.runs.snapshot(typeNamespacedName.Name)).To(BeNil())
+			_, err = controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			resource := &powerv1alpha1.ShutdownFlow{}
@@ -342,7 +345,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				},
 			}
 
-			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			result, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -388,7 +391,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 					return startedAt
 				},
 			}
-			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			result, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -408,7 +411,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			controllerReconciler.Clock = func() time.Time {
 				return startedAt.Add(6 * time.Minute)
 			}
-			result, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+			result, err = controllerReconciler.reconcileForTest(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -456,7 +459,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				},
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(store.shutdownFlowExecutions).To(HaveLen(2))
 			Expect(store.executionWaves).To(HaveLen(4))
@@ -484,7 +487,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(executionReady).NotTo(BeNil())
 			Expect(executionReady.Status).To(Equal(metav1.ConditionTrue))
 
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(store.shutdownFlowExecutions).To(HaveLen(2))
 			Expect(store.actionAttempts).To(HaveLen(2))
@@ -498,7 +501,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			pollTime = metav1.NewTime(currentTime.Add(-10 * time.Second))
 			device.Status.LastPollTime = &pollTime
 			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
 			Expect(resource.Status.LastExecution.TriggerActive).To(BeFalse())
@@ -509,7 +512,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			pollTime = metav1.NewTime(currentTime.Add(-10 * time.Second))
 			device.Status.LastPollTime = &pollTime
 			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(store.shutdownFlowExecutions).To(HaveLen(4))
 			Expect(store.actionAttempts).To(HaveLen(4))
@@ -553,7 +556,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				Clock:            func() time.Time { return observedAt },
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
@@ -579,7 +582,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(store.actionAttempts).To(HaveLen(2))
 			Expect(store.actionAttempts[0].Details).To(HaveKeyWithValue("rehearsal", true))
 
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(store.shutdownFlowExecutions).To(HaveLen(2))
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
@@ -630,7 +633,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			}
 
 			By("descending the full tier range on the first run")
-			_, err := firstInstance.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := firstInstance.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
@@ -654,7 +657,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			pollTime = metav1.NewTime(currentTime.Add(-10 * time.Second))
 			device.Status.LastPollTime = &pollTime
 			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
-			_, err = firstInstance.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = firstInstance.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
 			Expect(resource.Status.LastExecution.TriggerActive).To(BeFalse())
@@ -672,7 +675,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				StorageConnector: &fakeAuditConnector{store: store},
 				Clock:            func() time.Time { return currentTime },
 			}
-			_, err = secondInstance.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = secondInstance.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			// A fresh episode runs again, and the pointer it resumes from is the one the previous
@@ -728,7 +731,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			}
 
 			By("compiling the plan before the trigger fires")
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
 			Expect(resource.Status.ConfigHash).NotTo(BeEmpty())
@@ -802,7 +805,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			device.Status.LastPollTime = &pollTime
 			Expect(k8sClient.Status().Update(ctx, device)).To(Succeed())
 
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
@@ -835,7 +838,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				Scheme: k8sClient.Scheme(),
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -850,7 +853,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			profile.Spec.Version = "1.0.1"
 			Expect(k8sClient.Update(ctx, profile)).To(Succeed())
 
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err = controllerReconciler.reconcileForTest(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -884,7 +887,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -1449,7 +1452,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 				},
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(store.shutdownFlowExecutions).To(BeEmpty())
 			Expect(store.actionAttempts).To(BeEmpty())
@@ -1525,7 +1528,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(k8sClient.Update(ctx, resource)).To(Succeed())
 
 			controllerReconciler := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
@@ -1565,7 +1568,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			})
 
 			controllerReconciler := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			// The orphan rule is enforced in the compiler; this proves it actually
@@ -1606,7 +1609,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			})
 
 			controllerReconciler := &ShutdownFlowReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			resource := &powerv1alpha1.ShutdownFlow{}
@@ -1659,7 +1662,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			createSpoolingPowerCluster(ctx, GinkgoT().TempDir(), nil)
 			attachShutdownFlowToPowerCluster(ctx, typeNamespacedName)
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("reporting the inversion on the flow rather than only in the planner")
@@ -1733,7 +1736,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			createSpoolingPowerCluster(ctx, GinkgoT().TempDir(), nil)
 			attachShutdownFlowToPowerCluster(ctx, typeNamespacedName)
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("blocking nothing while still reporting the accepted risk")
@@ -1756,7 +1759,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			By("spooling execution evidence while PostgreSQL refuses writes")
 			failing := &fakeAuditStore{writeErr: errors.New("postgres write failed")}
 			_, err := newSpoolingShutdownFlowReconciler(failing, observedAt).
-				Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(failing.shutdownFlowExecutions).To(BeEmpty())
 			Expect(journalPath).To(BeAnExistingFile())
@@ -1765,7 +1768,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			replayedBefore := testutil.ToFloat64(metrics.AuditSpoolReplayRecordsTotal.WithLabelValues("replayed"))
 			healthy := &fakeAuditStore{}
 			_, err = newSpoolingShutdownFlowReconciler(healthy, observedAt.Add(time.Minute)).
-				Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			// The evidence PostgreSQL rejected the first time is now in PostgreSQL,
@@ -1803,7 +1806,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			droppedBefore := testutil.ToFloat64(metrics.AuditSpoolRecordsTotal.WithLabelValues("dropped"))
 			store := &fakeAuditStore{writeErr: errors.New("postgres write failed")}
 			_, err := newSpoolingShutdownFlowReconciler(store, observedAt).
-				Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			info, err := os.Stat(journalPath)
@@ -2031,8 +2034,8 @@ func histogramSampleCount(observer prometheus.Observer) uint64 {
 // in docs/tasks.md (10h production log, 744 "the object has been modified" conflicts on
 // ShutdownFlow): a reconcile's cache-backed read lands slightly behind a concurrent write, and the
 // reconcile's own later status write then races that stale read. Status().Update() carries the
-// stale resourceVersion and is rejected with a 409 Conflict; Status().Patch(client.MergeFrom(...))
-// has no resourceVersion precondition and applies cleanly regardless.
+// stale resourceVersion and is rejected with a 409 Conflict. The execution owner now requires
+// an optimistic status patch too: recompile/retry before admitting work on a superseded snapshot.
 type resourceVersionRaceInjectingClient struct {
 	client.Client
 	key      types.NamespacedName

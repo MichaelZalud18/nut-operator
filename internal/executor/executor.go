@@ -66,12 +66,21 @@ const (
 	DefaultSignalTTL  = 2 * time.Minute
 )
 
+// Progress carries group-count deltas or the latest adaptive snapshot. Consumers
+// must copy retained data before returning and must not perform blocking I/O.
+type Progress struct {
+	Groups, ActionAttempts, NodeReleases int
+	Adaptive                             *AdaptiveResult
+}
+
 // Executor writes the ordered execution evidence for one compiled shutdown run.
 type Executor struct {
-	Writer audit.Writer
-	Runner ActionRunner
-	Clock  func() time.Time
-	NewID  func() string
+	// Progress must be concurrency-safe: overlapping tiers may report together.
+	Progress func(Progress)
+	Writer   audit.Writer
+	Runner   ActionRunner
+	Clock    func() time.Time
+	NewID    func() string
 
 	// Observer reads live power state at each wave boundary, driving the tier
 	// pointer and the timing mode. Nil means the flow runs against
@@ -362,6 +371,8 @@ type waveExecutionResult struct {
 
 // Execute records the execution in compiled wave order.
 func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
+	ctx, cancelExecution := context.WithCancel(ctx)
+	defer cancelExecution()
 	groups, err := validateExecuteInput(input)
 	if err != nil {
 		return Result{}, err
@@ -473,9 +484,11 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		// so it tightens as the flow proceeds and the runtime drains.
 		waveState, adaptiveErr := e.evaluateWave(ctx, adaptiveInput, wave, remainingPlanDuration(input.Waves, waveIndex))
 		if adaptiveErr != nil {
+			cancelExecution()
+			pendingErr, _, pendingRecordErr := waitForPending()
 			result.Phase = PhaseFailed
-			result.RecordError = recordErr
-			return result, adaptiveErr
+			result.RecordError = errors.Join(recordErr, pendingRecordErr)
+			return result, errors.Join(adaptiveErr, pendingErr)
 		}
 
 		// F-126: an already-rendered actuator is not current authorization. Re-confirm approval
@@ -496,6 +509,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		adaptiveInput.Timing = waveState.Timing
 		adaptiveInput.Observation = waveState.Observation
 		result.Adaptive = adaptiveResultFrom(result.Adaptive, waveState)
+		e.reportProgress(Progress{Adaptive: &result.Adaptive})
 
 		waveStart := e.now()
 		if !sameInt32Ptr(tierWindow.ShutdownTier, wave.ShutdownTier) {
@@ -537,6 +551,14 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			}
 			timer := time.NewTimer(dueAfter)
 			select {
+			case <-ctx.Done():
+				stopTimer(timer)
+				pending = append(pending, runCh)
+				pendingErr, failedGroup, pendingRecordErr := waitForPending()
+				return e.recordAborted(ctx, writer, input, &result, abortRecord{
+					ExecutionID: executionID, Mode: mode, Err: errors.Join(ctx.Err(), pendingErr), FailedGroup: failedGroup,
+					DryRun: dryRun, StartedAt: startedAt, RecordError: errors.Join(recordErr, pendingRecordErr),
+				})
 			case run := <-runCh:
 				stopTimer(timer)
 				if returnResult, returnErr, done := handleWaveResult(run); done {
@@ -715,12 +737,14 @@ func (e Executor) runWave(ctx context.Context, cfg waveRunConfig, wave Wave, wav
 			}
 		}
 		if e.recordResumedGroup(&run, cfg.ResumedGroups, wave.Index, groupName) {
+			e.reportProgress(Progress{Groups: 1, ActionAttempts: 1})
 			continue
 		}
 		groupResult, groupErr := e.executeGroup(ctx, cfg.ActionContext, cfg.Writer, cfg.Input, cfg.ExecutionID, cfg.Mode, cfg.DryRun, wave.Index, group, waveState, tierWindowOverrunning(cfg.Window, e.now()))
 		run.Groups++
 		run.ActionAttempts += groupResult.ActionAttempts
 		run.NodeReleases += groupResult.NodeReleases
+		e.reportProgress(Progress{Groups: 1, ActionAttempts: groupResult.ActionAttempts, NodeReleases: groupResult.NodeReleases})
 		if groupResult.Degraded {
 			run.Degraded = true
 			if run.DegradedReason == "" {

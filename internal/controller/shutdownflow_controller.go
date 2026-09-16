@@ -33,10 +33,12 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/audit"
@@ -61,6 +63,9 @@ type ShutdownFlowReconciler struct {
 	// A cache a few seconds behind is exactly long enough to miss a pod that just
 	// landed on a node about to lose power.
 	APIReader client.Reader
+
+	runs              *flowRuns
+	executionProgress func()
 }
 
 // +kubebuilder:rbac:groups=power.zalud.io,resources=shutdownflows,verbs=get;list;watch;create;update;patch;delete
@@ -84,17 +89,29 @@ type ShutdownFlowReconciler struct {
 // against the current declarative inventory and UPS capability profile bundle.
 func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+	if r.runs == nil {
+		return ctrl.Result{}, fmt.Errorf("ShutdownFlow execution ownership requires SetupWithManager")
+	}
 
 	var flow powerv1alpha1.ShutdownFlow
 	if err := r.Get(ctx, req.NamespacedName, &flow); err != nil {
 		if apierrors.IsNotFound(err) {
+			r.runs.cancel(req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 	base := flow.DeepCopy()
+	if handled, result, err := r.publishOwnedRun(ctx, &flow, base); handled {
+		return result, err
+	}
+	if !flow.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
 
-	observedAt := r.now()
+	// metav1.Time persists at whole-second precision. Episode identities must use
+	// the same boundary before and after the status round trip.
+	observedAt := r.now().Truncate(time.Second)
 	reconcileResult := ctrl.Result{}
 	result := validateShutdownFlow(&flow)
 	var bundle resolver.StructuralBundle
@@ -289,10 +306,7 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		triggerNotEligibleReason,
 		triggerNotEligibleMessage,
 	)
-
-	if err := r.recordShutdownFlowAudit(ctx, &flow, result, resolverDiagnostics, plannerDiagnostics, bundle, compiledWaves, publishedArtifact, configHash, triggerEvaluation); err != nil {
-		log.Error(err, "failed to record ShutdownFlow audit records", "shutdownflow", flow.Name)
-	}
+	markExecutionPending(&flow, result.accepted, triggerEvaluation)
 
 	// EX-29 cadence: republish on a fixed interval whether or not anything changed, so
 	// silence from this flow means nothing is happening rather than that the operator
@@ -306,9 +320,19 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		publishCadence(&flow, cadenceParameters(managementCluster)),
 	)
 
-	if err := r.Status().Patch(ctx, &flow, client.MergeFrom(base)); err != nil {
+	if err := r.Status().Patch(ctx, &flow, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 		log.Error(err, "failed to update ShutdownFlow status")
 		return ctrl.Result{}, err
+	}
+	// Persist trigger episode and compiled plan before making execution eligible.
+	if !r.runs.submit(&flow, reconcileResult.RequeueAfter, func(runCtx context.Context, owned *powerv1alpha1.ShutdownFlow, publish func()) {
+		worker := *r
+		worker.executionProgress = publish
+		if err := worker.recordShutdownFlowAudit(runCtx, owned, result, resolverDiagnostics, plannerDiagnostics, bundle, compiledWaves, publishedArtifact, configHash, triggerEvaluation); err != nil {
+			log.Error(err, "Failed to record ShutdownFlow audit records", "shutdownflow", owned.Name)
+		}
+	}) {
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
 	return reconcileResult, nil
@@ -316,10 +340,17 @@ func (r *ShutdownFlowReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ShutdownFlowReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.runs = newFlowRuns(maxConcurrentFlowRuns)
+	if err := mgr.Add(r.runs); err != nil {
+		return err
+	}
 	specChanged := builder.WithPredicates(predicate.GenerationChangedPredicate{})
-	flowChanged := builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{}, predicate.AnnotationChangedPredicate{}))
+	flowChanged := builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{}, predicate.AnnotationChangedPredicate{}, predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool { return !e.ObjectNew.GetDeletionTimestamp().IsZero() },
+	}))
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&powerv1alpha1.ShutdownFlow{}, flowChanged).
+		WatchesRawSource(source.Channel(r.runs.events, &handler.EnqueueRequestForObject{})).
 		// F-42: scoped to the fields trigger evaluation reads. Unpredicated, every telemetry poll
 		// re-enqueued every flow.
 		Watches(&powerv1alpha1.UPSDevice{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange),

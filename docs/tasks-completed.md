@@ -72,7 +72,7 @@ status across trackers. Historical run output and longer investigations remain i
   assets. Race-enabled audit, controller (including real manager/watch/heartbeat/shutdown), and
   executor suites passed. Repeated concurrent-flow and shared-spool race tests passed; repository
   lint reported zero issues. Added-line security scans and independent source review cleared the
-  F-132 implementation recorded in `22c8261` (the accompanying Hadron edit was outside this review).
+  F-132 implementation. Hadron changes remained outside this review.
   See [in-process ownership](contributing/design/executor-requirements.md#in-process-ownership).
 
 - [x] `F-126` [High] independently recheck flow and agent authorization (2026-09-13).

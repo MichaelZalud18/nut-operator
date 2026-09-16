@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -75,8 +76,17 @@ func ReplaySpool(ctx context.Context, primary Writer, options ReplayOptions) (Re
 		fileName = defaultSpoolFileName
 	}
 	path := filepath.Join(options.Directory, fileName)
+	if err := ctx.Err(); err != nil {
+		return stats, err
+	}
+	// Replay is opportunistic. A second flow need not wait for another drain,
+	// and appenders never wait for database I/O while that drain runs.
+	if !spoolReplay.TryLock() {
+		return stats, nil
+	}
+	defer spoolReplay.Unlock()
 
-	file, err := os.Open(path) // #nosec G304 -- operator-configured spool path
+	file, snapshot, err := openSpoolSnapshot(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return stats, nil
@@ -85,7 +95,7 @@ func ReplaySpool(ctx context.Context, primary Writer, options ReplayOptions) (Re
 	}
 	defer func() { _ = file.Close() }()
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(io.LimitReader(file, snapshot.Size()))
 	// Compiled plans and dependency graphs are spooled as JSONB payloads and
 	// comfortably exceed bufio's default 64KiB line cap.
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -127,7 +137,7 @@ func ReplaySpool(ctx context.Context, primary Writer, options ReplayOptions) (Re
 	// file stays, because a spool that deletes evidence it failed to deliver is
 	// worse than one that retries.
 	if stats.Skipped == 0 {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := removeUnchangedSpool(path, snapshot); err != nil {
 			return stats, fmt.Errorf("remove drained audit spool journal: %w", err)
 		}
 	}

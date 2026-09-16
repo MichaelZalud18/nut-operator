@@ -161,8 +161,8 @@ operator problems, but neither outranks power response (SB-11).
 
 ### Replay
 
-`audit.ReplaySpool` drains the journal back into the primary writer, and `ShutdownFlow`
-reconciliation attempts it before writing new execution evidence. An unavailable primary leaves the
+`audit.ReplaySpool` drains the journal back into the primary writer, and the owned `ShutdownFlow`
+worker attempts it before writing new execution evidence. An unavailable primary leaves the
 journal in place for a later healthy reconcile. A spool that captures records but never returns them does not
 preserve the audit trail; it loses it more slowly.
 
@@ -170,6 +170,13 @@ Replay is safe to repeat. Every spooled record carries the same identity the pri
 immutable inserts ignore conflicts on that identity, while mutable execution progress uses upserts.
 Re-applying a record does not create a duplicate. The journal is removed only after a fully clean drain: a record that fails, or one this
 build does not recognize, leaves the file in place. A drain failure is logged, never returned.
+
+Concurrent workers coordinate journal size checks and appends across writer instances. Replay
+reads a fixed-size snapshot and removes the journal only if its identity, size, and modification
+time remain unchanged. Evidence appended during replay remains for a later idempotent drain.
+Only one in-process replay runs at a time; other workers skip that opportunistic drain rather
+than wait. Appenders do not hold a filesystem lock across database replay calls. This coordination
+covers workers in one manager process, not independent processes sharing a spool directory.
 
 The behavior has direct precedent in the telemetry tier — Fluent Bit filesystem buffering, the
 OpenTelemetry Collector's persistent sending queue, Vector disk buffers, and the Prometheus WAL all

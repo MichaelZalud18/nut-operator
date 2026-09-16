@@ -65,7 +65,8 @@ guess. (GP-2.)
 
 **EX-6 · Mode is re-read per wave.** Revoking an approval annotation mid-flow stops effectful
 execution at the next wave boundary. In-flight actions in the current wave complete or time out;
-subsequent waves run dry.
+subsequent waves run dry. A spec change, including a mode change, also cancels the manager-owned
+run once reconciled; the wave gate remains a fail-closed backstop before cancellation arrives.
 
 ---
 
@@ -125,6 +126,40 @@ evidence without the production callback. Per-wave selector enumeration is a sep
 ---
 
 ## Wave Execution
+
+### In-Process Ownership
+
+Reconciliation compiles and publishes policy; manager-owned workers execute it. The bounded
+worker owner (`internal/controller/shutdownflow_runs.go`) admits one run per flow name, including
+while a same-name replacement waits for the old run to stop. Its capacity includes completed
+runs awaiting status publication. Capacity exhaustion leaves the flow pending and retries; it
+does not start an untracked goroutine or block the reconciliation worker.
+
+Only reconciliation writes Kubernetes status. Workers publish immutable in-memory snapshots
+with execution identity, running phase, completed group/action/release counts, and adaptive
+state. Change notifications enqueue reconciliation; the configured heartbeat is the backstop
+if notifications coalesce. Completion stays owned until its optimistic status patch succeeds,
+so a failed status write cannot start the same execution again. Trigger episode timestamps use
+the same whole-second precision as persisted Kubernetes `Time` values.
+
+Deleting/replacing a flow or changing its spec cancels the owned run. Manager shutdown closes
+admission, cancels all runs, and joins their work. Action implementations must honor context
+cancellation; cancellation does not undo completed mutations or retract published halt signals.
+Fresh wave approval and per-node write authorization remain required while cancellation travels
+through the controller. Superseded runs cannot overwrite the new resource's status.
+
+Cross-flow claims are acquired atomically before execution, without holding a partial claim while
+waiting. Disjoint node-only cordon/drain plans may run concurrently. Workload selectors, external
+hooks, and host shutdown use an exclusive claim: their effects can include changing pod placement,
+external systems, or shared control-plane/communication infrastructure. Dry-run, Wait, and Notify
+alone need no mutation claim. A conflict sets `ExecutionReady=False` with `ExecutionConflict`;
+the contender re-evaluates and retries after the owner releases its claims. This is not ordering
+between independent plans. Put mutually dependent shutdown actions in one flow.
+
+The worker owns its audit writer/store through executor completion, including every overlapped
+wave and cancellation cleanup. Only then are storage and claims released. PostgreSQL bounds,
+configured spool fallback, and separate action/evidence outcomes still apply. Ownership is
+in-process, not a durable queue or a restart/exactly-once guarantee (SB-1).
 
 **EX-10 · Waves execute strictly in compiled order.** Groups within a wave run concurrently; a wave
 completes only when every group has met its completion condition or exhausted its timeout. The
