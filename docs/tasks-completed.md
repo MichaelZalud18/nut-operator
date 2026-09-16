@@ -54,6 +54,27 @@ status across trackers. Historical run output and longer investigations remain i
 
 ## Planning & Execution Logic
 
+- [x] `F-132` [High] separate long-running execution from reconciliation (2026-09-15).
+  Bounded manager-owned workers serialize each flow, publish running counts/adaptive state through
+  reconciliation, retain completion until status succeeds, and cancel/join on deletion, replacement,
+  spec changes, and manager shutdown. Atomic cross-flow claims defer conflicts without starting
+  effects; disjoint node-only work can proceed concurrently. Audit storage and claims outlive
+  overlapped actions and their cancellation cleanup. Fixed an early-return overlap cleanup path
+  and normalized trigger episode timestamps to Kubernetes persistence precision. Shared spool
+  append/cap checks and snapshot replay preserve evidence across concurrent workers.
+  Acceptance covers independent flows beside a blocked action, advancing heartbeats, duplicate
+  reconciliation, status-write failure, bounded capacity, cancellation/resource release,
+  conflicting execution/retry, audit lifetime, concurrent spooling/replay, blocked rehearsal
+  cadence, and overlapped observation-failure cleanup.
+  The existing policy tests exercise the asynchronous path. `ENG-3`'s audit orchestration cleanup
+  and `ENG-4`'s resume-only removal remain separate; SB-1 and fresh authorization are preserved.
+  **Validated:** full `go test ./api/... ./internal/... ./cmd/... -count=1` passed with local envtest
+  assets. Race-enabled audit, controller (including real manager/watch/heartbeat/shutdown), and
+  executor suites passed. Repeated concurrent-flow and shared-spool race tests passed; repository
+  lint reported zero issues. Added-line security scans and independent source review cleared the
+  F-132 implementation recorded in `22c8261` (the accompanying Hadron edit was outside this review).
+  See [in-process ownership](contributing/design/executor-requirements.md#in-process-ownership).
+
 - [x] `F-126` [High] independently recheck flow and agent authorization (2026-09-13).
   Flow approval is re-read through the uncached reader at every wave and remains sticky-dry-run
   after revocation. The Kubernetes runner now requires a node release validator immediately
