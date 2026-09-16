@@ -515,6 +515,84 @@ spec:
 		t.Logf("diagnostic manager log:\n%s", raw)
 	})
 	t.Log("confirmed: the real actuator accepted a real, operator-written signal -- produced by a real trigger evaluation and execution, not hand-written")
+
+	assertRealAuditRecords(ctx, t, kubeconfigPath, outageFlowNamespace)
+}
+
+// assertRealAuditRecords queries the real PostgreSQL audit store this test itself stood up
+// (createPostgresDSNSecret, applyPowerManagementClusterAndWaitReady) and confirms the executor
+// actually wrote the durable records VM-4's own text names -- "current authorization/release
+// evidence (F-126/F-127)" -- rather than only trusting the actuator's own in-guest log line. The
+// four tables and their column semantics are read directly from internal/audit/schema.go and
+// internal/executor/executor.go's own recordNodeReleases (Released/Accepted are both
+// `clearedForRelease && !dryRun && publication.Published`; a successful, non-dry-run AgentShutdown
+// action attempt with no runner error defaults its outcome to OutcomeSucceeded ("Succeeded")), not
+// guessed at.
+func assertRealAuditRecords(ctx context.Context, t *testing.T, kubeconfigPath, namespace string) {
+	t.Helper()
+	t.Log("verifying the real PostgreSQL audit store recorded this execution")
+
+	postgresPod := runKubectlOutput(ctx, t, kubeconfigPath, "get", "pods", "-n", namespace,
+		"-l", "app=hadron-outage-postgres", "-o", "jsonpath={.items[0].metadata.name}")
+	if postgresPod == "" {
+		t.Fatal("no postgres pod found")
+	}
+
+	query := func(sql string) (string, error) {
+		queryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(queryCtx, "kubectl", "exec", "-n", namespace, postgresPod, "--",
+			"env", "PGPASSWORD=hadron-outage-test",
+			"psql", "-h", "127.0.0.1", "-U", "nutoperator", "-d", "nutoperator", "-tAc", sql)
+		cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfigPath)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("psql query %q: %w\n%s", sql, err, out)
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+
+	var executionID string
+	waitForWithDiagnostics(t, ctx, time.Minute, "shutdownflow_executions row", func(ctx context.Context) error {
+		id, err := query(`SELECT execution_id FROM power.shutdownflow_executions ` +
+			`WHERE shutdownflow = 'hadron-outage-flow' AND mode = 'Enforce' ` +
+			`AND dry_run = false AND approved = true ` +
+			`ORDER BY observed_at DESC LIMIT 1`)
+		if err != nil {
+			return err
+		}
+		if id == "" {
+			return fmt.Errorf("no matching shutdownflow_executions row yet")
+		}
+		executionID = id
+		return nil
+	}, nil)
+	t.Logf("real execution_id: %s", executionID)
+
+	for _, check := range []struct {
+		table string
+		sql   string
+	}{
+		{"shutdownflow_action_attempts", fmt.Sprintf(
+			`SELECT count(*) FROM power.shutdownflow_action_attempts `+
+				`WHERE execution_id = '%s' AND action = 'AgentShutdown' AND outcome = 'Succeeded'`, executionID)},
+		{"node_release_records", fmt.Sprintf(
+			`SELECT count(*) FROM power.node_release_records `+
+				`WHERE execution_id = '%s' AND released = true AND approved = true`, executionID)},
+		{"node_signal_handoffs", fmt.Sprintf(
+			`SELECT count(*) FROM power.node_signal_handoffs `+
+				`WHERE execution_id = '%s' AND accepted = true`, executionID)},
+	} {
+		count, err := query(check.sql)
+		if err != nil {
+			t.Fatalf("querying %s: %v", check.table, err)
+		}
+		if count == "0" || count == "" {
+			t.Fatalf("expected at least one matching row in %s for execution %s, got %q", check.table, executionID, count)
+		}
+		t.Logf("confirmed: %s has %s matching row(s)", check.table, count)
+	}
+	t.Log("confirmed: the real PostgreSQL audit store recorded a successful action attempt, node release, and signal handoff for this execution")
 }
 
 // removeUnneededKubeSystemWorkloads deletes every stock k3s Deployment: local-path-provisioner (no
