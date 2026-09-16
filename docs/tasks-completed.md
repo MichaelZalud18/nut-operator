@@ -31,6 +31,21 @@ status across trackers. Historical run output and longer investigations remain i
 
 ## Operator Maturity & Hardening
 
+- [x] `ENG-6` [Low] split operand rendering into focused same-package files (2026-09-15).
+  `nodepoweragent_render.go` and `nutserver_render.go` retain reconciliation orchestration;
+  adjacent files own discovery, config/credentials/TLS, policies, workloads, and node-agent
+  signal authorization, scheduling, Talos, and readiness/status. Existing shared rendering
+  helpers live in `operand_render_helpers.go`. No API, service boundary, or rendering behavior
+  changed, and the completed ENG-1 supervisor implementation is preserved.
+  **Validated:** token-level comparison preserved all 156 declarations and their attached
+  comments. Controller tests passed before extraction and with the race detector afterward,
+  including envtest. The full API/internal/command suite passed; repository lint reported zero
+  issues, and credential/unsafe-execution pattern scanning found no matches in the moved files.
+  Existing regression tests continue to cover owner references, workload security/config,
+  rollout hashes and holds, signal revocation, TLS, and readiness. Historical audit references
+  remain historical; comment cleanup stays scoped to ENG-8. Independent review confirmed
+  declaration/comment preservation and found no security or logic regressions.
+
 - [x] `ENG-7` [Medium] retire Event-only NUTServer and NodePowerAgent finalizers (2026-09-15).
   No external teardown obligation was present. New resources receive no cleanup finalizer;
   live and terminating legacy resources retire only the operator's key through an optimistic

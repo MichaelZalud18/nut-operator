@@ -162,7 +162,7 @@ Remaining default-calibration evidence (`OD-27`) lives in the
 
 ### NUT Server / upsd
 
-Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_probe.go`, and the
+Owns: the `NUTServer` CRD, `internal/controller/nutserver_*.go`, and the
 `nut-server` operand image. Audit: `docs/contributing/audits/nutserver-pod-audit.md` (`F-15`–`F-19`, `F-23`,
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`, `F-124`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
@@ -209,7 +209,7 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 
 ### Node Agent / DaemonSet
 
-Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_render.go`, the `upsmon-agent`
+Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_*.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
 `internal/nodeagent`, plus the operator-side halt evidence in `internal/haltwatch` and
 `internal/controller/nodehalt_controller.go`. Design doc:
@@ -271,20 +271,13 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   **Testable now; Conditional:** shared accept/reject matrices, create/update admission and
   controller-condition tests, defaulting and bypassed-admission cases; preserve independent
   execution/publication gates and useful field-specific errors.
-- [ ] `ENG-6` [Low] split `nodepoweragent_render.go` and `nutserver_render.go` into focused
-  same-package files for target discovery, credentials/TLS, config rendering, NetworkPolicy,
-  workload objects, readiness/status, and related helpers. Preserve the reconciler/operand
-  architecture; no renderer DSL, public framework, or service layer just to reduce file size.
-  Coordinate NUT supervision changes with ENG-1 rather than maintaining two refactor branches.
-  **Testable now; Conditional:** unchanged rendered workload/config/security objects, owner refs,
-  hashes/rollout behavior, readiness, and controller tests. File movement must not change behavior.
 - [ ] `ENG-8` [Low] trim audit-history narration from production planner, controller, executor,
   kubeactions, renderer, webhook, and related runtime code. Remove F-number/review chronology and
   prior-bug storytelling only where it does not explain current behavior. Preserve non-obvious
   invariants, protocol constraints, and safety reasoning. Move useful historical detail to existing
   audit documentation or regression tests; do not delete the regression itself.
   **Testable now; Conditional:** comment-only diff review and affected checks; no behavior change.
-  Coordinate with ENG-2/ENG-6 and the completed ENG-9 boundary so file extraction and comment
+  Coordinate with ENG-2 and the completed ENG-6/ENG-9 boundaries so file extraction and comment
   cleanup do not compete.
 
 - [ ] `F-146` [Medium, investigation] finish controlled Kind setup/cost comparisons before any
