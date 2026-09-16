@@ -167,13 +167,18 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_render.go`/`nutserver_
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`, `F-124`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
-- [ ] `ENG-1` [Medium] replace shell driver supervision with Go while preserving singleton upsd,
-  the stable sidecar, upstream NUT semantics, and F-144 lifecycle/privilege contracts.
-  Start with stable-NUT compatibility verification; use owned foreground processes, serialized
-  reconciliation, NUT reload-or-exit decisions, bounded concurrent cleanup, and no extra privileges.
-  **Testable now; Conditional:** behavioral parity, unaffected PIDs, malformed config, reload retry,
-  child reaping, real-NUT image/race tests, renderer/binary assertions, and F-97 before/after stress.
-  Remove shell/embed code only after parity. F-97 needs its own root-cause evidence.
+- [ ] `ENG-1` [Medium] finish the Go supervisor migration's **Kind acceptance gate**.
+  The binary, direct sidecar invocation, upstream reload decisions, owned process groups,
+  rollback/cancellation regressions, image packaging, and shell removal are implemented;
+  [implementation/local validation](tasks-completed.md#nut-server--upsd) records the evidence.
+  **Remaining; Testable now; Conditional:** run the existing Kind driver-recovery and real
+  Online/OnBattery/LowBattery scenarios with the changed manager and NUT image. Verify the stable
+  sidecar/shared PID namespace, unchanged privilege boundary, and recovery within DEADTIME.
+  A matching successful CI run can satisfy this gate; no physical UPS is required.
+  **Local blocker (2026-09-15):** the isolated three-node setup stopped at the existing inotify
+  preflight (128 available; 512 required), before creating a cluster. Preserve that guardrail;
+  use a suitably provisioned runner. Local image/envtest passes are not Kind evidence.
+  F-97 remains a separate root-cause investigation.
   [Detailed design, migration order, and test matrix](contributing/design/nut-supervisor-migration.md).
 
 - `F-97` [High] find out why a driver `upsd` is still talking to fails a fresh `upsdrvctl status`

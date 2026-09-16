@@ -142,6 +142,12 @@ devices with `upsdrvctl list`, and starts each one as its own `upsdrvctl -FF sta
 If a worker exits, only that UPS is restarted. A bad driver definition therefore does not tear down
 the healthy workers beside it.
 
+The container executes `/usr/local/bin/nut-driver-supervisor` directly. Its Go implementation owns
+process groups, bounded concurrent termination, and reload requests; NUT owns driver-option
+interpretation and restart decisions. The [package contract](../../../internal/nutsupervisor/README.md)
+describes configuration rollback handling and the owned-process reload fallback for driver-name
+changes. Supervisor bookkeeping is in memory; NUT's own sockets and PID files remain in `/run/nut`.
+
 ### Why a sidecar rather than a container per driver
 
 Upstream supervises one service unit per driver (`upsdrvsvcctl`, and nut-driver-enumerator since
@@ -178,9 +184,9 @@ The container carries no probes. A readiness probe would gate the pod's endpoint
 supervisor rather than on the server, and a liveness probe would let a supervisor restart take the
 server down with it. Keeping them apart is the reason it is a separate container.
 
-The supervisor starts immediately because it owns driver startup; there is no entrypoint-start race
-left. The loop interval is now only the retry cadence for exited workers and projected-volume
-configuration changes.
+The supervisor owns driver startup and waits for an accepted upsd reload before adding workers.
+If the server has not created its PID file yet, the next reconciliation retries. The loop interval
+also controls exited-worker recovery and projected-volume configuration checks.
 
 ## Configuration changes
 

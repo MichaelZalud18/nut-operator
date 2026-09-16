@@ -25,7 +25,8 @@ stages:
 
 - `nut-server` builds NUT, verifies the source tarball sha256, asserts the shipped `upsd` version,
   and asserts OpenSSL linkage. Its runtime image copies the built NUT tree and includes `upsd`,
-  `upsdrvctl`, `upsc`, and the allowed network-capable drivers.
+  `upsdrvctl`, `upsc`, and the allowed network-capable drivers. A pinned Go builder supplies the
+  static `nut-driver-supervisor` binary; the assembled image verifies that it executes.
 - `upsmon-agent` builds NUT the same way and includes `upsmon`, `upsc`, and the Go
   `power-signal-writer` binary from this repository.
 

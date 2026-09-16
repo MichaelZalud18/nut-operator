@@ -245,7 +245,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Exercise NUT supervisor lifecycle
+      - name: Exercise NUT supervisor lifecycle and reloads
         timeout-minutes: 4
         run: bash hack/nut-supervisor-smoke.sh docker nut-server:tls-smoke
 

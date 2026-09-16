@@ -182,6 +182,27 @@ status across trackers. Historical run output and longer investigations remain i
 
 ## NUT Server / upsd
 
+- [x] `ENG-1` implementation and local parity milestone (2026-09-15); the overall task remains
+  open in the active tracker for Kind acceptance. Replaced shell supervision with the Go
+  `nut-driver-supervisor`, invoked directly by the stable sidecar. NUT still owns enumeration,
+  foreground startup, and reload-or-exit decisions. An owned-leader SIGUSR1 fallback handles a
+  changed driver name whose new PID filename cannot reach the old process. No new configuration
+  parser, service, CRD, privileges, or supervisor state files. Process groups, unreaped-leader
+  protection, shared shutdown grace, canceled-command joining, and uncertain-reload retries cover
+  normal exit, removal, rollback, and cancellation. Removed the shell/embed and replaced source
+  checks with behavioral tests, including 15 membership-change cycles and descendant cleanup.
+  **Validated:** full API/internal/command tests; controller/envtest and repeated supervisor/CLI
+  race tests; repository lint; independent review; offline secret scan; native ARM64 operand build
+  and AMD64 binary cross-build. Real-NUT tests cover idle startup, partial failure, failed reload
+  retries, live reload, port-driven restart, driver-name replacement, PID preservation, repeated
+  crashes, and termination of a frozen driver. Image CI uses the shipped binary in the same harness.
+  **Readiness evidence:** shell baseline and Go comparison each completed 60 samples with zero
+  probe misses, server failures, or disagreements. One expanded run recorded two server failures
+  during the fixture's final forced port restart. Waiting for the restored port's actual data fixed
+  that sequencing error; the confirming 60-sample run passed. Failed samples were retained.
+  This does not close F-97 or prove Kind/hardware behavior; the Kind host-preflight blocker is
+  recorded in the active task.
+
 - [x] `F-144` [Medium] isolate and harden NUT supervision (2026-09-13).
   Runtime shell, configuration, and process tests now belong to `internal/nutsupervisor`;
   the controller embeds the same bytes without source rewriting. Its README compares upstream

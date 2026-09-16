@@ -5,7 +5,8 @@ This directory contains project-owned image definitions for NUT Operator.
 Image definitions:
 
 - `nut-operator`: controller-manager image built from the root `Dockerfile`.
-- `nut-server`: source-built Network UPS Tools `upsd` and network-capable drivers, using OpenSSL.
+- `nut-server`: source-built Network UPS Tools `upsd` and network-capable drivers, using OpenSSL,
+  plus the Go `nut-driver-supervisor` sidecar command.
 - `upsmon-agent`: source-built NUT `upsmon` client and project-owned signal/notification writers.
 - `node-actuator`: simulation, approved Linux power-off, and Talos shutdown implementations.
 

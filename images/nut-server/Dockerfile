@@ -107,6 +107,18 @@ RUN ./configure \
     && make DESTDIR=/out install \
     && rm -rf /out/usr/share/man /out/usr/share/doc
 
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:26326682769ca980f8f1d3b1f52be2dd1c1d25270e3de3fe0c97d6bb65df3556 AS supervisor-builder
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download golang.org/x/sys
+COPY cmd/nut-driver-supervisor/ cmd/nut-driver-supervisor/
+COPY internal/nutsupervisor/ internal/nutsupervisor/
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-X main.version=${VERSION}" -o nut-driver-supervisor ./cmd/nut-driver-supervisor
+
 FROM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST}
 
 ARG VERSION=dev
@@ -141,6 +153,7 @@ RUN apk add --no-cache \
     && adduser -u 65532 -S -G nut -H -s /sbin/nologin nut
 
 COPY --from=nut-builder /out/ /
+COPY --from=supervisor-builder /workspace/nut-driver-supervisor /usr/local/bin/nut-driver-supervisor
 
 COPY images/nut-server/entrypoint.sh /usr/local/bin/nut-server-entrypoint
 
@@ -152,7 +165,9 @@ RUN chmod 0555 /usr/local/bin/nut-server-entrypoint \
 # decides whether CERTFILE is honored, not the rendered configuration, and F-39 was
 # exactly this check missing. It runs against the assembled image rather than the
 # staging directory so it verifies what actually ships.
-RUN upsd -V 2>&1 | grep -q "${NUT_VERSION}" \
+RUN test -x /usr/local/bin/nut-driver-supervisor \
+    && /usr/local/bin/nut-driver-supervisor --version \
+    && upsd -V 2>&1 | grep -q "${NUT_VERSION}" \
     && ldd /usr/sbin/upsd | grep -q libcrypto \
     && ! ldd /usr/sbin/upsd | grep -q libnss3
 

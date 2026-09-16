@@ -53,7 +53,7 @@ settled decisions by being indexed here; `scope-boundaries.md` remains the OD re
 | Record | Role | Task status owner |
 | --- | --- | --- |
 | [Modular deployment proposals](modular-deployment-proposals.md) | Research, alternatives, and acceptance for requested profiles; LocalNUT and profile dependencies require explicit decisions | [MOD-1 through MOD-5](../../tasks.md#modular-deployment-profiles) |
-| [NUT supervisor migration](nut-supervisor-migration.md) | Proposed implementation replacement within the existing sidecar boundary; not a claim that Go supervision ships | [ENG-1](../../tasks.md#nut-server--upsd) |
+| [NUT supervisor migration](nut-supervisor-migration.md) | Go replacement constraints, upstream compatibility decisions, and migration validation contract | [ENG-1](../../tasks.md#nut-server--upsd) |
 | [VM test research](../audits/vm-test-research-2026-09-15.md) | Recorded PEG/networking/deployment decisions, historical runs, and proposed guest qualification | [VM tasks](../../tasks.md#vm-test-coverage) |
 | [Kind component investigation](../audits/kind-modularity-2026-09-13.md) | Measured retain-shared-suite recommendation and remaining controlled comparisons | [F-146](../../tasks.md#operator-maturity--hardening) |
 

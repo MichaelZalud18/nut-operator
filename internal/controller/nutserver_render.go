@@ -27,7 +27,6 @@ import (
 	"strings"
 
 	"github.com/MichaelZalud18/nut-operator/internal/kubeinventory"
-	"github.com/MichaelZalud18/nut-operator/internal/nutsupervisor"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -833,10 +832,6 @@ func upsdReadinessProbeScript() string {
 		`awk '{for (i = 1; i <= NF; i++) if ($i == "RESPONSIVE") { found = 1; exit } } END { exit !found }'`
 }
 
-func driverSupervisorScript() string {
-	return nutsupervisor.Script()
-}
-
 // upsdResources returns what the upsd container asks for, defaulting it when spec.resources says
 // nothing.
 //
@@ -1240,7 +1235,7 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				Name:            driverSupervisorContainerName,
 				Image:           image,
 				ImagePullPolicy: pullPolicy,
-				Command:         []string{"sh", "-c", driverSupervisorScript()},
+				Command:         []string{"/usr/local/bin/nut-driver-supervisor"},
 				Resources:       driverSupervisorResources(),
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: ptrBool(false),

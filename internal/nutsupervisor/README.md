@@ -1,105 +1,93 @@
 # NUT Driver Supervision
 
-This package owns the driver supervisor independently of Kubernetes rendering.
-`supervisor.sh` is embedded unchanged in the manager; the controller places those bytes in the
-existing driver-supervisor container command. The NUT operand image supplies the actual NUT
-binaries. There is no second generated copy of the script and no new runtime service.
+This package owns the NUT driver lifecycle independently of Kubernetes rendering.
+`cmd/nut-driver-supervisor` builds the binary shipped in the NUT operand image. The controller
+invokes it directly in the existing sidecar; there is no embedded shell, network service, or new CRD.
 
 ## Runtime Contract
 
 - Enumerate devices through `upsdrvctl list` and run each through `upsdrvctl -FF start <name>`.
-- Keep healthy, unchanged workers running across unrelated additions, removals, and crashes.
-- Restart a worker when its own configuration changes; retry failed reloads without claiming
-  the new configuration was adopted.
-- Reload `upsd` when reloadable configuration changes. Listener and certificate changes remain
-  controller-owned pod replacements, not supervisor reloads.
-- Handle no configured devices as an idle state. Preserve existing workers when listing fails.
-- The supervisor owns its state directory and must never share it with another instance.
-  Each worker gives its owned foreground NUT child five seconds after TERM, then uses KILL and
-  reaps it. Supervisor shutdown starts all worker grace periods together, rather than spending
-  five seconds per device. Removing one device preserves unrelated workers. Enumeration, reload,
-  and best-effort named stop commands also have five-second bounds through the image's `timeout`.
-  The polling sleep is interruptible. The operand's container boundary remains the final process
-  cleanup boundary, including unexpected descendants; kernel-level uninterruptible I/O is not
-  something a userspace deadline can resolve.
+- One serialized loop owns membership, configuration changes, observed exits, and shutdown.
+  Foreground children are collected with `exec.Cmd.Wait`; no supervisor PID, exit, or digest files.
+- Preserve healthy workers across unrelated additions, removals, and failures. Restart failed
+  workers at a fixed reconciliation cadence, without a tight loop or exponential backoff.
+- Compare complete `ups.conf` and `upsd.users` files using SHA-256. This detects projected-volume
+  replacement without introducing another NUT configuration parser or filesystem watcher.
+- Only zero-byte `ups.conf` means an intentionally empty device set. Failed enumeration preserves
+  workers and leaves the revision pending. NUT error text does not turn malformed input into empty.
+- Reload upsd before starting newly configured drivers. Failed or uncertain reloads remain pending,
+  including configuration rollback while a command runs. Users-only changes never reload drivers.
+- NUT decides which surviving drivers can reload and which must exit. Listener, port, TLS, and
+  client-CA changes to upsd still require controller-owned pod replacement.
 
-Runtime configuration is explicit:
+Runtime configuration:
 
-| Variable | Default | Owner |
+| Variable | Default | Contract |
 | --- | --- | --- |
-| `NUT_CONFPATH` | `/etc/nut` | NUT and supervisor configuration directory |
-| `NUT_SUPERVISOR_STATE_DIR` | `/run/nut/driver-supervisor` | Private supervisor bookkeeping |
+| `NUT_CONFPATH` | `/etc/nut` | Shared NUT configuration directory |
 | `NUT_SUPERVISOR_INTERVAL_SECONDS` | `5` | Positive integer reconciliation interval |
 
-The default interval preserves existing recovery cadence. Production does not tune this through
-the CRD. Component tests use isolated paths and a shorter interval through this same contract;
-they execute the exact script bytes, not a source-rewritten variant.
+The interval is not a CRD tuning surface. The command rejects invalid or overflowing durations
+before starting children. `--version` reports the image build version.
 
-## Upstream Boundary
+## Upstream Reload Boundary
 
-NUT provides named driver startup, foreground operation, and configuration enumeration through
-[upsdrvctl](https://networkupstools.org/docs/man/upsdrvctl.html). Keep that hardware-specific
-behavior upstream. Its
-[service-instance controller](https://github.com/networkupstools/nut/blob/master/docs/man/upsdrvsvcctl.txt)
-targets systemd and Solaris SMF, rather than providing a drop-in supervisor for this operand.
-Adding a host service manager inside the pod is not implied by adopting its per-device model.
+Use `upsdrvctl -c reload-or-exit <name>` for configuration changes. The driver decides whether a
+setting is reloadable; the supervisor never hashes individual sections or translates driver options.
 
-### Supervision Choice
+When `driver=` changes, upsdrvctl searches for the PID file associated with the **new** driver name.
+That cannot locate the old worker. If the command fails while the run is still active, signal the
+owned foreground leader with NUT's `SIGUSR1` reload-or-exit signal. Single-device `-FF` executes
+the driver as that leader; image tests assert the relationship. NUT then applies its own driver-name
+and option checks. This fallback retains an unconfirmed revision for retry and never signals a PID
+read from arbitrary replacement configuration. See the
+[migration record](../../docs/contributing/design/nut-supervisor-migration.md) for upstream sources.
 
-Keep the stable sidecar and upstream named `upsdrvctl -FF` workers for v1. The project-owned layer
-reconciles dynamic membership and configuration; it does not implement driver protocols. This
-decision preserves the existing operand interface and the PID-preservation contract.
+Command success means a reload request was accepted, not transactional acknowledgment of all
+settings. Readiness and telemetry remain independent observations of actual NUT behavior.
 
-| Alternative | Reuse | Remaining integration cost |
-| --- | --- | --- |
-| NUT service instances | Upstream enumeration and host service lifecycle | Requires systemd/SMF inside this container model |
-| [s6-supervise](https://skarnet.org/software/s6/s6-supervise.html) | Per-service restart, state, and control | Generate/remove service directories and coordinate NUT config/reloads |
-| [runit runsv](https://smarden.org/runit/runsv.8) | Per-service restart, state, and control | Same membership/configuration adapter, plus new image dependency |
-| One Kubernetes container per UPS | Kubelet process supervision | Membership changes replace the pod and interrupt unchanged drivers |
+## Cleanup and Isolation
 
-s6/runit are credible replacements for child lifecycle handling, not replacements for the whole
-reconciler. Adding either now would introduce another service configuration representation while
-retaining the NUT-specific adapter. Revisit if lifecycle requirements outgrow the current small
-wrapper; do not add a host init system or a network service just for enumeration. This is a scoped
-design choice, not a claim that custom process management is generally preferable.
+Each worker and one-shot command gets an owned Linux process group. Shutdown sends TERM to all
+workers together, waits up to five seconds, then kills survivors and joins them. Cancellation during
+device removal includes still-terminating workers and immediately starts survivor shutdown.
+Enumeration and reload commands have separate five-second deadlines and are killed and joined on
+cancellation. No best-effort named stop is needed after an owned process group has been collected.
 
-Enumeration must succeed before a reload reaches `upsd`. NUT can report "no UPS definitions" for
-a malformed header as well as for an empty file. Only the renderer's zero-byte configuration is
-accepted as intentional removal of all devices; other failed enumerations retain the working
-server configuration and workers. This is conservative validation of the renderer's output
-contract, not a second NUT parser. Successful enumeration is not full driver-option validation.
+An exited leader remains waitable until group cleanup, preventing PID/group reuse before the final
+signal. The supervisor then calls `Wait`. Descendants remaining in the group are killed even when
+the leader exits first. The container init reaps orphaned descendants; the container remains the
+final boundary for processes that escape their group. Userspace cannot impose a completion deadline
+on kernel uninterruptible I/O.
+
+The sidecar retains its non-root, read-only, capability-free security context and existing mounts.
+It has no Kubernetes API client, token, host namespace, hostPath, or network listener. Shared pod
+process visibility remains necessary for the separate upsd container's PID-based reload command.
+
+Upstream `upsdrvsvcctl` targets systemd/SMF. s6 or runit would still need this dynamic NUT membership
+and reload adapter. A container per UPS would replace the pod when membership changes. Keep the
+stable sidecar and NUT-owned driver semantics rather than adding another service manager.
 
 ## Tests
 
-`go test -race ./internal/nutsupervisor` runs real process trees with fake NUT commands and needs
-no API server, cluster, UPS, or Docker daemon. Controller tests separately verify the rendered
-command and security/resource configuration. Operand-image and Kind tests establish actual NUT
-binary behavior; process fixtures alone do not establish image compatibility or readiness timing.
+`go test -race ./internal/nutsupervisor ./cmd/nut-driver-supervisor` uses real subprocesses and fake
+NUT commands for deterministic faults. It covers repeated membership changes, isolated crashes,
+fixed retry bounds, empty/malformed configuration, users-only changes, reload failure and rollback,
+NUT-requested restart, cancellation during removal, concurrent termination, child reaping, and
+descendant cleanup. These tests require no cluster or physical UPS.
 
-`make docker-smoke-nut-supervisor NUT_SERVER_IMG=<image>` runs the same supervisor bytes with
-actual NUT binaries from the selected operand image. It verifies idle startup, a failing driver
-alongside a healthy one, malformed configuration, failed reload retries and recovery, add/remove
-reloads, preservation of both worker and driver PIDs, repeated
-driver-crash recovery, and graceful termination without remaining NUT workers. It uses dummy UPS
-data, a non-root read-only container, private temporary filesystems, no capabilities, and no
-external network. It requires neither Kubernetes nor physical equipment. The outer harness bounds
-the run and removes its owned container on failure or cancellation.
+`make docker-smoke-nut-supervisor NUT_SERVER_IMG=<image>` executes the **shipped binary** with real
+NUT. It checks idle startup, mixed healthy/failing drivers, failed reload retries, malformed input,
+unaffected worker/driver PIDs, live debug-level reload, port-driven restart, driver-name replacement,
+repeated crash recovery, and termination of a STOP-frozen driver. The non-root read-only container
+has no external network or added capabilities. The owning harness bounds the run and cleans up its
+container on failure or cancellation. The image workflow runs this same test after building NUT.
 
-The lifecycle fixture also freezes a real driver with STOP, then verifies that supervisor shutdown
-kills and reaps it within the grace bound. Process tests cover multiple TERM-ignoring workers and
-a stalled named-stop helper without requiring a container or Kubernetes.
+`make docker-stress-nut-readiness NUT_SERVER_IMG=<image>` additionally compares 60 fresh driver probes
+with four concurrent `upsc` reads per sample while authenticated secondary upsmon runs. Every miss
+and the overall 180-second timeout fail the run. The fixture confirms its final port replacement
+has converged before sampling. A pass does not close F-97 or establish hardware/Kind compatibility.
 
-The existing image workflow runs this check immediately after building its native NUT server
-image; `docker-smoke-nut-server` includes it too. This complements, rather than replaces, the
-process-fixture tests for deterministic failure injection and Kind's actual sidecar wiring.
-
-`make docker-stress-nut-readiness NUT_SERVER_IMG=<image>` adds 60 readiness samples to the same
-isolated lifecycle fixture. Each sample compares a fresh `upsdrvctl status` response with four
-concurrent `upsc` reads while a real secondary `upsmon` process runs. Output separates driver-probe
-misses, server-read failures, and disagreements (the server responds while the driver probe fails).
-The harness fails on any miss and retains sample counts in its output, rather than averaging
-failures away. The overall 180-second deadline also applies to the stress run.
-
-Run this opt-in target when investigating NUT binary, probe, or supervision changes. It is not
-part of the ordinary image smoke job. A clean run is a bounded observation with dummy data, not
-proof that the intermittent startup-readiness issue is absent from other images or Kind sidecars.
+Controller tests own the rendered command, mounts, resources, and security context. The existing
+Kind recovery and telemetry scenarios own Kubernetes integration coverage. Implementation and
+remaining validation are tracked in [tasks](../../docs/tasks.md#nut-server--upsd).

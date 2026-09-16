@@ -221,7 +221,7 @@ var _ = Describe("NUTServer Controller", func() {
 			supervisor := deployment.Spec.Template.Spec.Containers[1]
 			Expect(supervisor.Name).To(Equal(driverSupervisorContainerName))
 			Expect(supervisor.Image).To(Equal(deployment.Spec.Template.Spec.Containers[0].Image))
-			Expect(supervisor.Command).To(Equal([]string{"sh", "-c", driverSupervisorScript()}))
+			Expect(supervisor.Command).To(Equal([]string{"/usr/local/bin/nut-driver-supervisor"}))
 
 			// It reaches the drivers exactly as upsd does -- the sockets and PID files in
 			// /run/nut, and the device list in /etc/nut -- and needs no privilege upsd does not

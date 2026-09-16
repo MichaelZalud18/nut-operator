@@ -37,7 +37,6 @@ timeout --signal=TERM --kill-after=5s 180s "$container_tool" run --rm --init \
   --env "NUT_READINESS_SAMPLES=$samples" \
   --tmpfs /tmp:rw,nosuid,nodev,uid=65532,gid=65532,mode=0700 \
   --tmpfs /run/nut:rw,nosuid,nodev,uid=65532,gid=65532,mode=0700 \
-  --mount "type=bind,src=$root/internal/nutsupervisor/supervisor.sh,dst=/supervisor.sh,readonly" \
   --mount "type=bind,src=$root/hack/nut-supervisor-smoke-container.sh,dst=/smoke.sh,readonly" \
   --mount "type=bind,src=$root/hack/nut-readiness-stress-container.sh,dst=/probe-stress.sh,readonly" \
   --entrypoint /bin/sh "$image" /smoke.sh &

@@ -1,26 +1,45 @@
-# NUT Supervisor Migration Proposal
+# NUT Supervisor Migration
 
 Components: NUT Server / upsd.
 Audience: contributors.
 
 Detailed migration constraints and acceptance criteria transferred from the 2026-09-15 task
-review. [ENG-1](../../tasks.md#nut-server--upsd) owns implementation status; this document is a
-proposed replacement, not a claim that the Go supervisor already ships. The current runtime
-contract remains in [the operand design](nut-server-operand.md) and
+review. [ENG-1](../../tasks.md#nut-server--upsd) owns implementation and validation status.
+The runtime contract remains in [the operand design](nut-server-operand.md) and
 [the supervisor package](../../../internal/nutsupervisor/README.md).
 
 ## Decision Context
 
 Preserve the existing singleton upsd plus stable sidecar boundary and NUT-owned driver semantics.
-The proposed change replaces shell process bookkeeping, not the operand architecture. Historical
+The change replaces shell process bookkeeping, not the operand architecture. Historical
 F-144 completion is in [completed tasks](../../tasks-completed.md); F-97 remains a separate readiness
 investigation. Adoption must preserve those lifecycle contracts and establish actual NUT parity.
 
+## Compatibility Decisions
+
+The [official stable downloads](https://networkupstools.org/download.html) still listed 2.8.5 on
+2026-09-15, matching the pinned image. No source version, checksum, or signature gate was changed.
+
+Real-image verification exposed a driver-identity edge case: `upsdrvctl -c reload-or-exit <name>`
+constructs the PID filename using the new `driver=` value, so it cannot signal the old process.
+The [tagged controller source](https://github.com/networkupstools/nut/blob/v2.8.5/drivers/upsdrvctl.c)
+explains that lookup. Keep the named command first; on failure, an active supervisor can deliver
+the same SIGUSR1 to its owned foreground leader. The
+[tagged driver source](https://github.com/networkupstools/nut/blob/v2.8.5/drivers/main.c)
+defines that signal as reload-or-exit. NUT still decides whether changed options require exit.
+Keep the revision unconfirmed after fallback and retry normally. Image tests assert the owned
+leader/driver PID relationship, changed-driver retirement, and preservation of unrelated workers.
+This replaces neither NUT's parser nor its reload policy.
+
+Use observable driver state to confirm reload, rather than merely checking the control command's
+exit status. The image test uses `driver.debug` for live reload and new fixture data for port
+replacement. The published `driver.parameter.pollinterval` is initialized at startup and is not a
+reliable live-reload acknowledgment in this release.
+
 ## Migration Constraints and Acceptance
 
-**Upstream gate:** recheck official NUT releases and source downloads before implementation. The
-transferred research recorded 2.8.5 as stable and 2.8.6 as planned; this is not a current upstream
-verification. Select a stable release, never an unreleased snapshot just because it is newer.
+**Upstream gate:** recheck official NUT releases and source downloads when changing the pinned
+version. Select a stable release, never an unreleased snapshot just because it is newer.
 If a newer stable exists, update `NUT_VERSION`, tarball checksum, signing-key verification, image
 assertions, and version-sensitive tests in a clearly separated change. Preserve both source-tarball
 checksum and upstream-signature verification. Prove that release's `upsdrvctl list`,
@@ -57,6 +76,7 @@ Unrelated adds/removes/edits must not restart surviving drivers.
 If NUT requires exit, observe the foreground worker exit and restart only that UPS. An
 `upsd.users`-only change reloads upsd without touching drivers. Failed server reload is retried
 without claiming adoption. Preserve validation/ordering that protects a working device set.
+The owned-process fallback above handles driver-name changes that the named command cannot reach.
 Listener/port, TLS certificate, and client-CA changes remain controller-owned pod replacements;
 do not widen reload support beyond what the actual NUT release proves.
 
@@ -65,7 +85,8 @@ to the operand. TERM, wait the existing bounded grace period, KILL remaining own
 and Wait/reap; no orphaned upsdrvctl children or drivers. Start all shutdown grace periods together,
 not one full period per UPS. Bound one-shot NUT control commands independently. Verify whether the
 old best-effort named `upsdrvctl stop` after terminating an owned worker provides necessary cleanup;
-retain it only for a demonstrated purpose. Keep non-root, read-only root filesystem, zero added
+real-process and image cleanup tests established that owned-group termination suffices, so the
+named stop is removed. Keep non-root, read-only root filesystem, zero added
 capabilities, RuntimeDefault seccomp, and existing config/credential/runtime mounts. No Kubernetes
 token/RBAC, host namespace, hostPath, or network listener. The container remains the final cleanup
 boundary; userspace deadlines cannot solve kernel uninterruptible I/O.
