@@ -546,6 +546,14 @@ func removeUnneededKubeSystemWorkloads(ctx context.Context, t *testing.T, kubeco
 	t.Helper()
 	names := []string{"local-path-provisioner", "metrics-server", "traefik", "coredns"}
 	t.Logf("removing unneeded kube-system Deployments so AgentShutdown's node-clearance check can pass: %s", strings.Join(names, ", "))
+
+	// Deleting the Deployment alone does not stick for traefik: k3s installs it from a HelmChart
+	// custom resource (helm.cattle.io/v1) that its own helm-controller continuously reconciles, and
+	// a live run's pod listing caught it reinstalled minutes later via a fresh helm-install-traefik
+	// Job. Deleting the HelmChart objects themselves removes the source the controller reconciles
+	// from, not just its rendered output. local-path-provisioner, metrics-server, and coredns are
+	// plain static manifests in k3s, not HelmCharts, so they do not need this.
+	runKubectl(ctx, t, kubeconfigPath, "-n", "kube-system", "delete", "helmchart", "traefik", "traefik-crd", "--ignore-not-found")
 	for _, name := range names {
 		runKubectl(ctx, t, kubeconfigPath, "-n", "kube-system", "delete", "deployment", name, "--ignore-not-found")
 	}
