@@ -1,6 +1,6 @@
 # Hadron VM-4: the real operator on a real guest
 
-Status: first two milestones closed, 2026-09-13. See `docs/tasks.md`'s `VM-4` entry for current
+Status: all three milestones closed, 2026-09-16. See `docs/tasks.md`'s `VM-4` entry for current
 status.
 
 ## Scope, and what this milestone deliberately does not attempt
@@ -113,18 +113,51 @@ Fixed: quoted all three tag fields in the manifest template.
 
 | [34781621589](https://github.com/MichaelZalud18/nut-operator/actions/runs/34781621589) | **pass** (547.22s) | The real `UPSDevice`/`NUTServer`/`NodePowerAgent` fixture applied cleanly, the `NodePowerAgent` reported `Ready`, and the real, operator-rendered DaemonSet pod (`hadron-agent-node-power-agent-58mz5`) was confirmed running on a real guest kernel -- the first time any Hadron test has run the real rendered manifest rather than a bare test-authored Pod, closing VM-4's second milestone. |
 
+## Milestone 3: a real ShutdownFlow-triggered signal
+
+`TestHadronShutdownFlowProducesRealSignal` (`test/hadron/outage_flow_smoke_test.go`) is the piece
+`VM-4`'s own text calls out as the thing manual signal injection cannot stand in for: a real
+`ShutdownFlow` (`mode: Enforce`) whose trigger evaluates real UPS telemetry, whose executor compiles
+and runs a real wave, and whose `AgentShutdown` step writes a real signal that the already-proven
+node-actuator (`VM-3`) observes and accepts. `NodePowerAgent` stays `Simulate`, so nothing here
+halts the guest.
+
+This milestone turned out to require far more real infrastructure than either prior milestone: a
+real PostgreSQL audit store (SB-11 makes it a required production component for Enforce-mode
+execution, not optional scaffolding), and a genuinely clear node for `AgentShutdown`'s own
+node-clearance precondition (EX-9) -- neither of which the design rationale below the fold on this
+doc's earlier milestones anticipated. Each was found live, from real evidence, not guessed at.
+
+### Evidence for milestone 3
+
+Nine failing runs, each fixing one distinct, verified real cause -- not the same failure recurring:
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| 1 | Enforce mode requires `safety.requireManualApproval: true` + a matching approval annotation; fixture set `requireManualApproval: false` | Set it `true`, added the approval annotation |
+| 2 | The `dummy-ups` device declares no model, so it matched no capability profile and Enforce mode blocked on `DeviceUnidentified` | Set `spec.safety.allowUnidentifiedDevices: true` -- the field's own documented escape hatch for exactly this |
+| 3 | The fixture's 40s `OB` window (copied from `test/e2e`, which only watches `UPSDevice.status.phase` directly) raced this test's own additional watch-latency + 1s eligibility hold before execution could start | Widened `OB` dwell to 600s |
+| 4 | `ExecutionReady` stuck on `AuditStoreUnavailable`: Enforce execution requires a ready PostgreSQL audit store (SB-11), and none existed | Stood up a real `postgres:16-alpine` server (pinned by digest) plus a `PowerManagementCluster` (`storage.mode: ExternalPostgres`) referencing it |
+| 5 | `PowerManagementCluster.Reconcile` never requeues on a failed audit-store connection for `ExternalPostgres` mode (unlike `CNPG`'s 5-minute requeue); applying it in the same batch as Postgres meant its one reconcile landed before Postgres was listening, and the resulting `AuditStoreNotReady` status never re-evaluated | Apply the `PowerManagementCluster` only after Postgres already reports Ready |
+| 6 | A one-shot pod List right after `NodePowerAgent` reported Ready caught a DaemonSet rollout mid-transition (one Running + one Terminating pod) | Wait for exactly one Running, non-terminating pod |
+| 7 | `AgentShutdown`'s node-clearance check (EX-9) blocked on `NodeNotCleared`: k3s's own stock Deployments (`local-path-provisioner`, `metrics-server`, `traefik`) are real, non-exempt, non-DaemonSet pods | Removed the ones this fixture doesn't use |
+| 8 | `NodeNotCleared` persisted: CoreDNS, kept alive for this test's own Postgres DNS lookup, is itself exactly such a pod | Read the Postgres Service's ClusterIP back via its own `kubectl` call and built the DSN from that instead -- matching `nutserver_render.go`'s own F-71 precedent that the operator's components never needed cluster DNS in the first place; found and fixed a real product bug in the same pass: `upsdevice_controller.go`'s `firstTelemetryEndpoint` had never had F-71's ClusterIP-preference applied to it, so removing CoreDNS broke the manager's own telemetry polling until fixed |
+| 9 | `NodeNotCleared` persisted a third time: `traefik` came back, reinstalled by k3s's own `helm-controller` from a `HelmChart` custom resource the Deployment-delete never touched | Delete the `traefik`/`traefik-crd` `HelmChart` resources themselves |
+
+[35053758898](https://github.com/MichaelZalud18/nut-operator/actions/runs/35053758898) --
+**pass** (559.20s). Real telemetry polling (with the ClusterIP fix) observed `OnBattery`; the real
+`ShutdownFlow` trigger evaluator matched it, the executor compiled and ran a real wave including a
+real `AgentShutdown` step against a genuinely cleared node, and the real node-actuator (`VM-3`)
+logged accepting the resulting operator-written signal -- closing `VM-4`.
+
 ## Open, deliberately not attempted here
 
-- A `ShutdownFlow` CR, or anything about the actual outage flow -- the second milestone deploys
-  `UPSDevice`/`NUTServer`/`NodePowerAgent` and confirms the real steady-state DaemonSet, but never
-  wires a trigger, and its `NodePowerAgent` is deliberately `DryRun`/`Simulate` so nothing can halt
-  the guest yet.
-- A real, operator-produced signal, as opposed to one this test (or `test/e2e`) hand-writes into a
-  Secret -- `VM-4`'s own text: "manual signal injection alone is not this end-to-end test."
 - The two-guest topology `VM-4`'s own text implies ("assert survivor availability" needs at least
-  one node that stays up while another is powered off) -- both milestones so far are single-guest,
-  since proving deployment and steady-state reconciliation does not need a second node yet. `VM-2`'s
-  `ClusterLink` is the established mechanism once a second guest is needed.
+  one node that stays up while another is powered off) -- every milestone so far is single-guest,
+  since proving deployment, steady-state reconciliation, and signal delivery did not need a second
+  node yet. `VM-2`'s `ClusterLink` is the established mechanism once a second guest is needed.
 - Real drain/eviction against a live workload Pod (`internal/kubeactions/runner.go`'s
-  `cordonNodes`/`drainNodes`/`evictPodsOnNode`) -- untested anywhere, Kind or Hadron, before this.
+  `cordonNodes`/`drainNodes`/`evictPodsOnNode`) -- untested anywhere, Kind or Hadron. Milestone 3's
+  node-clearance fix removed components this fixture never used; it did not exercise draining a
+  workload that has somewhere else to go.
 - Enforced network policy and audit-record assertions named in `VM-4`'s own text.

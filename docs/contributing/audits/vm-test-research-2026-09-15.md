@@ -253,11 +253,21 @@ builds/imports the real `nut-server` and `upsmon-agent` images and applies a rea
 `UPSDevice`/`NUTServer`/`NodePowerAgent` fixture -- the same shape `test/e2e`'s own
 signal-delivery spec already proves against Kind -- confirming the real, operator-rendered
 `NodePowerAgent` DaemonSet reaches Ready on a real guest kernel, `DryRun`/`Simulate` so nothing
-can halt the guest yet. Full rationale and evidence table in
+can halt the guest yet.
+**Third milestone passed 2026-09-16** ([run 35053758898](https://github.com/MichaelZalud18/nut-operator/actions/runs/35053758898),
+559.20s): `TestHadronShutdownFlowProducesRealSignal` (`hadron-outage-flow-smoke.yml`) drives a real
+`ShutdownFlow` (`mode: Enforce`) whose trigger evaluates real UPS telemetry, whose executor compiles
+and runs a real wave, and whose `AgentShutdown` step writes a real signal that the already-proven
+node-actuator (`VM-3`) accepts -- the operator-produced signal "manual signal injection alone is
+not this end-to-end test" required. Needed far more real infrastructure than either prior
+milestone: a real PostgreSQL audit store (SB-11 makes it required for Enforce-mode execution) and a
+genuinely cleared node for `AgentShutdown`'s own node-clearance precondition (EX-9), including a
+real product bug found and fixed along the way (`upsdevice_controller.go`'s telemetry polling had
+no ClusterIP fallback, unlike the agent's own monitoring, which F-71 already fixed). Full rationale
+and the nine-run evidence table in
 [hadron-vm-4-operator-2026-09-13.md](hadron-vm-4-operator-2026-09-13.md).
-A `ShutdownFlow` trigger driving a real, operator-produced signal (not one hand-written, per
-"manual signal injection alone is not this end-to-end test"), the two-guest topology, real
-drain/eviction against a live workload Pod, and the network-policy/audit assertions remain open.
+The two-guest topology, real drain/eviction against a live workload Pod, and the
+network-policy/audit assertions remain open.
 
 ## VM-5
 
