@@ -12,7 +12,7 @@
 #    reported as created, and drop nothing. That is exactly how F-98 -- a bundle with no egress
 #    rules at all -- passed every CI run before failing on the first real cluster it met. A suite
 #    that cannot fail a policy assertion should not be trusted to make one, so the default CNI is
-#    disabled here and Calico is installed by `make setup-test-e2e`.
+#    disabled here and Calico is installed by the owned `make test-e2e` runner.
 #
 # podSubnet matches Calico's own default IPv4 pool so its manifest applies unedited. The alternative
 # is patching CALICO_IPV4POOL_CIDR out of a 7800-line upstream manifest on every setup, which breaks
@@ -22,10 +22,8 @@ apiVersion: kind.x-k8s.io/v1alpha4
 networking:
   disableDefaultCNI: true
   podSubnet: "192.168.0.0/16"
-# Pinned, and pinned by digest (F-108). CI installs `kind` from `latest`, so without this the
-# Kubernetes version the suite runs against changes whenever kind cuts a release -- silently, with no
-# commit and no way to tell from a failing run which version it failed on. The tested-version claim
-# in docs/installation/README.md is only meaningful if this is fixed somewhere a reader can find it.
+# Pin the Kubernetes node image by digest independently of the Kind CLI version in the workflow.
+# A tooling upgrade must not silently change the API server and kubelet the scenarios exercise.
 #
 # Raising it is a deliberate act: bump the tag and digest together, and update that claim.
 nodes:

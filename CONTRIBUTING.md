@@ -42,6 +42,29 @@ kubeconfig, runs focused controller deletion/migration specs, and removes that c
 It proves real Kubernetes garbage collection without installing the operator or exercising host
 actuation. Ordinary envtest tests verify owner references and API deletion but do not run GC.
 
+`make test-e2e` owns a fresh Kind cluster and a private temporary kubeconfig for the entire run.
+`KIND_CLUSTER` is a name prefix, not permission to reuse or delete an existing cluster. The runner
+checks context and cluster UID before setup and the Go suite; cleanup deletes only verified full
+node container IDs, leaving the shared Kind network alone. The normal kubeconfig/context stays
+unchanged. Standalone setup/cleanup
+targets refuse name-only operations; invoke the complete runner instead. On cleanup failure,
+inspect the reported private state directory and cluster identity before manual removal. Do not
+publish that directory: it contains credentials. Cancellation cleanup is bounded, but cannot be
+guaranteed after runner loss or SIGKILL. `make test-kind-harness` exercises ownership, failure,
+and cancellation paths without Docker, Kubernetes, or VMs. Python 3 is required by the runner.
+
+### Test dependency pinning
+
+Images being promoted must remain immutable and digest-addressed through acceptance tests.
+Semantics-affecting test infrastructure uses explicit stable versions, with a digest or checksum
+where artifact identity matters (for example, the Kind node image). Small gating helpers use
+versioned releases; additional digests/checksums are optional unless exact artifact identity is
+required. `latest` is reserved for explicitly non-gating development or compatibility checks.
+Keep upgrades routine. Actual versions belong in the owning Makefile, workflow, or test fixture,
+not duplicated in guidance.
+
+### Selecting checks
+
 Inspect build tags and test entry points when selecting narrower checks. Component tests,
 Kind suites, and opt-in VM tests have different prerequisites and prove different things.
 Read the relevant workflow before running infrastructure tests, and use isolated resources,

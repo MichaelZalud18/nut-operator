@@ -141,8 +141,7 @@ cover-html: ## Render the coverage profile as a browsable HTML report.
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-# kubectl kuberc is disabled by default for test isolation; enable with:
-# - KUBECTL_KUBERC=true
+# The owned runner disables kubectl kuberc for test isolation.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= nut-operator-test-e2e
@@ -153,7 +152,7 @@ KIND_CONFIG ?= test/e2e/kind-config.yaml
 # as the unpinned kind node image (F-108) one layer down.
 CALICO_VERSION ?= v3.32.1
 CALICO_MANIFEST ?= https://raw.githubusercontent.com/projectcalico/calico/$(CALICO_VERSION)/manifests/calico.yaml
-# Every kubectl in the e2e suite is unqualified, so all of them follow the current context.
+# The owned runner provides a private kubeconfig; no user context is switched.
 KIND_CONTEXT = kind-$(KIND_CLUSTER)
 # Read from the config rather than repeated here, so the two cannot drift.
 E2E_NODE_COUNT = $(shell grep -c '^  - role:' $(KIND_CONFIG))
@@ -178,28 +177,13 @@ check-test-e2e-host: ## Verify the host can carry a multi-node Kind cluster.
 	fi
 
 .PHONY: setup-test-e2e
-setup-test-e2e: check-test-e2e-host ## Set up a Kind cluster for e2e tests if it does not exist
-	@command -v $(KIND) >/dev/null 2>&1 || { \
-		echo "Kind is not installed. Please install Kind manually."; \
-		exit 1; \
-	}
-	@case "$$($(KIND) get clusters)" in \
-		*"$(KIND_CLUSTER)"*) \
-			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
-		*) \
-			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
-			$(KIND) create cluster --name $(KIND_CLUSTER) --config $(KIND_CONFIG) ;; \
-	esac
-	# kind switches the current context when it *creates* a cluster and not when it reuses one, so
-	# on the reuse path the suite targets whatever context happened to be current. Every kubectl in
-	# the suite is unqualified and the suite deletes namespaces and patches Secrets, so on a
-	# workstation that also talks to a real cluster that is a live hazard rather than a nuisance.
-	# This is the one place that can make the target explicit for all of them.
-	kubectl config use-context $(KIND_CONTEXT)
-	$(MAKE) --no-print-directory setup-test-e2e-cni
+setup-test-e2e: ## Retired standalone setup; the suite owns its complete cluster lifetime.
+	@echo "Use make test-e2e; standalone cluster reuse is intentionally disabled."
+	@exit 1
 
 .PHONY: setup-test-e2e-cni
 setup-test-e2e-cni: ## Install the policy-enforcing CNI the e2e cluster is created without. Idempotent.
+	python3 -B hack/test-kind.py verify
 	@echo "Installing Calico $(CALICO_VERSION) into '$(KIND_CLUSTER)'..."
 	kubectl --context $(KIND_CONTEXT) apply --server-side -f $(CALICO_MANIFEST)
 	kubectl --context $(KIND_CONTEXT) -n kube-system rollout status daemonset/calico-node --timeout=5m
@@ -220,17 +204,16 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated 
 	# 30m, not go test's 10m default: BeforeSuite builds five operand images, and two of
 	# them compile NUT from source (F-39). The default budget was spent on image builds
 	# before the suite reached its first assertion.
-	@status=0; \
-	$(MAKE) --no-print-directory setup-test-e2e || status=$$?; \
-	if [ "$$status" -eq 0 ]; then \
-		KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout=30m || status=$$?; \
-	fi; \
-	$(MAKE) --no-print-directory cleanup-test-e2e || { cleanup_status=$$?; [ "$$status" -ne 0 ] || status=$$cleanup_status; }; \
-	exit $$status
+	KIND="$(KIND)" KIND_CLUSTER="$(KIND_CLUSTER)" KIND_CONFIG="$(KIND_CONFIG)" python3 -B hack/test-kind.py
+
+.PHONY: test-kind-harness
+test-kind-harness: ## Test Kind ownership and cancellation without creating a cluster.
+	python3 -B -m unittest discover -s hack -p test_kind.py
 
 .PHONY: cleanup-test-e2e
-cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
-	@$(KIND) delete cluster --name $(KIND_CLUSTER)
+cleanup-test-e2e: ## Retired standalone cleanup; the suite deletes only its owned resources.
+	@echo "make test-e2e cleans up its own cluster; name-only deletion is intentionally disabled."
+	@exit 1
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

@@ -31,6 +31,26 @@ status across trackers. Historical run output and longer investigations remain i
 
 ## Operator Maturity & Hardening
 
+- [x] `TEST-3` implementation/component slice (2026-09-15). `hack/test-kind.py` owns a unique
+  Docker-backed Kind cluster and private temporary kubeconfig, refusing existing-cluster reuse.
+  Context/cluster-UID checks precede CNI setup and direct Go suite entry; cleanup deletes only
+  verified full node container IDs, stops owned command groups, preserves primary failures, and retains private
+  state when cleanup cannot be proved. Standalone name-only setup/deletion refuses to run.
+  The shared full suite and promoted-image inputs are preserved. Kind/curl helper versions are
+  explicit; CONTRIBUTING.md owns the pinning policy with an AGENTS.md pointer.
+  **Validated:** nineteen cluster-free harness tests cover external-config preservation, unique
+  identities, partial setup/test failure, cancellation, context/UID mismatch, replacement-node
+  refusal, cleanup failure, file permissions, and actual child-process timeout/SIGTERM cleanup.
+  Tagged E2E compilation/image-table tests and tagged Go lint passed. Direct Go/CNI invocation
+  without owned state fails before mutation. Four Low Bandit subprocess advisories were reviewed
+  as intentional shell-free local-tool/test execution and annotated at the exact call/import sites.
+  Review identified Medium cleanup races in name-based deletion after identity verification and
+  repeated cancellation during process teardown; fixes bind deletion to full IDs and suppress
+  repeated signals until owned children are killed/reaped. Replacement-after-check, repeated-signal,
+  deadline, and real Make-precedence regressions passed; independent re-review approved both fixes.
+  Work and cleanup have separate budgets; runner loss or the outer CI deadline can still prevent cleanup.
+  Full Kind and live cancellation acceptance remain in TEST-3; host preflight blocked creation.
+
 - [x] `ENG-6` [Low] split operand rendering into focused same-package files (2026-09-15).
   `nodepoweragent_render.go` and `nutserver_render.go` retain reconciliation orchestration;
   adjacent files own discovery, config/credentials/TLS, policies, workloads, and node-agent

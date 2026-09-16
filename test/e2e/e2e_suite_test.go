@@ -79,10 +79,18 @@ func managerKustomizationPath() string {
 // TestE2E runs the e2e test suite to validate the solution in an isolated environment.
 // The default setup requires Kind and CertManager.
 //
-// To enable kubectl kuberc (use custom kubectl configurations), set: KUBECTL_KUBERC=true
-// By default, kuberc is disabled to ensure consistent test behavior across different environments.
+// The owned runner disables kubectl kuberc for consistent, isolated test behavior.
 // To skip CertManager installation, set: CERT_MANAGER_INSTALL_SKIP=true
 func TestE2E(t *testing.T) {
+	// Fail before Ginkgo registers cleanup or any spec can mutate the current cluster.
+	root, err := utils.GetProjectDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := exec.Command("python3", "-B", filepath.Join(root, "hack", "test-kind.py"), "verify")
+	if output, err := guard.CombinedOutput(); err != nil {
+		t.Fatalf("Kind ownership check failed: %v: %s", err, output)
+	}
 	RegisterFailHandler(Fail)
 	_, _ = fmt.Fprintf(GinkgoWriter, "Starting nut-operator e2e test suite\n")
 	RunSpecs(t, "e2e suite")

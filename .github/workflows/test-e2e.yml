@@ -70,9 +70,14 @@ jobs:
           path: bin
           key: ${{ runner.os }}-tools-${{ hashFiles('Makefile', '.custom-gcl.yml') }}
 
-      - name: Install the latest version of kind
+      - name: Kind harness regression tests
+        run: make test-kind-harness
+
+      - name: Install pinned Kind
+        env:
+          KIND_VERSION: v0.30.0
         run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
+          curl --fail --location -o ./kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-$(go env GOARCH)
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
 
@@ -81,7 +86,7 @@ jobs:
 
       # The runner default is 128, which is not enough for the three-node cluster the suite now
       # creates (F-109): the last node's kubelet dies with "inotify_init: too many open files" and
-      # never joins, while `kind create` still exits 0. `make setup-test-e2e` refuses to continue
+      # never joins, while `kind create` still exits 0. `make check-test-e2e-host` refuses to continue
       # under the default rather than run on a cluster that is quietly one node short, so this step
       # is what lets it proceed.
       - name: Raise inotify limits for the multi-node Kind cluster

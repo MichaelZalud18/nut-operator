@@ -293,20 +293,17 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   real guest shutdown stays in VM-3/VM-4/VM-7. Retain exact promoted-image coverage and network
   policy enforcement. This investigation does not authorize splitting CI or dropping VM evidence.
 - [ ] `TEST-3` [Medium; High for mutation isolation] harden Kind reproducibility and kubeconfig
-  handling. Give the suite a private temporary KUBECONFIG and explicit owned cluster identity;
-  preserve the user's normal context through success, setup failure, cancellation, and cleanup.
-  This suite mutates/deletes resources, so accidental use of an unrelated cluster is the High risk.
-  **Pinning policy:** production images being promoted remain immutable/digest-addressed;
-  semantics-affecting test infrastructure gets an explicit stable version and digest/checksum
-  where artifact identity matters. Small gating helpers normally use versioned releases. `latest`
-  is allowed only in explicitly non-gating development/compatibility checks; keep upgrades routine.
-  Pin Kind CLI rather than downloading latest and version `curlimages/curl:latest`; a checksum or
-  digest is optional for these helpers unless needed for immutable identity. Put the authoritative
-  policy in CONTRIBUTING.md, a short pointer in AGENTS.md, and actual pins in their existing
-  Makefile/workflow/config owners. Do not duplicate exact versions in guidance.
-  **Testable now; Conditional:** validate unchanged external kubeconfig/context, refusal to mutate
-  a mismatched cluster, cleanup limited to owned resources, and stable version selection on gating
-  paths. Preserve shared-suite behavior and required-check semantics; coordinate with TEST-1/F-146.
+  handling. **Implementation complete; live Kind qualification remains.** The runner now owns a
+  private kubeconfig and unique cluster, guards context/cluster UID before mutation, and checks
+  original container IDs before deletion. Kind/curl helpers are versioned; pinning policy lives in
+  CONTRIBUTING.md. [Component evidence](tasks-completed.md#operator-maturity--hardening).
+  **Remaining; Testable now; Conditional:** run the existing full Kind suite on a provisioned
+  runner, confirm policy-enforcing CNI setup, exact promoted-image coverage, unchanged external
+  kubeconfig/context, and successful owned teardown. Rehearse live cancellation/partial startup
+  cleanup; component failure/signal tests do not prove Docker/Kind lifecycle behavior.
+  **Local blocker (2026-09-15):** the existing host preflight reports 128 inotify instances against
+  512 required. No cluster was started and the guardrail is unchanged. Preserve shared-suite and
+  required-check semantics; coordinate with TEST-1/F-146. Hadron remains a separate harness.
 
 ### v1 Release Readiness
 

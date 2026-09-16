@@ -61,6 +61,8 @@ shape.
 
 Follow [CONTRIBUTING.md](CONTRIBUTING.md#development-checks). Inspect build tags and entry points
 so default Go tests do not silently omit the component being changed.
+Follow its [test dependency pinning policy](CONTRIBUTING.md#test-dependency-pinning) for gating
+tools and images; keep version values in their existing configuration owners.
 
 Distinguish unit/component tests, Kind workloads, VM boot checks, and guest-shutdown acceptance.
 A pass in one layer is not evidence for another; mocks or terminating a VM process do not prove
