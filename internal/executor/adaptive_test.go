@@ -173,9 +173,9 @@ func TestRecordingAnImprovementDoesNotLatchThePointer(t *testing.T) {
 	}
 }
 
-// A second dip resumes from the persisted depth and re-attempts the tiers it already ran as no-ops
+// An in-process second dip uses the previous depth and re-attempts the tiers it already ran as no-ops
 // (EX-26), reported as re-execution so a subscriber can tell a second descent from a first.
-func TestASecondDipResumesFromThePersistedDepth(t *testing.T) {
+func TestInProcessRedescentPreservesDepth(t *testing.T) {
 	// The state a dip-recover-dip outage leaves behind: the flow reached tier 2, power improved
 	// and the pointer recorded that by climbing back to 4, and Deepest kept the record of how far
 	// it actually got. That last field is what makes the next descent recognizable as a second one.
@@ -207,30 +207,6 @@ func TestASecondDipResumesFromThePersistedDepth(t *testing.T) {
 	}
 }
 
-// OD-17: the pointer and the timing mode must survive an executor restart, or a restarted
-// instance resumes at the wrong depth or silently reverts to a fresh mode.
-func TestResumeStateCarriesThePointerAndTimingMode(t *testing.T) {
-	writer := &fakeAuditWriter{}
-
-	if _, err := newExecutor(writer).Execute(context.Background(), tieredInput(onBattery(120))); err != nil {
-		t.Fatalf("Execute returned error: %v", err)
-	}
-	if len(writer.resumeStates) == 0 {
-		t.Fatal("expected resume state to be written")
-	}
-	for _, state := range writer.resumeStates {
-		for _, key := range []string{"tier", "deepestTier", "pointerStarted", "timingMode"} {
-			if _, present := state.State[key]; !present {
-				t.Fatalf("resume state is missing %q: %#v", key, state.State)
-			}
-		}
-	}
-	last := writer.resumeStates[len(writer.resumeStates)-1]
-	if last.State["timingMode"] != string(adaptive.ModeUrgent) {
-		t.Fatalf("timingMode = %v, want Urgent at 120s remaining", last.State["timingMode"])
-	}
-}
-
 // Unknown runtime and zero runtime are different facts. A subscriber reading the record must be
 // able to tell "the device did not say" from "no time left".
 func TestUnknownRuntimeIsRecordedAsAbsentRatherThanZero(t *testing.T) {
@@ -240,7 +216,7 @@ func TestUnknownRuntimeIsRecordedAsAbsentRatherThanZero(t *testing.T) {
 	if _, err := newExecutor(writer).Execute(context.Background(), input); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
-	state := writer.resumeStates[0].State
+	state := writer.waves[0].Details
 	if state["runtimeSeconds"] != nil {
 		t.Fatalf("runtimeSeconds = %#v, want nil for an unread runtime", state["runtimeSeconds"])
 	}
@@ -601,4 +577,25 @@ type runnerFunc func(ctx context.Context, action Action) (ActionOutcome, error)
 
 func (f runnerFunc) RunAction(ctx context.Context, action Action) (ActionOutcome, error) {
 	return f(ctx, action)
+}
+
+func TestWaveAuditPreservesAdaptiveFacts(t *testing.T) {
+	writer := &fakeAuditWriter{}
+	if _, err := newExecutor(writer).Execute(context.Background(), tieredInput(onBattery(120))); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.waves) == 0 {
+		t.Fatal("missing wave history")
+	}
+	for _, wave := range writer.waves {
+		for _, key := range []string{"tier", "deepestTier", "pointerStarted", "timingMode"} {
+			if _, ok := wave.Details[key]; !ok {
+				t.Fatalf("wave history lacks %s: %+v", key, wave)
+			}
+		}
+	}
+	last := writer.waves[len(writer.waves)-1]
+	if last.Details["timingMode"] != string(adaptive.ModeUrgent) {
+		t.Fatalf("wave timing: %+v", last.Details)
+	}
 }

@@ -69,11 +69,8 @@ type fakeAuditStore struct {
 	actionAttempts           []audit.ShutdownFlowActionAttempt
 	nodeReleases             []audit.NodeReleaseRecord
 	nodeSignalHandoffs       []audit.NodeSignalHandoff
-	executorResumeStates     []audit.ExecutorResumeState
 	groupDurationSamples     []audit.GroupDurationSample
 	groupDurationErr         error
-	resumeReadErr            error
-	groupProgressErr         error
 	retentionRuns            []time.Time
 	closeCalls               int
 	eventErr                 error
@@ -199,70 +196,11 @@ func (s *fakeAuditStore) RecordNodeSignalHandoff(_ context.Context, handoff audi
 	return nil
 }
 
-func (s *fakeAuditStore) UpsertExecutorResumeState(_ context.Context, state audit.ExecutorResumeState) error {
-	if err := s.recordErr(); err != nil {
-		return err
-	}
-	s.executorResumeStates = append(s.executorResumeStates, state)
-	return nil
-}
-
 func (s *fakeAuditStore) GroupDurations(context.Context, string, string, int) ([]audit.GroupDurationSample, error) {
 	if s.groupDurationErr != nil {
 		return nil, s.groupDurationErr
 	}
 	return append([]audit.GroupDurationSample(nil), s.groupDurationSamples...), nil
-}
-
-func (s *fakeAuditStore) ExecutorResumeState(_ context.Context, executionID string) (*audit.ExecutorResumeState, error) {
-	if s.resumeReadErr != nil {
-		return nil, s.resumeReadErr
-	}
-	for i := len(s.executorResumeStates) - 1; i >= 0; i-- {
-		state := s.executorResumeStates[i]
-		if state.ExecutionID != executionID {
-			continue
-		}
-		copied := state
-		if state.CurrentWaveIndex != nil {
-			index := *state.CurrentWaveIndex
-			copied.CurrentWaveIndex = &index
-		}
-		copied.State = copyAnyMap(state.State)
-		return &copied, nil
-	}
-	return nil, nil
-}
-
-func (s *fakeAuditStore) ExecutionGroupProgress(_ context.Context, executionID string) ([]audit.ExecutionGroupProgress, error) {
-	if s.groupProgressErr != nil {
-		return nil, s.groupProgressErr
-	}
-	progress := make([]audit.ExecutionGroupProgress, 0, len(s.executionGroups))
-	for _, group := range s.executionGroups {
-		if group.ExecutionID != executionID || group.CompletedAt == nil {
-			continue
-		}
-		progress = append(progress, audit.ExecutionGroupProgress{
-			WaveIndex:   group.WaveIndex,
-			GroupName:   group.GroupName,
-			Action:      group.Action,
-			Phase:       group.Phase,
-			CompletedAt: *group.CompletedAt,
-		})
-	}
-	return progress, nil
-}
-
-func copyAnyMap(in map[string]any) map[string]any {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]any, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
 }
 
 var _ = Describe("PowerManagementCluster Controller", func() {

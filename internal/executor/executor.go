@@ -133,25 +133,6 @@ type Input struct {
 	// Adaptive carries the tier pointer and timing mode across the boundary. The
 	// zero value runs a flow with default parameters from a fresh pointer.
 	Adaptive AdaptiveInput
-
-	// Resume carries durable execution evidence from a prior manager instance for
-	// the same deterministic execution ID. It is empty for a fresh execution.
-	Resume ResumeInput
-}
-
-// ResumeInput identifies work already recorded for this execution ID.
-type ResumeInput struct {
-	CurrentWaveIndex *int32
-	Phase            string
-	CompletedGroups  []CompletedGroup
-}
-
-// CompletedGroup is terminal group evidence already present in the audit store.
-type CompletedGroup struct {
-	WaveIndex int32
-	GroupName string
-	Action    string
-	Phase     string
 }
 
 // Wave is one ordered unit from the compiled plan.
@@ -366,7 +347,6 @@ type waveExecutionResult struct {
 	DegradedReason  string
 	DegradedMessage string
 	TierOverrun     *TierOverrun
-	ResumedGroups   []string
 }
 
 // Execute records the execution in compiled wave order.
@@ -420,7 +400,6 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 
 	adaptiveInput := input.Adaptive
 	tierPolicy := effectiveTierOverrunPolicy(input.TierOverrunPolicy)
-	resumedGroups := resumableGroupSet(input.Resume)
 	var tierWindow tierOverrunWindow
 	var pending []<-chan waveExecutionResult
 	// approvalRevoked is sticky for the rest of this execution once set (F-126): re-approving
@@ -536,7 +515,6 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 					Mode:          mode,
 					DryRun:        waveDryRun,
 					TierPolicy:    tierPolicy,
-					ResumedGroups: resumedGroups,
 					Window:        window,
 					LowerTierDue:  lowerTierDue,
 					WaveStart:     waveStart,
@@ -584,7 +562,6 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 				Mode:          mode,
 				DryRun:        waveDryRun,
 				TierPolicy:    tierPolicy,
-				ResumedGroups: resumedGroups,
 				Window:        tierWindow,
 				LowerTierDue:  lowerTierDue,
 				WaveStart:     waveStart,
@@ -683,7 +660,6 @@ type waveRunConfig struct {
 	Mode          string
 	DryRun        bool
 	TierPolicy    string
-	ResumedGroups map[string]CompletedGroup
 	Window        tierOverrunWindow
 	LowerTierDue  bool
 	WaveStart     time.Time
@@ -693,19 +669,6 @@ type waveRunConfig struct {
 func (e Executor) runWave(ctx context.Context, cfg waveRunConfig, wave Wave, waveState waveAdaptiveState) waveExecutionResult {
 	var run waveExecutionResult
 	waveRecordID := e.newID()
-	currentWave := wave.Index
-	run.RecordError = errors.Join(run.RecordError, cfg.Writer.UpsertExecutorResumeState(ctx, audit.ExecutorResumeState{
-		ExecutionID:      cfg.ExecutionID,
-		ObservedAt:       cfg.WaveStart,
-		ShutdownFlow:     cfg.Input.ShutdownFlow,
-		PlanConfigHash:   cfg.Input.PlanConfigHash,
-		CurrentWaveIndex: &currentWave,
-		Phase:            PhaseRunning,
-		State: mergeDetails(adaptiveStateRecord(waveState), map[string]any{
-			"currentWaveIndex": wave.Index,
-			"groups":           append([]string(nil), wave.Groups...),
-		}),
-	}))
 	run.RecordError = errors.Join(run.RecordError, cfg.Writer.RecordShutdownFlowExecutionWave(ctx, audit.ShutdownFlowExecutionWave{
 		WaveRecordID: waveRecordID,
 		ExecutionID:  cfg.ExecutionID,
@@ -735,10 +698,6 @@ func (e Executor) runWave(ctx context.Context, cfg waveRunConfig, wave Wave, wav
 			for i := range group.NodeReleases {
 				group.NodeReleases[i].TerminalHandoff = len(wave.Groups) == 1 && cfg.TerminalWave
 			}
-		}
-		if e.recordResumedGroup(&run, cfg.ResumedGroups, wave.Index, groupName) {
-			e.reportProgress(Progress{Groups: 1, ActionAttempts: 1})
-			continue
 		}
 		groupResult, groupErr := e.executeGroup(ctx, cfg.ActionContext, cfg.Writer, cfg.Input, cfg.ExecutionID, cfg.Mode, cfg.DryRun, wave.Index, group, waveState, tierWindowOverrunning(cfg.Window, e.now()))
 		run.Groups++
@@ -792,9 +751,6 @@ func (e Executor) runWave(ctx context.Context, cfg waveRunConfig, wave Wave, wav
 		run.TierOverrun = overrun
 		waveDetails["tierOverrun"] = tierOverrunDetails(*overrun)
 	}
-	if len(run.ResumedGroups) > 0 {
-		waveDetails["resumedGroups"] = append([]string(nil), run.ResumedGroups...)
-	}
 	run.RecordError = errors.Join(run.RecordError, cfg.Writer.RecordShutdownFlowExecutionWave(ctx, audit.ShutdownFlowExecutionWave{
 		WaveRecordID: waveRecordID,
 		ExecutionID:  cfg.ExecutionID,
@@ -809,64 +765,11 @@ func (e Executor) runWave(ctx context.Context, cfg waveRunConfig, wave Wave, wav
 	return run
 }
 
-func (e Executor) recordResumedGroup(run *waveExecutionResult, groups map[string]CompletedGroup, waveIndex int32, groupName string) bool {
-	if run == nil {
-		return false
-	}
-	resumed, ok := groups[resumableGroupKey(waveIndex, groupName)]
-	if !ok {
-		return false
-	}
-	run.Groups++
-	run.ActionAttempts++
-	run.ResumedGroups = append(run.ResumedGroups, groupName)
-	if resumed.Action == ActionRunHook && resumed.Phase == PhaseFailed {
-		run.Degraded = true
-		if run.DegradedReason == "" {
-			run.DegradedReason = "ShutdownHookFailed"
-			run.DegradedMessage = fmt.Sprintf("RunHook group %q failure was resumed from audit evidence", groupName)
-		}
-	}
-	return true
-}
-
 func effectiveTierOverrunPolicy(policy string) string {
 	if policy == "" {
 		return TierOverrunPolicyWait
 	}
 	return policy
-}
-
-func resumableGroupSet(resume ResumeInput) map[string]CompletedGroup {
-	if len(resume.CompletedGroups) == 0 {
-		return nil
-	}
-	groups := make(map[string]CompletedGroup, len(resume.CompletedGroups))
-	for _, group := range resume.CompletedGroups {
-		if !groupIsResumable(group) {
-			continue
-		}
-		groups[resumableGroupKey(group.WaveIndex, group.GroupName)] = group
-	}
-	return groups
-}
-
-func groupIsResumable(group CompletedGroup) bool {
-	switch group.Phase {
-	case PhaseCompleted:
-		return true
-	case PhaseFailed:
-		return group.Action == ActionRunHook
-	default:
-		return false
-	}
-}
-
-func resumableGroupKey(waveIndex int32, groupName string) string {
-	if groupName == "" {
-		return ""
-	}
-	return fmt.Sprintf("%d/%s", waveIndex, groupName)
 }
 
 func executionDetails(input Input, details map[string]any) map[string]any {
@@ -1004,17 +907,6 @@ func adaptiveResultFrom(previous AdaptiveResult, waveState waveAdaptiveState) Ad
 		Observation: waveState.Observation,
 		Events:      append(previous.Events, waveState.Events...),
 	}
-}
-
-// finalAdaptiveStateRecord renders the end-of-run state for the resume row. It
-// reuses the per-wave shape so a resume row reads the same whether it was written
-// mid-flow or at the end.
-func finalAdaptiveStateRecord(result AdaptiveResult) map[string]any {
-	return adaptiveStateRecord(waveAdaptiveState{
-		Pointer:     result.Pointer,
-		Timing:      result.Timing,
-		Observation: result.Observation,
-	})
 }
 
 type groupExecutionResult struct {
@@ -1666,7 +1558,7 @@ func (e Executor) executionDefaults(input Input) (executionID string, observedAt
 }
 
 // completionRecord carries the execution identity a completed run has to stamp on its final audit
-// rows. Grouped into one value so recordCompletion does not take six positional arguments that are
+// row. Grouped into one value so recordCompletion does not take six positional arguments that are
 // all strings and bools and trivially swappable.
 type completionRecord struct {
 	ExecutionID string
@@ -1676,11 +1568,7 @@ type completionRecord struct {
 	StartedAt   time.Time
 }
 
-// recordCompletion writes the terminal execution row and resume state for a run that finished.
-//
-// Split out of Execute rather than inlined: it is the only place two audit writes have to agree on
-// one completedAt and one details map, and reading that agreement was hard when it sat under three
-// hundred lines of wave orchestration.
+// recordCompletion writes the terminal execution row for a run that finished.
 func (e Executor) recordCompletion(ctx context.Context, writer audit.Writer, input Input, result *Result, rec completionRecord) error {
 	var recordErr error
 	completedAt := e.now()
@@ -1711,22 +1599,6 @@ func (e Executor) recordCompletion(ctx context.Context, writer audit.Writer, inp
 		ApprovalEvidence:  map[string]any{"approved": input.Approved, "requestedMode": rec.Mode, "effectiveDryRun": rec.DryRun},
 		Revalidation:      map[string]any{"inputHash": input.InputHash},
 		Details:           finalDetails,
-	}))
-	resumeState := map[string]any{
-		"completedWaveCount": len(input.Waves),
-		"groupCount":         result.Groups,
-		"rehearsal":          input.Rehearsal,
-	}
-	if len(result.TierOverruns) > 0 {
-		resumeState["tierOverruns"] = tierOverrunListDetails(result.TierOverruns)
-	}
-	recordErr = errors.Join(recordErr, writer.UpsertExecutorResumeState(ctx, audit.ExecutorResumeState{
-		ExecutionID:    rec.ExecutionID,
-		ObservedAt:     completedAt,
-		ShutdownFlow:   input.ShutdownFlow,
-		PlanConfigHash: input.PlanConfigHash,
-		Phase:          PhaseCompleted,
-		State:          mergeDetails(finalAdaptiveStateRecord(result.Adaptive), resumeState),
 	}))
 
 	return recordErr

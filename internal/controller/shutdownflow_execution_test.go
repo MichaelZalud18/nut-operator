@@ -165,12 +165,3 @@ func TestShutdownExecutionDeduplicationKeyIncludesTheEpisodeBoundary(t *testing.
 		t.Fatal("later trigger episode reused the first episode key")
 	}
 }
-
-func TestResumeStateInt32RejectsOutOfRangeValues(t *testing.T) {
-	if _, ok := resumeStateInt32(map[string]any{"tier": int64(1) << 40}, "tier"); ok {
-		t.Fatal("expected an out-of-range resume tier to be ignored")
-	}
-	if tier, ok := resumeStateInt32(map[string]any{"tier": "3"}, "tier"); !ok || tier != 3 {
-		t.Fatalf("expected a valid string resume tier, got %d/%t", tier, ok)
-	}
-}

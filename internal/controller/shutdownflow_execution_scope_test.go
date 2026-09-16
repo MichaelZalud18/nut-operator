@@ -112,7 +112,7 @@ func TestEligibleDomainSelectionReachesExecutor(t *testing.T) {
 				}
 				flow.Status.CompiledSteps, flow.Status.CompiledWaves = compiled.Steps, compiled.Waves
 				flow.Status.PublishedArtifact = compiled.Artifact
-				input, err := r.shutdownExecutionInput(ctx, flow, now, "inputs", compiled.ConfigHash, evaluation, "scope-test", bundle, false, shutdownExecutionResumeEvidence{})
+				input, err := r.shutdownExecutionInput(ctx, flow, now, "inputs", compiled.ConfigHash, evaluation, "scope-test", bundle, false)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -183,7 +183,7 @@ func TestPrunedAgentReferenceIsNotResolvedForExecution(t *testing.T) {
 		t.Fatalf("compile: %+v", compiled.Diagnostics)
 	}
 	flow.Status.CompiledSteps, flow.Status.CompiledWaves = compiled.Steps, compiled.Waves
-	if _, err := r.shutdownExecutionInput(context.Background(), flow, time.Now(), "inputs", compiled.ConfigHash, evaluation, "episode", bundle, false, shutdownExecutionResumeEvidence{}); err != nil {
+	if _, err := r.shutdownExecutionInput(context.Background(), flow, time.Now(), "inputs", compiled.ConfigHash, evaluation, "episode", bundle, false); err != nil {
 		t.Fatalf("pruned agent blocked unrelated work: %v", err)
 	}
 }

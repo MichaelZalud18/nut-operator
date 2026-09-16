@@ -70,8 +70,8 @@ such as CloudNativePG: those talk to PostgreSQL as the workload they manage, not
 - `shutdownflow_action_attempts`: individual dry-run or effectful executor action outcomes.
 - `node_release_records`: executor release decisions for node shutdown handoff.
 - `node_signal_handoffs`: signal-file evidence passed to node power agents.
-- `executor_resume_states`: compact execution state used by existing resume helpers; retained
-  implementation, not a supported restart-continuity guarantee (EX-14, superseded OD-17).
+- `executor_resume_states`: deprecated historical checkpoints from older builds. Current code
+  neither reads nor writes this table (EX-14, superseded OD-17).
 
 For node handoff evidence, `Released=true` and `Accepted=true` require a successful signal Secret
 write reported by the action runner for that exact node, agent, namespace, Secret, and data key.
@@ -124,10 +124,25 @@ diagram exports, plus capability profile match rows, capability profile verifica
 decisions, and eligible dry-run execution evidence through the referenced `PowerManagementCluster`
 storage backend. Rejected `ShutdownFlow` reconciliations record a compilation row with diagnostics
 and no accepted plan hash. Executor implementations use the execution, wave, group,
-action-attempt, release, handoff, and resume-state tables to make shutdown progress auditable
+action-attempt, release, and handoff tables to make shutdown progress auditable
 without putting PostgreSQL on the host actuation boundary or promising restart continuity. External
 PostgreSQL requires TLS by default. CNPG mode reads the generated application credential Secret and
 prefers the FQDN URI when present.
+
+## Deprecated Resume Storage
+
+Migration 9 marks `executor_resume_states` deprecated with a PostgreSQL table comment.
+Migrations 1 through 8 remain unchanged, including the original table definition. Fresh installs
+and upgrades therefore follow the same migration history. The migration neither drops the table
+nor modifies historical rows, unrelated execution evidence, or foreign keys. Existing checkpoints
+expire only through the existing parent execution retention policy and its cascading foreign key.
+
+No runtime resume reader, writer, or completed-group replay interface remains. Legacy
+`executor_resume_state` spool entries are unrecognized by the current replayer and stay in the
+journal as evidence. Recognized audit entries in the same journal still replay; the journal is
+retained while any legacy entry remains. Such retained journals require operator-managed archival
+under the spool storage policy; upgrading does not silently discard them. PostgreSQL history and
+duration queries continue to use ordinary execution and group records.
 
 ## Shutdown-Time Spool
 

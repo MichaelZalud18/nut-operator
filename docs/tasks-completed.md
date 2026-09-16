@@ -100,6 +100,19 @@ status across trackers. Historical run output and longer investigations remain i
 
 ## Planning & Execution Logic
 
+- [x] `ENG-4` [Medium] remove unsupported durable executor resume machinery (2026-09-15).
+  Removed persisted reconstruction, completed-group skipping, and resume-only audit/executor
+  interfaces. New executions start from current observations, not published historical adaptive
+  status. Episode deduplication, in-process progress/adaptive transitions, fresh authorization,
+  targeting, signal expiry/withdrawal, ordinary audit/history, and worker/storage ownership remain.
+  Migration 9 deprecates the old checkpoint table without changing migrations 1-8 or deleting
+  existing evidence; legacy spool checkpoint entries remain while supported records replay.
+  Scope, executor, adaptive, and schema contracts describe this boundary and archival strategy.
+  **Validated:** controller/audit/executor suites and race runs, fresh-state and repeat-safe
+  workload shutdown with different execution IDs, legacy spool replay, real PostgreSQL upgrade
+  and retention tests, and the broad API/internal/command regression suite. Independent review
+  found no blocking security or correctness issues; repository lint reported zero issues.
+
 - [x] `F-132` [High] separate long-running execution from reconciliation (2026-09-15).
   Bounded manager-owned workers serialize each flow, publish running counts/adaptive state through
   reconciliation, retain completion until status succeeds, and cancel/join on deletion, replacement,

@@ -37,7 +37,6 @@ type Store interface {
 	EnforceRetention(ctx context.Context, now time.Time) error
 	Writer
 	HistoryReader
-	ResumeReader
 	Close() error
 }
 
@@ -56,7 +55,6 @@ type Writer interface {
 	RecordShutdownFlowActionAttempt(ctx context.Context, attempt ShutdownFlowActionAttempt) error
 	RecordNodeRelease(ctx context.Context, release NodeReleaseRecord) error
 	RecordNodeSignalHandoff(ctx context.Context, handoff NodeSignalHandoff) error
-	UpsertExecutorResumeState(ctx context.Context, state ExecutorResumeState) error
 }
 
 // SQLStoreOptions configure a PostgreSQL-backed Store.
@@ -214,7 +212,6 @@ func (NoopStore) RecordNodeRelease(context.Context, NodeReleaseRecord) error { r
 func (NoopStore) RecordNodeSignalHandoff(context.Context, NodeSignalHandoff) error {
 	return nil
 }
-func (NoopStore) UpsertExecutorResumeState(context.Context, ExecutorResumeState) error { return nil }
 
 // PowerEvent records a controller or executor decision/event.
 type PowerEvent struct {
@@ -422,28 +419,6 @@ type NodeSignalHandoff struct {
 	Accepted       bool
 	Reason         string
 	Details        map[string]any
-}
-
-// ExecutorResumeState stores compact executor restart state for one execution.
-type ExecutorResumeState struct {
-	ExecutionID      string
-	ObservedAt       time.Time
-	ShutdownFlow     string
-	PlanConfigHash   string
-	CurrentWaveIndex *int32
-	Phase            string
-	State            map[string]any
-}
-
-// ExecutionGroupProgress is the durable group evidence used to resume an
-// interrupted executor without re-running work that already reached a terminal
-// record.
-type ExecutionGroupProgress struct {
-	WaveIndex   int32
-	GroupName   string
-	Action      string
-	Phase       string
-	CompletedAt time.Time
 }
 
 // DiagnosticRecord is the durable, package-local diagnostic shape.
@@ -930,39 +905,6 @@ ON CONFLICT (handoff_id) DO NOTHING`, s.quotedSchema),
 	)
 	if err != nil {
 		return fmt.Errorf("record node signal handoff %q: %w", handoff.HandoffID, err)
-	}
-	return nil
-}
-
-func (s *SQLStore) UpsertExecutorResumeState(ctx context.Context, state ExecutorResumeState) error {
-	if state.ExecutionID == "" || state.ShutdownFlow == "" || state.PlanConfigHash == "" || state.Phase == "" {
-		return fmt.Errorf("executor resume state requires execution ID, flow, plan config hash, and phase")
-	}
-	encodedState, err := jsonObject(state.State)
-	if err != nil {
-		return err
-	}
-	_, err = s.executor.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %[1]s.executor_resume_states
-(execution_id, observed_at, shutdownflow, plan_config_hash, current_wave_index, phase, state, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now())
-ON CONFLICT (execution_id) DO UPDATE SET
-  observed_at = EXCLUDED.observed_at,
-  shutdownflow = EXCLUDED.shutdownflow,
-  plan_config_hash = EXCLUDED.plan_config_hash,
-  current_wave_index = EXCLUDED.current_wave_index,
-  phase = EXCLUDED.phase,
-  state = EXCLUDED.state,
-  updated_at = now()`, s.quotedSchema),
-		state.ExecutionID,
-		observedAt(state.ObservedAt),
-		state.ShutdownFlow,
-		state.PlanConfigHash,
-		optionalInt32(state.CurrentWaveIndex),
-		state.Phase,
-		encodedState,
-	)
-	if err != nil {
-		return fmt.Errorf("upsert executor resume state %q: %w", state.ExecutionID, err)
 	}
 	return nil
 }

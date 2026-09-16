@@ -163,11 +163,12 @@ Pointer and timing mode must stay consistent during execution. Recovering them a
 restart is not required; the former OD-17 promise was superseded by
 [SB-1](scope-boundaries.md#executor-restarts-and-idempotency).
 
-The current implementation writes both to `executor_resume_states`, alongside execution ID, plan
-config hash, current wave index, phase, and an open `state` payload. `UpsertExecutorResumeState`
-upserts by execution ID. These are existing record shapes, not a supported crash-recovery contract.
-An enabled audit spool can preserve failed writes, but evidence durability does not guarantee that
-an interrupted execution will resume or complete.
+The manager-owned execution worker holds pointer and timing state in process, including across
+wave boundaries and overlapped actions. Wave audit records and current status publish those facts.
+A new execution starts with fresh adaptive state and current observations; neither status nor
+historical audit records are execution checkpoints. The deprecated resume table is retained only
+as historical evidence; see [the schema policy](audit-storage-schema.md#deprecated-resume-storage).
+An enabled audit spool preserves failed audit writes without promising interrupted-flow recovery.
 
 ## Implementation
 
@@ -224,8 +225,8 @@ Three inputs cross the boundary:
   trigger time would defeat the point of evaluating at boundaries at all.
 - **The tier**, taken from each compiled wave's own `shutdownTier` rather than counted. Counting waves
   drifts the moment one tier spans two waves.
-- **The prior state**, supplied by the caller. The existing controller can seed it from recorded
-  execution state; this does not promise exact restart continuity (EX-14).
+- **The prior state**, held in the execution worker and advanced between waves. The controller
+  supplies fresh state for each new execution; historical status is not an input (EX-14).
 
 Reading power degrades rather than refuses. A `UPSDevice` that cannot be read contributes an unknown
 runtime, exactly like a stale one, and the flow continues — PL-32 keeps the reading pessimistic while
@@ -300,8 +301,9 @@ a state no one declared: some tiers down, some up, and no record of which decisi
 completed execution is a state a recovery subscriber can act on. A partially-run one is a puzzle.
 
 Trigger eligibility governs the next execution, so a genuine recovery simply means no new execution
-starts, and a flicker means the next one begins from a pointer that was never latched
-(`PointerState.Halted` stays false) and is persisted in the resume state.
+starts. A later eligible episode starts a fresh execution and evaluates current power observations.
+Within an active execution, power improvement does not latch the pointer
+(`PointerState.Halted` stays false).
 
 ## Decisions affecting adaptive execution
 

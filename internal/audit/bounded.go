@@ -159,15 +159,6 @@ func (s *BoundedStore) RecordNodeSignalHandoff(ctx context.Context, record NodeS
 	return s.finish(child, s.Store.RecordNodeSignalHandoff(child, record))
 }
 
-func (s *BoundedStore) UpsertExecutorResumeState(ctx context.Context, record ExecutorResumeState) error {
-	child, cancel, err := s.begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer cancel()
-	return s.finish(child, s.Store.UpsertExecutorResumeState(child, record))
-}
-
 func (s *BoundedStore) EnsureSchema(ctx context.Context) error {
 	child, cancel, err := s.begin(ctx)
 	if err != nil {
@@ -191,24 +182,6 @@ func (s *BoundedStore) GroupDurations(ctx context.Context, flow, hash string, li
 	}
 	defer cancel()
 	values, err := s.Store.GroupDurations(child, flow, hash, limit)
-	return values, s.finish(child, err)
-}
-func (s *BoundedStore) ExecutorResumeState(ctx context.Context, id string) (*ExecutorResumeState, error) {
-	child, cancel, err := s.begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer cancel()
-	value, err := s.Store.ExecutorResumeState(child, id)
-	return value, s.finish(child, err)
-}
-func (s *BoundedStore) ExecutionGroupProgress(ctx context.Context, id string) ([]ExecutionGroupProgress, error) {
-	child, cancel, err := s.begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer cancel()
-	values, err := s.Store.ExecutionGroupProgress(child, id)
 	return values, s.finish(child, err)
 }
 

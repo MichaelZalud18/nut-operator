@@ -198,12 +198,6 @@ func (w *SpoolWriter) RecordNodeSignalHandoff(ctx context.Context, handoff NodeS
 	})
 }
 
-func (w *SpoolWriter) UpsertExecutorResumeState(ctx context.Context, state ExecutorResumeState) error {
-	return w.record(ctx, "executor_resume_state", state.ExecutionID, state, func() error {
-		return w.primary.UpsertExecutorResumeState(ctx, state)
-	})
-}
-
 func (w *SpoolWriter) record(ctx context.Context, kind, key string, payload any, primaryWrite func() error) error {
 	primaryErr := primaryWrite()
 	if primaryErr == nil {

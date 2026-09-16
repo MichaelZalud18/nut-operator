@@ -55,7 +55,7 @@ const (
 	triggerNotEligibleMessage = "shutdown flow execution has not started because no trigger is eligible"
 )
 
-func (r *ShutdownFlowReconciler) executeShutdownFlow(ctx context.Context, writer audit.Writer, resumeReader audit.ResumeReader, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, bundle resolver.StructuralBundle) error {
+func (r *ShutdownFlowReconciler) executeShutdownFlow(ctx context.Context, writer audit.Writer, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, bundle resolver.StructuralBundle) error {
 	if writer == nil || flow == nil || evaluation == nil {
 		return nil
 	}
@@ -104,31 +104,12 @@ func (r *ShutdownFlowReconciler) executeShutdownFlow(ctx context.Context, writer
 	if rehearsalRun {
 		dedupeKey = shutdownRehearsalDeduplicationKey(flow, rehearsal, configHash, executionEvaluation.SelectedUPSDevices)
 	}
-	executionID := shutdownExecutionIdentity(dedupeKey)
 	if executionAlreadyRecorded(flow.Status.LastExecution, dedupeKey) {
-		markExecutionAlreadyRecorded(flow, executionID, dedupeKey, configHash, executionEvaluation, rehearsalRun, nil)
+		markExecutionAlreadyRecorded(flow, rehearsalRun)
 		return nil
 	}
 
-	resume, resumeErr := r.shutdownExecutionResumeEvidence(ctx, resumeReader, executionID, flow.Name, configHash)
-	if resumeErr != nil {
-		log := logf.FromContext(ctx)
-		log.Error(resumeErr, "Could not read shutdown flow executor resume evidence",
-			"shutdownflow", flow.Name, "executionID", executionID)
-		setDegradedCondition(
-			&flow.Status.Conditions,
-			flow.Generation,
-			true,
-			"ExecutorResumeReadFailed",
-			"shutdown flow execution could not read all resume evidence: "+resumeErr.Error(),
-		)
-	}
-	if resumeExecutionCompleted(resume) {
-		markExecutionAlreadyRecorded(flow, executionID, dedupeKey, configHash, executionEvaluation, rehearsalRun, resume.state)
-		return nil
-	}
-
-	input, err := r.shutdownExecutionInput(ctx, flow, observedAt, inputHash, configHash, executionEvaluation, dedupeKey, bundle, rehearsalRun, resume)
+	input, err := r.shutdownExecutionInput(ctx, flow, observedAt, inputHash, configHash, executionEvaluation, dedupeKey, bundle, rehearsalRun)
 	if err != nil {
 		setExecutionReadyCondition(
 			&flow.Status.Conditions,
@@ -267,7 +248,7 @@ func (r *ShutdownFlowReconciler) executeShutdownFlow(ctx context.Context, writer
 	return result.RecordError
 }
 
-func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, dedupeKey string, bundle resolver.StructuralBundle, rehearsal bool, resume shutdownExecutionResumeEvidence) (executorpkg.Input, error) {
+func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flow *powerv1alpha1.ShutdownFlow, observedAt time.Time, inputHash, configHash string, evaluation *powerv1alpha1.ShutdownTriggerEvaluationStatus, dedupeKey string, bundle resolver.StructuralBundle, rehearsal bool) (executorpkg.Input, error) {
 	waves := executorWavesFromFlow(flow.Status.CompiledWaves, flow.Status.CompiledSteps)
 	applyCommunicationBarriers(waves, flow.Status.PublishedArtifact)
 	groups, err := r.executorGroups(ctx, flowForCompiledExecution(flow), false)
@@ -312,8 +293,7 @@ func (r *ShutdownFlowReconciler) shutdownExecutionInput(ctx context.Context, flo
 		TierOverrunPolicy:  string(effectiveShutdownTierOverrunPolicy(flow.Spec.TierOverrunPolicy)),
 		Waves:              waves,
 		Groups:             groups,
-		Adaptive:           adaptiveInputForFlow(flow, bundle, observation, resume.state),
-		Resume:             resume.input,
+		Adaptive:           adaptiveInputForFlow(flow, observation),
 	}, nil
 }
 
@@ -1369,8 +1349,7 @@ var shutdownExecutionIDNamespace = uuid.NewSHA1(uuid.NameSpaceDNS, []byte("power
 //
 // F-100. The digest used to be the identity outright, and it could not be: `execution_id` is a
 // `uuid` column in six tables, so every write failed with SQLSTATE 22P02 and the execution audit
-// trail was empty on every cluster -- resume state included, which is why resume-after-restart
-// could never have worked either.
+// trail was empty on every cluster.
 //
 // Widening those columns to `text` was the other option and was not taken. The identity does not
 // stay in PostgreSQL: it is stamped on Kubernetes objects as the `power.zalud.io/execution` label,
@@ -1407,4 +1386,28 @@ func shutdownExecutionPhase(phase string, err error) powerv1alpha1.ShutdownExecu
 	default:
 		return powerv1alpha1.ShutdownExecutionPhaseFailed
 	}
+}
+
+func markExecutionAlreadyRecorded(
+	flow *powerv1alpha1.ShutdownFlow,
+	rehearsalRun bool,
+) {
+	reason := "AlreadyExecuted"
+	message := "eligible trigger episode already has execution evidence"
+	if rehearsalRun {
+		reason = "RehearsalAlreadyExecuted"
+		message = "rehearsal request already has execution evidence"
+	}
+	status := flow.Status.LastExecution
+	status.TriggerActive = true
+	status.Reason = reason
+	status.Message = message
+	applyLastExecutionPhase(flow)
+	setExecutionReadyCondition(
+		&flow.Status.Conditions,
+		flow.Generation,
+		true,
+		reason,
+		message,
+	)
 }

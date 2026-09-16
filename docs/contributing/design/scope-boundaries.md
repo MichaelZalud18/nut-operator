@@ -74,10 +74,12 @@ because the operator can prove they were delivered exactly once. Repeat safety m
 retaining the same execution ID. External hook authors/receivers own the same property for their
 effects; repeated invocation or audit records are not themselves a correctness failure.
 
-Audit history and correct in-process progress reporting remain in scope. Existing resume helpers
-and `executor_resume_states` records in the implementation do not establish a supported restart
-contract; this documentation clarification does not remove them. Approval, signal expiry, and
-node-binding checks remain required independently of idempotency.
+Audit history and correct in-process progress reporting remain in scope. The manager-owned worker
+retains adaptive state for its lifetime; new executions do not reconstruct checkpoints from status
+or audit history, or skip groups using previous completion records. Trigger-episode deduplication
+still uses the published execution summary. Approval, signal expiry, and node-binding checks remain
+required independently of idempotency. The deprecated `executor_resume_states` table retains old
+evidence under the [schema upgrade policy](audit-storage-schema.md#deprecated-resume-storage).
 
 Scope clarified 2026-09-05, superseding the restart-continuity promise formerly recorded under
 `EX-14` and `OD-17`. Reviews must distinguish an unsafe repeated effect from missing resume evidence.

@@ -46,7 +46,6 @@ type fakeAuditWriter struct {
 	actionAttempts           []audit.ShutdownFlowActionAttempt
 	nodeReleases             []audit.NodeReleaseRecord
 	nodeSignalHandoffs       []audit.NodeSignalHandoff
-	resumeStates             []audit.ExecutorResumeState
 }
 
 func (w *fakeAuditWriter) RecordPowerEvent(_ context.Context, event audit.PowerEvent) error {
@@ -139,13 +138,6 @@ func (w *fakeAuditWriter) RecordNodeSignalHandoff(_ context.Context, handoff aud
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.nodeSignalHandoffs = append(w.nodeSignalHandoffs, handoff)
-	return nil
-}
-
-func (w *fakeAuditWriter) UpsertExecutorResumeState(_ context.Context, state audit.ExecutorResumeState) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.resumeStates = append(w.resumeStates, state)
 	return nil
 }
 
@@ -247,12 +239,10 @@ func TestExecutorRecordsOrderedDryRunEvidence(t *testing.T) {
 	if handoff.SignalPayload["planConfigHash"] != "plan-hash-a" || handoff.SignalPayload["shutdownFlow"] != "conserve-power" {
 		t.Fatalf("unexpected signal payload: %#v", handoff.SignalPayload)
 	}
-	if gotPhases := resumePhases(writer.resumeStates); fmt.Sprint(gotPhases) != "[Running Running Completed]" {
-		t.Fatalf("unexpected resume phases: %#v", gotPhases)
-	}
+
 }
 
-func TestExecutorSkipsResumedTerminalGroups(t *testing.T) {
+func TestExecutorRunsEveryGroupWithoutReplaySkipping(t *testing.T) {
 	writer := &fakeAuditWriter{}
 	runner := &recordingActionRunner{outcome: ActionOutcome{Outcome: OutcomeSucceeded}}
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
@@ -263,8 +253,8 @@ func TestExecutorSkipsResumedTerminalGroups(t *testing.T) {
 		NewID:  sequenceIDs(),
 	}
 
-	result, err := executor.Execute(context.Background(), Input{
-		ExecutionID:       "execution-resume-a",
+	input := Input{
+		ExecutionID:       "execution-repeat-a",
 		ObservedAt:        fixed,
 		ShutdownFlow:      "conserve-power",
 		Mode:              ModeEnforce,
@@ -280,31 +270,25 @@ func TestExecutorSkipsResumedTerminalGroups(t *testing.T) {
 			{Name: "snapshot", Action: ActionRunHook},
 			{Name: "databases", Action: "ScaleWorkload"},
 		},
-		Resume: ResumeInput{
-			CompletedGroups: []CompletedGroup{{
-				WaveIndex: 0,
-				GroupName: "snapshot",
-				Action:    ActionRunHook,
-				Phase:     PhaseCompleted,
-			}},
-		},
-	})
+	}
+	result, err := executor.Execute(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 	if result.Phase != PhaseCompleted || result.Groups != 2 || result.ActionAttempts != 2 {
-		t.Fatalf("expected resumed execution summary to include both groups, got %#v", result)
+		t.Fatalf("expected execution summary to include both groups, got %#v", result)
 	}
-	if len(runner.actions) != 1 || runner.actions[0].Group.Name != "databases" {
-		t.Fatalf("expected only the unfinished group to run, got %#v", runner.actions)
+
+	if len(runner.actions) != 2 || runner.actions[0].Group.Name != "snapshot" || runner.actions[1].Group.Name != "databases" {
+		t.Fatalf("expected every group to run: %+v", runner.actions)
 	}
-	if len(writer.groups) != 1 || writer.groups[0].GroupName != "databases" {
-		t.Fatalf("expected only unfinished group evidence to be rewritten, got %#v", writer.groups)
+	if len(writer.groups) != 2 {
+		t.Fatalf("expected both group records: %+v", writer.groups)
 	}
-	details := completedWaveDetails(writer.waves, 0)
-	resumed, ok := details["resumedGroups"].([]string)
-	if !ok || fmt.Sprint(resumed) != "[snapshot]" {
-		t.Fatalf("expected wave 0 to report resumed group evidence, got %#v", details)
+	// Audit history and an unchanged execution identity must not suppress another invocation.
+	result, err = executor.Execute(context.Background(), input)
+	if err != nil || result.Groups != 2 || len(runner.actions) != 4 || len(writer.groups) != 4 {
+		t.Fatalf("repeat execution: result=%+v actions=%d records=%d err=%v", result, len(runner.actions), len(writer.groups), err)
 	}
 }
 
@@ -845,14 +829,6 @@ func waitForExecution(t *testing.T, ch <-chan struct {
 			err    error
 		}{}
 	}
-}
-
-func resumePhases(states []audit.ExecutorResumeState) []string {
-	phases := make([]string, 0, len(states))
-	for _, state := range states {
-		phases = append(phases, state.Phase)
-	}
-	return phases
 }
 
 // F-100: a run that traverses every wave must not report as failed because the database rejected

@@ -30,7 +30,7 @@ const (
 	DefaultSchema = "power"
 
 	// CurrentSchemaVersion is the latest bundled migration version.
-	CurrentSchemaVersion = 8
+	CurrentSchemaVersion = 9
 )
 
 // Migration is one ordered PostgreSQL migration.
@@ -88,6 +88,17 @@ func Migrations(schema string) ([]Migration, error) {
 			Name:    "trigger_decision_id_text_schema",
 			SQL:     triggerDecisionIDTextSchemaSQL(quotedSchema),
 		},
+		{
+			Version: 9,
+			Name:    "deprecate_executor_resume_states",
+			SQL: fmt.Sprintf(`COMMENT ON TABLE %[1]s.executor_resume_states IS
+'Deprecated: historical evidence only. No runtime resume readers or writers; retained until parent execution retention expires.';
+
+INSERT INTO %[1]s.audit_schema_migrations (version, name)
+VALUES (9, 'deprecate_executor_resume_states')
+ON CONFLICT (version) DO NOTHING;
+`, quotedSchema),
+		},
 	}, nil
 }
 
@@ -110,8 +121,8 @@ func Migrations(schema string) ([]Migration, error) {
 //
 // F-100: the digest was being used *as* execution_id, which is typed uuid. Every write to
 // shutdownflow_executions and the five tables keyed on it failed with SQLSTATE 22P02 on every
-// cluster, so the execution audit trail was empty everywhere and resume-after-restart could never
-// work. execution_id is now derived from the digest instead of being it, and the digest lands here.
+// cluster, leaving the execution audit trail empty. execution_id is now derived from the digest
+// instead of being it, and the digest lands here for episode correlation.
 //
 // No existing row can be backfilled: there are none. That is the finding.
 func executionDeduplicationKeySchemaSQL(schema string) string {

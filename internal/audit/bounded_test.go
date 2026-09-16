@@ -64,10 +64,4 @@ func TestUnavailableStoreDoesNotReportEmptySuccessfulReads(t *testing.T) {
 	if _, err := store.GroupDurations(context.Background(), "flow", "hash", 1); !errors.Is(err, cause) {
 		t.Fatal(err)
 	}
-	if _, err := store.ExecutorResumeState(context.Background(), "id"); !errors.Is(err, cause) {
-		t.Fatal(err)
-	}
-	if _, err := store.ExecutionGroupProgress(context.Background(), "id"); !errors.Is(err, cause) {
-		t.Fatal(err)
-	}
 }

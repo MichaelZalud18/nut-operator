@@ -180,8 +180,6 @@ func replayRecord(ctx context.Context, primary Writer, record spoolReplayRecord)
 		return decodeAndApply(record, primary.RecordNodeRelease, ctx)
 	case "node_signal_handoff":
 		return decodeAndApply(record, primary.RecordNodeSignalHandoff, ctx)
-	case "executor_resume_state":
-		return decodeAndApply(record, primary.UpsertExecutorResumeState, ctx)
 	default:
 		return false, nil
 	}

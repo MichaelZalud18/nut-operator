@@ -253,8 +253,9 @@ from API Priority and Fairness are not overridden — that is backpressure, not 
 **EX-14 · Idempotent execution, without a restart-continuity guarantee.** The former requirement
 to resume at an exact persisted wave and avoid repeating completed actions was superseded on
 2026-09-05 by [SB-1](scope-boundaries.md#executor-restarts-and-idempotency). `EX-26` remains the
-action-safety contract. Existing resume readers, writers, and schema do not turn restart recovery
-or durable resume evidence into product requirements.
+action-safety contract. Historical resume storage does not turn restart recovery
+or durable resume evidence into product requirements. Runtime checkpoint reconstruction and
+completed-group replay are removed; current authorization and targeting still apply.
 
 ---
 
@@ -309,7 +310,7 @@ points — all to PostgreSQL per GP-3 and SB-12, keyed by plan hash (PL-14).
 **EX-20 · Audit failure does not halt power response** (SB-11). PostgreSQL unavailability during
 execution degrades evidence, raises a condition, and the flow continues when the shutdown-time
 audit spool is enabled. The spool appends replayable JSONL records with the same execution IDs,
-wave keys, action-attempt IDs, release IDs, handoff IDs, and resume-state keys that the primary
+wave keys, action-attempt IDs, release IDs, and handoff IDs that the primary
 PostgreSQL writer uses. If both PostgreSQL and the configured spool path fail, the audit failure is
 returned and the flow records the failed evidence path.
 
@@ -491,8 +492,9 @@ during execution. Replay/drain automation is a recovery-subscriber concern.
 
 **OD-17 · Executor state persistence for resume - superseded 2026-09-05.** Restart/resume continuity
 is outside project scope under [SB-1](scope-boundaries.md#executor-restarts-and-idempotency).
-The existing tables and helpers remain implementation details, not a requirement to expand or
-prove crash recovery. Durable audit history remains in scope.
+The deprecated checkpoint table retains historical evidence; runtime resume helpers are removed.
+Durable audit history remains in scope. See the
+[schema upgrade policy](audit-storage-schema.md#deprecated-resume-storage).
 
 Bound from elsewhere: OD-12 (infeasibility policy — consumed at EX-3), OD-14 (partial-domain scope
 — determines what EX-10 executes when one domain fires).

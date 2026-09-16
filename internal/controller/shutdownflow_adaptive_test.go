@@ -29,7 +29,6 @@ import (
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
-	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
 	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
@@ -220,34 +219,6 @@ func TestCompiledTierRangeDefaultsForAnUntieredPlan(t *testing.T) {
 	}
 }
 
-// OD-17: a restarted executor must resume from the pointer it left behind, or it re-reports
-// tiers it already descended as new work.
-func TestResumedStateReadsBackTheLastPublishedPointer(t *testing.T) {
-	status := &powerv1alpha1.ShutdownExecutionStatus{
-		Adaptive: &powerv1alpha1.ShutdownExecutionAdaptiveStatus{
-			Tier: 4, DeepestTier: 2, PointerStarted: true, TimingMode: string(adaptive.ModeUrgent),
-		},
-	}
-
-	pointer := resumedPointerState(status)
-	if pointer.Tier != 4 || pointer.Deepest != 2 || !pointer.Started {
-		t.Fatalf("pointer = %#v, want tier 4 deepest 2 started", pointer)
-	}
-	if mode := resumedTimingState(status).Mode; mode != adaptive.ModeUrgent {
-		t.Fatalf("mode = %q, want Urgent", mode)
-	}
-}
-
-// A flow with no prior execution starts fresh rather than panicking on a nil status.
-func TestResumedStateHandlesAFlowThatNeverExecuted(t *testing.T) {
-	if pointer := resumedPointerState(nil); pointer.Started {
-		t.Fatalf("pointer = %#v, want an unstarted pointer", pointer)
-	}
-	if mode := resumedTimingState(nil).Mode; mode != "" {
-		t.Fatalf("mode = %q, want empty so the executor defaults it", mode)
-	}
-}
-
 // A malformed Wait duration leaves the pause undeclared rather than rejecting the flow.
 // Refusing to shut a cluster down over a typo in an advisory pause is the worse failure.
 func TestAMalformedWaitDurationIsTreatedAsUndeclared(t *testing.T) {
@@ -290,25 +261,6 @@ func TestDedupeIsScopedToTheTriggerEpisode(t *testing.T) {
 	}
 	if executionAlreadyRecorded(deactivated, "key-a") {
 		t.Fatal("once the trigger goes ineligible the episode is over; the next dip must run")
-	}
-}
-
-// The published pointer is what the next execution resumes from, so the round trip through status
-// has to preserve it exactly -- including Deepest, which is what makes re-descent recognizable.
-func TestThePublishedPointerRoundTripsBackIntoTheNextRun(t *testing.T) {
-	published := adaptiveStatusFromResult(executorpkg.AdaptiveResult{
-		Pointer: adaptive.PointerState{Tier: 4, Deepest: 2, Started: true},
-		Timing:  adaptive.TimingState{Mode: adaptive.ModeUrgent},
-	})
-
-	resumed := resumedPointerState(&powerv1alpha1.ShutdownExecutionStatus{Adaptive: published})
-	if resumed.Tier != 4 || resumed.Deepest != 2 || !resumed.Started {
-		t.Fatalf("resumed = %#v, want tier 4 deepest 2 started", resumed)
-	}
-	// Recording an improvement is not a halt: the resumed pointer must be free to descend again
-	// (EX-30, which reserves latching for abort).
-	if resumed.Halted {
-		t.Fatal("a run that observed power improving must not resume into a latched pointer")
 	}
 }
 

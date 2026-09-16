@@ -21,33 +21,21 @@ import (
 
 	powerv1alpha1 "github.com/MichaelZalud18/nut-operator/api/v1alpha1"
 	"github.com/MichaelZalud18/nut-operator/internal/adaptive"
-	"github.com/MichaelZalud18/nut-operator/internal/audit"
 	"github.com/MichaelZalud18/nut-operator/internal/capability"
 	executorpkg "github.com/MichaelZalud18/nut-operator/internal/executor"
-	"github.com/MichaelZalud18/nut-operator/internal/resolver"
 )
 
 // adaptiveInputForFlow assembles the tier-pointer and timing-mode state the
-// executor resumes from.
+// executor starts with. Historical status is output, not an execution checkpoint.
 //
 // The tier range comes from the tiers the plan actually compiled rather than from
 // a constant, so a flow whose last tier is 3 does not report descending past it.
 // Tier 0 is last-ditch and excluded from flow targeting (OD-4), so the final tier
 // is never below 1 regardless of what the waves say.
-func adaptiveInputForFlow(flow *powerv1alpha1.ShutdownFlow, bundle resolver.StructuralBundle, observation adaptive.PowerObservation, resumeState *audit.ExecutorResumeState) executorpkg.AdaptiveInput {
+func adaptiveInputForFlow(flow *powerv1alpha1.ShutdownFlow, observation adaptive.PowerObservation) executorpkg.AdaptiveInput {
 	final, start := compiledTierRange(flow.Status.CompiledWaves)
-	pointer := resumedPointerState(flow.Status.LastExecution)
-	if resumed, ok := resumedPointerStateFromAudit(resumeState); ok {
-		pointer = resumed
-	}
-	timing := resumedTimingState(flow.Status.LastExecution)
-	if resumed, ok := resumedTimingStateFromAudit(resumeState); ok {
-		timing = resumed
-	}
 	return executorpkg.AdaptiveInput{
 		Parameters:  adaptive.DefaultParameters(),
-		Pointer:     pointer,
-		Timing:      timing,
 		Observation: observation,
 		FinalTier:   final,
 		StartTier:   start,
@@ -174,72 +162,6 @@ func soonestRequeue(current, candidate time.Duration) time.Duration {
 		return candidate
 	}
 	return current
-}
-
-// resumedPointerState reads back the pointer an earlier execution left behind
-// (OD-17, EX-14).
-//
-// A restarted executor that started from a fresh pointer would re-report tiers it
-// already descended as new work, which is a reporting error at exactly the moment
-// a subscriber is trying to understand a second dip.
-func resumedPointerState(status *powerv1alpha1.ShutdownExecutionStatus) adaptive.PointerState {
-	if status == nil || status.Adaptive == nil {
-		return adaptive.PointerState{}
-	}
-	return adaptive.PointerState{
-		Tier:    status.Adaptive.Tier,
-		Deepest: status.Adaptive.DeepestTier,
-		Started: status.Adaptive.PointerStarted,
-	}
-}
-
-// resumedTimingState reads back the timing mode. Restarting into a fresh mode
-// would silently relax a flow that had escalated, handing back time it may need
-// and cannot get again.
-func resumedTimingState(status *powerv1alpha1.ShutdownExecutionStatus) adaptive.TimingState {
-	if status == nil || status.Adaptive == nil || status.Adaptive.TimingMode == "" {
-		return adaptive.TimingState{}
-	}
-	return adaptive.TimingState{Mode: adaptive.TimingMode(status.Adaptive.TimingMode)}
-}
-
-func resumedPointerStateFromAudit(state *audit.ExecutorResumeState) (adaptive.PointerState, bool) {
-	if state == nil || len(state.State) == 0 {
-		return adaptive.PointerState{}, false
-	}
-	started, startedOK := resumeStateBool(state.State, "pointerStarted")
-	if !startedOK {
-		return adaptive.PointerState{}, false
-	}
-	pointer := adaptive.PointerState{Started: started}
-	if tier, ok := resumeStateInt32(state.State, "tier"); ok {
-		pointer.Tier = tier
-	}
-	if deepest, ok := resumeStateInt32(state.State, "deepestTier"); ok {
-		pointer.Deepest = deepest
-	}
-	if halted, ok := resumeStateBool(state.State, "pointerHalted"); ok {
-		pointer.Halted = halted
-	}
-	return pointer, true
-}
-
-func resumedTimingStateFromAudit(state *audit.ExecutorResumeState) (adaptive.TimingState, bool) {
-	if state == nil || len(state.State) == 0 {
-		return adaptive.TimingState{}, false
-	}
-	mode, ok := resumeStateString(state.State, "timingMode")
-	if !ok {
-		return adaptive.TimingState{}, false
-	}
-	timing := adaptive.TimingState{Mode: adaptive.TimingMode(mode)}
-	if pendingMode, ok := resumeStateString(state.State, "timingPendingMode"); ok {
-		timing.PendingMode = adaptive.TimingMode(pendingMode)
-	}
-	if pending, ok := resumeStateInt64(state.State, "timingPending"); ok {
-		timing.PendingCount = int(pending)
-	}
-	return timing, true
 }
 
 // adaptiveStatusFromResult publishes the adaptive state a run ended on (EX-28).

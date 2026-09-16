@@ -49,25 +49,6 @@ type fakeResult int64
 func (r fakeResult) LastInsertId() (int64, error) { return int64(r), nil }
 func (r fakeResult) RowsAffected() (int64, error) { return int64(r), nil }
 
-type resumeStateScanner struct {
-	values ExecutorResumeState
-}
-
-func (s resumeStateScanner) Scan(dest ...any) error {
-	*dest[0].(*string) = s.values.ExecutionID
-	*dest[1].(*time.Time) = s.values.ObservedAt
-	*dest[2].(*string) = s.values.ShutdownFlow
-	*dest[3].(*string) = s.values.PlanConfigHash
-	waveIndex := dest[4].(*sql.NullInt32)
-	if s.values.CurrentWaveIndex != nil {
-		waveIndex.Int32 = *s.values.CurrentWaveIndex
-		waveIndex.Valid = true
-	}
-	*dest[5].(*string) = s.values.Phase
-	*dest[6].(*[]byte) = []byte(`{"tier":3,"pointerStarted":true,"timingMode":"Urgent"}`)
-	return nil
-}
-
 func TestNewSQLStoreRequiresExecutor(t *testing.T) {
 	if _, err := NewSQLStore(nil, SQLStoreOptions{}); err == nil {
 		t.Fatal("expected nil SQL executor to be rejected")
@@ -467,21 +448,6 @@ func TestSQLStoreRecordsAllAuditPayloadTypes(t *testing.T) {
 				})
 			},
 		},
-		{
-			name:  "executor resume state",
-			table: `"power".executor_resume_states`,
-			write: func() error {
-				return store.UpsertExecutorResumeState(context.Background(), ExecutorResumeState{
-					ExecutionID:      "00000000-0000-4000-8000-000000000006",
-					ObservedAt:       observedAt,
-					ShutdownFlow:     "conserve-power",
-					PlanConfigHash:   "hash-a",
-					CurrentWaveIndex: &waveIndex,
-					Phase:            "Running",
-					State:            map[string]any{"completedGroups": []string{"applications"}},
-				})
-			},
-		},
 	}
 
 	for _, write := range writes {
@@ -558,50 +524,6 @@ func TestSQLStoreUpsertsExecutorProgressRecords(t *testing.T) {
 		if !strings.Contains(query, write.want) {
 			t.Fatalf("%s query missing %q:\n%s", write.name, write.want, query)
 		}
-	}
-}
-
-func TestScanExecutorResumeStateDecodesCurrentWaveAndStatePayload(t *testing.T) {
-	waveIndex := int32(2)
-	observedAt := time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC)
-
-	state, err := scanExecutorResumeState(resumeStateScanner{values: ExecutorResumeState{
-		ExecutionID:      "00000000-0000-4000-8000-000000000006",
-		ObservedAt:       observedAt,
-		ShutdownFlow:     "conserve-power",
-		PlanConfigHash:   "hash-a",
-		CurrentWaveIndex: &waveIndex,
-		Phase:            "Running",
-	}})
-	if err != nil {
-		t.Fatalf("scanExecutorResumeState returned error: %v", err)
-	}
-	if state.CurrentWaveIndex == nil || *state.CurrentWaveIndex != waveIndex {
-		t.Fatalf("unexpected current wave: %#v", state.CurrentWaveIndex)
-	}
-	if state.State["timingMode"] != "Urgent" || state.State["pointerStarted"] != true {
-		t.Fatalf("resume state payload was not decoded: %#v", state.State)
-	}
-}
-
-func TestSQLStoreResumeReadersReturnEmptyWithoutQueryExecutor(t *testing.T) {
-	store, err := NewSQLStore(&fakeExecutor{}, SQLStoreOptions{})
-	if err != nil {
-		t.Fatalf("NewSQLStore returned error: %v", err)
-	}
-	state, err := store.ExecutorResumeState(context.Background(), "00000000-0000-4000-8000-000000000006")
-	if err != nil {
-		t.Fatalf("ExecutorResumeState returned error: %v", err)
-	}
-	if state != nil {
-		t.Fatalf("expected no resume state without query support, got %#v", state)
-	}
-	progress, err := store.ExecutionGroupProgress(context.Background(), "00000000-0000-4000-8000-000000000006")
-	if err != nil {
-		t.Fatalf("ExecutionGroupProgress returned error: %v", err)
-	}
-	if len(progress) != 0 {
-		t.Fatalf("expected no group progress without query support, got %#v", progress)
 	}
 }
 
@@ -778,9 +700,6 @@ func TestSQLStoreRejectsIncompleteRecords(t *testing.T) {
 		SelectedTargets: map[string]any{"not": "an array"},
 	}); err == nil {
 		t.Fatal("expected non-array selected targets to be rejected")
-	}
-	if err := store.UpsertExecutorResumeState(context.Background(), ExecutorResumeState{}); err == nil {
-		t.Fatal("expected incomplete executor resume state to be rejected")
 	}
 }
 

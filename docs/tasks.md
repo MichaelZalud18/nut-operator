@@ -143,21 +143,6 @@ Remaining default-calibration evidence (`OD-27`) lives in the
   provenance, feasibility, communication, and quorum stay green; equivalent inputs retain
   equivalent semantic artifacts. Judge clearer ownership and less repeated derivation/plumbing,
   not lines removed.
-- [ ] `ENG-4` [Medium] remove machinery used only for durable executor resume, preserving SB-1
-  and EX-26. Audit controller/audit/executor callers before removing persisted resume reconstruction,
-  completed-group replay/skip logic, and resume-only interfaces or records. This is deletion of an
-  unsupported subsystem, not reinstatement of F-130 or a demand for exactly-once execution.
-  Preserve trigger-episode deduplication, in-process progress and adaptive execution state, current
-  authorization, signal expiry/withdrawal, audit history, and repeat-safe actions. Repeated effects
-  after interruption must be safe; precise checkpoint restoration and proof of skipped work are not
-  required. Distinguish unused resume persistence from ordinary historical execution evidence.
-  Preserve the in-process ownership established by completed `F-132` and `ENG-3` before deleting
-  shared state.
-  **Testable now; Conditional:** repeated-action and episode-boundary tests, adaptive progression,
-  fresh approval/targeting and stale-signal regressions, audit/history tests, and affected race suites.
-  Define an explicit schema/upgrade strategy for resume-only tables without deleting unrelated
-  audit data or rewriting already-applied migration history. Update scope/schema docs and retire
-  resume-only tests only after supported behavior has independent coverage.
 
 ---
 

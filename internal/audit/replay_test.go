@@ -81,9 +81,6 @@ func (w *recordingWriter) RecordNodeRelease(_ context.Context, release NodeRelea
 func (w *recordingWriter) RecordNodeSignalHandoff(context.Context, NodeSignalHandoff) error {
 	return w.err
 }
-func (w *recordingWriter) UpsertExecutorResumeState(context.Context, ExecutorResumeState) error {
-	return w.err
-}
 
 // spoolAndDrain writes records through a spool whose primary is failing, then
 // replays the journal into a healthy primary -- the exact sequence a PostgreSQL
@@ -249,9 +246,8 @@ func TestReplayCoversEveryWriterMethod(t *testing.T) {
 		"ShutdownFlowActionAttempt": func(w Writer) error {
 			return w.RecordShutdownFlowActionAttempt(ctx, ShutdownFlowActionAttempt{AttemptID: "a"})
 		},
-		"NodeRelease":         func(w Writer) error { return w.RecordNodeRelease(ctx, NodeReleaseRecord{ReleaseID: "a"}) },
-		"NodeSignalHandoff":   func(w Writer) error { return w.RecordNodeSignalHandoff(ctx, NodeSignalHandoff{HandoffID: "a"}) },
-		"ExecutorResumeState": func(w Writer) error { return w.UpsertExecutorResumeState(ctx, ExecutorResumeState{ExecutionID: "a"}) },
+		"NodeRelease":       func(w Writer) error { return w.RecordNodeRelease(ctx, NodeReleaseRecord{ReleaseID: "a"}) },
+		"NodeSignalHandoff": func(w Writer) error { return w.RecordNodeSignalHandoff(ctx, NodeSignalHandoff{HandoffID: "a"}) },
 	}
 
 	for name, write := range writes {
@@ -277,5 +273,23 @@ func TestReplayCoversEveryWriterMethod(t *testing.T) {
 				t.Fatalf("replay does not understand the record kind this write produces: %#v", stats)
 			}
 		})
+	}
+}
+
+func TestReplayRetainsLegacyResumeEvidence(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, defaultSpoolFileName)
+	data := []byte("{\"kind\":\"executor_resume_state\",\"payload\":{\"ExecutionID\":\"old-execution\"}}\n{\"kind\":\"shutdownflow_execution\",\"payload\":{\"ExecutionID\":\"ordinary-execution\"}}\n")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	healthy := &recordingWriter{}
+	stats, err := ReplaySpool(context.Background(), healthy, ReplayOptions{Directory: directory})
+	if err != nil || stats.Skipped != 1 || stats.Replayed != 1 || len(healthy.executions) != 1 {
+		t.Fatalf("legacy replay: %+v %v", stats, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(data) {
+		t.Fatalf("legacy evidence changed: %q %v", got, err)
 	}
 }

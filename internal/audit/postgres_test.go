@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,11 @@ import (
 // The tagged suite requires an explicit disposable database; the default suite
 // neither opens database connections nor silently skips this acceptance test.
 func openTestPostgres(t *testing.T) (context.Context, *sql.DB, *SQLStore) {
+	t.Helper()
+	return openTestPostgresThrough(t, CurrentSchemaVersion)
+}
+
+func openTestPostgresThrough(t *testing.T, version int) (context.Context, *sql.DB, *SQLStore) {
 	t.Helper()
 	dsn := os.Getenv("AUDIT_TEST_POSTGRES_DSN")
 	if dsn == "" {
@@ -54,9 +60,15 @@ func openTestPostgres(t *testing.T) (context.Context, *sql.DB, *SQLStore) {
 			t.Errorf("clean owned schema: %v", err)
 		}
 	})
+	migrations, err := Migrations(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for range 2 {
-		if err := store.EnsureSchema(ctx); err != nil {
-			t.Fatal(err)
+		for _, migration := range migrations[:version] {
+			if _, err := db.ExecContext(ctx, migration.SQL); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	return ctx, db, store
@@ -196,9 +208,6 @@ func TestPostgresAllRecordsReplay(t *testing.T) {
 		{"node_signal_handoffs", func(w Writer) error {
 			return w.RecordNodeSignalHandoff(ctx, NodeSignalHandoff{HandoffID: id, ExecutionID: id, ObservedAt: now, NodeName: "worker", Reason: "test"})
 		}},
-		{"executor_resume_states", func(w Writer) error {
-			return w.UpsertExecutorResumeState(ctx, ExecutorResumeState{ExecutionID: id, ObservedAt: now, ShutdownFlow: "flow", PlanConfigHash: "hash", Phase: "Completed", State: map[string]any{"test": true}})
-		}},
 	}
 	if len(writes) != reflect.TypeFor[Writer]().NumMethod() {
 		t.Fatal("extend the PostgreSQL fixtures for the changed Writer interface")
@@ -241,21 +250,6 @@ func TestPostgresAllRecordsReplay(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("drained journal remains: %v", err)
-	}
-	state, err := store.ExecutorResumeState(ctx, id)
-	if err != nil || state == nil || state.State["test"] != true {
-		t.Fatalf("stored state: %+v %v", state, err)
-	}
-	groups, err := store.ExecutionGroupProgress(ctx, id)
-	if err != nil || len(groups) != 1 || groups[0].GroupName != "workers" {
-		t.Fatalf("stored groups: %+v %v", groups, err)
-	}
-	if err := store.UpsertExecutorResumeState(ctx, ExecutorResumeState{ExecutionID: id, ShutdownFlow: "flow", PlanConfigHash: "hash", Phase: "Updated"}); err != nil {
-		t.Fatal(err)
-	}
-	state, err = store.ExecutorResumeState(ctx, id)
-	if err != nil || state == nil || state.Phase != "Updated" {
-		t.Fatalf("updated state: %+v %v", state, err)
 	}
 	// Identity conflicts are repeat-safe, but unrelated integrity failures must
 	// remain errors rather than being mistaken for already-delivered evidence.
@@ -301,5 +295,78 @@ func TestPostgresLockedWriterFallsBackToSpool(t *testing.T) {
 	stats, err := ReplaySpool(ctx, store, ReplayOptions{Directory: dir})
 	if err != nil || stats.Replayed != 1 {
 		t.Fatalf("replay after lock release: %+v %v", stats, err)
+	}
+}
+
+func TestPostgresResumeDeprecationPreservesEvidence(t *testing.T) {
+	ctx, db, store := openTestPostgresThrough(t, 8)
+	now := time.Now().UTC()
+	id := "00000000-0000-4000-8000-000000000111"
+	if err := store.RecordShutdownFlowExecution(ctx, ShutdownFlowExecution{
+		ExecutionID: id, ObservedAt: now.Add(-2 * time.Hour),
+		ShutdownFlow: "flow", PlanConfigHash: "hash", Mode: "Enforce", Phase: "Running",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO "+store.quotedSchema+".executor_resume_states (execution_id, observed_at, shutdownflow, plan_config_hash, phase, state) VALUES ($1, now(), 'flow', 'hash', 'Running', '{\"tier\":3}')", id); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordShutdownFlowExecutionGroup(ctx, ShutdownFlowExecutionGroup{
+		GroupRecordID: id, ExecutionID: id, GroupName: "workers", Action: "DrainNodes", Phase: "Completed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := store.EnsureSchema(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var tier, migrations int
+	if err := db.QueryRowContext(ctx, "SELECT (state->>'tier')::int FROM "+store.quotedSchema+".executor_resume_states WHERE execution_id=$1", id).Scan(&tier); err != nil || tier != 3 {
+		t.Fatalf("legacy evidence: tier=%d err=%v", tier, err)
+	}
+	for _, table := range []string{"shutdownflow_executions", "shutdownflow_execution_groups"} {
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+store.quotedSchema+"."+table).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("%s evidence: count=%d err=%v", table, count, err)
+		}
+	}
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+store.quotedSchema+".audit_schema_migrations").Scan(&migrations); err != nil || migrations != CurrentSchemaVersion {
+		t.Fatalf("migrations=%d err=%v", migrations, err)
+	}
+	var comment string
+	if err := db.QueryRowContext(ctx, "SELECT obj_description(($1)::regclass, 'pg_class')", store.quotedSchema+".executor_resume_states").Scan(&comment); err != nil || !strings.Contains(comment, "Deprecated") {
+		t.Fatalf("deprecation: %q %v", comment, err)
+	}
+
+	recentID := "00000000-0000-4000-8000-000000000112"
+	if err := store.RecordShutdownFlowExecution(ctx, ShutdownFlowExecution{
+		ExecutionID: recentID, ObservedAt: now, ShutdownFlow: "flow", PlanConfigHash: "hash",
+		Mode: "Enforce", Phase: "Completed", Details: map[string]any{"preserved": true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordShutdownFlowExecutionGroup(ctx, ShutdownFlowExecutionGroup{
+		GroupRecordID: recentID, ExecutionID: recentID, ObservedAt: now,
+		GroupName: "workers", Action: "DrainNodes", Phase: "Completed",
+		Details: map[string]any{"preserved": true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnforceRetention(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	// The checkpoint is recent; its removal must follow the expired parent execution.
+	for _, table := range []string{"shutdownflow_executions", "shutdownflow_execution_groups", "executor_resume_states"} {
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+store.quotedSchema+"."+table+" WHERE execution_id=$1", id).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("expired execution evidence in %s: count=%d err=%v", table, count, err)
+		}
+	}
+	for _, table := range []string{"shutdownflow_executions", "shutdownflow_execution_groups"} {
+		var preserved bool
+		if err := db.QueryRowContext(ctx, "SELECT (details->>'preserved')::boolean FROM "+store.quotedSchema+"."+table+" WHERE execution_id=$1", recentID).Scan(&preserved); err != nil || !preserved {
+			t.Fatalf("recent evidence in %s: preserved=%v err=%v", table, preserved, err)
+		}
 	}
 }

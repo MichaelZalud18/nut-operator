@@ -31,19 +31,13 @@ import (
 // stays pure -- it reads no clock, no client, and no telemetry -- so everything
 // impure about running it lives here: reading the power state, persisting the
 // resulting state, and emitting the events.
-//
-// State arrives on the input rather than being held on the Executor because the
-// executor may restart mid-flow (EX-14). The caller loads the last persisted
-// pointer and timing state from executor_resume_states and hands them back, which
-// is what stops a restarted instance resuming at the wrong depth or silently
-// reverting to a fresh mode.
 type AdaptiveInput struct {
 	// Parameters are the OD-27 through OD-30 tunables. Zero values are filled from
 	// adaptive.DefaultParameters, so a caller that has no opinion still gets the
 	// validated defaults rather than a model that escalates on nothing.
 	Parameters adaptive.Parameters
 
-	// Pointer and Timing are the state to resume from. Zero values are a fresh
+	// Pointer and Timing carry in-process adaptive state. Zero values are a fresh
 	// flow: pointer not started, mode Relaxed.
 	Pointer adaptive.PointerState
 	Timing  adaptive.TimingState
@@ -243,11 +237,10 @@ func remainingPlanDuration(waves []Wave, fromIndex int) time.Duration {
 	return total
 }
 
-// adaptiveStateRecord renders the pointer and timing state for the
-// executor_resume_states payload (OD-17).
+// adaptiveStateRecord renders pointer and timing facts for execution audit history.
 //
 // Written as plain values rather than the Go structs so the record stays readable
-// and stable if the model's internals change: a resume row outlives the build that
+// and stable if the model's internals change: an audit row outlives the build that
 // wrote it.
 func adaptiveStateRecord(state waveAdaptiveState) map[string]any {
 	return map[string]any{

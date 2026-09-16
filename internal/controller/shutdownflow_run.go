@@ -43,7 +43,7 @@ func (r *ShutdownFlowReconciler) runShutdownFlow(ctx context.Context, flow *powe
 	// the executor's trigger/rehearsal, approval, and fresh-target gates do.
 	var executionErr error
 	if result.accepted {
-		executionErr = r.executeShutdownFlow(ctx, writer, store, flow, observedAt, bundle.Hash, configHash, triggerEvaluation, bundle)
+		executionErr = r.executeShutdownFlow(ctx, writer, flow, observedAt, bundle.Hash, configHash, triggerEvaluation, bundle)
 	}
 	return errors.Join(auditErr, executionErr)
 }

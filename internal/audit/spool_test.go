@@ -68,9 +68,6 @@ func (w failingAuditWriter) RecordNodeRelease(context.Context, NodeReleaseRecord
 func (w failingAuditWriter) RecordNodeSignalHandoff(context.Context, NodeSignalHandoff) error {
 	return w.err
 }
-func (w failingAuditWriter) UpsertExecutorResumeState(context.Context, ExecutorResumeState) error {
-	return w.err
-}
 
 func TestSpoolWriterRecordsFallbackJSONL(t *testing.T) {
 	fixed := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)

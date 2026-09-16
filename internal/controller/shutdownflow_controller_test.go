@@ -589,12 +589,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.LastExecution.Reason).To(Equal("RehearsalAlreadyExecuted"))
 		})
 
-		// EX-14: the executor is itself a workload in a cluster that is shutting down, so it may be
-		// killed mid-flow. A restart has no continuity except what reached etcd, which is why this
-		// seeds the persisted record and then reconciles through a second reconciler instance --
-		// that pair is what a restarted operator pod actually is. Producing the suspension in-process
-		// would exercise suspension, not restart.
-		It("resumes a restarted execution from the tier it left behind rather than starting over", func() {
+		It("starts a fresh adaptive run for a new episode after restart", func() {
 			observedAt := time.Date(2026, 8, 4, 9, 0, 0, 0, time.UTC)
 			currentTime := observedAt
 			cluster := &powerv1alpha1.PowerManagementCluster{
@@ -643,8 +638,6 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(firstRun.PointerStarted).To(BeTrue())
 			Expect(firstRun.Tier).To(Equal(lateTier))
 			Expect(firstRun.DeepestTier).To(Equal(lateTier))
-			// The contrast the resumed run is measured against: a pointer with no history reports
-			// entering the first tier, and a timing state with no history has to escalate into Urgent.
 			Expect(firstRun.Events).To(ContainElement(ContainSubstring("entered tier 5")))
 			Expect(firstRun.Events).To(ContainElement(ContainSubstring("Escalated")))
 			Expect(firstRun.TimingMode).To(Equal(string(adaptive.ModeUrgent)))
@@ -678,29 +671,22 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			_, err = secondInstance.reconcileForTest(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
-			// A fresh episode runs again, and the pointer it resumes from is the one the previous
-			// run persisted -- otherwise the restart is blocked by the record of its own progress.
 			Expect(len(store.shutdownFlowExecutions)).To(BeNumerically(">", executionsAfterFirstRun))
 
 			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
-			resumed := resource.Status.LastExecution.Adaptive
-			Expect(resumed).NotTo(BeNil())
+			fresh := resource.Status.LastExecution.Adaptive
+			Expect(fresh).NotTo(BeNil())
 
-			// The pointer resumed. Starting from a fresh one would re-report tier 5 as new work at
-			// exactly the moment a subscriber is trying to read a second dip.
-			Expect(resumed.Events).NotTo(ContainElement(ContainSubstring("entered tier 5")))
-			Expect(resumed.Events).To(ContainElement(ContainSubstring("held at tier 3")))
-			Expect(resumed.Tier).To(Equal(lateTier))
-			Expect(resumed.DeepestTier).To(Equal(lateTier))
-			Expect(resumed.PointerStarted).To(BeTrue())
+			Expect(fresh.Events).To(ContainElement(ContainSubstring("entered tier 5")))
+			Expect(fresh.Tier).To(Equal(lateTier))
+			Expect(fresh.DeepestTier).To(Equal(lateTier))
+			Expect(fresh.PointerStarted).To(BeTrue())
 
-			// The timing mode resumed. A fresh state would have to climb out of Relaxed again, which
-			// hands back time the flow already decided it needed and cannot get back.
-			Expect(resumed.TimingMode).To(Equal(string(adaptive.ModeUrgent)))
-			Expect(resumed.Events).NotTo(ContainElement(ContainSubstring("Escalated")))
+			Expect(fresh.TimingMode).To(Equal(string(adaptive.ModeUrgent)))
+			Expect(fresh.Events).To(ContainElement(ContainSubstring("Escalated")))
 		})
 
-		It("loads durable resume state when status was not published before restart", func() {
+		It("executes every group despite historical evidence when status was not published", func() {
 			observedAt := time.Date(2026, 8, 29, 9, 0, 0, 0, time.UTC)
 			cluster := &powerv1alpha1.PowerManagementCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: shutdownFlowTestPowerClusterName},
@@ -759,27 +745,6 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			resource.Status.ConfigHash = executionPlan.ConfigHash
 			dedupeKey := shutdownExecutionDeduplicationKey(resource, evaluation, resource.Status.ConfigHash)
 			executionID := shutdownExecutionIdentity(dedupeKey)
-			currentWave := int32(0)
-			store.executorResumeStates = append(store.executorResumeStates, audit.ExecutorResumeState{
-				ExecutionID:      executionID,
-				ObservedAt:       currentTime,
-				ShutdownFlow:     resource.Name,
-				PlanConfigHash:   resource.Status.ConfigHash,
-				CurrentWaveIndex: &currentWave,
-				Phase:            executorpkg.PhaseRunning,
-				State: map[string]any{
-					"tier":              lateTier,
-					"deepestTier":       lateTier,
-					"pointerStarted":    true,
-					"pointerHalted":     false,
-					"timingMode":        string(adaptive.ModeUrgent),
-					"timingPendingMode": "",
-					"timingPending":     0,
-					"onBattery":         true,
-					"lowBattery":        false,
-					"runtimeTrusted":    true,
-				},
-			})
 			completedAt := currentTime.Add(10 * time.Second)
 			store.executionGroups = append(store.executionGroups, audit.ShutdownFlowExecutionGroup{
 				GroupRecordID: "00000000-0000-4000-8000-000000000101",
@@ -812,8 +777,7 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(resource.Status.LastExecution).NotTo(BeNil())
 			Expect(resource.Status.LastExecution.ExecutionID).To(Equal(executionID))
 			Expect(resource.Status.LastExecution.Adaptive).NotTo(BeNil())
-			Expect(resource.Status.LastExecution.Adaptive.Events).NotTo(ContainElement(ContainSubstring("entered tier 5")))
-			Expect(resource.Status.LastExecution.Adaptive.Events).To(ContainElement(ContainSubstring("held at tier 3")))
+			Expect(resource.Status.LastExecution.Adaptive.Events).To(ContainElement(ContainSubstring("entered tier 5")))
 			Expect(resource.Status.LastExecution.Adaptive.TimingMode).To(Equal(string(adaptive.ModeUrgent)))
 
 			var applicationsRecords int
@@ -826,10 +790,10 @@ var _ = Describe("ShutdownFlow Controller", func() {
 					databasesRecords++
 				}
 			}
-			Expect(applicationsRecords).To(Equal(1))
+			Expect(applicationsRecords).To(Equal(2))
 			Expect(databasesRecords).To(Equal(1))
-			Expect(store.actionAttempts).To(HaveLen(1))
-			Expect(store.actionAttempts[0].GroupName).To(Equal("databases"))
+			Expect(store.actionAttempts).To(HaveLen(2))
+			Expect(store.actionAttempts[0].GroupName).To(Equal("applications"))
 		})
 
 		It("should change plan identity when capability profiles change", func() {
@@ -1062,7 +1026,6 @@ var _ = Describe("ShutdownFlow Controller", func() {
 			Expect(store.executionGroups).To(HaveLen(1))
 			Expect(store.actionAttempts).To(HaveLen(1))
 			Expect(store.actionAttempts[0].Outcome).To(Equal("Simulated"))
-			Expect(store.executorResumeStates).NotTo(BeEmpty())
 			Expect(flow.Status.LastExecution).NotTo(BeNil())
 			Expect(flow.Status.LastExecution.Phase).To(Equal(powerv1alpha1.ShutdownExecutionPhaseCompleted))
 			Expect(flow.Status.LastExecution.TriggerActive).To(BeTrue())
