@@ -184,6 +184,8 @@ func TestHadronShutdownFlowProducesRealSignal(t *testing.T) {
 		return err
 	}, nil)
 
+	removeUnneededKubeSystemWorkloads(ctx, t, kubeconfigPath, clientset)
+
 	t.Log("importing the real manager and operand images into the guest's own containerd")
 	for _, tarPath := range []string{managerTar, nutServerTar, upsmonTar, actuatorTar, postgresTar} {
 		importImageTarball(ctx, t, creds, tarPath)
@@ -511,6 +513,46 @@ spec:
 		t.Logf("diagnostic manager log:\n%s", raw)
 	})
 	t.Log("confirmed: the real actuator accepted a real, operator-written signal -- produced by a real trigger evaluation and execution, not hand-written")
+}
+
+// removeUnneededKubeSystemWorkloads deletes the stock k3s Deployments this test does not exercise
+// (local-path-provisioner: no PersistentVolumeClaim anywhere in this fixture; metrics-server: no
+// HPA or resource-metrics query; traefik: no Ingress). CoreDNS is deliberately left alone --
+// PostgreSQL is reached by its Service DNS name, hadron-outage-postgres.<namespace>.svc.cluster.
+// local, so this test depends on it.
+//
+// Found live: the executor's AgentShutdown readiness check (internal/executor/executor.go's
+// agentShutdownReadinessError, EX-9) refuses to proceed unless a node's non-exempt, non-DaemonSet
+// pods are gone -- exempt is the manager's own namespace and every NodePowerAgent's operand
+// namespace (internal/controller/shutdownflow_execution.go's clearanceExemptNamespaces), which
+// does not cover kube-system. A single guest was assumed clear enough for this milestone
+// (docs/contributing/audits/hadron-vm-4-operator-2026-09-13.md's own design rationale), but k3s's
+// stock Deployments are real, non-exempt, non-DaemonSet pods and blocked with reason
+// "NodeNotCleared" on a live run. Real drain/eviction against a live workload Pod remains a later
+// milestone's work (that same audit doc's own "open, deliberately not attempted here" section) --
+// removing components this test never uses is not a stand-in for that, it makes the node
+// genuinely, accurately clear rather than working around the check.
+func removeUnneededKubeSystemWorkloads(ctx context.Context, t *testing.T, kubeconfigPath string, clientset *kubernetes.Clientset) {
+	t.Helper()
+	names := []string{"local-path-provisioner", "metrics-server", "traefik"}
+	t.Logf("removing unneeded kube-system Deployments so AgentShutdown's node-clearance check can pass: %s", strings.Join(names, ", "))
+	for _, name := range names {
+		runKubectl(ctx, t, kubeconfigPath, "-n", "kube-system", "delete", "deployment", name, "--ignore-not-found")
+	}
+	waitForWithDiagnostics(t, ctx, 2*time.Minute, "unneeded kube-system pods gone", func(ctx context.Context) error {
+		pods, err := clientset.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return fmt.Errorf("listing kube-system pods: %w", err)
+		}
+		for _, pod := range pods.Items {
+			for _, name := range names {
+				if strings.HasPrefix(pod.Name, name+"-") {
+					return fmt.Errorf("pod %q still present", pod.Name)
+				}
+			}
+		}
+		return nil
+	}, nil)
 }
 
 // waitForExactlyOneRunningAgentPod waits for exactly one Running, non-terminating pod matching the
