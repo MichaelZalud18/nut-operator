@@ -480,6 +480,15 @@ spec:
 	}, func(ctx context.Context) {
 		diagCtx, diagCancel := context.WithTimeout(ctx, 15*time.Second)
 		defer diagCancel()
+
+		// A live run kept hitting NodeNotCleared (internal/executor/executor.go's
+		// agentShutdownReadinessError, EX-9) after removing every kube-system Deployment this
+		// fixture doesn't need, with no blocking-workload list surfacing anywhere in
+		// ShutdownFlow.status. A full cluster-wide pod listing is the only way to see which
+		// specific pod is still on the node and non-exempt.
+		podsOut := runKubectlOutput(diagCtx, t, kubeconfigPath, "get", "pods", "-A", "-o", "wide")
+		t.Logf("diagnostic pod listing:\n%s", podsOut)
+
 		out := runKubectlOutput(diagCtx, t, kubeconfigPath, "get", "shutdownflow", "hadron-outage-flow", "-o", "yaml")
 		t.Logf("diagnostic ShutdownFlow state:\n%s", out)
 
