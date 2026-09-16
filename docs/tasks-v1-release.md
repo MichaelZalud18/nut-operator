@@ -47,34 +47,15 @@ registry cleanup, and publishing require explicit authorization; this checklist 
   resource. True previous-release schema compatibility starts after there is a previous released API
   to install.
 
-- [ ] `REL-5` [Medium] deliver a concise first-time-user quick-start before v1. Build on existing
-  installation/configuration guides and examples instead of a parallel configuration reference.
-  **Organization implemented (2026-09-15):** the
-  [configuration quick start](installation/configuration.md) and documentation entry points now
-  follow UPS devices/NUT, topology, and shutdown flow, with their sub-components grouped together.
-  The minimal two-UPS example and disposable install-to-plan validation below remain open.
-  Explain three user-facing configuration domains, not a flat list of CRDs:
-  **UPS/NUT integration:** UPSDevice, connection/credential and TLS Secrets, capability/behavior
-  profiles and matching, device polling/thresholds, and a
-  NUTServer selecting one or more UPS devices. One NUTServer produces one managed pod with one
-  upsd process plus the selected devices' driver processes, owned by the supervisor sidecar.
-  Multiple physical UPS devices may share a capability profile; it is not a per-device object.
-  **Topology:** inventory graph nodes model physical/logical things such as servers and supporting
-  infrastructure; edges model power feeds and communication carries. Show how this graph vocabulary
-  maps to the actual resource kinds: `PowerInventoryNode.nodeName` is a Kubernetes Node, not a place
-  to invent arbitrary external hosts. Keep the explanation broader than switches or Kubernetes
-  nodes without claiming the API already implements every possible graph entity.
-  **Shutdown policy:** ShutdownFlow owns triggers, groups/steps, ordering, dependencies, and
-  actions. Topology states what depends on what; ShutdownHook/action configuration states how an
-  external target is asked to stop, with the existing advisory-delivery limitations made clear.
-  Mention bootstrap/global resources and node-agent prerequisites separately so they do not
-  obscure these three domains; each domain may span multiple CRs even if examples share a file.
-  **Acceptance:** one minimal copyable, public-safe example connects a pair of UPS devices,
-  a handful of servers/infrastructure relationships, and a simple ShutdownFlow to a working dry-run.
-  Validate example schemas and the documented install-to-plan path using disposable fixtures;
-  show reviewable expected output and which domain to edit as a setup grows. Reuse credential
-  references, not real secrets, and keep actual actuation an explicit separate decision. The guide
-  must stand on its own; the optional wizard research is ENG-10 in the engineering tracker.
+- [ ] `REL-5` [Medium] qualify the documented two-UPS quick start on a disposable cluster.
+  The [copyable example](examples/quickstart/README.md), three-domain guide, schema/component
+  coverage, and owned Kind install-to-plan spec are implemented; see the
+  [completed implementation slice](tasks-completed.md#release-readiness).
+  **Remaining acceptance:** run the Kind quickstart spec through the owned harness on a suitable
+  host and verify actual installer/admission, NUT polling/profile match, agent coverage/readiness,
+  and the documented published waves. Retain the three-domain UX and explicit separate opt-in to
+  real actuation. Local preflight on 2026-09-15 blocked cluster creation at 128 inotify instances
+  (minimum 512); component/schema passes do not close this live gate. Do not lower the host guard.
 
 ## Qualification
 

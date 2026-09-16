@@ -12,9 +12,11 @@ name: E2E Tests
 # benefit.
 on:
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
+    paths:
+      - "**"
+      - "!docs/**"
+      - "docs/examples/quickstart/**"
+      - "!**.md"
   workflow_call:
     inputs:
       manager-image:
@@ -69,6 +71,9 @@ jobs:
         with:
           path: bin
           key: ${{ runner.os }}-tools-${{ hashFiles('Makefile', '.custom-gcl.yml') }}
+
+      - name: Install quickstart renderer dependencies
+        run: python3 -m pip install --disable-pip-version-check -r docs/examples/quickstart/requirements.txt
 
       - name: Kind harness regression tests
         run: make test-kind-harness

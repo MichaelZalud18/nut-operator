@@ -1,0 +1,71 @@
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata: {name: quickstart-workers}
+spec:
+  managementClusterRef: {name: quickstart}
+  namespace: quickstart-power
+  nutServerRefs: [{name: quickstart-nut}]
+  nodeSelector:
+    matchLabels: {power.example.com/quickstart-role: worker}
+  mode: DryRun
+  shutdownFlowRef: {name: quickstart}
+  shutdown: {actuatorPolicy: Simulate}
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NodePowerAgent
+metadata: {name: quickstart-control}
+spec:
+  managementClusterRef: {name: quickstart}
+  namespace: quickstart-power
+  nutServerRefs: [{name: quickstart-nut}]
+  nodeSelector:
+    matchLabels: {power.example.com/quickstart-role: control}
+  mode: DryRun
+  shutdownFlowRef: {name: quickstart}
+  shutdown: {actuatorPolicy: Simulate}
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: ShutdownFlow
+metadata: {name: quickstart}
+spec:
+  managementClusterRef: {name: quickstart}
+  mode: DryRun
+  communicationPaths:
+    - service: OperatorAPI
+      entities: [quickstart-switch]
+    - service: NUT
+      entities: [quickstart-switch]
+  triggers:
+    - type: OnBattery
+      powerDomains: [quickstart-a, quickstart-b]
+      for: 30s
+    - type: RuntimeBelow
+      powerDomains: [quickstart-a, quickstart-b]
+      runtimeBelowSeconds: 600
+  groups:
+    - name: drain-workers
+      action: DrainNodes
+      shutdownTier: 2
+      before: [stop-workers]
+      target:
+        nodeSelector:
+          matchLabels: {power.example.com/quickstart-role: worker}
+      timeout: 2m
+    - name: stop-workers
+      action: AgentShutdown
+      shutdownTier: 2
+      target:
+        agentRefs: [{name: quickstart-workers}]
+      timeout: 1m
+    - name: stop-control
+      action: AgentShutdown
+      shutdownTier: 1
+      target:
+        agentRefs: [{name: quickstart-control}]
+      timeout: 1m
+  concurrencyPolicy: Forbid
+  abortPolicy: {behavior: HaltAndSurface, notify: false}
+  safety:
+    requireManualApproval: true
+    approvalAnnotation: power.zalud.io/approved-for-enforce
+    maxEstimatedDuration: 10m

@@ -1,0 +1,92 @@
+# Render the three QUICKSTART_* tokens using render.py before applying.
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: quickstart-control
+spec:
+  nodeName: QUICKSTART_CONTROL
+  roles: {controlPlane: true, controlPlaneQuorumMember: true, shutdownTier: 1}
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: quickstart-worker-a
+spec:
+  nodeName: QUICKSTART_WORKER_A
+  roles: {shutdownTier: 2}
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryNode
+metadata:
+  name: quickstart-worker-b
+spec:
+  nodeName: QUICKSTART_WORKER_B
+  roles: {shutdownTier: 2}
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInfrastructure
+metadata:
+  name: quickstart-switch
+spec:
+  class: Switch
+  description: Shared API and NUT network path; modeled, never actuated.
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata: {name: quickstart-a-control}
+spec:
+  from: {kind: UPSDevice, name: quickstart-ups-a}
+  to: {kind: Node, name: QUICKSTART_CONTROL}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata: {name: quickstart-a-worker}
+spec:
+  from: {kind: UPSDevice, name: quickstart-ups-a}
+  to: {kind: Node, name: QUICKSTART_WORKER_A}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata: {name: quickstart-b-worker}
+spec:
+  from: {kind: UPSDevice, name: quickstart-ups-b}
+  to: {kind: Node, name: QUICKSTART_WORKER_B}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata: {name: quickstart-a-switch}
+spec:
+  from: {kind: UPSDevice, name: quickstart-ups-a}
+  to: {kind: PowerInfrastructure, name: quickstart-switch}
+  relation: Feeds
+  input: psu-a
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata: {name: quickstart-switch-control}
+spec:
+  from: {kind: PowerInfrastructure, name: quickstart-switch}
+  to: {kind: Node, name: QUICKSTART_CONTROL}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata: {name: quickstart-switch-worker-a}
+spec:
+  from: {kind: PowerInfrastructure, name: quickstart-switch}
+  to: {kind: Node, name: QUICKSTART_WORKER_A}
+  relation: Carries
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerInventoryEdge
+metadata: {name: quickstart-switch-worker-b}
+spec:
+  from: {kind: PowerInfrastructure, name: quickstart-switch}
+  to: {kind: Node, name: QUICKSTART_WORKER_B}
+  relation: Carries

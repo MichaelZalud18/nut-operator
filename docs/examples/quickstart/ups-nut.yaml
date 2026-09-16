@@ -1,0 +1,69 @@
+# One fixture and one profile shared by two independent simulated UPS devices.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: quickstart-sequence
+  namespace: quickstart-power
+data:
+  sequence.seq: |
+    device.mfr: nut-operator
+    device.model: quickstart-fixture
+    ups.mfr: nut-operator
+    ups.model: quickstart-fixture
+    ups.status: OL
+    battery.charge: 100
+    battery.runtime: 3600
+    ups.load: 25
+    TIMER 300
+    ups.status: OB
+    battery.charge: 70
+    battery.runtime: 1800
+    TIMER 300
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSCapabilityProfile
+metadata:
+  name: quickstart-fixture
+spec:
+  version: "1.0.0"
+  selector: {modelGlob: quickstart-fixture}
+  telemetry:
+    variables: [ups.mfr, ups.model, ups.status, ups.load, battery.charge, battery.runtime]
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  name: quickstart-ups-a
+spec:
+  driver: dummy-ups
+  identity: {model: quickstart-fixture}
+  simulation:
+    sequenceConfigMapRef: {namespace: quickstart-power, name: quickstart-sequence}
+  powerDomains: [quickstart-a]
+  telemetry: {pollInterval: 10s, alertPollInterval: 5s}
+  thresholds: {minRuntimeSeconds: 600, minChargePercent: 20, onBatteryHoldoff: 30s, staleAfter: 45s}
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: UPSDevice
+metadata:
+  name: quickstart-ups-b
+spec:
+  driver: dummy-ups
+  identity: {model: quickstart-fixture}
+  simulation:
+    sequenceConfigMapRef: {namespace: quickstart-power, name: quickstart-sequence}
+  powerDomains: [quickstart-b]
+  telemetry: {pollInterval: 10s, alertPollInterval: 5s}
+  thresholds: {minRuntimeSeconds: 600, minChargePercent: 20, onBatteryHoldoff: 30s, staleAfter: 45s}
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: NUTServer
+metadata:
+  name: quickstart-nut
+spec:
+  managementClusterRef: {name: quickstart}
+  namespace: quickstart-power
+  deviceRefs: [{name: quickstart-ups-a}, {name: quickstart-ups-b}]
+  auth: {mode: OperatorManaged}
+  # Trusted disposable evaluation only; production requires certificate/CA Secret refs.
+  tls: {mode: Disabled}

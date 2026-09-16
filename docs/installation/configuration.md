@@ -8,6 +8,10 @@ Each domain contains several related resources; it is not one CRD or necessarily
 Keep flows in `DryRun` and agents in `DryRun` / `Simulate` while reviewing the plan. Real actuation
 is [a separate decision](../guides/enable-actuation.md).
 
+For a copyable first run, use the [two-UPS quickstart](../examples/quickstart/README.md):
+two scripted UPS devices, three actual Kubernetes Nodes, a modeled switch, and a reviewable
+DryRun plan. It follows these same domains and needs no UPS hardware or site credentials.
+
 | Domain | Question it answers | Sub-components |
 | --- | --- | --- |
 | [1. UPS devices and NUT](#1-ups-devices-and-nut) | What supplies power, and how do we read it? | `UPSDevice`, `NUTServer`, credential and TLS Secrets, capability/behavior profiles, polling and thresholds |

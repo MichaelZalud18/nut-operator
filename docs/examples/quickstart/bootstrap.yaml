@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: quickstart-power
+---
+apiVersion: power.zalud.io/v1alpha1
+kind: PowerManagementCluster
+metadata:
+  name: quickstart
+spec:
+  operandNamespace: {name: quickstart-power, create: true}
+  storage: {mode: Disabled}
+  images:
+    nutServer:
+      repository: ghcr.io/michaelzalud18/nut-server
+      tag: main
+      pullPolicy: IfNotPresent
+    upsmonAgent:
+      repository: ghcr.io/michaelzalud18/upsmon-agent
+      tag: main
+      pullPolicy: IfNotPresent
+    actuator:
+      repository: ghcr.io/michaelzalud18/node-actuator
+      tag: main
+      pullPolicy: IfNotPresent

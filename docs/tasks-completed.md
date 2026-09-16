@@ -353,3 +353,26 @@ status across trackers. Historical run output and longer investigations remain i
   failure and successful recovery replay. Full API/internal/command race tests passed. Existing
   approval checks remain in force, and evidence failures stay separate from action outcomes.
   Local filesystem stalls are not covered by database deadlines; durable resume remains outside SB-1.
+
+## Release Readiness
+
+- [x] `REL-5` quick-start implementation/component slice (2026-09-15). The configuration guide
+  links a copyable two-UPS simulation with three actual Kubernetes Node bindings and a supporting
+  switch. UPS/NUT setup, topology, and shutdown flow remain the three domains; bootstrap/storage
+  and DryRun/Simulate node agents are prerequisites. One profile and NUTServer serve both UPS
+  devices. Secrets remain references or operator-generated, TLS-off is limited to disposable
+  evaluation, and real actuation is a separate opt-in. The guide describes expected waves,
+  extending each domain, external-hook limitations, and cleanup.
+  Component tests consume the shipped manifests and renderer, validating admission, power domains,
+  agent coverage, per-wave tiers/durations, and rejection of invalid or missing node bindings.
+  An owned Kind spec covers BYO-certificate installation through telemetry/readiness and plan
+  publication. CI explicitly installs the pinned renderer dependency and runs on example changes.
+  **Validated:** all 116 sample/example schemas, quickstart component tests including race,
+  tagged E2E compilation and race-enabled command lifecycle tests, ordinary/tagged lint,
+  Python security scanning, and independent review. Review identified a Medium timeout-cleanup
+  issue: killing only the certificate-script shell could leave child commands alive. Commands now
+  own process groups, and spec-scoped signal cancellation stays latched through cleanup. Tests
+  cover inherited/closed pipes, TERM-resistant descendants, parent SIGTERM/Interrupt, refusal
+  to start commands after cancellation, and preservation of independent signal subscribers.
+  Live install-to-plan qualification remains in [REL-5](tasks-v1-release.md#release-readiness):
+  host preflight blocked creation at 128 inotify instances versus the required 512.

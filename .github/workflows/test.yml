@@ -4,13 +4,17 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
+    paths:
+      - "**"
+      - "!docs/**"
+      - "docs/examples/quickstart/**"
+      - "!**.md"
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
+    paths:
+      - "**"
+      - "!docs/**"
+      - "docs/examples/quickstart/**"
+      - "!**.md"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -60,6 +64,9 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+
+      - name: Install quickstart renderer dependencies
+        run: python3 -m pip install --disable-pip-version-check -r docs/examples/quickstart/requirements.txt
 
       - name: Running Tests
         run: make test ENVTEST_K8S_VERSION=${{ matrix.k8s }}
