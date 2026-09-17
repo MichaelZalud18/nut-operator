@@ -37,8 +37,16 @@ func runTalosctl(ctx context.Context, timeout time.Duration, args ...string) (st
 // override, so this dials talosHost directly on apid's default port. Any successful reply proves
 // the guest has booted, not merely that QEMU started -- unlike test/hadron's SSH-reachability
 // check, there is no login to prove here, only that apid itself is up.
+//
+// 2026-09-17 first two live runs: "version --insecure" is not this probe -- the guest's own real
+// reply was "rpc error: code = Unimplemented desc = API is not implemented in maintenance mode",
+// confirmed against this exact pinned build (v1.12.9), not a timing issue the first run's widened
+// budget was expected to fix (it didn't). "get disks --insecure" is the maintenance-mode-safe
+// resource query Talos's own community documentation uses for this exact purpose (inspecting
+// available disks before an install), confirmed against a locally downloaded talosctl binary's own
+// `get --help` (-i/--insecure: "get resources using the insecure ... maintenance service").
 func talosMaintenanceAPIReachable(ctx context.Context) error {
-	_, err := runTalosctl(ctx, 15*time.Second, "version", "--insecure", "--nodes", talosHost)
+	_, err := runTalosctl(ctx, 15*time.Second, "get", "disks", "--insecure", "--nodes", talosHost)
 	return err
 }
 

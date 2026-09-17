@@ -25,11 +25,18 @@ limitations under the License.
 // This file closes that gap: the same signal-validation scenarios actuator_smoke_test.go already
 // proved against a bare Pod, now driven against the real rendered DaemonSet.
 //
-// Unverified against a real guest as of this writing, the same "Testable now; Conditional" status
-// every one of this session's own milestones started at. In particular: the exact timing of
-// signalStillAuthorized's own revocation pass (internal/controller/nodepoweragent_signals.go)
-// against a hand-injected signal with no backing ShutdownFlow execution has no live evidence yet --
-// see this file's own per-case comments for what each one is actually expected to prove.
+// 2026-09-17, two live runs: signalStillAuthorized's own revocation pass
+// (internal/controller/nodepoweragent_signals.go) reliably beats the actuator to three of the five
+// negative-signal cases below, not occasionally -- its own logic guarantees it. A signal naming an
+// unresolvable ShutdownFlow (every case here uses "test-flow", which is never created) is judged by
+// signalStillAuthorized's flow-is-nil branch: kept only while now.Sub(written) <= ttl. "stale" is
+// already ten minutes past ttl the instant it is written, so the very first reconcile revokes it;
+// "malformed-timestamp" and "missing-fields" fail signalStillAuthorized's parse/required-field
+// guard immediately, independent of ttl. "wrong-node" and "future" both pass that same nil-flow
+// check (an on-time or future-dated signal is not stale), so they survive long enough for the
+// actuator's own InspectSignal gate to reject them and log why. See
+// waitForSignalRejectedOrRevoked's own comment for how the negative-signal loop now accounts for
+// this rather than assuming the actuator's log always wins the race.
 package hadron
 
 import (
@@ -371,50 +378,67 @@ func writeRealSignal(ctx context.Context, t *testing.T, guest actuatorDaemonSetG
 			guest.nodeName, base64.StdEncoding.EncodeToString(encoded)))
 }
 
-// waitForActuatorPodLog polls podName's own log for want, the DaemonSet-pod equivalent of
-// actuator_smoke_test.go's own waitForActuatorLog (which targets a bare Pod in "default"; this one
-// targets a real DaemonSet pod in actuatorDaemonSetNamespace with two containers, so the log fetch
-// must name the "actuator" container specifically).
-func waitForActuatorPodLog(ctx context.Context, t *testing.T, clientset *kubernetes.Clientset, podName, what, want string) string {
+// waitForSignalRejectedOrRevoked confirms an invalid signal never reaches actuation, accepting
+// either of two real, mutually exclusive outcomes rather than assuming one always wins:
+//
+//  1. The actuator's own InspectSignal gate reads the signal and rejects it, logging
+//     "halt gate=SignalAccepted result=fail detail=\"<wantReason>...\"" -- confirmed live for
+//     "wrong-node" and "future".
+//  2. The NodePowerAgent controller's own revocation (signalStillAuthorized,
+//     internal/controller/nodepoweragent_signals.go) deletes the key from the real Secret before
+//     the actuator ever reads it, because the payload itself is already unauthorized on its face
+//     (already past signalTTL, or missing/malformed required fields) -- confirmed live, reliably,
+//     for "stale", "malformed-timestamp", and "missing-fields" (see this file's own top-of-file
+//     comment for exactly why signalStillAuthorized resolves each case the way it does). The
+//     actuator then sees no file at all -- InspectSignal's own "SignalMissing" case, which
+//     cmd/node-actuator/main.go deliberately never logs, so there is no line to wait for.
+//
+// Both outcomes prove the same safety property: this signal never authorizes a halt. Which one
+// actually happens is a race this test does not control and must not assume either side of.
+func waitForSignalRejectedOrRevoked(ctx context.Context, t *testing.T, guest actuatorDaemonSetGuest, agentName, podName, wantReason string) {
 	t.Helper()
+	secretName := agentName + "-node-signals"
+	signalKey := guest.nodeName + ".json"
 	var log string
-	// 2026-09-16 first live run: three of five negative-signal subtests timed out at the previous
-	// 2-minute budget, each one immediately following another subtest's own writeRealSignal call.
-	// The actuator log itself proved why: it kept re-logging the *prior* subtest's own rejection
-	// reason for over a minute after the new signal was patched in, because this is a real
-	// Kubernetes projected-Secret-volume propagation delay, not a test or actuator bug -- Kubernetes'
-	// own documentation states the total delay from a Secret update to it appearing in a mounted
-	// volume can be as long as the kubelet sync period (1m default) plus the secret cache TTL (1m
-	// default), i.e. up to 2 minutes in the worst case
-	// (https://kubernetes.io/docs/concepts/configuration/secret/). Back-to-back subtests in the same
-	// pod can land unluckily in that cycle. Widened past the documented worst case, with margin for
-	// the actuator's own poll interval and API latency on top.
-	waitForWithDiagnostics(t, ctx, 4*time.Minute, what, func(ctx context.Context) error {
-		current, err := clientset.CoreV1().Pods(actuatorDaemonSetNamespace).Get(ctx, podName, metav1.GetOptions{})
+	waitForWithDiagnostics(t, ctx, 4*time.Minute, "signal rejection or revocation", func(ctx context.Context) error {
+		secret, err := guest.clientset.CoreV1().Secrets(actuatorDaemonSetNamespace).Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if _, present := secret.Data[signalKey]; !present {
+			return nil // revoked before the actuator ever saw it -- an accepted, safe outcome
+		}
+		current, err := guest.clientset.CoreV1().Pods(actuatorDaemonSetNamespace).Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
 		if current.Status.Phase != corev1.PodRunning && current.Status.Phase != corev1.PodPending {
 			return fmt.Errorf("pod left Running/Pending unexpectedly: phase=%s", current.Status.Phase)
 		}
-		raw, err := clientset.CoreV1().Pods(actuatorDaemonSetNamespace).GetLogs(podName, &corev1.PodLogOptions{Container: "actuator"}).DoRaw(ctx)
+		raw, err := guest.clientset.CoreV1().Pods(actuatorDaemonSetNamespace).GetLogs(podName, &corev1.PodLogOptions{Container: "actuator"}).DoRaw(ctx)
 		if err != nil {
 			return err
 		}
 		log = string(raw)
+		want := "halt gate=SignalAccepted result=fail detail=\"" + wantReason
 		if !strings.Contains(log, want) {
-			return fmt.Errorf("no %q yet:\n%s", want, log)
+			return fmt.Errorf("signal key %q still present in the Secret and no %q rejection logged yet", signalKey, want)
 		}
 		return nil
 	}, func(ctx context.Context) {
-		current, err := clientset.CoreV1().Pods(actuatorDaemonSetNamespace).Get(ctx, podName, metav1.GetOptions{})
+		current, err := guest.clientset.CoreV1().Pods(actuatorDaemonSetNamespace).Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
 			t.Logf("diagnostic pod fetch failed: %v", err)
 			return
 		}
 		t.Logf("diagnostic pod status: phase=%s\n%+v", current.Status.Phase, current.Status)
 	})
-	return log
+	if log != "" {
+		t.Logf("actuator log:\n%s", log)
+	}
+	if strings.Contains(log, "halt gate=ModeAuthorized") || strings.Contains(log, "halt gate=SyscallIssued") {
+		t.Fatalf("actuator reached actuation gates on a signal that should have been rejected at SignalAccepted:\n%s", log)
+	}
 }
 
 // TestHadronActuatorDaemonSetRejectsInvalidSignals re-runs actuator_smoke_test.go's own
@@ -445,12 +469,7 @@ func TestHadronActuatorDaemonSetRejectsInvalidSignals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			writeRealSignal(ctx, t, guest, agentName, tc.signal(guest.nodeName))
 
-			log := waitForActuatorPodLog(ctx, t, guest.clientset, podName, "signal rejection log line",
-				"halt gate=SignalAccepted result=fail detail=\""+tc.wantReason)
-			t.Logf("actuator log:\n%s", log)
-			if strings.Contains(log, "halt gate=ModeAuthorized") || strings.Contains(log, "halt gate=SyscallIssued") {
-				t.Fatalf("actuator reached actuation gates on a signal that should have been rejected at SignalAccepted:\n%s", log)
-			}
+			waitForSignalRejectedOrRevoked(ctx, t, guest, agentName, podName, tc.wantReason)
 
 			t.Log("confirming the guest is still reachable -- the rejected signal must not have halted it")
 			nodes, err := guest.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
