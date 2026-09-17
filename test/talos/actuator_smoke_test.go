@@ -218,6 +218,11 @@ func bootTalosActuatorGuestReadyForNodePowerAgent(ctx context.Context, t *testin
 	runMake(ctx, t, repoRoot, kubeconfigPath, []string{"IMG=" + managerImage}, "deploy-byo-cert")
 
 	t.Log("waiting for the real controller-manager Deployment to become Ready")
+	// 2026-09-17 first live run: this wait timed out with no evidence of why -- a bare
+	// "context deadline exceeded" does not distinguish an image pull failure (the new
+	// registry-mirror plumbing this guest alone depends on) from anything else. A diagnose
+	// callback that lists the actual pod's container statuses answers that directly next time
+	// instead of leaving it to guess.
 	waitForWithDiagnostics(t, ctx, 3*time.Minute, "controller-manager Ready", func(ctx context.Context) error {
 		dep, err := clientset.AppsV1().Deployments(operatorNamespace).Get(ctx, operatorDeployment, metav1.GetOptions{})
 		if err != nil {
@@ -227,7 +232,19 @@ func bootTalosActuatorGuestReadyForNodePowerAgent(ctx context.Context, t *testin
 			return fmt.Errorf("controller-manager not ready yet: readyReplicas=%d", dep.Status.ReadyReplicas)
 		}
 		return nil
-	}, nil)
+	}, func(ctx context.Context) {
+		pods, err := clientset.CoreV1().Pods(operatorNamespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			t.Logf("diagnostic pod list failed: %v", err)
+			return
+		}
+		for _, pod := range pods.Items {
+			t.Logf("diagnostic pod %s: phase=%s", pod.Name, pod.Status.Phase)
+			for _, cs := range pod.Status.ContainerStatuses {
+				t.Logf("  container %s: ready=%v restarts=%d state=%+v", cs.Name, cs.Ready, cs.RestartCount, cs.State)
+			}
+		}
+	})
 
 	t.Log("creating the operand namespace")
 	runKubectl(ctx, t, kubeconfigPath, "create", "ns", talosActuatorNamespace)

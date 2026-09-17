@@ -48,7 +48,16 @@ func startLocalRegistry(ctx context.Context, t *testing.T) (hostPort string) {
 	if err != nil {
 		t.Fatalf("docker run registry:2: %v\n%s", err, out)
 	}
-	containerID := strings.TrimSpace(string(out))
+	// 2026-09-17 first live run: on a cold image cache, docker run's combined stdout+stderr
+	// includes the full pull-progress text ahead of the container ID -- trimming the whole blob
+	// captured that text as "containerID", which then failed every subsequent docker command.
+	// Only the last line is ever the ID.
+	trimmed := strings.TrimSpace(string(out))
+	lines := strings.Split(trimmed, "\n")
+	containerID := strings.TrimSpace(lines[len(lines)-1])
+	if containerID == "" {
+		t.Fatalf("docker run registry:2 produced no container ID:\n%s", out)
+	}
 	t.Cleanup(func() { _ = exec.Command("docker", "stop", containerID).Run() })
 
 	portOut, err := exec.CommandContext(ctx, "docker", "port", containerID, "5000/tcp").CombinedOutput()

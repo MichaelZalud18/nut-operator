@@ -77,7 +77,11 @@ jobs:
 
       - name: Allocate private smoke state
         timeout-minutes: 1
-        run: echo "TALOS_STATE_ROOT=$(mktemp -d "$RUNNER_TEMP/talos-actuator-smoke-XXXXXXXX")" >> "$GITHUB_ENV"
+        # hack/talos-cleanup.py hardcodes this exact "talos-smoke-" prefix as its own safety guard
+        # (its own comment: "a typo could weaken" it) -- every Talos smoke workflow must match it,
+        # not invent a workflow-specific one. 2026-09-17 first live run of this workflow used
+        # "talos-actuator-smoke-" here and the cleanup step failed closed exactly as designed.
+        run: echo "TALOS_STATE_ROOT=$(mktemp -d "$RUNNER_TEMP/talos-smoke-XXXXXXXX")" >> "$GITHUB_ENV"
 
       # GNU timeout bounds compilation, the four docker builds/pushes and make install/
       # deploy-byo-cert each test performs itself (three times over, once per test -- each test
