@@ -83,8 +83,15 @@ machine configuration generated and applied over the insecure maintenance API, s
 after install and reboot, cluster bootstrapped, kubeconfig fetched, and a real Node Ready confirmed
 from outside the guest. Full history and evidence table in
 [talos-vm-7-bootstrap-2026-09-17.md](talos-vm-7-bootstrap-2026-09-17.md)
-(`test/talos/boot_smoke_test.go`, `talos-vm-boot-smoke.yml`). Milestone 2 (`TalosShutdown`
-qualification) remains open.
+(`test/talos/boot_smoke_test.go`, `talos-vm-boot-smoke.yml`).
+
+**Milestone 2 closed 2026-09-17** ([run 35281326987](https://github.com/MichaelZalud18/nut-operator/actions/runs/35281326987),
+all pass, after three earlier live runs each found a real, distinct bug): the same five
+negative-signal cases, an absent-approval admission control, and a real accepted-signal halt
+(hypervisor-confirmed QEMU process exit) all pass against the real `TalosShutdown` actuator policy.
+Full history and evidence table in
+[talos-vm-7-actuator-2026-09-17.md](talos-vm-7-actuator-2026-09-17.md)
+(`test/talos/actuator_smoke_test.go`, `talos-actuator-smoke.yml`). `VM-7` is now fully closed.
 
 ## VM-2
 
