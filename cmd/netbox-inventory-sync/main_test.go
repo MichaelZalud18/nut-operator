@@ -109,3 +109,43 @@ func TestRunRendersSnapshotJSONFromFakeNetBox(t *testing.T) {
 		t.Fatal("command output must not contain the NetBox token")
 	}
 }
+
+func TestRunRejectsUnmappedSecondaryFeedWithoutPartialOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/dcim/devices/":
+			_, _ = w.Write([]byte(`{"results":[
+				{"id":1,"name":"ups","custom_fields":{"nut_operator":{"kind":"UPSDevice","powerDomains":["test"],"nut":{"driver":"dummy-ups","model":"test"}}}},
+				{"id":2,"name":"node","custom_fields":{"nut_operator":{"kind":"Node","communicationPathExempt":true}}}
+			]}`))
+		case "/api/dcim/power-ports/":
+			if r.URL.Query().Get("device_id") == "2" {
+				_, _ = w.Write([]byte(`{"results":[
+					{"id":10,"name":"PSU-A","device":{"id":2},"connected_endpoints":[{"id":20,"device":{"id":1}}]},
+					{"id":11,"name":"PSU-B","device":{"id":2},"connected_endpoints":[{"id":21,"device":{"id":99}}]}
+				]}`))
+				return
+			}
+			fallthrough
+		default:
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		}
+	}))
+	defer server.Close()
+	for _, format := range []string{"yaml", "snapshot-json"} {
+		t.Run(format, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := run(context.Background(), []string{"-url", server.URL, "-token-env", "", "-format", format}, &stdout, &stderr)
+			if err == nil || stdout.Len() != 0 {
+				t.Fatal("unmapped secondary feed must fail without emitting a partial inventory")
+			}
+			if err.Error() != "NetBox inventory contains an unmapped power endpoint at dcim.PowerPort/11" {
+				t.Fatalf("unexpected rejection: %v", err)
+			}
+			if stderr.Len() != 0 {
+				t.Fatal("rejection must not expose provider diagnostics before returning the sanitized error")
+			}
+		})
+	}
+}

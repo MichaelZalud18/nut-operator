@@ -88,21 +88,9 @@ Owns: the topology and power-domain data model — `UPSDevice`, `PowerInfrastruc
 `PowerInventoryNode`, `PowerInventoryEdge`, the `internal/inventory` compiler, and the declarative
 resolver/adapter that feeds it into reconciliation. Design contract: `docs/contributing/design/inventory-provider-contract.md` (`IN-n`).
 
-- [ ] `TEST-4` [Medium] add a disposable real-NetBox integration test for the shipped
-  `netbox-inventory-sync` workflow. Fake-HTTP tests remain valuable but do not establish real API
-  serialization, pagination, authentication, or DCIM relationship compatibility.
-  Start an isolated supported, explicitly pinned NetBox version with bounded owned cleanup.
-  Seed a UPS, Kubernetes node, power-infrastructure device, a power connection carrying downstream
-  input identity, a communication connection, `nut_operator` custom metadata, and power-managed
-  tag filtering. Run the shipped CLI and validate the provider-neutral snapshot and/or CR output.
-  Exercise real authentication and pagination; credentials must never appear in output or errors.
-  Verify deterministic identity/edge mapping and compilation under the same inventory contract as
-  authored resources; malformed/unmappable provider data must fail without a misleading partial
-  snapshot. **Testable now; Conditional:** run for importer, dependency, contract, and fixture
-  changes. Use a dedicated disposable-service suite, not a live NetBox dependency in normal Kind
-  E2E or shutdown runtime. An optional Kind test may consume an already-rendered artifact.
-  Actual NetBox is required but site resources are not. If advertised as v1-supported, this
-  compatibility test is a v1 requirement; otherwise record release placement explicitly.
+Completed integration work and real-service evidence are recorded in
+[completed tasks](tasks-completed.md#inventory-system). Release-candidate NetBox compatibility
+remains part of the [release validation gates](tasks-v1-release.md#validation-gates).
 
 ---
 
@@ -263,14 +251,19 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   runner and verify cleanup on failure. The 2026-09-17 local preflight still reports 128 inotify
   instances against 512 required; no cluster was started. Keep the shared Kind suite/cluster
   unless controlled `F-146` evidence supports changing it; no CI restructuring is approved.
+  The [2026-09-17 image run](https://github.com/MichaelZalud18/nut-operator/actions/runs/35271792237)
+  stopped at module tidiness before E2E. The direct-dependency declaration is corrected locally;
+  this failed run is not Kind qualification evidence.
 - [ ] `TEST-2` [Medium, investigation] prove a full logical ShutdownFlow scenario is feasible in
-  Kind before committing it as a permanent gate. Connect real dummy-ups telemetry transitions to
-  an eligible ShutdownFlow, production trigger evaluation, planner/executor, drain/order actions,
-  an operator-generated node signal, and the Simulate actuator consuming it. Existing telemetry
-  and separately injected-signal tests suggest the pieces fit; they do not prove that full path.
-  **Testable now; Conditional:** first build a minimal honest fixture, then promote it with positive
-  execution/order evidence and negative authorization/stale-signal controls. Do not substitute a
-  hand-written halt Secret for production signal publication. Kind ends at simulated actuation;
+  Kind before treating it as a qualified permanent gate. The candidate scenario now connects
+  controlled dummy-ups telemetry transitions to an eligible ShutdownFlow, production trigger
+  evaluation, planner/executor, scale/drain ordering, an operator-generated node signal, and
+  rendered Simulate actuation. It checks real audit records, unchanged survivor workloads,
+  missing approval, DryRun non-effects, and a separate expired-signal control.
+  **Remaining; Testable now; Conditional:** run the candidate with the shared full Kind suite,
+  resolve any live failures, and capture positive execution/order and negative-control evidence.
+  Component fixture checks do not establish end-to-end feasibility. Never replace production
+  publication with a hand-written positive halt Secret. Kind ends at simulated actuation;
   real guest shutdown stays in VM-3/VM-4/VM-7. Retain exact promoted-image coverage and network
   policy enforcement. This investigation does not authorize splitting CI or dropping VM evidence.
 - [ ] `TEST-3` [Medium; High for mutation isolation] harden Kind reproducibility and kubeconfig
@@ -280,9 +273,10 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   CONTRIBUTING.md. [Component evidence](tasks-completed.md#operator-maturity--hardening).
   **Remaining; Testable now; Conditional:** run the existing full Kind suite on a provisioned
   runner, confirm policy-enforcing CNI setup, exact promoted-image coverage, unchanged external
-  kubeconfig/context, and successful owned teardown. Rehearse live cancellation/partial startup
-  cleanup; component failure/signal tests do not prove Docker/Kind lifecycle behavior.
-  **Local blocker (2026-09-15):** the existing host preflight reports 128 inotify instances against
+  kubeconfig/context, and successful owned teardown. Run `make test-kind-lifecycle` (also available
+  through the manual Kind Lifecycle Qualification workflow) for partial-startup and post-API
+  cancellation. Component failure/signal tests do not prove Docker/Kind lifecycle behavior.
+  **Local blocker (2026-09-17):** the existing host preflight reports 128 inotify instances against
   512 required. No cluster was started and the guardrail is unchanged. Preserve shared-suite and
   required-check semantics; coordinate with TEST-1/F-146. Hadron remains a separate harness.
 
@@ -384,7 +378,7 @@ The public VM test guide (`VM-6`) lives in the
 
 The 2026-09-15 proposal's tracker split is complete; the work above remains open unless checked.
 Keep High shutdown-safety work ahead of cleanup. The suggested test progression is VM-8 fixtures,
-Kind fixture/safety work and TEST-2 feasibility, real NetBox coverage, then acceptance for approved
+Kind fixture/safety work and TEST-2 feasibility, then acceptance for approved
 profiles. Talos provisioning follows VM-8; TalosShutdown follows deterministic Talos bring-up.
 This is dependency guidance, not a requirement to serialize independent component work.
 ENG-1 begins with its stable-NUT gate and preserves F-97's separate investigation. MOD-4 is a

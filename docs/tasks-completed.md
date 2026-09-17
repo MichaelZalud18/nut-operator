@@ -12,6 +12,26 @@ status across trackers. Historical run output and longer investigations remain i
 
 ## Inventory System
 
+- [x] `TEST-4` [Medium] disposable real-NetBox compatibility suite (2026-09-17).
+  `make test-netbox` builds the shipped importer and runs it inside an owned, pinned NetBox
+  service with PostgreSQL/Redis on an internal Docker network, no published ports or site inputs.
+  Synthetic REST fixtures cover UPS/node/infrastructure metadata, tag filtering, downstream
+  power-input identity, physical communication cables, real v1/v2 authentication, and pagination
+  where required edges cannot be recovered from the first page. Tests compare deterministic
+  snapshots and exact typed CR specs with an independently authored inventory contract.
+  Malformed metadata, missing authentication, unmapped secondary supplies, and orphaned nodes
+  must fail with empty stdout and specific diagnostics; credentials stay out of output/errors.
+  This exposed an importer gap: a valid primary feed could conceal an omitted secondary supply.
+  The CLI now rejects `PowerEndpointUnmapped` before either output format is written; a focused
+  regression checks both formats and the exact sanitized error.
+  **Validated:** the final `make test-netbox` run passed against the pinned real services on a
+  Linux arm64 Docker daemon, and independent label queries confirmed no owned containers/network
+  remained. Ten Docker-free lifecycle tests, six CR-corruption cases, importer race tests, vet,
+  and scoped lint passed. Review fixes strengthened pagination/CR/diagnostic assertions and
+  bodyless fixture DELETE requests. The path-filtered NetBox workflow is separate from Kind;
+  its GitHub amd64 execution remains release-candidate evidence to collect, not a claimed pass.
+  [Fixture contract and dependency sources](../test/netbox/README.md).
+
 - [x] `ENG-9` [Medium] extract the remaining controller inventory/resolution integration
   (2026-09-15). `internal/kubeinventory` owns Kubernetes inventory reads, API conversions,
   device-scoped capability lookup, and the existing inventory/profile validation needed by both
@@ -30,6 +50,35 @@ status across trackers. Historical run output and longer investigations remain i
   See [the adapter boundary](../internal/kubeinventory/README.md).
 
 ## Operator Maturity & Hardening
+
+- [x] `TEST-2` candidate fixture/component slice (2026-09-17). Added a shared-Manager scenario
+  that drives dummy-ups from Online to OnBattery, observes eligible DryRun non-effects, and
+  approves Enforce for ordered scale/drain and operator-published Simulate handoff. PostgreSQL
+  audit rows must show targeted effects and non-overlapping action order; signal identity must
+  match the completed execution. Untouched workloads and a separately injected expired signal
+  provide controls. Positive signal injection is not used. Fixture checks cover admission,
+  compiled waves, telemetry sequencing, placement, image identity, negative-control isolation,
+  and rejection of invalid audit evidence. Original 22/24 registration fingerprints are preserved
+  alongside the new scenario. Checked bounded teardown verifies fixture removal before restoring
+  shared scheduling; cleanup failures retain the reservation until owned cluster teardown.
+  Tagged race tests, cleanup failure/ordering checks, and tagged lint passed.
+  **Scope limit:** live feasibility remains TEST-2 in `tasks.md`;
+  component/race passes are not a Kind or guest-shutdown pass.
+
+- [x] `TEST-3` cancellation qualification harness/component slice (2026-09-17).
+  `make test-kind-lifecycle` invokes the shipped owned runner and observes partial-startup and
+  API-owner milestones before SIGTERM. It checks captured and cluster-labeled container IDs,
+  preservation of pre-existing containers, unchanged external kubeconfigs, failure exit semantics,
+  and private-state cleanup. Its observer never deletes Docker resources. Failed attempts retain
+  private evidence; repeated cancellation is suppressed during bounded child reaping.
+  A manual supplemental workflow provisions the existing host limits and Kind pin; the normal
+  E2E workflow also runs cluster-free lifecycle checks without replacing its exact-image gate.
+  Review caught and fixed late-created survivors escaping the captured-ID check.
+  Existing runner tests now tolerate concurrent `/proc` disappearance and bounded descendant exit
+  after direct-child reaping, while still failing for a live survivor. Three repeated runs of
+  the real repeated-cancellation regression passed. All 22 runner and 23 lifecycle component
+  tests passed; Bandit reported no findings after reviewing intentional subprocess usage.
+  Live qualification remains open in TEST-3.
 
 - [x] `TEST-1` implementation/component slice (2026-09-17). Extracted upgrade, metrics,
   webhook/certificate, signal-handoff, scripted dummy-ups, and SNMP scenarios from the manager

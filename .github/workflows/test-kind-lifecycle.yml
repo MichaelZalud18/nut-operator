@@ -1,0 +1,45 @@
+name: Kind Lifecycle Qualification
+
+# Supplemental manual evidence only; does not replace E2E or the image gate.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  lifecycle:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Lifecycle component tests
+        run: python3 -B -m unittest discover -s hack -p test_kind_lifecycle.py
+
+      - name: Install pinned Kind
+        env:
+          KIND_VERSION: v0.30.0
+        run: |
+          curl --fail --location -o ./kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-$(go env GOARCH)
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      # Matches the existing E2E hosted-runner setup. The rehearsal itself only
+      # checks the host and never raises limits or bypasses that guardrail.
+      - name: Prepare disposable CI host inotify limits
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=512
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+
+      - name: LIVE lifecycle qualification
+        run: python3 -B hack/test-kind-lifecycle.py

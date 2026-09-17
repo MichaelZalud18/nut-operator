@@ -76,7 +76,7 @@ jobs:
         run: python3 -m pip install --disable-pip-version-check -r docs/examples/quickstart/requirements.txt
 
       - name: Kind harness regression tests
-        run: make test-kind-harness
+        run: make test-kind-harness test-kind-lifecycle-harness
 
       - name: Install pinned Kind
         env:

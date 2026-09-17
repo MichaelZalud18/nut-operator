@@ -53,6 +53,18 @@ publish that directory: it contains credentials. Cancellation cleanup is bounded
 guaranteed after runner loss or SIGKILL. `make test-kind-harness` exercises ownership, failure,
 and cancellation paths without Docker, Kubernetes, or VMs. Python 3 is required by the runner.
 
+`make test-kind-lifecycle` rehearses cancellation during partial startup and after API ownership
+is established, using the same owned runner and host preflight. It checks observed container
+cleanup and unchanged external kubeconfigs; failures retain private evidence for inspection.
+This opt-in rehearsal and its manual CI workflow supplement the full E2E/image gate.
+`make test-kind-lifecycle-harness` tests the rehearsal's checks without starting clusters.
+
+`make test-netbox` runs the shipped inventory importer against a disposable real NetBox service.
+Its isolated Docker resources and synthetic inventory belong to the test; no site NetBox is needed.
+See the [NetBox guide](docs/guides/import-netbox-inventory.md) for the fixture contract.
+`make test-netbox-harness` checks the service runner without starting containers. This service
+suite is separate from Kind and from shutdown execution.
+
 ### Test dependency pinning
 
 Images being promoted must remain immutable and digest-addressed through acceptance tests.

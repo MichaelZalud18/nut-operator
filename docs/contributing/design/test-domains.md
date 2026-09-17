@@ -45,6 +45,30 @@ lifecycle, soak runs, required-image presence), gated behind the `e2e` build tag
 via `workflow_call` from `images.yml` on push to `main` (against the images just published).
 `make check-test-e2e-host` gates the host's inotify limits before a local run.
 
+The `TEST-2` scenario connects dummy-ups telemetry to production trigger evaluation, planning,
+ordered workload actions, signal publication, and the rendered Simulate actuator. It includes
+approval, DryRun, stale-signal, audit-order, and untouched-workload controls. This tests logical
+orchestration, not host power-off; current live qualification is tracked in `docs/tasks.md`.
+
+`make test-kind-lifecycle` separately exercises cancellation during real cluster startup and
+after API ownership is established. The observer checks owned container removal and unchanged
+external kubeconfigs; it never deletes containers itself. Its manual workflow supplements the
+normal full-suite/image gate. Cluster-free runner/rehearsal tests prove the checks' behavior,
+not successful live teardown. Failed attempts retain private evidence, not proof of cleanup.
+
+### Real NetBox service
+
+**Proves:** compatibility of the shipped importer with the pinned real NetBox REST API: token
+authentication, pagination, DCIM cables, custom metadata, filtering, deterministic topology and
+CR output, and provider-neutral inventory compilation. Invalid provider data must fail closed.
+It does not prove Kubernetes reconciliation, NUT connectivity, or shutdown behavior.
+
+**Owns:** `test/netbox/`, `hack/test-netbox.py`, and `.github/workflows/test-netbox.yml`.
+`make test-netbox` creates owned disposable NetBox/PostgreSQL/Redis resources on a private Docker
+network. The conditional workflow follows importer/contract/dependency/fixture changes; normal
+Kind runs and shutdown execution have no NetBox service dependency. See the
+[service fixture](../../../test/netbox/README.md) for coverage and cleanup boundaries.
+
 ### Static analysis and supply chain
 
 **Proves:** no committed secrets, no known-vulnerable dependencies, no common insecure code

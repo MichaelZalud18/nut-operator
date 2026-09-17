@@ -11,6 +11,7 @@ import signal
 import subprocess  # nosec B404
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -20,6 +21,39 @@ spec.loader.exec_module(runner)
 
 
 class KindTest(unittest.TestCase):
+    def assert_process_stopped(self, pid):
+        stat = Path(f"/proc/{pid}/stat")
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                state = stat.read_text().split()[2]
+            except (FileNotFoundError, ProcessLookupError):
+                return
+            if state in ("Z", "X"):
+                return
+            if time.monotonic() >= deadline:
+                self.fail(f"owned descendant {pid} has not exited; last state was {state}")
+            # Reaping the direct child does not synchronize descendant exit.
+            time.sleep(0.01)
+
+    def test_process_exit_observation_tolerates_concurrent_reaping(self):
+        with patch.object(Path, "exists", return_value=True), \
+                patch.object(Path, "read_text", side_effect=FileNotFoundError):
+            self.assert_process_stopped(123)
+
+    def test_process_exit_observation_waits_for_killed_descendant(self):
+        with patch.object(Path, "exists", return_value=True), \
+                patch.object(Path, "read_text", side_effect=["123 (python) R", "123 (python) Z"]), \
+                patch.object(time, "sleep"):
+            self.assert_process_stopped(123)
+
+    def test_process_exit_observation_still_rejects_live_descendant(self):
+        with patch.object(Path, "read_text", return_value="123 (python) R"), \
+                patch.object(time, "monotonic", side_effect=[0, 0, 2]), \
+                patch.object(time, "sleep"), \
+                self.assertRaisesRegex(AssertionError, "owned descendant 123 has not exited"):
+            self.assert_process_stopped(123)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -303,8 +337,7 @@ class KindTest(unittest.TestCase):
         def assert_stopped():
             self.assertIsNotNone(command.returncode, "command has not been reaped")
             self.assertEqual(command.returncode, -signal.SIGKILL)
-            stat = Path(f"/proc/{child_pid}/stat")
-            self.assertTrue(not stat.exists() or stat.read_text().split()[2] == "Z")
+            self.assert_process_stopped(child_pid)
 
         def dispatch(args, env, **kwargs):
             nonlocal command, child_pid
@@ -357,7 +390,9 @@ class KindTest(unittest.TestCase):
             with self.assertRaisesRegex(KeyboardInterrupt, f"received signal {signal.SIGTERM}"), \
                     patch("sys.stderr") as stderr:
                 self.invoke(dispatch)
-            self.assertEqual(events, ["cancel", "teardown", "teardown", "reaped", "cluster cleanup"])
+            teardown_output = "".join(call.args[0] for call in stderr.write.call_args_list)
+            self.assertEqual(events, ["cancel", "teardown", "teardown", "reaped", "cluster cleanup"],
+                             teardown_output)
             self.assertTrue(self.state.exists())
             self.assertIn("Kind cleanup failed", "".join(call.args[0] for call in stderr.write.call_args_list))
             for sig in previous:
@@ -379,8 +414,7 @@ class KindTest(unittest.TestCase):
             with self.assertRaises(subprocess.TimeoutExpired):
                 runner.run([sys.executable, "-c", code, str(pidfile)], dict(os.environ), timeout=0.5, capture=True)
             pid = int(pidfile.read_text())
-            stat = Path(f"/proc/{pid}/stat")
-            self.assertTrue(not stat.exists() or stat.read_text().split()[2] == "Z")
+            self.assert_process_stopped(pid)
         finally:
             if pidfile.exists():
                 try:
@@ -401,8 +435,7 @@ class KindTest(unittest.TestCase):
                 process.terminate()
                 process.communicate(timeout=12)
                 self.assertNotEqual(process.returncode, 0)
-                stat = Path(f"/proc/{pid}/stat")
-                self.assertTrue(not stat.exists() or stat.read_text().split()[2] == "Z")
+                self.assert_process_stopped(pid)
             finally:
                 if process.poll() is None:
                     process.kill()

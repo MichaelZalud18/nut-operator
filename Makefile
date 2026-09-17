@@ -118,6 +118,14 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 test-postgres: ## Run audit component tests against an isolated disposable PostgreSQL container.
 	bash hack/test-postgres.sh
 
+.PHONY: test-netbox
+test-netbox: ## Run the shipped inventory importer against an owned disposable NetBox service.
+	python3 -B hack/test-netbox.py
+
+.PHONY: test-netbox-harness
+test-netbox-harness: ## Test disposable NetBox ownership and cleanup without starting containers.
+	python3 -B -m unittest discover -s hack -p test_netbox.py
+
 .PHONY: test-operand-deletion
 test-operand-deletion: ## Verify operand deletion and real GC in an owned disposable Kind cluster.
 	bash hack/test-operand-deletion.sh
@@ -209,6 +217,14 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated 
 .PHONY: test-kind-harness
 test-kind-harness: ## Test Kind ownership and cancellation without creating a cluster.
 	python3 -B -m unittest discover -s hack -p test_kind.py
+
+.PHONY: test-kind-lifecycle
+test-kind-lifecycle: ## Rehearse cancellation and cleanup against owned disposable Kind clusters.
+	KIND="$(KIND)" KIND_CONFIG="$(KIND_CONFIG)" python3 -B hack/test-kind-lifecycle.py
+
+.PHONY: test-kind-lifecycle-harness
+test-kind-lifecycle-harness: ## Test the live Kind lifecycle rehearsal's safety checks without clusters.
+	python3 -B -m unittest discover -s hack -p test_kind_lifecycle.py
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Retired standalone cleanup; the suite deletes only its owned resources.

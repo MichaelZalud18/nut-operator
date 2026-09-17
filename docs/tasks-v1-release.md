@@ -106,6 +106,10 @@ evidence, not current release sign-off.
   and network-only defaults.
 - Public-readiness scans show no private hostnames, private addresses, credentials, or site-specific
   topology.
+  **Follow-up (2026-09-17):** refresh secret-scan triage after the controller/executor extractions
+  and hash-compatibility fixtures. The targeted detect-secrets run still flags existing Secret
+  object names, diagnostic text, and public hash snapshots outside the TEST changes. Review each
+  reported location before adding narrow exceptions; the full repository scan is not signed off.
 - ASH grype low finding `GO-2026-5932` is tracked and triaged: `golang.org/x/crypto v0.56.0`
   (bumped 2026-09-04; see below) still has no fix version from `go list -m -u`, and `govulncheck`
   confirms it is required but not imported at all -- the OpenPGP package in the current dependency

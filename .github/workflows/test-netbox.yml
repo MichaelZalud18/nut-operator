@@ -1,0 +1,60 @@
+name: NetBox Integration Tests
+
+on:
+  pull_request:
+    paths:
+      - 'internal/netbox/**'
+      - 'cmd/netbox-inventory-sync/**'
+      - 'internal/inventory/**'
+      - 'internal/kubeinventory/**'
+      - 'api/**'
+      - 'test/netbox/**'
+      - 'hack/test-netbox.py'
+      - 'hack/test_netbox.py'
+      - 'docs/contributing/design/inventory-provider-contract.md'
+      - 'docs/guides/import-netbox-inventory.md'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/test-netbox.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'internal/netbox/**'
+      - 'cmd/netbox-inventory-sync/**'
+      - 'internal/inventory/**'
+      - 'internal/kubeinventory/**'
+      - 'api/**'
+      - 'test/netbox/**'
+      - 'hack/test-netbox.py'
+      - 'hack/test_netbox.py'
+      - 'docs/contributing/design/inventory-provider-contract.md'
+      - 'docs/guides/import-netbox-inventory.md'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/test-netbox.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netbox-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  netbox:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+      - name: Docker-free harness checks
+        run: make test-netbox-harness
+      - name: Real disposable NetBox REST and shipped CLI compatibility
+        run: make test-netbox

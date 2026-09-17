@@ -67,8 +67,45 @@ func assertKindSpecInventory(t *testing.T, soak, want string) {
 	}
 	for _, line := range strings.Split(string(output), "\n") {
 		if inventory, found := strings.CutPrefix(line, "SPEC-INVENTORY:"); found {
-			// Captured from the original suite before extracting its scenarios.
-			if got := fmt.Sprintf("%x", sha256.Sum256([]byte(inventory))); got != want {
+			// Preserve the original 22/24-spec inventory byte for byte while explicitly
+			// allowing exactly one TEST-2 addition inside the shared Manager lifecycle.
+			var specs []json.RawMessage
+			if err := json.Unmarshal([]byte(inventory), &specs); err != nil {
+				t.Fatal(err)
+			}
+			var original []json.RawMessage
+			additions := 0
+			for _, raw := range specs {
+				var spec struct {
+					Text            string
+					Labels          []string
+					Ordered, Serial bool
+					State           string
+				}
+				if err := json.Unmarshal(raw, &spec); err != nil {
+					t.Fatal(err)
+				}
+				if spec.Text == "Manager executes a logical ShutdownFlow from real dummy-ups telemetry through ordered drain and simulated actuation" {
+					additions++
+					if !spec.Ordered || spec.Serial || spec.State != "passed" || len(spec.Labels) != 1 || spec.Labels[0] != "TEST-2" {
+						t.Fatalf("TEST-2 registration changed: %s", raw)
+					}
+				} else {
+					original = append(original, raw)
+				}
+			}
+			count := 22
+			if soak == "true" {
+				count = 24
+			}
+			if additions != 1 || len(original) != count {
+				t.Fatalf("want original %d specs plus one TEST-2, got %d + %d", count, len(original), additions)
+			}
+			baseline, err := json.Marshal(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := fmt.Sprintf("%x", sha256.Sum256(baseline)); got != want {
 				t.Fatalf("spec registration fingerprint = %s, want %s\n%s", got, want, inventory)
 			}
 			return

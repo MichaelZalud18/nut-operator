@@ -74,7 +74,9 @@ Infrastructure devices can be inferred from NetBox roles containing `pdu`, `swit
 
 The command compiles the rendered provider-neutral snapshot before writing YAML. Structural errors
 such as missing feed inputs, duplicate entities, or orphaned nodes fail the command instead of
-emitting a manifest the planner would reject later. Warnings are printed to stderr; credentials are
+emitting a manifest the planner would reject later. Connected power endpoints outside the imported
+device set also fail, even if another feed would keep a node non-orphaned: include the required
+upstream device in the selected inventory. Warnings are printed to stderr; credentials are
 never rendered into the output.
 
 For debugging the provider contract directly:
@@ -85,3 +87,12 @@ NETBOX_TOKEN=... go run ./cmd/netbox-inventory-sync \
   -tag power-managed \
   -format snapshot-json
 ```
+
+## Compatibility testing
+
+The [disposable NetBox integration suite](../../test/netbox/README.md) runs this command against
+an explicitly pinned real NetBox service with synthetic DCIM inventory. It covers authentication,
+pagination, tag selection, cabling, deterministic output and fail-closed inventory compilation.
+Run `make test-netbox` on an authorized development Docker host; `make test-netbox-harness`
+checks ownership and cleanup without Docker. The suite does not connect to an existing NetBox
+instance or add NetBox to the operator's shutdown runtime.

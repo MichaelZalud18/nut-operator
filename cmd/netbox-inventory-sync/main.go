@@ -107,6 +107,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// A remaining valid feed can hide an omitted secondary supply from compilation.
+	// Refuse a partial power graph even when the mapper can render its other edges.
+	for _, diagnostic := range manifest.Diagnostics {
+		if diagnostic.Reason == "PowerEndpointUnmapped" {
+			return fmt.Errorf("NetBox inventory contains an unmapped power endpoint at %s", diagnostic.Subject)
+		}
+	}
 
 	if _, diagnostics, err := inventory.Compile(manifest.Snapshot); err != nil {
 		for _, diagnostic := range diagnostics {
