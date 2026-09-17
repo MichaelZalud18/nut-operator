@@ -102,6 +102,63 @@ users:
 `, device, creds.User, creds.Pass)
 }
 
+// KairosAutoInstallServerCloudConfig is KairosAutoInstallCloudConfig plus a k3s `--tls-san` for
+// tlsSAN, a second address (the ClusterLink static address VM-2's two-node join assigns after
+// boot) k3s's own self-signed server certificate must also validate for.
+//
+// The ordering problem this sidesteps: the raw ClusterLink segment (network.go) has no DHCP, and
+// this project already found once that an apparently-documented Kairos cloud-config networking
+// feature can silently not fire (the k3s-ready stage below); rather than risk repeating that with
+// a declarative network-config stanza, the join test assigns the static address itself via a
+// plain `ip addr add` over SSH after boot. But k3s starts automatically during that same first
+// boot, before any such SSH command can run, and bakes its certificate's SANs in at that moment.
+// Declaring the address as a `--tls-san` in advance -- which needs no interface to actually carry
+// that address yet, only to be listed as an acceptable value -- avoids depending on which of the
+// two racing steps (k3s startup, the SSH-driven address assignment) actually finishes first.
+func KairosAutoInstallServerCloudConfig(creds Credentials, device, tlsSAN string) string {
+	return fmt.Sprintf(`#cloud-config
+install:
+  device: %q
+  reboot: true
+  auto: true
+k3s:
+  enabled: true
+  args:
+  - --tls-san=%s
+users:
+- name: %s
+  passwd: %s
+  groups:
+  - admin
+`, device, tlsSAN, creds.User, creds.Pass)
+}
+
+// KairosAutoInstallAgentCloudConfig renders a Kairos cloud-config for a k3s agent joining an
+// already-running server at serverURL (e.g. "https://192.168.100.1:6443") using token -- the real
+// value read from that server's own /var/lib/rancher/k3s/server/node-token after it comes up, not
+// a placeholder. The `k3s-agent` stanza and its `env` map (K3S_URL/K3S_TOKEN) are confirmed
+// against kairos.io/docs/examples/multi-node, not guessed -- unlike the k3s-ready stage this
+// project already found does not fire on this Kairos version, this project has no live evidence
+// yet that k3s-agent's own wiring works either; that is exactly what this join test proves.
+func KairosAutoInstallAgentCloudConfig(creds Credentials, device, serverURL, token string) string {
+	return fmt.Sprintf(`#cloud-config
+install:
+  device: %q
+  reboot: true
+  auto: true
+k3s-agent:
+  enabled: true
+  env:
+    K3S_URL: %s
+    K3S_TOKEN: %s
+users:
+- name: %s
+  passwd: %s
+  groups:
+  - admin
+`, device, serverURL, token, creds.User, creds.Pass)
+}
+
 // MinimalSSHCloudConfig renders a cloud-config that only creates a login using creds -- no
 // install stanza, no k3s. For guests that only ever need to be SSH-reachable in their live
 // installer environment and never install to disk, such as a networking-only test: attaching no

@@ -1,0 +1,113 @@
+name: Hadron Cluster Join Smoke Test
+
+# VM-2's remaining open work: the actual two-node topology. TestHadronClusterLinkConnectivity
+# (hadron-cluster-link-smoke.yml) already proved the raw ClusterLink segment carries traffic
+# between two independently booted guests; this workflow proves the rest -- a real k3s server, a
+# real k3s agent, and a genuine two-node join over that same link, confirmed by listing two
+# distinct Ready nodes through the server's forwarded kube-API from outside both guests entirely.
+#
+# The raw segment has no DHCP. Each guest's static address on it is assigned imperatively over SSH
+# after boot (test/hadron/cluster_join_smoke_test.go's own doc comment explains why, given this
+# project's one prior experience with an apparently-documented but silently-non-firing Kairos
+# cloud-config feature), not through a declarative network-config stanza.
+#
+# Unverified against a real guest as of this writing; the budget below is a first estimate --
+# expect it to need adjustment after a first live run, the same as every other milestone in this
+# session did.
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  cluster-join:
+    permissions:
+      contents: read
+    name: Boot a real k3s server and agent and confirm a genuine two-node join over the cluster link
+    runs-on: ubuntu-latest
+    # Sum of bounded steps below is 64 minutes; reserve additional cancellation margin.
+    timeout-minutes: 70
+    steps:
+      - name: Clone the code
+        timeout-minutes: 2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        timeout-minutes: 5
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Record free disk before installing tooling
+        timeout-minutes: 1
+        run: df -h /
+
+      - name: Install QEMU and genisoimage
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils acl genisoimage
+
+      # Same fix as every other Hadron smoke workflow: /dev/kvm is present but not group/user
+      # accessible by default on this runner image.
+      - name: Grant KVM device access
+        timeout-minutes: 1
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-hadron-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo setfacl -m u:"$(whoami)":rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm && echo "/dev/kvm is read/write accessible"
+
+      - name: Allocate private smoke state
+        timeout-minutes: 1
+        run: echo "HADRON_STATE_ROOT=$(mktemp -d "$RUNNER_TEMP/hadron-smoke-XXXXXXXX")" >> "$GITHUB_ENV"
+
+      # GNU timeout bounds compilation as well as the test binary. TERM permits cooperative
+      # cancellation; KILL bounds a hung library call. The Go deadline reserves cleanup time.
+      # Two full unattended installs, sequential (the agent's own config needs the server's
+      # already-generated node-token), is the reason this budget is roughly double a single-guest
+      # boot workflow's own.
+      - name: Boot a real k3s server and agent and confirm a genuine two-node join
+        timeout-minutes: 42
+        run: TMPDIR="$HADRON_STATE_ROOT" timeout --signal=TERM --kill-after=15s 41m go test -tags=hadron,hadron_smoke ./test/hadron -run TestHadronClusterJoin -v -timeout=39m
+
+      - name: Stop leftover guests owned by this run
+        id: cleanup
+        if: always() && env.HADRON_STATE_ROOT != ''
+        timeout-minutes: 1
+        run: python3 hack/hadron-cleanup.py "$HADRON_STATE_ROOT"
+
+      - name: Dump both guests' console logs on failure
+        timeout-minutes: 1
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for dir in "$HADRON_STATE_ROOT"/nut-operator-hadron-*; do
+            echo "::group::$dir/stdout"
+            grep -iE 'error|fail|panic|k3s|link|addr|join' "$dir/stdout" 2>/dev/null \
+              || echo "(no matching lines, or nothing captured)"
+            echo "::endgroup::"
+          done
+
+      - name: Upload full guest console logs on failure
+        timeout-minutes: 3
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hadron-cluster-join-smoke-console
+          path: ${{ env.HADRON_STATE_ROOT }}/nut-operator-hadron-*/std*
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove stopped guest state
+        if: always() && steps.cleanup.outcome == 'success'
+        timeout-minutes: 1
+        run: rm -rf -- "$HADRON_STATE_ROOT"
+
+      - name: Record free disk after the run
+        timeout-minutes: 1
+        if: always()
+        run: df -h /
