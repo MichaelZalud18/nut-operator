@@ -91,14 +91,7 @@ func podRestartSpecs() {
 			if err != nil {
 				return nil, err
 			}
-			var ready []string
-			for _, line := range utils.GetNonEmptyLines(out) {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 && fields[1] == "True" {
-					ready = append(ready, fields[0])
-				}
-			}
-			return ready, nil
+			return readyPodNames(out), nil
 		}
 
 		devicePhase := func() (string, error) {

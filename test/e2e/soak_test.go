@@ -73,9 +73,7 @@ func driverSoakSpecs() {
 		podSelector := "power.zalud.io/nutserver=" + serverName
 
 		driverState := func() (string, error) {
-			out, err := utils.Run(exec.Command("kubectl", "-n", namespace, "exec", serverPod, "-c", "upsd",
-				"--", "sh", "-c", "upsdrvctl status 2>/dev/null | grep -v S_RESPONSIVE"))
-			return strings.TrimSpace(out), err
+			return nutDriverState(namespace, serverPod)
 		}
 
 		BeforeAll(func() {

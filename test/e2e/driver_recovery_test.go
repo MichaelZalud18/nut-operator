@@ -76,9 +76,7 @@ func driverRecoverySpecs() {
 		// a stale PID file leaves PF_PID populated while RUNNING and S_PID report N/A, which is exactly
 		// how F-97 was misread in the first place.
 		driverState := func() (string, error) {
-			out, err := utils.Run(exec.Command("kubectl", "-n", namespace, "exec", serverPod, "-c", "upsd",
-				"--", "sh", "-c", "upsdrvctl status 2>/dev/null | grep -v S_RESPONSIVE"))
-			return strings.TrimSpace(out), err
+			return nutDriverState(namespace, serverPod)
 		}
 
 		BeforeAll(func() {

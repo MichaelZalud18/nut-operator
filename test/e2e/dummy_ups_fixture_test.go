@@ -31,11 +31,8 @@ import (
 	"github.com/MichaelZalud18/nut-operator/test/utils"
 )
 
-// Shared setup/teardown for the two specs that stand up a single dummy-ups-backed NUTServer and
-// exercise its driver-outage behavior: driverRecoverySpecs (driver_recovery_test.go) and
-// driverSoakSpecs (soak_test.go, F-110's repeated-cycle version of the same claim). Factored out
-// rather than duplicated between them -- both specs need identically-shaped fixtures, just under
-// different namespaces and cycle counts.
+// Shared setup/teardown for the driver recovery, driver soak, and pod restart scenarios.
+// Their AfterAll callbacks own teardown, including when BeforeAll only partially applies.
 
 // applyDummyUPSFixture creates namespace and a UPSDevice/NUTServer pair inside it, backed by the
 // dummy-ups driver so no real hardware or SNMP simulator is needed.
@@ -45,7 +42,19 @@ func applyDummyUPSFixture(namespace, serverName, upsName, displayName string) {
 	Expect(err).NotTo(HaveOccurred())
 
 	By("creating a dummy-ups-backed UPSDevice and NUTServer")
-	manifest := fmt.Sprintf(`
+	manifest := dummyUPSManifest(namespace, serverName, upsName, displayName)
+
+	applyFixture := func(g Gomega) {
+		applyErr := applyFixtureManifest(manifest)
+		g.Expect(applyErr).NotTo(HaveOccurred())
+	}
+	Eventually(applyFixture, 2*time.Minute, 5*time.Second).Should(Succeed())
+}
+
+// dummyUPSManifest is the common UPSDevice/NUTServer pair. Agent and simulation
+// settings stay in the scenarios that exercise them.
+func dummyUPSManifest(namespace, serverName, upsName, displayName string) string {
+	return fmt.Sprintf(`
 apiVersion: power.zalud.io/v1alpha1
 kind: UPSDevice
 metadata:
@@ -71,17 +80,9 @@ spec:
   tls:
     mode: Disabled
 `, namespace, nutServerRepository, upsName, serverName, operandImageTag, displayName)
-
-	applyFixture := func(g Gomega) {
-		applyCmd := exec.Command("kubectl", "apply", "-f", "-")
-		applyCmd.Stdin = strings.NewReader(manifest)
-		_, applyErr := utils.Run(applyCmd)
-		g.Expect(applyErr).NotTo(HaveOccurred())
-	}
-	Eventually(applyFixture, 2*time.Minute, 5*time.Second).Should(Succeed())
 }
 
-// waitForNUTServerPodReady polls until exactly one pod matching podSelector reports Ready, and
+// waitForNUTServerPodReady polls until a pod matching podSelector reports Ready, and
 // returns its name.
 func waitForNUTServerPodReady(namespace, podSelector string) string {
 	var serverPod string
@@ -93,12 +94,8 @@ func waitForNUTServerPodReady(namespace, podSelector string) string {
 		g.Expect(getErr).NotTo(HaveOccurred())
 
 		readyPod := ""
-		for _, line := range utils.GetNonEmptyLines(out) {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 && fields[1] == "True" {
-				readyPod = fields[0]
-				break
-			}
+		if ready := readyPodNames(out); len(ready) > 0 {
+			readyPod = ready[0]
 		}
 		g.Expect(readyPod).NotTo(BeEmpty(), "no Ready pod matched %s; observed pods: %q", podSelector, out)
 		serverPod = readyPod
@@ -122,4 +119,23 @@ func teardownDummyUPSFixture(namespace, serverName, upsName string) {
 	} {
 		_, _ = utils.Run(exec.Command("kubectl", args...))
 	}
+}
+
+// readyPodNames preserves the API's order and all matches so callers can assert
+// cardinality themselves (the restart scenario requires exactly one replacement).
+func readyPodNames(output string) []string {
+	var ready []string
+	for _, line := range utils.GetNonEmptyLines(output) {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == "True" {
+			ready = append(ready, fields[0])
+		}
+	}
+	return ready
+}
+
+func nutDriverState(namespace, pod string) (string, error) {
+	out, err := utils.Run(exec.Command("kubectl", "-n", namespace, "exec", pod, "-c", "upsd",
+		"--", "sh", "-c", "upsdrvctl status 2>/dev/null | grep -v S_RESPONSIVE"))
+	return strings.TrimSpace(out), err
 }

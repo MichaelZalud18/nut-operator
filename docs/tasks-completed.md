@@ -31,6 +31,21 @@ status across trackers. Historical run output and longer investigations remain i
 
 ## Operator Maturity & Hardening
 
+- [x] `TEST-1` implementation/component slice (2026-09-17). Extracted upgrade, metrics,
+  webhook/certificate, signal-handoff, scripted dummy-ups, and SNMP scenarios from the manager
+  suite into focused files, retaining their registration order and shared install/teardown.
+  Shared helpers own manifest application, partial-apply cleanup, dummy UPS/server rendering,
+  Ready-pod parsing, and driver-state reads. Scenario manifests and assertions stay visible;
+  image references, bounds, network policy, and the separate VM harness are unchanged.
+  **Validated:** cluster-free tagged fixture tests and both registration fingerprints captured
+  from the original suite (22 normal scenarios, 24 with soak enabled); all 19 Kind ownership
+  harness tests passed. Tagged cluster-free race tests passed and tagged lint reported zero
+  issues. Five repeated registration runs passed. Registration checks preserve full names, order,
+  labels, ordered/serial placement, and enabled state without bypassing the real suite's ownership guard.
+  Independent scope and correctness/security reviews passed; added-code safety checks were clean.
+  Live focused/full qualification remains in `tasks.md`: the existing host preflight rejects
+  128 available inotify instances against 512 required. No live Kind pass is claimed.
+
 - [x] `ENG-5` [Medium] unify static admission/reconciliation validation (2026-09-15).
   `internal/resourcevalidation` owns pure NodePowerAgent and ShutdownFlow rules and shared field
   checks. Admission retains API field errors/warnings and controllers adapt errors to conditions;

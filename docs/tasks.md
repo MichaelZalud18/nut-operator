@@ -253,13 +253,16 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   network-policy enforcement, cleanup, and required-check semantics. No suite split is approved.
   [Evidence, dependency map, and measurement criteria](contributing/audits/kind-modularity-2026-09-13.md).
 
-- [ ] `TEST-1` [Low] deduplicate the Kind scenario layer and split materially different scenarios
-  out of `test/e2e/e2e_test.go`. Extract recurring setup into focused fixtures/helpers using the
-  existing dummy UPS fixture as a model. Preserve readable scenario manifests and important
-  assertions instead of hiding them in a large builder DSL. Keep Kind and VM fixtures separate;
-  `VM-8` is related work, not a shared all-purpose harness.
-  **Testable now; Conditional:** retain scenario assertions and failure cleanup in focused/full
-  runs. Keep the shared Kind suite/cluster unless controlled `F-146` evidence supports changing it.
+- [ ] `TEST-1` [Low] qualify the refactored Kind scenarios in focused/full live runs.
+  **Implementation complete; live Kind qualification remains.** Upgrade, metrics, webhook,
+  signal handoff, scripted telemetry, and SNMP conformance have focused scenario files under
+  the same shared installation lifecycle. Reusable fixture helpers retain readable manifests,
+  assertions, image selection, and failure cleanup; Kind and VM fixtures remain separate.
+  [Implementation/component evidence](tasks-completed.md#operator-maturity--hardening).
+  **Remaining; Testable now; Conditional:** run focused/full Kind acceptance on a provisioned
+  runner and verify cleanup on failure. The 2026-09-17 local preflight still reports 128 inotify
+  instances against 512 required; no cluster was started. Keep the shared Kind suite/cluster
+  unless controlled `F-146` evidence supports changing it; no CI restructuring is approved.
 - [ ] `TEST-2` [Medium, investigation] prove a full logical ShutdownFlow scenario is feasible in
   Kind before committing it as a permanent gate. Connect real dummy-ups telemetry transitions to
   an eligible ShutdownFlow, production trigger evaluation, planner/executor, drain/order actions,
