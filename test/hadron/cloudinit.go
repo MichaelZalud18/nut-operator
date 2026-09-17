@@ -102,6 +102,20 @@ users:
 `, device, creds.User, creds.Pass)
 }
 
+// disableHostFirewallRunCmd is a plain cloud-init `runcmd:` (not a Kairos-specific stage like the
+// k3s-ready hook this project already found silently does not fire -- runcmd is a standard
+// cloud-init primitive, and this same cloud-config's own k3s:/k3s-agent:/users: directives are
+// already live-proven to apply to the installed system in this test, not only the live installer)
+// that best-effort disables firewalld and ufw, matching k3s's own documented installation
+// requirement: "It is recommended to turn off firewalld" / "turn off ufw"
+// (https://docs.k3s.io/installation/requirements). Whether either ships active on this Kairos
+// build is unconfirmed either way; each command is a no-op (`|| true`) if that service is absent,
+// so this is safe to always render.
+const disableHostFirewallRunCmd = `runcmd:
+- systemctl disable --now firewalld || true
+- systemctl disable --now ufw || true
+`
+
 // KairosAutoInstallServerCloudConfig is KairosAutoInstallCloudConfig plus a k3s `--tls-san` for
 // tlsSAN, a second address (the ClusterLink static address VM-2's two-node join assigns after
 // boot) k3s's own self-signed server certificate must also validate for.
@@ -130,7 +144,7 @@ users:
   passwd: %s
   groups:
   - admin
-`, device, tlsSAN, creds.User, creds.Pass)
+`+disableHostFirewallRunCmd, device, tlsSAN, creds.User, creds.Pass)
 }
 
 // KairosAutoInstallAgentCloudConfig renders a Kairos cloud-config for a k3s agent joining an
@@ -156,7 +170,7 @@ users:
   passwd: %s
   groups:
   - admin
-`, device, serverURL, token, creds.User, creds.Pass)
+`+disableHostFirewallRunCmd, device, serverURL, token, creds.User, creds.Pass)
 }
 
 // MinimalSSHCloudConfig renders a cloud-config that only creates a login using creds -- no
