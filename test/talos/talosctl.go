@@ -65,11 +65,22 @@ func talosMaintenanceAPIReachable(ctx context.Context) error {
 // used by the actuator milestone to redirect image pulls to a local ephemeral registry reachable
 // from inside the guest via QEMU user-mode networking's own host gateway address (10.0.2.2), since
 // Talos has no SSH or `ctr images import` equivalent for loading a locally built image.
+//
+// Always sets cluster.allowSchedulingOnControlPlanes: true. Talos taints control-plane nodes
+// NoSchedule by default (confirmed against Talos's own control-plane documentation and, live,
+// against every workload pod in the 2026-09-17 actuator milestone sitting Pending forever with no
+// container statuses at all -- never scheduled, not an image-pull failure); this package only ever
+// builds a single all-in-one node with no separate worker, so every caller needs this, the same
+// reasoning Talos's own single-node guides give for it. --config-patch's plain JSON merge form
+// (not JSON6902, which this CLI version rejects for multi-document configs -- confirmed live)
+// is the confirmed-working way to set it, verified by generating a config locally and grepping the
+// result before ever touching a live guest.
 func genConfig(ctx context.Context, clusterName, outDir string, registryMirrors ...string) (controlplaneConfigPath, talosconfigPath string, err error) {
 	args := []string{"gen", "config", clusterName,
 		"https://" + KubeAPIAddr,
 		"--additional-sans", talosHost,
 		"--install-disk", "/dev/vda",
+		"--config-patch", `{"cluster":{"allowSchedulingOnControlPlanes":true}}`,
 		"--output-dir", outDir,
 	}
 	for _, mirror := range registryMirrors {

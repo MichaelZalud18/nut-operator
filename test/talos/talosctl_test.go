@@ -84,7 +84,7 @@ func TestTalosSecureAPIReachableNeverPassesInsecure(t *testing.T) {
 func TestGenConfigArgs(t *testing.T) {
 	var captured string
 	outDir := t.TempDir()
-	withFakeTalosctl(t, `echo "$@" > `+outDir+`/argv; touch "${10}/controlplane.yaml" "${10}/talosconfig"`)
+	withFakeTalosctl(t, `echo "$@" > `+outDir+`/argv; touch "${12}/controlplane.yaml" "${12}/talosconfig"`)
 	controlplaneConfigPath, talosconfigPath, err := genConfig(context.Background(), "nut-operator-talos-smoke", outDir)
 	if err != nil {
 		t.Fatal(err)
@@ -104,6 +104,7 @@ func TestGenConfigArgs(t *testing.T) {
 		"gen config nut-operator-talos-smoke https://" + KubeAPIAddr,
 		"--additional-sans " + talosHost,
 		"--install-disk /dev/vda",
+		`--config-patch {"cluster":{"allowSchedulingOnControlPlanes":true}}`,
 		"--output-dir " + outDir,
 	} {
 		if !strings.Contains(captured, want) {
@@ -114,7 +115,7 @@ func TestGenConfigArgs(t *testing.T) {
 
 func TestGenConfigArgsWithRegistryMirror(t *testing.T) {
 	outDir := t.TempDir()
-	withFakeTalosctl(t, `echo "$@" > `+outDir+`/argv; touch "${10}/controlplane.yaml" "${10}/talosconfig"`)
+	withFakeTalosctl(t, `echo "$@" > `+outDir+`/argv; touch "${12}/controlplane.yaml" "${12}/talosconfig"`)
 	if _, _, err := genConfig(context.Background(), "nut-operator-talos-smoke", outDir, "10.0.2.2:5000=http://10.0.2.2:5000"); err != nil {
 		t.Fatal(err)
 	}
