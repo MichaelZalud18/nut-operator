@@ -58,7 +58,7 @@ type nodePowerAgentDaemonSetSpec struct {
 
 // ensureNodePowerAgentDaemonSet renders the agent DaemonSet, deferring the write while a flow is live.
 //
-// heldBy names that flow when one is (F-92). The rendered spec is correct at any moment; the timing
+// heldBy names that flow when one is. The rendered spec is correct at any moment; the timing
 // is what is wrong. maxSurge: 1 with maxUnavailable: 0 means a rollout replaces monitoring pods
 // node by node, and doing that while a shutdown flow is releasing nodes churns exactly the workload
 // whose absence is the failure it exists to prevent. A config change can wait for the outage to end;
@@ -98,10 +98,8 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 		daemonSet.Spec.UpdateStrategy = appsv1.DaemonSetUpdateStrategy{
 			Type: appsv1.RollingUpdateDaemonSetStrategyType,
 			RollingUpdate: &appsv1.RollingUpdateDaemonSet{
-				// Surge rather than go unavailable (F-72). maxUnavailable: 1 left a node with no
-				// agent for a full pull-and-start window on every rollout, and this is a workload
-				// whose absence is the failure it exists to prevent. Nothing blocks two agent pods
-				// briefly coexisting: the pod declares no hostPort and no hostNetwork.
+				// Surge to retain monitoring during image pull and startup. Two agent pods can
+				// briefly coexist because the pod declares no hostPort or hostNetwork.
 				MaxUnavailable: ptrIntOrStringFromInt32(0),
 				MaxSurge:       ptrIntOrStringFromInt32(1),
 			},
@@ -129,11 +127,10 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 		}
 		daemonSet.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
-				// One projected volume rather than two subPath mounts (F-69).
+				// One projected volume rather than two subPath mounts.
 				//
 				// A subPath mount is resolved once at container start and never receives ConfigMap
-				// or Secret updates, which is why the config-hash rolling restart was the only
-				// mechanism that could work rather than the one chosen. upsmon reads its config
+				// or Secret updates. upsmon reads its config
 				// from a compiled-in sysconfdir and has no flag to point it elsewhere -- -c takes a
 				// command, not a path -- so the files have to arrive at /etc/nut under their real
 				// names. A projected volume is what lets both sources do that through one mount
@@ -173,10 +170,8 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				},
 			},
 			{
-				// The actuator's own health evidence, mounted into the actuator and nowhere else
-				// (F-64). It is deliberately not the power-agent-run emptyDir the signal writer
-				// also has open for writing: health evidence a neighbouring container can rewrite
-				// is not evidence, and F-57 is already open on that shared boundary.
+				// Mount health evidence only into the actuator so the signal writer cannot
+				// forge readiness through its writable power-agent-run volume.
 				Name: "power-agent-actuator-state",
 				VolumeSource: corev1.VolumeSource{
 					EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: resource.NewQuantity(1024*1024, resource.BinarySI)},
@@ -188,7 +183,7 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 					Secret: &corev1.SecretVolumeSource{
 						SecretName:  spec.SignalSecretName,
 						DefaultMode: ptrInt32(0440),
-						// Not optional (F-86). The operator reconciles this Secret before the
+						// Not optional. The operator reconciles this Secret before the
 						// DaemonSet and it always carries the delivery-channel marker, so a missing
 						// one is not a startup race -- it means the only authorized path to a halt
 						// does not exist, and a pod that refuses to start says that far louder than
@@ -210,10 +205,8 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				Image:           spec.UpsmonImage,
 				ImagePullPolicy: spec.UpsmonPullPolicy,
 				Command:         []string{"upsmon"},
-				// -F, not -D (F-67). Both foreground upsmon, but -D does it as a side effect of
-				// raising the debugging level, so every agent in the fleet ran at debug level
-				// permanently to get a behavior -F provides on its own. upsmon has no -FF: unlike
-				// upsd it has no PID-file-on-foreground variant to select.
+				// -F foregrounds upsmon without the debug logging enabled by -D.
+				// Unlike upsd, upsmon has no -FF PID-file-on-foreground variant.
 				Args:            []string{"-F"},
 				Resources:       agent.Spec.Resources.Upsmon,
 				SecurityContext: restrictedContainerSecurityContext(),
@@ -221,7 +214,7 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 				LivenessProbe:   upsmonLivenessProbe(),
 				Env:             nodePowerAgentSignalEnv(agent, spec.ConfigHash, spec.SelectedUPSDevices),
 				VolumeMounts: []corev1.VolumeMount{
-					// A directory mount, so config updates reach the container (F-69).
+					// A directory mount, so config updates reach the container.
 					{Name: "upsmon-etc", MountPath: nodePowerAgentConfigDirectory, ReadOnly: true},
 					{Name: "upsmon-run", MountPath: "/run"},
 					{Name: "power-agent-run", MountPath: "/run/power-agent"},
@@ -331,7 +324,7 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentDaemonSet(ctx context.Con
 	return daemonSet, err
 }
 
-// upsmonLivenessProbe restarts upsmon if the process itself has died, and only that (F-35). It is
+// upsmonLivenessProbe restarts upsmon if the process itself has died, and only that. It is
 // deliberately NOT tied to NUT server reachability -- that's upsmonReadinessProbe's job -- so a upsmon
 // that's alive but can't currently reach its configured UPS server stays up and NotReady rather than
 // getting restarted, which would just churn the same failure. This is the read-only monitoring
@@ -353,25 +346,12 @@ func upsmonLivenessProbe() *corev1.Probe {
 }
 
 // upsmonReadinessProbe checks that every UPS this agent is configured to monitor is actually being
-// served to it (F-65).
+// served to it. Fail on zero MONITOR targets, and keep the loop in the current shell so `set -e`
+// applies. Query each full `<ups>@<server>` target: LIST UPS alone only proves server reachability.
 //
-// Two things were wrong with the previous script, and the first is the serious one. It piped the
-// `MONITOR` targets into a `while` loop, so with zero targets the loop body never ran and the
-// pipeline exited 0 -- a rendering bug that dropped every monitor line presented as a healthy agent.
-// The rewrite counts the targets first and fails on none, and runs the loop in the current shell so
-// `set -e` applies to it.
-//
-// Second, it ran `upsc -l "$server"`, an anonymous LIST UPS against the host half of the target.
-// That proves a NUT server is listening and nothing else: it does not check that the UPS this agent
-// monitors is among the ones served, which is the actual precondition for upsmon working. Querying
-// the full `<ups>@<server>` target does.
-//
-// The credentials and TLS posture are covered by the third step rather than by upsc, which cannot
-// reach them: upsc does not read upsmon.conf, so it exercises neither. That was the gap `F-40` fell
-// into, where upsmon failed with an SSL error against a server upsc reached fine. COMMOK/COMMBAD
-// come from upsmon's own session, so `power-notify-writer --check` answers the question upsc cannot
-// -- it fails when upsmon's last word on a UPS was that it lost contact (`F-68` supplies the
-// events). Silence passes: an agent that has never dispatched one has nothing to report.
+// upsc does not read upsmon.conf, so it cannot verify upsmon's credentials or TLS posture.
+// `power-notify-writer --check` reads COMMOK/COMMBAD from upsmon's own session and fails if its
+// last report was lost contact. Silence passes when no notification has been dispatched.
 func upsmonReadinessProbe() *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
@@ -397,13 +377,7 @@ power-notify-writer --check`,
 	}
 }
 
-// actuatorReadinessProbe asks whether the watch loop is running (F-64).
-//
-// It used to exec `--version`, which prints a string and returns before any configuration is
-// parsed. That passed on a process parked forever in block(), on one whose signal directory had
-// never appeared, and on one that had stopped looping entirely -- the three things readiness is for.
-// `F-46` retired the same instruction on the server image: a check that cannot fail is worse than no
-// check, because it reads as coverage.
+// actuatorReadinessProbe asks whether the watch loop is running.
 //
 // `--ready` reads the state file the loop writes after each pass and fails on a missing, stale, or
 // unparseable record, or on a signal directory the loop could not see. Under a Disabled policy it
@@ -433,15 +407,12 @@ func nodePowerAgentActuatorEnv(agent *powerv1alpha1.NodePowerAgent, talos *nodeP
 				FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"},
 			},
 		},
-		// The projected Secret, and nothing else (F-57, OD-37). The local tmpfs path the upsmon
-		// container writes through SHUTDOWNCMD used to lead this list, which made the
-		// network-facing container able to halt the host by writing one file. It is gone from both
-		// variables rather than reordered: the operator path is the only path with authority, so a
-		// second entry here is not a fallback, it is the bypass.
+		// Only the projected Secret authorizes a halt (OD-37). Including upsmon's writable
+		// SHUTDOWNCMD tmpfs path would let the network-facing container bypass operator approval.
 		{Name: "POWER_SIGNAL_PATHS", Value: nodePowerAgentProjectedSignalPath},
 		{Name: "POWER_SIGNAL_TTL", Value: durationString(agent.Spec.Shutdown.SignalTTL, "2m")},
 		{Name: "POWER_ACTUATOR_STATE_PATH", Value: nodePowerAgentActuatorStatePath},
-		// Only when the agent declares a flow (F-55). nodePowerAgentShutdownFlowName falls back to
+		// Only when the agent declares a flow. nodePowerAgentShutdownFlowName falls back to
 		// "upsmon-local" for the upsmon container, which is a name for the locked-down local path
 		// rather than a flow anything issues signals under -- rendering it here would make the
 		// actuator compare against a value the executor can never send and reject every release.

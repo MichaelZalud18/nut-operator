@@ -49,11 +49,11 @@ const nodePowerAgentFinalizer = "power.zalud.io/nodepoweragent-cleanup"
 
 // nodePowerAgentPodLabelKey is set on every Pod rendered for a NodePowerAgent (labelsForNodePowerAgent
 // in nodepoweragent_render.go) and is also the label the dedicated Pod cache in SetupWithManager
-// filters on (F-32) -- shared as one constant so the two can never drift apart.
+// filters on -- shared as one constant so the two can never drift apart.
 const nodePowerAgentPodLabelKey = "power.zalud.io/nodepoweragent"
 
 // nodePowerAgentRolloutHoldRequeue is how often a deferred DaemonSet write retries while a flow is
-// live (F-92). Short, because the deferred change is usually one an operator just made and is
+// live. Short, because the deferred change is usually one an operator just made and is
 // watching for, and cheap, because a pass that changes nothing writes nothing.
 const nodePowerAgentRolloutHoldRequeue = 30 * time.Second
 
@@ -132,7 +132,7 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			agent.Status.ConfigHash = rendered.ConfigHash
 			agent.Status.ManagedResources = rendered.ManagedResources
 			agent.Status.UncoveredNodes = rendered.UncoveredNodes
-			// A held DaemonSet write is deferred work, not failed work (F-92), so it requeues rather
+			// A held DaemonSet write is deferred work, not failed work, so it requeues rather
 			// than erroring. The ShutdownFlow watch already re-enqueues this agent when the flow's
 			// status moves, which is what actually lands the deferred write; this interval is the
 			// backstop for a flow that stops being reconciled without ever going inactive.
@@ -168,12 +168,8 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				degradedReason = "NUTTLSDowngraded"
 				degradedMessage = "upsmon.conf is less strict than the monitored NUTServers request: " + rendered.TLSDowngradeReason
 			}
-			// A Pod Security conflict outranks both (F-62). It is not a competing symptom, it is the
-			// cause of the unavailability directly above: the pods are not late, they were refused
-			// admission, and the only place that shows is a kubelet event on a pod that does not
-			// exist. Naming the exception here is the difference between a five-minute fix and an
-			// afternoon.
-			// F-74: a node the inventory describes and this agent does not select is not
+			// Pod Security conflicts outrank coverage and TLS degradation because they prevent
+			// admission entirely. A node the inventory describes and this agent does not select is not
 			// unavailable and not degraded by any other measure -- it is simply absent, and the
 			// agent reports ready over a fleet it partly covers. Ranked below admission rejection,
 			// which stops the agent existing at all, and above a TLS downgrade, which still
@@ -224,7 +220,7 @@ func (r *NodePowerAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 // SetupWithManager sets up the controller with the Manager.
 //
-// The Pod watch is deliberately not a plain Watches(&corev1.Pod{}, ...) (F-32): that would make the
+// The Pod watch is deliberately not a plain Watches(&corev1.Pod{}, ...): that would make the
 // manager's shared cache -- the same cache that backs mgr.GetClient(), which internal/kubeactions.Runner
 // uses for its own unrestricted, cluster-wide Pod list during DrainNodes eviction -- watch and hold
 // every Pod in the cluster in memory, only to discard almost all of them in the map function below.
@@ -267,12 +263,9 @@ func (r *NodePowerAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.DaemonSet{}).
 		Owns(&corev1.ConfigMap{}).
 		WatchesRawSource(podSource).
-		// F-74's coverage check is computed against the inventory, so it has to be recomputed when
-		// the inventory changes and not only when the agent does. Without this the check answered
-		// correctly and answered late: adding a PowerInventoryNode the selector misses left every
-		// agent reporting Ready until something unrelated happened to trigger a reconcile.
+		// Recompute coverage when inventory changes, including nodes the agent's selector misses.
 		Watches(&powerv1alpha1.PowerInventoryNode{}, handler.EnqueueRequestsFromMapFunc(r.enqueueAllNodePowerAgents)).
-		// Signal revocation (F-87) is decided against the flow's LastExecution, so the instant that
+		// Signal revocation is decided against the flow's LastExecution, so the instant that
 		// record stops covering a signal is the instant the signal becomes withdrawable. Without this
 		// watch the withdrawal waits for whatever unrelated event next reconciles the agent, and the
 		// wait it would lose is exactly the one that matters: a node rebooting after power returns,
@@ -289,8 +282,8 @@ func (r *NodePowerAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // enqueueAllNodePowerAgents re-evaluates every agent when the inventory or a ShutdownFlow changes.
 //
-// Coverage is a property of the inventory and the agent's selector together (F-74), so either side
-// changing can turn a covered fleet into a partly covered one. Signal revocation (F-87) is likewise
+// Coverage is a property of the inventory and the agent's selector together, so either side
+// changing can turn a covered fleet into a partly covered one. Signal revocation is likewise
 // a property of a flow's execution record and whichever agents' Secrets carry signals from it. In
 // both cases there is no cheap way to know which agents a given object affects -- the answer depends
 // on each agent's selector, or on Secret contents -- and the number of NodePowerAgents in a cluster

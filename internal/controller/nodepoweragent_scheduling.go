@@ -27,7 +27,7 @@ import (
 
 // shutdownFlowHoldingRollouts names a ShutdownFlow whose execution episode is currently live, if any.
 //
-// Deliberately not scoped to flows that could release this agent's nodes (F-92). What makes a flow
+// Deliberately not scoped to flows that could release this agent's nodes. What makes a flow
 // live is a power event, and a power event is when pod churn is least welcome anywhere in the
 // cluster — including on nodes this flow will not touch, whose agents are the ones that still have
 // to be watching when it does. Narrowing the scope would buy a faster config rollout during an
@@ -58,7 +58,7 @@ func (r *NodePowerAgentReconciler) shutdownFlowHoldingRollouts(ctx context.Conte
 //
 // TriggerActive is the flow's own answer to whether the power event that started the episode is
 // still happening, which is the same signal signalStillAuthorized uses to decide whether a halt is
-// still authorized (F-87). Phase is checked as well because a flow can be Running before its first
+// still authorized. Phase is checked as well because a flow can be Running before its first
 // execution record exists.
 func shutdownFlowIsLive(flow *powerv1alpha1.ShutdownFlow) bool {
 	if flow.Status.Phase == powerv1alpha1.ShutdownFlowPhaseRunning {

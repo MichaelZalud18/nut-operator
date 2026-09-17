@@ -80,9 +80,8 @@ func (r *PDUCapabilityProfileReconciler) Reconcile(ctx context.Context, req ctrl
 	setAcceptedCondition(&profile.Status.Conditions, profile.Generation, result)
 
 	// A profile can be individually valid and still leave the set unable to resolve -- two profiles
-	// claiming selector.universal, or the same id and version twice. Those checks previously ran
-	// only inside MatchPDU, which has no caller while there is no PDU device kind (OD-25), so the
-	// conflict was reported nowhere and both profiles read as Accepted.
+	// claiming selector.universal, or the same id and version twice. Check the set here because
+	// MatchPDU has no caller while there is no PDU device kind (OD-25).
 	//
 	// Accepted stays true because the spec really is valid. Ready goes false because the profile
 	// cannot be used for resolution while the conflict stands, and that is the distinction the two

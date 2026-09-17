@@ -138,7 +138,7 @@ func validateUPSCapabilityProfileAdmission(obj *powerv1alpha1.UPSCapabilityProfi
 // validateCapabilityQuirks rejects quirk declarations the matcher cannot evaluate.
 //
 // Firmware scope is only worth having if a malformed scope is caught at admission
-// rather than discovered as a quirk that silently never applies (F-26).
+// rather than discovered as a quirk that silently never applies.
 func validateCapabilityQuirks(quirksPath *field.Path, quirks []powerv1alpha1.CapabilityQuirk) field.ErrorList {
 	var errs field.ErrorList
 	seen := map[string]struct{}{}

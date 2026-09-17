@@ -29,20 +29,19 @@ const (
 	defaultOperandNamespace = "power-system"
 	nutServerPortName       = "upsd"
 
-	// upsdReadinessProbe timing (F-17): a local upsc query proves the driver has registered with
-	// upsd, not merely that the TCP port is accepting connections.
+	// Timing for the readiness probe's upsdrvctl status flag check.
 	upsdReadinessInitialDelaySeconds = 5
 	upsdReadinessPeriodSeconds       = 10
 	upsdReadinessTimeoutSeconds      = 5
 	upsdReadinessFailureThreshold    = 3
 
 	// nutServerUpsdContainerName is the container that serves the NUT protocol. It is referenced by
-	// name rather than by index because the pod now holds more than one container.
+	// name rather than by index because the pod holds more than one container.
 	nutServerUpsdContainerName = "upsd"
 
-	// driverSupervisorContainerName owns NUT driver processes (F-49). It is a sidecar rather than
+	// driverSupervisorContainerName owns NUT driver processes. It is a sidecar rather than
 	// one container per driver so that adding or removing a UPSDevice does not force a pod recreate
-	// and drop every existing upsmon session (F-48), but inside that stable sidecar each configured
+	// and drop every existing upsmon session, but inside that stable sidecar each configured
 	// UPS still gets its own foreground upsdrvctl worker. That mirrors NUT's service-instance model
 	// without pretending Kubernetes can add containers to a running pod.
 	driverSupervisorContainerName = "driver-supervisor"
@@ -117,17 +116,10 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
-	// The pod-template annotation carries only the config upsd cannot adopt on reload (F-48).
-	//
-	// It used to carry a digest of everything rendered, so any change at all replaced the pod --
-	// dropping every upsmon session and NUT's login accounting, which is the damage F-15 and F-16
-	// exist to prevent. Adding one device should not cost the other devices their clients.
-	//
-	// The split is drawn from what upsd actually does, established by running it rather than from
-	// the documentation: `upsd -c reload` registers a device added to ups.conf (upsc -l reports it
-	// immediately afterwards) and re-reads upsd.users, but a changed LISTEN address or port is
-	// ignored -- the reload returns success, logs nothing about it, and upsd stays bound to the old
-	// port. Silent non-adoption is why upsd.conf stays on the restart path.
+	// The pod-template annotation carries only config upsd cannot adopt on reload, preserving
+	// upsmon sessions and NUT login accounting for reloadable changes.
+	// `upsd -c reload` registers devices added to ups.conf and re-reads upsd.users, but silently
+	// ignores a changed LISTEN address or port. That keeps upsd.conf on the restart path.
 	//
 	// TLS material is on the restart path for the same reason and is included by digest, because it
 	// lives in referenced Secrets rather than in configData: upsd builds its SSL context at startup,
@@ -188,7 +180,7 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 	managed := []powerv1alpha1.ManagedResourceStatus{
 		{APIVersion: "v1", Kind: "Namespace", Name: namespace},
 		{APIVersion: "v1", Kind: "ConfigMap", Namespace: namespace, Name: configMap.Name, Hash: configHash},
-		// No Hash here, matching the F-24 precedent for the upsd.users Secret: this Secret can carry
+		// No Hash here: this Secret can carry
 		// real driver credentials (SNMP community/SNMPv3 passwords), and status is broadly readable.
 		{APIVersion: "v1", Kind: "Secret", Namespace: namespace, Name: driverConfigSecret.Name},
 		{APIVersion: "v1", Kind: "Service", Namespace: namespace, Name: service.Name},
@@ -215,7 +207,7 @@ func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, se
 				Name:      service.Name,
 				Namespace: namespace,
 				DNSName:   fmt.Sprintf("%s.%s.svc.cluster.local", service.Name, namespace),
-				// Published so agents can monitor the server without cluster DNS (F-71). Empty
+				// Published so agents can monitor the server without cluster DNS. Empty
 				// for a headless Service and before allocation, which is why the DNS name stays.
 				ClusterIP: serviceClusterIP(service),
 				Port:      servicePort(server),

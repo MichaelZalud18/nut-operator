@@ -36,7 +36,7 @@ var nutserverlog = logf.Log.WithName("nutserver-resource")
 // defaultNUTServerPriorityClassName matches the priority class convention used for other
 // cluster-wide singleton control-plane-adjacent services (e.g. CoreDNS). upsd is on the
 // observability path for every NodePowerAgent, so preempting or evicting it degrades every
-// agent's telemetry simultaneously (F-18).
+// agent's telemetry simultaneously.
 const defaultNUTServerPriorityClassName = "system-cluster-critical"
 
 // SetupNUTServerWebhookWithManager registers the webhook for NUTServer in the manager.
@@ -123,9 +123,7 @@ func defaultNUTServer(obj *powerv1alpha1.NUTServer) {
 		obj.Spec.TLS.Mode = powerv1alpha1.NUTTLSRequired
 	}
 	if obj.Spec.TLS.VerifyClientCertificates == nil {
-		// False, matching the CRD default and the field's own documentation. This branch used to
-		// default it true, which the structural default masked in a real cluster and no test
-		// caught, because the webhook suite runs without CRD defaulting.
+		// Match the CRD default even when structural defaulting has not run.
 		obj.Spec.TLS.VerifyClientCertificates = ptrBool(false)
 	}
 	if obj.Spec.Config.ListenAddress == "" {
@@ -237,11 +235,10 @@ func validateNUTTLS(path *field.Path, tls powerv1alpha1.NUTTLSSpec) field.ErrorL
 		errs = append(errs, validateOptionalNamespacedNameReference(path.Child("serverCARef"), tls.ServerCARef)...)
 	}
 	if verifyClientCertificatesEnabled(tls) {
-		// F-41: upsd's OpenSSL branch ends its TLS setup with SSL_CTX_set_verify(ctx,
+		// upsd's OpenSSL branch ends its TLS setup with SSL_CTX_set_verify(ctx,
 		// SSL_VERIFY_NONE, NULL) and never loads a client CA, so CERTREQUEST is honored by no
 		// released OpenSSL build. Accepting true would report mutual TLS in the API while serving
-		// none on the wire -- the F-25/F-33/F-44 defect exactly, and on the security surface where
-		// a false claim is worst. Refused until the operand ships a release that honors it.
+		// none on the wire. Refused until the operand ships a release that honors it.
 		errs = append(errs, field.Invalid(
 			path.Child("verifyClientCertificates"), true,
 			fmt.Sprintf("client certificate validation is not honored by the %s operand: upsd's OpenSSL "+

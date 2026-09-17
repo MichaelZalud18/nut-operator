@@ -177,7 +177,7 @@ func (r *NUTServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.NetworkPolicy{}).
-		// F-43: the render reads UPSDevice specs and the Secrets they reference, and Owns covers
+		// The render reads UPSDevice specs and the Secrets they reference, and Owns covers
 		// neither -- a user-supplied credentialSecretRef target carries no owner reference back
 		// here. Without these two watches a driver, port, or credential change silently does
 		// nothing until an unrelated reconcile fires.

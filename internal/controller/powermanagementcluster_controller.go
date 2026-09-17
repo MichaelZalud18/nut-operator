@@ -117,11 +117,6 @@ func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ct
 
 // reconcileOperandNamespace settles spec.operandNamespace before anything else needs it.
 //
-// F-104: this reconciler used to contain no namespace code at all. The operand namespace came into
-// existence only when a NUTServer or NodePowerAgent was reconciled, so a PowerManagementCluster
-// applied on its own reached Ready with the namespace absent, and the very next namespaced object
-// in the examples failed. reference/security.md already described the behaviour implemented here.
-//
 // create: false is honoured in the other direction: the operator reports the namespace missing
 // rather than creating it, because the user has said they own its existence.
 func (r *PowerManagementClusterReconciler) reconcileOperandNamespace(

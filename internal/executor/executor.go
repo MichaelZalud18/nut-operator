@@ -87,9 +87,8 @@ type Executor struct {
 	// Input.Adaptive.Observation for its whole duration.
 	Observer PowerObserver
 
-	// ApprovalChecker independently reconfirms flow enforcement approval at each wave boundary
-	// (F-126). Nil means Input.Approved is trusted for the whole execution, unchanged from this
-	// executor's behavior before F-126.
+	// ApprovalChecker independently reconfirms flow enforcement approval at each wave boundary.
+	// Nil means Input.Approved is trusted for the whole execution.
 	ApprovalChecker ApprovalChecker
 
 	// RefreshNodeRelease refreshes guard evidence before an AgentShutdown group.
@@ -108,9 +107,8 @@ type Executor struct {
 // waves plus the action metadata needed to produce execution evidence.
 type Input struct {
 	ExecutionID string
-	// DeduplicationKey is the trigger-episode digest ExecutionID was derived from. Carried so the
-	// audit row can name the episode without ExecutionID having to *be* the digest, which is what
-	// F-100 was: a 64-character hex string written into a uuid column.
+	// DeduplicationKey is the trigger-episode digest ExecutionID was derived from.
+	// Store it separately because the audit schema requires ExecutionID to be a UUID.
 	DeduplicationKey   string
 	ObservedAt         time.Time
 	ShutdownFlow       string
@@ -303,13 +301,8 @@ type Result struct {
 	// RecordError is every audit-write failure the run accumulated, kept apart from the error
 	// Execute returns.
 	//
-	// F-100: they used to be the same value. Execute joined the record error into its returned
-	// error on the completion path, so a run that traversed every wave came back with a non-nil
-	// error and the caller mapped it to phase Failed. An audit outage is not a shutdown outcome,
-	// and reporting it as one meant the only visible symptom of a broken audit trail was a
-	// shutdown claiming to have failed -- which points the reader at the wrong system entirely.
-	//
-	// The caller must publish this. Silence here is a shutdown whose evidence was never written.
+	// The caller must publish audit failures separately from the shutdown outcome so missing
+	// evidence remains visible without misreporting a completed shutdown as failed.
 	RecordError error
 
 	// Adaptive is the pointer and timing state the run ended on, for the caller to
@@ -402,7 +395,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 	tierPolicy := effectiveTierOverrunPolicy(input.TierOverrunPolicy)
 	var tierWindow tierOverrunWindow
 	var pending []<-chan waveExecutionResult
-	// approvalRevoked is sticky for the rest of this execution once set (F-126): re-approving
+	// approvalRevoked is sticky for the rest of this execution once set: re-approving
 	// mid-flow does not resume enforcement partway through a shutdown flow already degraded to
 	// dry-run, since later waves may depend on ordering or clearance decided while revoked.
 	approvalRevoked := false
@@ -470,7 +463,7 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 			return result, errors.Join(adaptiveErr, pendingErr)
 		}
 
-		// F-126: an already-rendered actuator is not current authorization. Re-confirm approval
+		// An already-rendered actuator is not current authorization. Re-confirm approval
 		// fresh at this wave boundary rather than trusting the snapshot Execute started with --
 		// only while there is still enforcement to lose (dryRun already covers Mode/Approved at
 		// entry) and only while nothing has revoked it already (approvalRevoked is sticky).

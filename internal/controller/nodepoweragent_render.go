@@ -30,14 +30,14 @@ const (
 	nodePowerAgentProjectedSignalDirectory = "/var/lib/power-agent/signals"
 	nodePowerAgentProjectedSignalPath      = nodePowerAgentProjectedSignalDirectory + "/$(POWER_NODE_NAME).json"
 	nodePowerAgentSignalReason             = "upsmon-fsd"
-	// A directory mount rather than subPath, so config updates reach the container (F-69).
+	// A directory mount rather than subPath, so config updates reach the container.
 	nodePowerAgentConfigDirectory = "/etc/nut"
-	// nodePowerAgentNotifyWriterPath receives upsmon's NOTIFYCMD dispatches (F-68).
+	// nodePowerAgentNotifyWriterPath receives upsmon's NOTIFYCMD dispatches.
 	nodePowerAgentNotifyWriterPath = "/usr/local/bin/power-notify-writer"
 	// nodePowerAgentNotifyStatePath is where those dispatches land for something else to read.
 	nodePowerAgentNotifyStatePath = "/run/power-agent/notify.json"
 	// nodePowerAgentActuatorStateDirectory is the actuator-only volume holding the record of its
-	// watch loop, which is what makes readiness able to fail (F-64).
+	// watch loop, which is what makes readiness able to fail.
 	nodePowerAgentActuatorStateDirectory            = "/run/actuator"
 	nodePowerAgentActuatorStatePath                 = nodePowerAgentActuatorStateDirectory + "/state.json"
 	nodePowerAgentSignalWriterPath                  = "/usr/local/bin/power-signal-writer"
@@ -62,7 +62,7 @@ const (
 	// CApath argument and never as CAfile (clients/upsclient.c). OpenSSL treats CApath as
 	// a directory of hash-named certificates, so a file there loads without error and then
 	// fails every verification -- CERTVERIFY plus FORCESSL turns that into a connection
-	// that cannot be established at all (F-40).
+	// that cannot be established at all.
 	nodePowerAgentServerCAPath = "/var/lib/nut-tls/server-ca.d"
 )
 
@@ -82,12 +82,12 @@ type renderedNodePowerAgent struct {
 	// monitoring over a weaker channel, but it must not pass silently either.
 	TLSDowngradeReason string
 	// PodSecurityConflict is set when the operand namespace enforces a Pod Security level that
-	// will reject the actuating agent pod (F-62).
+	// will reject the actuating agent pod.
 	PodSecurityConflict string
-	// UncoveredNodes names inventory nodes this agent's selector does not match (F-74).
+	// UncoveredNodes names inventory nodes this agent's selector does not match.
 	UncoveredNodes []string
 	// DaemonSetWriteHeldBy names the live ShutdownFlow that deferred this pass's DaemonSet spec
-	// write (F-92). Empty when nothing is holding it.
+	// write. Empty when nothing is holding it.
 	DaemonSetWriteHeldBy string
 }
 
@@ -106,7 +106,7 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 		return renderedNodePowerAgent{}, err
 	}
 
-	// Only the actuating shape can be rejected on admission, so only it is checked (F-62).
+	// Only the actuating shape can be rejected on admission, so only it is checked.
 	podSecurityConflict := ""
 	if nodePowerAgentRequiresHostPoweroff(agent) {
 		podSecurityConflict = nodePowerAgentPodSecurityConflict(operandNamespace)
@@ -212,7 +212,7 @@ func (r *NodePowerAgentReconciler) reconcileNodePowerAgentOperands(ctx context.C
 			{APIVersion: "v1", Kind: "Namespace", Name: namespace},
 			{APIVersion: "v1", Kind: "ServiceAccount", Namespace: namespace, Name: serviceAccount.Name},
 			{APIVersion: "v1", Kind: "ConfigMap", Namespace: namespace, Name: configMap.Name, Hash: hashStringMap(configData)},
-			// Publishing a hash of Secret contents in status is safe here and deliberate (F-24): it is
+			// Publishing a hash of Secret contents in status is safe here and deliberate: it is
 			// a one-way SHA-256 over a 32-byte random value from randomPassword(), serving the standard
 			// config-hash-triggers-rollout pattern. Recovering the password from it is infeasible. The
 			// NUTServer side reaches the opposite conclusion for its own credential Secret, where the

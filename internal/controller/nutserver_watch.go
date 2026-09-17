@@ -34,14 +34,12 @@ import (
 )
 
 // nutServerRenderRelevantPredicate admits only the UPSDevice changes that can
-// change what a NUTServer renders (F-43).
+// change what a NUTServer renders.
 //
 // The render path reads the device's spec -- driver, port, driverOptions,
 // credentialSecretRef, upstreamNUT, simulation -- and its labels, which is what
-// spec.deviceSelector matches on. It reads no status at all, so the telemetry
-// churn that F-42 had to filter out for ShutdownFlow is excluded here by the same
-// rule rather than by a second list of fields: a status-only update cannot change
-// a rendered config.
+// spec.deviceSelector matches on. It reads no status, so status-only telemetry
+// updates cannot change rendered config and are excluded.
 //
 // Generation stands in for the whole spec because the API server increments it on
 // every spec write. Labels are compared directly, since a label edit is a metadata
@@ -54,7 +52,7 @@ func nutServerRenderRelevantPredicate() predicate.Predicate {
 		GenericFunc: func(event.GenericEvent) bool { return true },
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			if e.ObjectOld == nil || e.ObjectNew == nil {
-				// Erring toward admitting, as in F-42: a surplus reconcile costs a render, a
+				// Err toward admitting: a surplus reconcile costs a render, a
 				// missed one leaves the operand serving a configuration nobody asked for.
 				return true
 			}
@@ -93,8 +91,7 @@ func secretDataChangedPredicate() predicate.Predicate {
 	}
 }
 
-// nutServerRequestsForUPSDevice enqueues the NUTServers that select this device
-// (F-43).
+// nutServerRequestsForUPSDevice enqueues the NUTServers that select this device.
 //
 // Answers only "does this server select the object I was handed". Both sides of a
 // relabelling are covered without any bookkeeping here, because
@@ -125,7 +122,7 @@ func (r *NUTServerReconciler) nutServerRequestsForUPSDevice(ctx context.Context,
 }
 
 // nutServerRequestsForSecret enqueues NUTServers referencing TLS material directly
-// or selecting devices that use this Secret for credentials (F-43, F-141).
+// or selecting devices that use this Secret for credentials.
 //
 // Owns(&corev1.Secret{}) covers only Secrets carrying an owner reference back to
 // the NUTServer. A user-supplied credentialSecretRef target has none, so without
@@ -190,10 +187,8 @@ func nutServerUsesTLSSecret(server *powerv1alpha1.NUTServer, secret *corev1.Secr
 // nutServerRequestsForConfigMap enqueues the NUTServers whose selected devices name this ConfigMap
 // as a simulation fixture.
 //
-// The same gap as the credential Secret: simulation.sequenceConfigMapRef is user-supplied and
-// carries no owner reference, so Owns() never matches it and a fixture edit reached the operand only
-// when some unrelated reconcile fired. Kept separate from the Secret path only because the reference
-// lives on a different field; the reasoning is identical.
+// simulation.sequenceConfigMapRef is user-supplied and carries no owner reference, so Owns()
+// cannot detect fixture edits. This watch maps those edits through the device reference.
 func (r *NUTServerReconciler) nutServerRequestsForConfigMap(ctx context.Context, obj client.Object) []reconcile.Request {
 	log := logf.FromContext(ctx)
 

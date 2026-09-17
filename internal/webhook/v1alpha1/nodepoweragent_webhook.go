@@ -121,7 +121,7 @@ func defaultNodePowerAgent(obj *powerv1alpha1.NodePowerAgent) {
 }
 
 // defaultNodePowerAgentResources fills in conservative requests/limits for whichever resource keys
-// the user left unset (F-34). Without this, the tier-0 DaemonSet this whole project depends on
+// the user left unset. Without this, the tier-0 DaemonSet this whole project depends on
 // surviving node pressure runs BestEffort QoS by default -- no OOM-score protection, no scheduler
 // capacity reservation -- unless every user remembers to set spec.resources themselves. Per-key, not
 // wholesale: a user-supplied request or limit for a given resource name is never overwritten.

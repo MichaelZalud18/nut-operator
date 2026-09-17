@@ -351,8 +351,7 @@ func (r *ShutdownFlowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&powerv1alpha1.ShutdownFlow{}, flowChanged).
 		WatchesRawSource(source.Channel(r.runs.events, &handler.EnqueueRequestForObject{})).
-		// F-42: scoped to the fields trigger evaluation reads. Unpredicated, every telemetry poll
-		// re-enqueued every flow.
+		// Reconcile only when fields consumed by trigger evaluation change.
 		Watches(&powerv1alpha1.UPSDevice{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange),
 			builder.WithPredicates(upsDeviceTriggerRelevantPredicate())).
 		Watches(&powerv1alpha1.PowerManagementCluster{}, handler.EnqueueRequestsFromMapFunc(r.shutdownFlowRequestsForInventoryChange), specChanged).
@@ -419,7 +418,7 @@ func (r *ShutdownFlowReconciler) recordShutdownFlowAudit(ctx context.Context, wr
 				// PostgreSQL schema, and renaming it for vocabulary alone would
 				// mean a migration over existing records for no behavior change.
 				Fallback: match.Unidentified,
-				// F-101: which profile a device resolved to is only half the record. Without the
+				// Which profile a device resolved to is only half the record. Without the
 				// two model strings beside it, history cannot say whether the profile describes
 				// the device that was actually being read.
 				DeclaredModel: declaredModel,
@@ -612,7 +611,7 @@ func auditDiagnosticsFromPlanner(diagnostics []planner.Diagnostic) []audit.Diagn
 // Ordered most structural first: an inventory problem explains a planning one, and both explain a
 // trigger that cannot fire, so reporting the downstream symptom would send the reader to the wrong
 // place. Only the first is published as the condition — the full set is on
-// status.compileDiagnostics (F-99), which is what makes picking one here safe.
+// status.compileDiagnostics, which is what makes picking one here safe.
 type compileVerdictResult struct {
 	degraded     bool
 	reason       string
@@ -642,7 +641,7 @@ func compileVerdict(
 	if warning := firstPlannerDiagnostic(plannerDiagnostics, planner.DiagnosticWarning); warning != nil {
 		return compileVerdictResult{true, warning.Reason, warning.Message, "shutdown flow compiled with planner warnings"}
 	}
-	// F-113. A hook that cannot deliver never holds a wave (HK-7), so this degrades rather than
+	// A hook that cannot deliver never holds a wave (HK-7), so this degrades rather than
 	// rejects -- but it is published before the outage instead of discovered during it.
 	if hook := firstDiagnosticStatus(hookDiagnostics, resolver.DiagnosticWarning); hook != nil {
 		return compileVerdictResult{true, hook.Reason, hook.Message, "shutdown flow compiled with hook endpoint warnings"}
@@ -843,7 +842,7 @@ func shutdownFlowDecisionDetails(evaluation *powerv1alpha1.ShutdownTriggerEvalua
 	return details
 }
 
-// deviceIdentityEvidence reads the two model strings the F-101 check compares.
+// deviceIdentityEvidence reads the declared and reported model strings for comparison.
 //
 // The reported half is not in the structural bundle and must not be: the bundle is hashed into plan
 // identity, and a value that changes when a device is re-read would make the plan hash churn on
@@ -871,9 +870,7 @@ func (r *ShutdownFlowReconciler) deviceIdentityEvidence(ctx context.Context, dev
 
 // reportPlannerRejection logs the planner's refusal and returns it as the compile's rejection.
 //
-// F-99: the planner already said why, in a diagnostic nobody read. It reached the audit writer and
-// stopped there, so on a cluster with storage: Disabled the reason existed nowhere the operator
-// could look. It goes to the log here and to status.compileDiagnostics alongside.
+// Log the cause alongside status.compileDiagnostics so it remains visible with storage: Disabled.
 func reportPlannerRejection(log logr.Logger, flowName string, diagnostics []planner.Diagnostic) validationResult {
 	if diagnostic := firstPlannerDiagnostic(diagnostics, planner.DiagnosticError); diagnostic != nil {
 		log.Info("Shutdown flow planner rejected the compile",
@@ -889,12 +886,6 @@ func reportPlannerRejection(log logr.Logger, flowName string, diagnostics []plan
 }
 
 // plannerRejection names the planner's own reason for refusing to produce a plan.
-//
-// F-99: a rejected compile reported reason PlannerFailed with the message "shutdown flow planner
-// failed after resolver inputs were attached", which says only that the thing that failed was the
-// planner. The diagnostics naming the actual cause went to the audit writer, which returns early
-// when spec.managementClusterRef is unset and writes nothing at all under storage: Disabled -- so
-// on the configuration the install guide recommends for evaluation, the cause was unreachable.
 //
 // The generic reason survives as the fallback. A planner that produces neither a plan nor a
 // diagnostic is its own bug, and flattening that case into a specific-sounding reason would hide it.

@@ -49,7 +49,7 @@ import (
 
 // triggerNotEligibleReason and triggerNotEligibleMessage are the single statement published
 // whenever no trigger is eligible, so the ExecutionReady condition and status.lastExecution cannot
-// drift into saying different things about the same state (F-106).
+// drift into saying different things about the same state.
 const (
 	triggerNotEligibleReason  = "TriggerNotEligible"
 	triggerNotEligibleMessage = "shutdown flow execution has not started because no trigger is eligible"
@@ -215,11 +215,8 @@ func (r *ShutdownFlowReconciler) executeShutdownFlow(ctx context.Context, writer
 			status.Message,
 		)
 	}
-	// F-100: an audit outage gets its own signal rather than being folded into the execution
-	// phase. A run that traversed every wave used to come back Failed because the record error was
-	// the returned error, which pointed the reader at the shutdown when the broken thing was the
-	// database. Degraded is the honest condition -- the shutdown happened, the evidence for it did
-	// not -- and the phase now reports what the executor actually did.
+	// Report missing audit evidence as Degraded independently of the execution phase,
+	// which describes the shutdown outcome rather than the availability of its record.
 	if result.RecordError != nil {
 		log := logf.FromContext(ctx)
 		log.Error(result.RecordError, "Could not record shutdown flow execution evidence",
@@ -887,13 +884,12 @@ func (r *ShutdownFlowReconciler) reader() client.Reader {
 	return r.Client
 }
 
-// approvalChecker independently reconfirms flow enforcement approval at each wave boundary
-// (F-126): an already-rendered actuator is not current authorization. Re-fetches flow fresh
+// approvalChecker independently reconfirms flow enforcement approval at each wave boundary:
+// an already-rendered actuator is not current authorization. Re-fetches flow fresh
 // through r.reader() rather than trusting the snapshot Input.Approved was derived from at
 // execution start -- the same reason APIReader exists for EX-9's node-clearance check: a cache a
 // few seconds behind is exactly long enough to miss an operator flipping spec.mode back out of
-// Enforce mid-execution. Extracted to its own method, rather than inlined where it is used, so it
-// is testable directly against a real client without needing to race a live multi-wave execution.
+// Enforce mid-execution.
 func (r *ShutdownFlowReconciler) approvalChecker(flow *powerv1alpha1.ShutdownFlow) executorpkg.ApprovalChecker {
 	key := client.ObjectKeyFromObject(flow)
 	return func(ctx context.Context) (bool, error) {
@@ -929,7 +925,7 @@ func isMirrorPod(pod corev1.Pod) bool {
 }
 
 // nodePowerAgentTelemetryFreshness implements spec.shutdown.requireFreshTelemetry (defaulted true by
-// the webhook, previously unenforced anywhere -- F-33). It fails closed: any error resolving the
+// the webhook). It fails closed: any error resolving the
 // agent's monitored devices, any device this agent depends on with no status yet, and any device
 // reporting Stale/Unavailable/Unknown telemetry are all treated as not fresh, consistent with
 // resiliency-and-partitions.md's "lost connectivity degrades certainty, never grants optimistic
@@ -1265,9 +1261,7 @@ func executionAlreadyRecorded(status *powerv1alpha1.ShutdownExecutionStatus, ded
 // deactivateLastExecution clears the trigger episode and, with it, any reason that only made
 // sense while the episode was live.
 //
-// F-103's neighbour: rewriting Reason and leaving Message behind published a pair that
-// contradicted each other -- reason TriggerNotEligible beside "eligible trigger episode already
-// has execution evidence". Reason and Message are one statement, so they move together.
+// Reason and Message describe one state, so update them together.
 func deactivateLastExecution(status **powerv1alpha1.ShutdownExecutionStatus) {
 	if status == nil || *status == nil {
 		return
@@ -1347,18 +1341,10 @@ var shutdownExecutionIDNamespace = uuid.NewSHA1(uuid.NameSpaceDNS, []byte("power
 
 // shutdownExecutionIdentity derives the execution's identity from its trigger-episode digest.
 //
-// F-100. The digest used to be the identity outright, and it could not be: `execution_id` is a
-// `uuid` column in six tables, so every write failed with SQLSTATE 22P02 and the execution audit
-// trail was empty on every cluster.
+// A UUID fits both the PostgreSQL execution_id type and the 63-character Kubernetes label
+// limit; the 64-character trigger digest does not.
 //
-// Widening those columns to `text` was the other option and was not taken. The identity does not
-// stay in PostgreSQL: it is stamped on Kubernetes objects as the `power.zalud.io/execution` label,
-// where 63 characters is the ceiling and a 64-character digest is silently truncated -- so the
-// label stopped equalling the ID it names. It also has five foreign keys pointing at it, which
-// `text` would mean rebuilding. A UUID is 36 characters, survives the label intact, and is the type
-// every other identity column in this schema already uses.
-//
-// UUIDv5 keeps what the digest was providing: the derivation is deterministic, so the same trigger
+// UUIDv5 derivation is deterministic, so the same trigger
 // episode always yields the same execution ID and a re-record lands on the primary key instead of
 // creating a second row. The digest itself is kept beside it, in status and in
 // `shutdownflow_executions.deduplication_key`.

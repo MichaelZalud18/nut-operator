@@ -119,6 +119,30 @@ Original entry (historical, not an additional open task):
 
 ## Operator Maturity & Hardening
 
+- [x] `ENG-8` [Low] trim production comment history (2026-09-17).
+  Removed audit-number and prior-bug narration from planner, controller/rendering, executor,
+  kubeactions, and webhook comments. Retained current invariants, authorization boundaries,
+  protocol limitations, requirement references, and regression tests. NUT readiness wording
+  describes the flag check without claiming it proves live driver health; NS-1 owns that fix.
+  Coordinated the planner comments with the separately staged ENG-2 extraction.
+  **Validated:** identical Go token and directive streams across all 37 edited runtime files;
+  planner, controller (envtest), executor, kubeactions, and webhook tests passed. Repository lint
+  reported zero issues; independent review confirmed preserved safety reasoning and no behavior
+  changes. Historical findings remain in the existing audits and completed task records.
+
+- [x] `OM-1` [Low] targeted Kind cost investigation (2026-09-17).
+  Rechecked the successful published-image trace at `a1e76b7`, ranked scenario work (590.124s),
+  pre-suite command work (about 178.247s), BeforeSuite (47.004s), and AfterSuite (13.313s).
+  Retained two pre-E2E failures, a canceled 17m47s Kind attempt, and a pre-Kind cancellation
+  separately; an in-progress pipeline is not completion evidence. No average, controlled
+  speedup, PR/source-build, resource, or full cache-state claim is made.
+  Decision: retain the shared cluster, full coverage, immutable-image promotion, enforced
+  network policy, cleanup ownership, required checks, and deadlines. Future optimization
+  should first measure scenario convergence/signal latency and pre-suite compilation phases;
+  shared image loading is not the dominant measured cost. This closes the scoped investigation,
+  not TEST-1/TEST-2/TEST-3 or an optimization implementation.
+  [Evidence, ranking, and decision](contributing/audits/kind-modularity-2026-09-13.md#om-1-decision-september-17).
+
 - [x] `TEST-2` candidate fixture/component slice (2026-09-17). Added a shared-Manager scenario
   that drives dummy-ups from Online to OnBattery, observes eligible DryRun non-effects, and
   approves Enforce for ordered scale/drain and operator-published Simulate handoff. PostgreSQL

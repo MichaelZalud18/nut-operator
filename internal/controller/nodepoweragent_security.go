@@ -60,14 +60,13 @@ func nodePowerAgentUsesTalosAPI(agent *powerv1alpha1.NodePowerAgent) bool {
 }
 
 // nodePowerAgentPodSecurityConflict reports whether the operand namespace's enforced Pod Security
-// level will reject the actuating agent pod, and names the exception needed (F-62).
+// level will reject the actuating agent pod, and names the exception needed.
 //
 // This reads the namespace and reports. It deliberately does not write the labels. Relaxing a
 // namespace from `baseline` to `privileged` is a decision about how much the cluster is willing to
 // trust one workload, and an operator that quietly widens it on the user's behalf has taken that
 // decision away from the person accountable for it -- while making a CR field the thing that edits
-// a security boundary. The failure this replaces is not the rejection itself, which is loud; it is
-// that nothing connected the rejection back to this operator's own rendering choices.
+// a security boundary.
 //
 // Two things put the actuating pod outside `baseline`, both measured on kind against a labelled
 // namespace rather than read off the standard:
@@ -102,23 +101,18 @@ func actuatorContainerSecurityContext(hostPoweroff bool) *corev1.SecurityContext
 	if !hostPoweroff {
 		return restrictedContainerSecurityContext()
 	}
-	// No seccomp override: the pod's RuntimeDefault applies (F-62).
-	//
-	// This carried SeccompProfile: Unconfined on the assumption that the runtime's default profile
-	// would block reboot(2). It does not. Measured on kind, with the capability actually held after
-	// the F-61 fix:
+	// Keep the pod's RuntimeDefault seccomp profile. The kind probe of reboot(2) with an invalid
+	// argument distinguishes the capability gate from a seccomp denial:
 	//
 	//   RuntimeDefault + CAP_SYS_BOOT  -> EINVAL, the kernel's reboot handler ran and rejected the
 	//                                    argument, so the capability check passed
 	//   RuntimeDefault, no capability  -> EPERM, refused on the capability
 	//
 	// The two errnos are what separate the explanations. Seccomp denials surface as EPERM before the
-	// handler runs; EINVAL can only come from the handler itself. The capability is the gate, and
-	// Unconfined was buying nothing while removing every other syscall filter from the one container
-	// that can halt the machine.
+	// handler runs; EINVAL can only come from the handler itself. CAP_SYS_BOOT permits the call
+	// while RuntimeDefault retains the other syscall filters on the container that can halt the host.
 	//
-	// hostPID still places this pod outside Pod Security "baseline" on its own, so dropping the
-	// override narrows the container without changing where it can be admitted.
+	// hostPID still places this pod outside Pod Security "baseline" on its own.
 	return &corev1.SecurityContext{
 		AllowPrivilegeEscalation: ptrBool(false),
 		ReadOnlyRootFilesystem:   ptrBool(true),

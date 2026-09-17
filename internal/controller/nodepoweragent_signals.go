@@ -43,24 +43,17 @@ func (r *NodePowerAgentReconciler) ensureNodePowerAgentSignalSecret(ctx context.
 		if secret.Data == nil {
 			secret.Data = map[string][]byte{}
 		}
-		// Withdraw the signals whose authorization has ended (F-87). Absence is the record that the
-		// episode is over: the operator writes a node's signal and, until this, never took it back, so
-		// the file outlived the halt it authorized. Every actuator pod starts with an empty seen-set --
-		// F-58's dedupe lives on a per-pod emptyDir -- so any pod replacement inside the TTL (rollout,
-		// kubelet restart, OOM, eviction) read a signal that was already spent and halted the node
-		// again. The worst shape is power restoration: nodes boot inside the TTL of the very signal
-		// that took them down and immediately take themselves back down.
-		//
-		// This is the primary guard. The TTL is a backstop for the case where the operator is not
-		// around to revoke, and F-58's dedupe stays as defense in depth for the pod that is.
+		// Withdraw signals whose authorization has ended. Deduplication lives in a per-pod
+		// emptyDir, so a replacement actuator can otherwise repeat a spent signal inside its TTL,
+		// including after power restoration. Revocation is the primary guard; TTL bounds signals
+		// when the operator is unavailable, and per-pod deduplication adds defense in depth.
 		for key := range revoked {
 			delete(secret.Data, key)
 		}
-		// The marker the actuator's readiness looks for (F-86). An empty Secret projects as an empty
+		// The marker the actuator's readiness looks for. An empty Secret projects as an empty
 		// directory, which is exactly what kubelet mounts when the Secret is missing entirely, so
 		// without a key that is always present there is nothing to tell "no flow running" apart from
-		// "this channel does not exist". Revocation makes an empty Secret the steady state rather than
-		// an edge case, so the marker matters more here than it did when it was written.
+		// "this channel does not exist". Revocation leaves no signals during normal idle operation.
 		//
 		// The value is the agent's generation rather than a timestamp: it has to be stable across
 		// reconciles, or every pass would rewrite the Secret and re-trigger kubelet projection on
@@ -161,10 +154,9 @@ func (r *NodePowerAgentReconciler) shutdownFlowForSignal(ctx context.Context, na
 // Revocation therefore needs positive evidence that an episode ended. Where there is none -- the
 // flow cannot be found at all -- the signal is kept until its TTL runs out and then cleaned up,
 // because at that point the actuator rejects it anyway and removing it is bookkeeping rather than a
-// withdrawal of authority. Revoking a missing-flow signal on sight was the first shape here and it
-// was wrong twice over: a flow the cache has not synced yet is indistinguishable from one that was
-// deleted, so a cold cache could cancel a live shutdown, and "I cannot find the flow" is not
-// evidence that the halt it authorized already happened.
+// withdrawal of authority. A flow the cache has not synced yet is indistinguishable from one
+// that was deleted; revoking on a missing lookup could cancel a live shutdown. A missing flow
+// is not evidence that its authorized halt already happened.
 func signalStillAuthorized(payload nodeagent.ShutdownSignal, flow *powerv1alpha1.ShutdownFlow, ttl time.Duration, now time.Time) bool {
 	written, err := time.Parse(time.RFC3339Nano, payload.Timestamp)
 	if err != nil || payload.ExecutionID == "" || payload.NodeName == "" || payload.ShutdownFlow == "" {

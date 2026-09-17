@@ -29,12 +29,9 @@ import (
 
 // applyIdentityStatus records what the device said about itself on this poll.
 //
-// F-101. The capability profile is selected from spec.identity.model and never from the reported
-// value, because GP-5 keeps the failure path on authored input. Nothing compared the two, so a typo
-// in the declared model silently bound the device to a different product's profile -- and the
-// profile is what decides which telemetry is trusted and which triggers are supported. GP-5 permits
-// exactly this correction: derived data verifies authored input and raises a condition, without
-// feeding the decision itself.
+// GP-5 keeps profile selection on authored spec.identity.model. Compare the reported model
+// to raise a mismatch condition without letting derived data change the selected profile,
+// trusted telemetry, or supported triggers.
 func applyIdentityStatus(device *powerv1alpha1.UPSDevice, snapshot telemetry.Snapshot) {
 	observedAt := metav1.NewTime(snapshot.ObservedAt)
 	device.Status.Identity = &powerv1alpha1.UPSDeviceIdentityStatus{

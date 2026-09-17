@@ -24,14 +24,8 @@ import (
 )
 
 // upsDeviceTriggerRelevantPredicate admits only the UPSDevice changes that can
-// change a ShutdownFlow's verdict (F-42).
-//
-// The unpredicated watch this replaces re-enqueued every flow on every telemetry
-// poll -- one per device every 5-15 seconds -- and each reconcile did a Postgres
-// audit round trip whether or not anything the trigger logic reads had moved. A
-// 10h production pull showed 1,516 conflict errors, 744 against ShutdownFlow.
-// F-31 fixed the conflicts by making status writes patches; this removes the work
-// underneath them.
+// change a ShutdownFlow's verdict, avoiding reconciliation and audit writes for
+// telemetry updates that do not affect trigger evaluation.
 //
 // The admitted set is derived from what the trigger path actually consumes:
 // status.phase, status.runtimeSeconds, status.batteryChargePercent, and status.loadPercent. Spec

@@ -39,11 +39,6 @@ var operandNamespaceLabels = map[string]string{
 
 // operandNamespaceCreateAllowed reads spec.operandNamespace.create.
 //
-// F-104: the field had no reader at all. The webhook defaulted it to true, both operand reconcilers
-// created the namespace unconditionally, and the cluster reconciler contained no namespace code --
-// so create: false did not suppress creation, create: true did not cause it, and a
-// PowerManagementCluster on its own reached Ready with the namespace still absent.
-//
 // A nil cluster is a standalone NUTServer or NodePowerAgent with no managementClusterRef. There is
 // no field to read in that case, so creation stands: it is the webhook's default and the only
 // answer under which a standalone operand can converge without an out-of-band namespace.

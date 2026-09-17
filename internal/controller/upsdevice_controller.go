@@ -74,7 +74,7 @@ type UPSDeviceReconciler struct {
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=power.zalud.io,resources=powermanagementclusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
-// This reconciler records events on nine paths and had no grant for any of them (F-115).
+// Grant event writes for this reconciler's status and telemetry notifications.
 // Both groups: the recorder writes through events.k8s.io, while the legacy core group stays
 // for any client still reading events there.
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -345,13 +345,9 @@ type telemetryEndpoint struct {
 
 // firstTelemetryEndpoint resolves the host this reconciler polls a NUTServer's telemetry at.
 //
-// The ClusterIP is preferred over the DNS name when the server publishes one, the same F-71
-// preference nodePowerAgentTargets.go's nutServerDNSName already applies to the agent's own MONITOR
-// target: CoreDNS is an ordinary workload inside the flow's own path, and a manager that cannot
-// resolve svc.cluster.local during a CoreDNS outage would stop polling telemetry at exactly the
-// moment a real power event needs it most. F-71's own audit finding scoped its fix to the agent's
-// MONITOR line and readiness probe and never touched this reconciler's own polling target, leaving
-// this one path still DNS-first until now.
+// Prefer the published ClusterIP, as nutServerDNSName does for the agent's MONITOR target.
+// CoreDNS can stop during shutdown, so telemetry polling must not depend on DNS resolution
+// when a stable Service IP is available.
 //
 // The DNS name remains the fallback rather than being removed: a server that has not yet published
 // an endpoint still has to be addressable, and a name that resolves later beats no target at all.

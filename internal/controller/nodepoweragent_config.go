@@ -41,21 +41,16 @@ func renderNodePowerAgentSecret(agent *powerv1alpha1.NodePowerAgent, targets []a
 	fmt.Fprintf(&out, "POLLFREQALERT %d\n", durationSeconds(agent.Spec.Upsmon.AlertPollFrequency, 5))
 	fmt.Fprintf(&out, "HOSTSYNC %d\n", durationSeconds(agent.Spec.Upsmon.HostSync, 15))
 	fmt.Fprintf(&out, "DEADTIME %d\n", durationSeconds(agent.Spec.Upsmon.DeadTime, 45))
-	// No POWERDOWNFLAG (F-66). upsmon writes that file so the system's own late-boot shutdown
+	// No POWERDOWNFLAG. upsmon writes that file so the system's own late-boot shutdown
 	// scripts can ask "did we power off because of the UPS?" and call `upsdrvctl shutdown`. This
-	// operand has no such script and no init system to run one, so the directive named a path
-	// nothing would ever read. Rendering an inert NUT directive invites a future reader to assume
-	// there is a consumer.
+	// operand has no such script or init system, so there is no consumer for the file.
 	fmt.Fprintf(&out, "FINALDELAY %d\n", durationSeconds(agent.Spec.Upsmon.FinalDelay, 10))
 
-	// The notification surface (F-68). Without NOTIFYCMD upsmon does not stay quiet -- it falls back
-	// to `wall`, which the operand image does not ship, so every notification logged
-	// "Warning: no custom notification command defined" followed by "sh: wall: not found". The
-	// notifications were not merely unused; they were failing.
+	// NOTIFYCMD records notifications and avoids the default `wall` command, which the image lacks.
 	//
 	// EXEC rather than SYSLOG on the communication events, because these are the ones something
 	// else needs to read: COMMOK/COMMBAD/NOCOMM are how a node reports whether it still holds a
-	// working session with its server, which is the check F-65's readiness probe cannot make from
+	// working session with its server, which is the check the readiness probe cannot make from
 	// upsc alone. The writer records them to a file; nothing here interprets them.
 	fmt.Fprintf(&out, "NOTIFYCMD %s\n", shellQuotedNUTValue(nodePowerAgentNotifyWriterPath))
 	for _, event := range nodePowerAgentNotifyEvents {
@@ -113,7 +108,7 @@ func nutBoolean(value bool) string {
 	return "0"
 }
 
-// nodePowerAgentNotifyEvents are the upsmon events dispatched through NOTIFYCMD (F-68).
+// nodePowerAgentNotifyEvents are the upsmon events dispatched through NOTIFYCMD.
 //
 // The communication events are the load-bearing ones -- they are what say whether this node still
 // holds a working session with its server. The power events are included because a node that saw

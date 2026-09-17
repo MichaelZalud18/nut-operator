@@ -74,7 +74,7 @@ func renderUPSDConf(server *powerv1alpha1.NUTServer) string {
 	fmt.Fprintf(&out, "LISTEN %s %d\n", listenAddress(server), servicePort(server))
 
 	// ALLOW_NO_DEVICE is rendered unconditionally, not only when the selector currently matches
-	// nothing (F-51).
+	// nothing.
 	//
 	// Without it upsd calls fatalx on a device-less ups.conf -- verified: "Fatal error: at least
 	// one UPS must be defined in ups.conf", exit 1 -- so a NUTServer whose selector matches nothing

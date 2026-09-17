@@ -127,7 +127,7 @@ func (r *NodePowerAgentReconciler) resolveAgentMonitorTargets(ctx context.Contex
 
 // nutServerDNSName is the address agents monitor a server at.
 //
-// The ClusterIP is preferred over the DNS name when the server publishes one (F-71). CoreDNS is an
+// The ClusterIP is preferred over the DNS name when the server publishes one. CoreDNS is an
 // ordinary workload inside the flow's own path: when it goes, every agent resolving
 // <name>.<ns>.svc.cluster.local loses the ability to reconnect and flips NotReady together, and the
 // readiness probe cannot tell that apart from the server being down. A ClusterIP is stable for the
@@ -194,7 +194,7 @@ func (r *NodePowerAgentReconciler) selectedNodeNames(ctx context.Context, agent 
 
 // uncoveredInventoryNodes names nodes the power inventory describes that this agent does not select.
 //
-// The inverse of readiness (F-74). Every other count the agent publishes is computed over nodes
+// The inverse of readiness. Every other count the agent publishes is computed over nodes
 // spec.nodeSelector already matched, so a placement mistake -- a selector that misses a rack, a
 // label that was never applied -- produces no unavailable pod and no degraded node. It produces
 // silence, and an agent reporting fully ready over a fleet it only partly covers.

@@ -70,7 +70,7 @@ func (r *NUTServerReconciler) validateNUTServerTLSSecrets(ctx context.Context, s
 // disk unserved until the process restarts. Folding a digest of the material into the restart hash
 // is what turns a rotation into a rollout.
 //
-// It is a digest rather than the material itself for the F-24 reason: the value ends up in a
+// It is a digest rather than the material itself because the value ends up in a
 // pod-template annotation, which is broadly readable, and a SHA-256 over the certificate and key
 // cannot be reversed to recover them.
 func (r *NUTServerReconciler) nutServerTLSMaterialDigest(ctx context.Context, server *powerv1alpha1.NUTServer, namespace string) (string, error) {
@@ -194,11 +194,8 @@ func applyNUTServerTLSOperand(deployment *appsv1.Deployment, server *powerv1alph
 
 // nutServerUpsdContainer finds the server container by name rather than by position.
 //
-// These mounts carry the certificate and CA material upsd negotiates TLS with, and they were
-// indexed as Containers[0] while upsd was the only container. Now that the pod also runs the F-49
-// supervisor, position is no longer a safe way to name the one container that serves the protocol:
-// reordering the slice would mount the CA into the sidecar and leave upsd serving plaintext while
-// reporting TLS Required, which is F-37 and F-39 arriving a third time by a different route.
+// TLS mounts must target upsd even if the container slice is reordered; mounting the
+// certificate and CA into the supervisor would leave the protocol server without them.
 func nutServerUpsdContainer(podSpec *corev1.PodSpec) *corev1.Container {
 	for i := range podSpec.Containers {
 		if podSpec.Containers[i].Name == nutServerUpsdContainerName {

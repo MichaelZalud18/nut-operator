@@ -200,8 +200,7 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 	}
 
 	stepIDs := map[string]struct{}{}
-	// reportedStepIDs guards against F-121: a third or later occurrence of the same id must not
-	// emit another diagnostic on top of the one already raised for the second.
+	// Report each duplicate step ID once, even if it occurs more than twice.
 	reportedStepIDs := map[string]struct{}{}
 	for _, step := range input.Steps {
 		if step.ContinueOnError {
@@ -257,11 +256,7 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 	diagnostics = append(diagnostics, reportDefaultedShutdownTiers(input)...)
 	diagnostics = append(diagnostics, validateTierInversion(input)...)
 	for _, group := range input.Groups {
-		// F-119: slices.Concat always allocates its own backing array, unlike
-		// append(group.Before, group.After...), which can write into group.Before's backing
-		// array in place when it has spare capacity -- harmless with today's callers, which
-		// happen to hand it exactly-sized slices, but not a guarantee this expression's own
-		// signature makes.
+		// Concat avoids mutating the input slices' backing arrays when they have spare capacity.
 		for _, dependency := range slices.Concat(group.Requires, group.Before, group.After) {
 			if _, exists := groupNames[dependency]; !exists {
 				diagnostics = append(diagnostics, Diagnostic{
@@ -285,7 +280,7 @@ func validateStructuralInputs(input StructuralInputs) []Diagnostic {
 }
 
 // compileGroups descends the group graph into waves, and reports the groups it could not schedule
-// rather than spinning on them (F-117).
+// rather than spinning on them.
 //
 // The last return is empty on success and holds every group still waiting when the descent stopped
 // making progress. That can only happen if the graph has a cycle, which validateStructuralInputs
@@ -637,9 +632,7 @@ func copyStringMap(input map[string]string) map[string]string {
 }
 
 // sortTriggers orders triggers deterministically by content hash. Each trigger's hash is computed
-// once, up front, and carried alongside it through the sort (F-118) rather than recomputed inside
-// the comparator on every call sort.SliceStable makes -- a hidden O(n log n) JSON-marshal-and-hash
-// cost at every call site, for work with only n distinct answers.
+// once before sorting, keeping JSON marshaling and hashing to O(n) work.
 func sortTriggers(triggers []Trigger) error {
 	type hashedTrigger struct {
 		trigger Trigger
@@ -677,12 +670,8 @@ func hasError(diagnostics []Diagnostic) bool {
 	return false
 }
 
-// stableHash returns an error rather than panicking on an encoding failure (F-123). The input
-// shapes make json.Marshal failing here effectively unreachable today -- everything hashed is
-// plain structural data, no channels, funcs, or cycles -- but Compile already returns an error
-// for every other rejection, this runs during power-event planning, and a panic mid-reconcile is
-// a worse failure mode than a clean, diagnosable rejection for a "cannot happen" that turns out
-// to happen anyway.
+// stableHash returns encoding failures to Compile so power-event planning can report
+// a diagnosable rejection without panicking in reconciliation.
 func stableHash(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {

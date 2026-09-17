@@ -244,26 +244,9 @@ No open work. Execution/audit ownership separation (`ENG-3`) and database compon
 Owns: reconciler correctness, RBAC scope, leader election, metrics infrastructure, and
 image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity-benchmarks.md` (`F-1`–`F-7`).
 
-- [ ] `ENG-8` [Low] trim audit-history narration from production planner, controller, executor,
-  kubeactions, renderer, webhook, and related runtime code. Remove F-number/review chronology and
-  prior-bug storytelling only where it does not explain current behavior. Preserve non-obvious
-  invariants, protocol constraints, and safety reasoning. Move useful historical detail to existing
-  audit documentation or regression tests; do not delete the regression itself.
-  **Testable now; Conditional:** comment-only diff review and affected checks; no behavior change.
-  Coordinate with ENG-2 and the completed ENG-6/ENG-9 boundaries so file extraction and comment
-  cleanup do not compete.
-
-- [ ] `OM-1` [Low, investigation] identify the largest measured Kind CI costs and propose
-  targeted efficiency improvements while retaining the shared cluster and full suite.
-  Use existing run/step/scenario evidence, distinguishing source-build and promoted-image paths,
-  successful completions, failures, retries, and cancellations. State the sample/revision scope
-  and measurement gaps; do not infer cache state or assertion cost from total job duration.
-  **Acceptance; Testable now; Conditional:** record ranked observed costs and a justified
-  targeted proposal or keep-as-is conclusion. Require controlled before/after measurements only
-  for a specific proposed optimization, not an exhaustive benchmark matrix to close this task.
-  Preserve exact promoted-image coverage, network-policy enforcement, ownership/cleanup,
-  required-check semantics, and all acceptance scenarios. No suite split is authorized.
-  [Existing evidence and dependency map](contributing/audits/kind-modularity-2026-09-13.md).
+Completed comment cleanup (`ENG-8`) and Kind-cost analysis (`OM-1`) are recorded in
+[completed tasks](tasks-completed.md#operator-maturity--hardening). The Kind decision retains
+the shared suite and existing safety gates.
 
 - [ ] `TEST-1` [Low] qualify the refactored Kind scenarios in focused/full live runs.
   **Implementation complete; live Kind qualification remains.** Upgrade, metrics, webhook,
@@ -274,7 +257,7 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   **Remaining; Testable now; Conditional:** run focused/full Kind acceptance on a provisioned
   runner and verify cleanup on failure. The 2026-09-17 local preflight still reports 128 inotify
   instances against 512 required; no cluster was started. Keep the shared Kind suite/cluster
-  while `OM-1` evaluates targeted improvements; no CI restructuring is approved.
+  under the completed `OM-1` keep-as-is decision; no CI restructuring is approved.
   The [2026-09-17 image run](https://github.com/MichaelZalud18/nut-operator/actions/runs/35271792237)
   stopped at module tidiness before E2E. The direct-dependency declaration is corrected locally;
   this failed run is not Kind qualification evidence.
@@ -302,7 +285,8 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   cancellation. Component failure/signal tests do not prove Docker/Kind lifecycle behavior.
   **Local blocker (2026-09-17):** the existing host preflight reports 128 inotify instances against
   512 required. No cluster was started and the guardrail is unchanged. Preserve shared-suite and
-  required-check semantics; coordinate with TEST-1/OM-1. Hadron remains a separate harness.
+  required-check semantics; coordinate with TEST-1 and retain OM-1's shared-suite decision.
+  Hadron remains a separate harness.
 
 ### v1 Release Readiness
 
@@ -413,8 +397,8 @@ Keep High shutdown-safety work ahead of cleanup. The suggested test progression 
 Kind fixture/safety work and TEST-2 feasibility, then acceptance for approved
 profiles. Talos provisioning follows VM-8; TalosShutdown follows deterministic Talos bring-up.
 This is dependency guidance, not a requirement to serialize independent component work.
-ENG-1 includes NS-6 startup verification; NS-1 owns the separate readiness fix. OM-1 retains
-shared Kind setup while evaluating targeted costs, replacing F-146's exhaustive matrix. MOD-4 is a
+ENG-1 includes NS-6 startup verification; NS-1 owns the separate readiness fix. Completed OM-1
+retains shared Kind setup; controlled measurements apply to concrete optimizations. MOD-4 is a
 distinct managed-NUT profile, not an implicit expansion of MOD-3. ENG-4 must preserve the execution
 ownership established by F-132/ENG-3 when deleting resume state. Complete REL-5 before evaluating ENG-10.
 

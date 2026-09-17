@@ -29,17 +29,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// upsdReadinessProbeScript proves at least one configured device has a live, connected driver
-// (F-17), using NUT's own driver-state report rather than inferring it (F-46).
+// upsdReadinessProbeScript accepts output from `upsdrvctl status` when at least one field
+// equals RESPONSIVE. This flag check does not establish live driver health (NS-1).
 //
-// `upsdrvctl status` is the built-in answer to exactly this question. It prints one TAB-separated
-// row per device in ups.conf with an S_RESPONSIVE column holding RESPONSIVE or NOT_RESPONSIVE,
-// determined by probing the driver's own socket. Ready means at least one row says RESPONSIVE.
-//
-// `upsc -l` cannot answer it (verified empirically): it lists every name defined in ups.conf
+// `upsc -l` cannot answer it: it lists every name defined in ups.conf
 // whether or not the driver ever connected, so a fully-disconnected driver still reports as
-// present. The earlier probe worked around that by querying a variable per name and reading the
-// failure, which reimplemented in shell what upsdrvctl reports directly.
+// present.
 //
 // The match is field-exact and deliberately so: NOT_RESPONSIVE contains RESPONSIVE as a
 // substring, so a grep for the token would report every dead driver as healthy -- a readiness
@@ -53,13 +48,8 @@ func upsdReadinessProbeScript() string {
 // upsdResources returns what the upsd container asks for, defaulting it when spec.resources says
 // nothing.
 //
-// The container ran unbounded while the sidecar beside it was sized, which is the
-// backwards half of the pair: upsd is the process that must survive a power event, and an
-// unrequested container is the first thing the kubelet evicts under node pressure -- exactly the
-// condition a rack losing power tends to produce.
-//
 // Requests equal limits for the same reason they do on the supervisor: the pod is Guaranteed, so it
-// sits in the last eviction class rather than the first.
+// sits in the last eviction class during node pressure, when upsd must remain available.
 //
 // spec.resources is honoured verbatim the moment it declares anything at all. Filling in
 // individual missing keys would quietly convert a deliberate requests-only declaration into a
@@ -72,9 +62,7 @@ func upsdResources(server *powerv1alpha1.NUTServer) corev1.ResourceRequirements 
 	return defaultUpsdResources()
 }
 
-// defaultUpsdResources sizes the protocol server. The driver workers live in the supervisor
-// sidecar, but keeping the old upsd default avoids turning a process-model fix into an accidental
-// memory downsize on the server that agents monitor during an outage.
+// defaultUpsdResources sizes the protocol server independently of the driver supervisor.
 func defaultUpsdResources() corev1.ResourceRequirements {
 	requests := corev1.ResourceList{
 		corev1.ResourceCPU:    resource.MustParse("50m"),
@@ -153,9 +141,9 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
 		deployment.Labels = labels
 		deployment.Spec.Replicas = &replicas
-		// Recreate (F-16): upsd is a singleton with long-lived client TCP sessions and NUT's own
+		// Recreate: upsd is a singleton with long-lived client TCP sessions and NUT's own
 		// login accounting. RollingUpdate would briefly run two instances and split that
-		// accounting, the same failure mode F-15 pins replicas to 1 to avoid. A short outage
+		// accounting, violating the single-replica constraint. A short outage
 		// window on upgrade is the accepted trade-off.
 		deployment.Spec.Strategy = appsv1.DeploymentStrategy{
 			Type: appsv1.RecreateDeploymentStrategyType,
@@ -178,7 +166,7 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				Type: corev1.SeccompProfileTypeRuntimeDefault,
 			},
 		}
-		// F-48: the supervisor signals upsd with `upsd -c reload`, and signalling across the
+		// The supervisor signals upsd with `upsd -c reload`, and signalling across the
 		// container boundary needs a shared PID namespace. Without it upsd is PID 1 in its own
 		// container, so the PID file reads "1" and upsd refuses it -- "Ignoring invalid pid number
 		// 1". The reload is not merely blocked but blocked in a way that resembles success, since
@@ -186,11 +174,10 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 		//
 		// The isolation cost is small here in a way it would not be elsewhere: both containers run
 		// the same image as the same non-root UID and are peers. This is not the node agent's
-		// split, where F-57 records a real trust boundary between a container that parses network
+		// split, which has a trust boundary between a container that parses network
 		// responses and one holding CAP_SYS_BOOT.
 		//
-		// It also makes the pause container PID 1, which reaps the orphaned drivers upsd never
-		// reaped (F-76).
+		// It also makes the pause container PID 1 to reap orphaned drivers.
 		deployment.Spec.Template.Spec.ShareProcessNamespace = ptrBool(true)
 		deployment.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
@@ -302,8 +289,8 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 	return deployment, err
 }
 
-// ensureNUTServerPodDisruptionBudget renders a PDB with minAvailable 1 (F-18). Paired with the
-// F-15 replica pin, this blocks voluntary eviction of the sole upsd pod entirely, which is the
+// ensureNUTServerPodDisruptionBudget renders a PDB with minAvailable 1. Paired with the
+// single-replica constraint, this blocks voluntary eviction of the sole upsd pod entirely, which is the
 // desired behavior: upsd is on the observability path for every NodePowerAgent, and draining it
 // mid-event puts every agent into DEADTIME simultaneously.
 func (r *NUTServerReconciler) ensureNUTServerPodDisruptionBudget(ctx context.Context, server *powerv1alpha1.NUTServer, namespace string) (*policyv1.PodDisruptionBudget, error) {

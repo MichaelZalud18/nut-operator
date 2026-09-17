@@ -7,7 +7,70 @@ now owns targeted efficiency analysis. The controlled matrix below is historical
 completion requirement. Apply controlled comparisons to a concrete proposed optimization.
 The original F-146 entry is retained under [superseded tasks](../../tasks-completed.md#superseded-tasks).
 
-## Decision So Far
+## OM-1 Decision, September 17
+
+**Keep the shared cluster, full suite, immutable-image promotion gate, and current deadlines.**
+OM-1's scoped investigation is complete; the record is in
+[completed tasks](../../tasks-completed.md#operator-maturity--hardening). No optimization or
+speedup is claimed. The comparison matrix below belongs to superseded F-146, not a remaining gate.
+
+Re-read the API job metadata and decoded timestamped log for successful job `103604795592`,
+run `34712583914`, attempt 1, push revision `a1e76b76ffe4d19183a87f5e50ad6b5f48789476`.
+This is a published-image run, not a source-build PR measurement. Go and local-tool caches
+explicitly reported hits; that does not establish all Docker layers or filesystem caches were warm.
+
+Ranked, non-overlapping wall-clock intervals within that trace:
+
+| Rank | Interval | Observed cost |
+| --- | --- | ---: |
+| 1 | Scenario setup, execution, and cleanup, 19:05:17.251 to 19:15:07.375 | 590.124s |
+| 2 | Test-command start to BeforeSuite, 19:01:32 to 19:04:30.247 | about 178.247s |
+| 3 | Shared BeforeSuite | 47.004s |
+| 4 | AfterSuite | 13.313s |
+
+The second interval includes generation/build checks, cluster/CNI setup, and test compilation;
+it is not all cluster startup. Cluster creation itself spans about 33.003s (19:03:22.685 to
+19:03:55.688); CNI setup to Ready spans about 29.837s (19:03:56.078 to 19:04:25.915).
+Those are subdivisions, not additional costs to add to the ranking. About 34s of job time
+remains outside these four intervals, including workflow setup/post steps and command/log gaps.
+
+The longest scenario step-to-next-step intervals were signal handoff (92.104s), BYO-certificate
+manager readiness (65.294s), fanout convergence (64.200s), and fanout signal acceptance (40.997s).
+These include real reconciliation/projection/startup waits, not proven idle time. Scripted
+OnBattery and LowBattery observation added 31.654s and 40.132s respectively; those exercise real
+telemetry timing and must not be deleted or silently replaced by synthetic status writes.
+
+### Unsuccessful And Partial Observations
+
+Retain failures and cancellations as separate observations, not successful completion samples:
+
+- Runs `35225195618` and `35271792237` failed before E2E as recorded below.
+- [Run 35276345446](https://github.com/MichaelZalud18/nut-operator/actions/runs/35276345446),
+  revision `810c62c`, canceled Kind job `105390479267` after 17m47s. BeforeSuite completed in
+  42.101s; the log reached the new shutdown-flow fixture setup before cancellation. Signal
+  handoff took 5.216s in this attempt, while fanout signal acceptance took 71.622s. These differ
+  substantially from the successful trace and caution against attributing a single slow sample
+  to a fixed bottleneck. The suite, revision, and execution order differ; no A/B speedup follows.
+  The canceled job supplies neither full-suite acceptance nor confirmed teardown evidence.
+- [Run 35278691189](https://github.com/MichaelZalud18/nut-operator/actions/runs/35278691189),
+  revision `9dd97b8`, canceled during image/TLS jobs; Kind was skipped. It has no Kind duration.
+- Run `35279101851` at `6469108` was still building the manager at inspection. It is not included
+  as a completed timing or qualification result. No retries were measured in this scoped sample.
+
+### Targeted Follow-Up Policy
+
+If optimizing later, first measure per-scenario convergence and signal-delivery latency across
+comparable runs. A controlled change should address the measured delay while retaining the same
+assertions, production paths, and failure bounds. Next examine the generation/compilation portion
+of the 178s pre-suite interval with phase timers; do not assume cache hits make it negligible.
+Shared image loading is a lower-priority target: production pull/load was only 16.188s here.
+
+The evidence does not justify a split cluster per component, parallel mutations of shared
+fixtures, shorter acceptance deadlines, or removal of network-policy/real-image coverage.
+No resource measurements, PR/source-build timings, or controlled cache comparisons were captured;
+those limitations bound this decision rather than creating an exhaustive new benchmark task.
+
+## Historical Decision And Evidence
 
 Retain the shared Kind suite and exact-image promotion gate. The reviewed log does not support
 attributing its overall runtime primarily to shared image setup. Narrow component tests are useful

@@ -109,11 +109,8 @@ func collectNodeClearanceGraphEdges(groups []Group, membership []GroupNodeMember
 // reportDefaultedShutdownTiers names groups whose tier came from the cluster
 // default rather than from anything the group itself declares.
 //
-// Falling back is legitimate configuration, and silent until now. That made a
-// mistyped tier label indistinguishable from a deliberate default: the group
-// simply became ordinary, and nothing said so. The tier compiler already
-// diagnoses tiers that are malformed — invalid values, duplicates, a targeted
-// tier 0 — but never one that is merely absent.
+// Report absent tiers separately from malformed tiers so a mistyped label that
+// selects the cluster default remains visible.
 //
 // Informational, because defaulting is not an error. The point is that it is
 // visible before an outage rather than inferred from a wave order afterward.

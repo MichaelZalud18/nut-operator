@@ -151,7 +151,7 @@ func (r *NodePowerAgentReconciler) serverCABundle(ctx context.Context, server *p
 //
 // openssl rehash writes the <subject-hash>.N symlinks OpenSSL looks for when it
 // walks a CApath. Without them the directory reads as empty and every certificate
-// verification fails, which is the F-40 failure mode. The bundle may hold several
+// verification fails. The bundle may hold several
 // CAs when an agent monitors several servers, and rehash handles that by splitting
 // on subject rather than on file.
 func nodePowerAgentServerCARehashScript() string {

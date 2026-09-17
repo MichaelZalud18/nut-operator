@@ -65,10 +65,8 @@ func (r *ShutdownFlowReconciler) shutdownFlowHookDigests(ctx context.Context, fl
 
 // disallowedHookEndpointDiagnostics reports hook URLs the cluster allowlist does not permit.
 //
-// F-113: the allowlist was enforced at delivery time only, so a flow referencing a hook pointing
-// somewhere `spec.hooks.allowedEndpoints` does not cover compiled clean and discovered the problem
-// mid-outage — which is the one moment `HK-9` exists to have settled in Git beforehand. Editing a
-// host out of the allowlist had the same effect on every hook still pointing at it, silently.
+// Check spec.hooks.allowedEndpoints during compilation so HK-9 violations, including allowlist
+// edits affecting existing hooks, are visible before an outage.
 //
 // Warning, not rejection. `OD-34` makes hooks advisory and `HK-7` says a hook never holds a wave, so
 // a hook that cannot deliver must not stop a shutdown plan from existing. It degrades the flow and

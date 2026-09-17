@@ -80,7 +80,7 @@ type Runner struct {
 	// ManagerNamespace is the controller-manager's own install namespace (POD_NAMESPACE via the
 	// downward API in config/manager/manager.yaml). Included in protectedNamespaces so a
 	// ShutdownFlow's DrainNodes/ScaleWorkload actions can never evict or scale down the operator that
-	// is executing them (F-30). Empty in envtest/unit tests, where there is no real manager pod to
+	// is executing them. Empty in envtest/unit tests, where there is no real manager pod to
 	// protect.
 	ManagerNamespace string
 
@@ -106,7 +106,7 @@ type Runner struct {
 
 // RunAction implements executor.ActionRunner. It is a thin instrumented wrapper around runAction: every
 // executor action (real or dry-run) passes through here exactly once, making it the single choke point
-// for the actuator's action-attempt metrics (F-3).
+// for the actuator's action-attempt metrics.
 func (r Runner) RunAction(ctx context.Context, action executor.Action) (executor.ActionOutcome, error) {
 	start := time.Now()
 	outcome, err := r.runAction(ctx, action)
@@ -157,11 +157,11 @@ func (r Runner) runAction(ctx context.Context, action executor.Action) (executor
 	}
 }
 
-// protectedNamespaces resolves the operand namespace of every NodePowerAgent in the cluster (F-14),
-// plus the controller-manager's own namespace (F-30). Tier 0 excludes the power agent's own namespace
+// protectedNamespaces resolves the operand namespace of every NodePowerAgent in the cluster,
+// plus the controller-manager's own namespace. Tier 0 excludes the power agent's own namespace
 // from orchestrated flow targeting per OD-4/PL-22; this is the executor-side enforcement of that rule,
-// structural rather than relying on incidental protections like DaemonSet-skip-on-drain. F-30 extends
-// the same structural protection to the manager itself: without it, a ShutdownFlow group whose
+// structural rather than relying on incidental protections like DaemonSet-skip-on-drain. The
+// same protection covers the manager itself: without it, a ShutdownFlow group whose
 // selector happens to match the manager's own node or namespace could evict or scale down the very
 // process executing the flow.
 func (r Runner) protectedNamespaces(ctx context.Context) (map[string]struct{}, error) {
@@ -438,8 +438,7 @@ func (r Runner) evictPodsOnNode(ctx context.Context, nodeName string, protected 
 		// deferred past the battery. Mid-shutdown the refusal is usually permanent rather than
 		// transient -- the replica that would restore the budget cannot schedule onto nodes that
 		// are already cordoned -- so waiting it out means the flow aborts and the cluster stays up
-		// while the runtime drains. That was the behaviour before this: any non-NotFound error from
-		// the eviction was fatal, so one ordinary budget could stop a whole shutdown.
+		// while the runtime drains.
 		//
 		// The fall-back is Delete, not "skip the pod". Delete still honors terminationGracePeriod,
 		// so the workload gets the shutdown it would have had; skipping would leave the pod running
@@ -869,9 +868,7 @@ func hookDeliveryClient(base *http.Client) *http.Client {
 
 // HookURLAllowed reports whether a hook URL is permitted by the cluster allowlist (HK-9).
 //
-// Exported so the compile path can apply the same check this delivery path does. Two copies of an
-// allowlist is the F-50 shape: they agree until one is edited, and the disagreement surfaces at the
-// worst possible moment. There is one implementation and both callers use it.
+// Exported so compilation and delivery use the same allowlist check.
 func HookURLAllowed(parsed *url.URL, allowed []powerv1alpha1.PowerHookEndpointAllowlistEntry) bool {
 	return hookURLAllowed(parsed, allowed)
 }

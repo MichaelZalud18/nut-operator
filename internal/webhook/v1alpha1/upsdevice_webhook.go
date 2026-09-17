@@ -111,18 +111,15 @@ func validateUPSDeviceAdmission(obj *powerv1alpha1.UPSDevice) error {
 		if obj.Spec.Driver == "" {
 			errs = append(errs, field.Required(specPath.Child("driver"), "required unless spec.upstreamNUT is set"))
 		} else if isUnsupportedLocalUPSDriver(obj.Spec.Driver) {
-			// F-103. Not field.NotSupported: its third argument is the *valid* set, so passing the
-			// unsupported list reported usbhid-ups as unsupported and then listed it first among
-			// "supported values". There is no valid set to offer here either -- the network
-			// allowlist is not an alternative for a device wired over USB -- so say what is out of
-			// scope instead of offering a substitution that does not exist.
+			// Use Invalid: NotSupported requires a valid alternative set, and network drivers
+			// cannot substitute for a device wired over USB.
 			errs = append(errs, field.Invalid(specPath.Child("driver"), obj.Spec.Driver, unsupportedLocalUPSDriverMessage))
 		} else if !isSupportedNetworkUPSDriver(obj.Spec.Driver) {
 			errs = append(errs, field.NotSupported(specPath.Child("driver"), obj.Spec.Driver, supportedNetworkUPSDrivers()))
 		}
 		// Reserved here for the same reason it is reserved on the upstreamNUT path: ups.conf takes
 		// the last `driver =` line, so overriding it in driverOptions would render a driver the
-		// allowlist above never saw (F-85).
+		// allowlist above never saw.
 		if _, exists := obj.Spec.DriverOptions["driver"]; exists {
 			errs = append(errs, field.Forbidden(specPath.Child("driverOptions").Key("driver"), "rendered from spec.driver; overriding it would bypass the driver allowlist"))
 		}
@@ -217,14 +214,10 @@ func isSupportedNetworkUPSDriver(driver string) bool {
 
 // supportedNetworkUPSDrivers is the admission allowlist, and every entry must exist in the
 // nut-server operand image. hack/smoke-image.sh asserts the binaries are present and
-// TestSmokeTestCoversEveryAllowlistedDriver asserts the two lists agree, because they drifted
-// apart once already and nothing noticed (F-50).
+// TestSmokeTestCoversEveryAllowlistedDriver asserts the two lists agree.
 //
-// powerman-pdu was admitted here and is not in the image: images/nut-server/Dockerfile passes
-// --without-powerman, and building it in would mean compiling libpowerman from source as well,
-// since Alpine does not package it. Adding a second source build to every operand image for a
-// driver no device in the inventory uses is the wrong trade against an allowlist entry that could
-// never start, so the allowlist gives way rather than the image.
+// powerman-pdu is excluded because images/nut-server/Dockerfile uses --without-powerman.
+// Supporting it also requires building libpowerman from source; Alpine does not package it.
 func supportedNetworkUPSDrivers() []string {
 	return []string{"dummy-ups", "snmp-ups", "netxml-ups", "apcupsd-ups"}
 }
