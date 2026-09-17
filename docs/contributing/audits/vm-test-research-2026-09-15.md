@@ -77,6 +77,15 @@ disposable Talos guest API and shutdown qualification. No physical UPS or site c
 a passing Hadron test cannot close Talos acceptance. Coordinate image/job wiring with VM-5 and
 public instructions with VM-6; only gate on repeated, bounded, reproducible guest success.
 
+**Milestone 1 closed 2026-09-17** ([run 35271999079](https://github.com/MichaelZalud18/nut-operator/actions/runs/35271999079),
+pass, after two earlier live runs each found a real, distinct bug): artifact pinned/verified,
+machine configuration generated and applied over the insecure maintenance API, secure API reachable
+after install and reboot, cluster bootstrapped, kubeconfig fetched, and a real Node Ready confirmed
+from outside the guest. Full history and evidence table in
+[talos-vm-7-bootstrap-2026-09-17.md](talos-vm-7-bootstrap-2026-09-17.md)
+(`test/talos/boot_smoke_test.go`, `talos-vm-boot-smoke.yml`). Milestone 2 (`TalosShutdown`
+qualification) remains open.
+
 ## VM-2
 
 implement a reproducible two-node VM harness using established virtualization
@@ -224,7 +233,16 @@ found and fixed along the way (a wrong assumption about capturing a racy pod log
 k3s default-ServiceAccount startup race) -- full history and evidence table in
 [hadron-vm-3-actuator-2026-09-13.md](hadron-vm-3-actuator-2026-09-13.md)
 (`test/hadron/actuator_smoke_test.go`, `hadron-actuator-smoke.yml`).
-Revoked approval and the full DaemonSet/RBAC remain open.
+
+**DaemonSet/RBAC milestone and absent approval closed 2026-09-17**
+([run 35272002034](https://github.com/MichaelZalud18/nut-operator/actions/runs/35272002034), all
+pass, after two earlier live runs each found a real, distinct bug): the same negative-signal and
+accepted-signal scenarios, now against the real `NodePowerAgent`-rendered DaemonSet, ServiceAccount,
+and RBAC, plus a PowerOff `NodePowerAgent` with no `approvalAnnotation` correctly rejected at
+admission. Full history and evidence table in
+[hadron-vm-3-actuator-daemonset-2026-09-17.md](hadron-vm-3-actuator-daemonset-2026-09-17.md)
+(`test/hadron/actuator_daemonset_smoke_test.go`, `hadron-actuator-daemonset-smoke.yml`).
+Revoked approval remains open.
 
 ## VM-4
 
