@@ -112,6 +112,21 @@ func TestGenConfigArgs(t *testing.T) {
 	}
 }
 
+func TestGenConfigArgsWithRegistryMirror(t *testing.T) {
+	outDir := t.TempDir()
+	withFakeTalosctl(t, `echo "$@" > `+outDir+`/argv; touch "${10}/controlplane.yaml" "${10}/talosconfig"`)
+	if _, _, err := genConfig(context.Background(), "nut-operator-talos-smoke", outDir, "10.0.2.2:5000=http://10.0.2.2:5000"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(outDir, "argv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "--registry-mirror 10.0.2.2:5000=http://10.0.2.2:5000") {
+		t.Fatalf("argv %q missing --registry-mirror", string(raw))
+	}
+}
+
 func TestApplyConfigArgsNeverPassEndpointsWithInsecure(t *testing.T) {
 	// Talos's own documentation: "--insecure cannot be combined with an --endpoints override."
 	outDir := t.TempDir()

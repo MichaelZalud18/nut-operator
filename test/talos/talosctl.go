@@ -59,13 +59,23 @@ func talosMaintenanceAPIReachable(ctx context.Context) error {
 // by default (types.DefaultDriveSize's own single virtio-blk-pci disk), the same /dev/vda name
 // test/hadron's own KairosAutoInstallCloudConfig already targets on the identical PEG-attached
 // disk.
-func genConfig(ctx context.Context, clusterName, outDir string) (controlplaneConfigPath, talosconfigPath string, err error) {
-	if _, err := runTalosctl(ctx, 30*time.Second, "gen", "config", clusterName,
-		"https://"+KubeAPIAddr,
+//
+// registryMirrors, when non-empty, each add a "--registry-mirror <host>=<url>" pair -- talosctl
+// gen config's own documented flag (confirmed via its `--help` text) for machine.registries.mirrors,
+// used by the actuator milestone to redirect image pulls to a local ephemeral registry reachable
+// from inside the guest via QEMU user-mode networking's own host gateway address (10.0.2.2), since
+// Talos has no SSH or `ctr images import` equivalent for loading a locally built image.
+func genConfig(ctx context.Context, clusterName, outDir string, registryMirrors ...string) (controlplaneConfigPath, talosconfigPath string, err error) {
+	args := []string{"gen", "config", clusterName,
+		"https://" + KubeAPIAddr,
 		"--additional-sans", talosHost,
 		"--install-disk", "/dev/vda",
 		"--output-dir", outDir,
-	); err != nil {
+	}
+	for _, mirror := range registryMirrors {
+		args = append(args, "--registry-mirror", mirror)
+	}
+	if _, err := runTalosctl(ctx, 30*time.Second, args...); err != nil {
 		return "", "", err
 	}
 	return filepath.Join(outDir, "controlplane.yaml"), filepath.Join(outDir, "talosconfig"), nil
