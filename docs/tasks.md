@@ -38,6 +38,8 @@ tasks denotes priority; an implementation risk is not evidence that current beha
 
 ### Modular Deployment Profiles
 
+**New task prefix:** `MOD` (modular deployment).
+
 Owns: installation and API boundaries across components, based on
 [US-1 through US-4](contributing/design/user-stories.md). `MOD-1` through `MOD-3` remain investigations;
 `MOD-4` defines the requested managed NUT-only profile, subject to its explicit dependency decisions.
@@ -84,6 +86,8 @@ introducing new services or APIs.
 
 ### Inventory System
 
+**New task prefix:** `IN` (inventory).
+
 Owns: the topology and power-domain data model — `UPSDevice`, `PowerInfrastructure`,
 `PowerInventoryNode`, `PowerInventoryEdge`, the `internal/inventory` compiler, and the declarative
 resolver/adapter that feeds it into reconciliation. Design contract: `docs/contributing/design/inventory-provider-contract.md` (`IN-n`).
@@ -96,6 +100,8 @@ remains part of the [release validation gates](tasks-v1-release.md#validation-ga
 
 ### Capability Profiles
 
+**New task prefix:** `CR` (capability resolution).
+
 Owns: the `UPSCapabilityProfile` CRD, `internal/capability` matching, the bundled catalog under
 `config/catalog/`, and the device-quirk/aliasing/profile-source design surface. Design docs:
 `docs/contributing/design/capability-profiles.md`.
@@ -105,6 +111,8 @@ None.
 ---
 
 ### Planning & Execution Logic
+
+**New task prefixes:** `PL` (planning), `EX` (execution), `HK` (shutdown hooks).
 
 Owns: `internal/planner` (pure compile), `internal/executor` (wave execution/evidence),
 `internal/kubeactions` (action runner), and `internal/shutdownflow` plus the `ShutdownFlow`
@@ -135,6 +143,8 @@ Remaining default-calibration evidence (`OD-27`) lives in the
 ---
 
 ### NUT Server / upsd
+
+**New task prefix:** `NS` (NUT server).
 
 Owns: the `NUTServer` CRD, `internal/controller/nutserver_*.go`, and the
 `nut-server` operand image. Audit: `docs/contributing/audits/nutserver-pod-audit.md` (`F-15`–`F-19`, `F-23`,
@@ -186,6 +196,8 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_*.go`, and the
 
 ### Node Agent / DaemonSet
 
+**New task prefix:** `NA` (node agent).
+
 Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_*.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
 `internal/nodeagent`, plus the operator-side halt evidence in `internal/haltwatch` and
@@ -202,6 +214,8 @@ below; it does not introduce a new actuator policy.
 
 ### Outputs & Publishing
 
+**New task prefix:** `OP` (outputs and publishing).
+
 Owns: the published planner artifact contract (compiled plan, dependency graph, waves, explanations,
 diagram exports) and the CR-status-as-interface model — the "what gets exported and how" surface.
 Design doc: `docs/contributing/design/shutdown-flow.md`, Published Artifacts section (`GP-6`/`GP-7`).
@@ -213,6 +227,8 @@ No open work. Communication-ordering artifact completion is in
 
 ### Storage & Audit
 
+**New task prefix:** `SA` (storage and audit).
+
 Owns: the PostgreSQL audit schema, storage backend resolution, retention, and the shutdown-time
 spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 
@@ -222,6 +238,8 @@ No open work. Execution/audit ownership separation (`ENG-3`) and database compon
 ---
 
 ### Operator Maturity & Hardening
+
+**New task prefix:** `OM` (operator maturity).
 
 Owns: reconciler correctness, RBAC scope, leader election, metrics infrastructure, and
 image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity-benchmarks.md` (`F-1`–`F-7`).
@@ -288,9 +306,13 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
 
 ### v1 Release Readiness
 
+**New task prefix:** `REL` (release readiness).
+
 Release tasks and acceptance gates live in [tasks-v1-release.md](tasks-v1-release.md).
 
 ### VM Test Coverage
+
+**New task prefix:** `VM` (virtual-machine testing).
 
 Owns: the generic PEG/QEMU harness and Hadron/k3s and Talos guest qualification, separate from
 Kind and site deployment. Keep logical matrices in component/Kind tests and real guest shutdown
@@ -354,6 +376,8 @@ own detailed prerequisites and prior milestones; the remaining work is below.
 
 ### Telemetry & Triggers
 
+**New task prefix:** `TT` (telemetry and triggers).
+
 Owns: NUT protocol polling (`internal/nut`), normalization (`internal/telemetry`), poll composition
 (`internal/polling`), and trigger evaluation (`internal/trigger`). Design docs:
 `telemetry-and-triggers.md`, `resiliency-and-partitions.md`.
@@ -363,6 +387,8 @@ None.
 ---
 
 ### Foundation & Documentation
+
+**New task prefix:** `FD` (foundation and documentation).
 
 Owns: scaffold, docs upkeep, examples, and decision-registry maintenance — glue work not owned by one
 component.

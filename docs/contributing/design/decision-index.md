@@ -94,6 +94,23 @@ Dated audit and findings records live in `docs/contributing/audits/` and share t
 | IN | Inventory contract rule | inventory-provider-contract | IN-1 – IN-16 |
 | F | Audit finding | audit records (`docs/contributing/audits/`) | F-1 – F-92 |
 
+### Additional Component Task Prefixes
+
+The section labels in [tasks.md](../../tasks.md) use the existing requirement namespaces above
+where applicable. These additional prefixes cover sections without a requirement namespace;
+reserved prefixes allocate no task numbers until work is added. Existing identifiers remain
+unchanged, including legacy ENG/TEST and historical findings.
+
+| Prefix | Owning section | Allocation |
+| --- | --- | --- |
+| MOD | Modular Deployment Profiles | Existing tasks in tasks.md |
+| OP | Outputs & Publishing | Reserved; no numbered tasks yet |
+| SA | Storage & Audit | Reserved; no numbered tasks yet |
+| REL | v1 Release Readiness | Existing tasks in tasks-v1-release.md |
+| VM | VM Test Coverage | Existing tasks in tasks.md and release tracker |
+| TT | Telemetry & Triggers | Reserved; no numbered tasks yet |
+| FD | Foundation & Documentation | Reserved; no numbered tasks yet |
+
 Identifiers are stable: never reused, never renumbered. Superseded items are marked in place.
 
 The provisional `AE` namespace is retired. `AE-1`–`AE-6` were folded into `EX-25`–`EX-30`
