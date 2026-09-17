@@ -18,7 +18,14 @@ name: Talos Actuator Smoke Test
 # plus up to five negative-signal subtests at a 4-minute budget each -- expect it to need
 # adjustment after a first live run, the same as every other milestone in this session did.
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: >-
+          go test -run pattern. Defaults to all three tests; narrow it (e.g. to one test name)
+          to reach the same failure point without paying for guests this run does not need.
+        required: false
+        default: '^TestTalosActuator'
 
 permissions: {}
 
@@ -90,7 +97,9 @@ jobs:
       # deadline reserves cleanup time.
       - name: Boot guests and confirm the real TalosShutdown actuator arms, rejects, and halts correctly
         timeout-minutes: 172
-        run: TMPDIR="$TALOS_STATE_ROOT" timeout --signal=TERM --kill-after=15s 171m go test -tags=talos,talos_smoke ./test/talos -run '^TestTalosActuator' -v -timeout=169m
+        env:
+          TEST_FILTER: ${{ inputs.test_filter }}
+        run: TMPDIR="$TALOS_STATE_ROOT" timeout --signal=TERM --kill-after=15s 171m go test -tags=talos,talos_smoke ./test/talos -run "$TEST_FILTER" -v -timeout=169m
 
       # Stop before uploading artifacts, so slow diagnostics cannot delay process cleanup.
       - name: Stop leftover guests owned by this run
