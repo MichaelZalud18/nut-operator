@@ -88,6 +88,11 @@ with four concurrent `upsc` reads per sample while authenticated secondary upsmo
 and the overall 180-second timeout fail the run. The fixture confirms its final port replacement
 has converged before sampling. A pass does not close F-97 or establish hardware/Kind compatibility.
 
+The opt-in `NUT_READINESS_DIAGNOSTICS=1 make docker-smoke-nut-supervisor NUT_SERVER_IMG=<image>`
+control pauses only the fixture's dummy driver, demonstrates cached upsd reads, checks a bounded
+probe, records upstream classification, and verifies same-PID recovery. It is diagnostic evidence,
+not a production-readiness pass; see the [F-97 investigation](../../docs/contributing/audits/nut-readiness-investigation-2026-09-17.md).
+
 Controller tests own the rendered command, mounts, resources, and security context. The existing
 Kind recovery and telemetry scenarios own Kubernetes integration coverage. Implementation and
 remaining validation are tracked in [tasks](../../docs/tasks.md#nut-server--upsd).

@@ -178,6 +178,13 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_*.go`, and the
   failures, or disagreements, and passed lifecycle cleanup; a three-sample run also passed. Both
   used the cached ARM64 operand image. The original intermittent root cause remains open. One
   image architecture and dummy data do not establish Kind or hardware compatibility.
+  **2026-09-17 research:** real NUT 2.8.5 reports `RESPONSIVE` for a STOP-confirmed driver
+  after a timed-out handshake, while upsd initially serves cached `OL`. The current five-second
+  readiness deadline masks the observed seven-second false positive; shorter/partial-response
+  variants still need qualification. The Go supervisor no longer restarts on probe misses.
+  **High follow-up:** qualify/fix readiness classification separately from capturing the original
+  spontaneous startup failure. Preserve the existing timeout; increasing it is not a fix.
+  [Pinned upstream analysis, diagnostic, and remaining experiment matrix](contributing/audits/nut-readiness-investigation-2026-09-17.md).
 
 ---
 
@@ -239,6 +246,11 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   claim. Compare selective fixtures and component tests against duplicated setup/maintenance costs.
   **Acceptance:** a measured keep/change decision preserving full coverage, exact promoted images,
   network-policy enforcement, cleanup, and required-check semantics. No suite split is approved.
+  **2026-09-17:** retained shared setup. Current failed CI observations stop before E2E;
+  the local preflight still rejects 128 inotify instances (512 required). Controlled comparisons
+  remain blocked on a provisioned runner, not established by historical aggregate timings.
+  The audit now specifies paired inputs, cache evidence, phase/resource records, and retention
+  of failed/canceled attempts. This is not a completed measurement gate.
   [Evidence, dependency map, and measurement criteria](contributing/audits/kind-modularity-2026-09-13.md).
 
 - [ ] `TEST-1` [Low] qualify the refactored Kind scenarios in focused/full live runs.

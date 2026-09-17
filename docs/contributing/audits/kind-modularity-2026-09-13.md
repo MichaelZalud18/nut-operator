@@ -9,6 +9,43 @@ attributing its overall runtime primarily to shared image setup. Narrow componen
 alongside it; a separate Kind cluster per component could duplicate startup and teardown costs.
 Comparative measurements remain open before claiming savings or restructuring CI.
 
+### September 17 Qualification Check
+
+The decision remains **keep shared setup; comparison not qualified**. Run
+[35271792237](https://github.com/MichaelZalud18/nut-operator/actions/runs/35271792237)
+at `d925fda` failed module tidiness before E2E. Run
+[35225195618](https://github.com/MichaelZalud18/nut-operator/actions/runs/35225195618)
+at `f5d9c72` failed the cluster-free harness before cluster creation. Retain these as failed
+pipeline observations, not zero-duration Kind runs or successful setup measurements.
+The September 17 local `make check-test-e2e-host` also failed before creating a cluster:
+128 inotify instances were available, against the existing 512-instance requirement.
+No guardrail was bypassed and no host setting was changed.
+
+F-146 cannot be closed from those observations. The next controlled experiment needs a
+provisioned disposable runner, a fixed revision, and a fixed set of production image digests.
+Use the following record for every attempt, including unsuccessful attempts:
+
+- Revision, source-build/published-image path, full/focused scenario inventory, runner class,
+  architecture, Kubernetes/CNI versions, and exact production/fixture image identities.
+- Explicit cache preparation and observed cache hits. A new job or a faster run alone does
+  not prove a cold or warm cache. Never clear a shared host's caches for an experiment.
+- At least two repetitions of each focused/full x source-build/published-image x cold/warm cell.
+  Pair comparisons on the same inputs; report the small sample size rather than a stable average.
+- Separate generation/compilation, cluster/CNI setup, image build/pull/load, BeforeSuite,
+  scenario setup/execution/cleanup, AfterSuite, and cluster deletion. Unmeasured intervals stay
+  unknown; workflow-step timestamps alone cannot separate all of these.
+- Peak resource observations with the sampling interval and scope. Runner process memory does
+  not include all Docker container memory, and CPU time is not wall time.
+- Outcome, attempt number, failure phase, cancellation point, and verified cleanup. Keep retries
+  as distinct attempts; canceled durations are partial costs, not completion times.
+
+Compare selective fixture setup with the unchanged shared suite before proposing any split.
+For a split proposal, include repeated cluster/CNI/manager/image setup and maintenance cost,
+not just the sum of assertion durations. Component tests complement integration coverage;
+they cannot replace exact-image or network-policy acceptance. TEST-1/TEST-3 own live scenario
+and cancellation qualification; this investigation consumes their evidence, not a second
+independent cleanup implementation. Required-check names and promotion dependencies stay intact.
+
 ## Direct Evidence
 
 Inspected job `103604795592` in

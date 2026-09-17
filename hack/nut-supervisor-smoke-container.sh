@@ -152,6 +152,10 @@ test_driver_reload() {
 }
 test_driver_reload
 
+if [ "${NUT_READINESS_DIAGNOSTICS:-0}" -eq 1 ]; then
+  sh /probe-diagnostic.sh
+fi
+
 if [ "${NUT_READINESS_SAMPLES:-0}" -gt 0 ]; then
   sh /probe-stress.sh
 fi

@@ -9,6 +9,11 @@ fi
 container_tool="$1"
 image="$2"
 samples="${NUT_READINESS_SAMPLES:-0}"
+diagnostics="${NUT_READINESS_DIAGNOSTICS:-0}"
+if [[ "$diagnostics" != 0 && "$diagnostics" != 1 ]]; then
+  echo 'NUT_READINESS_DIAGNOSTICS must be 0 or 1' >&2
+  exit 64
+fi
 if [[ ! "$samples" =~ ^(0|[1-9][0-9]?)$ ]] || (( samples > 60 )); then
   echo 'NUT_READINESS_SAMPLES must be an integer from 0 to 60' >&2
   exit 64
@@ -35,10 +40,12 @@ timeout --signal=TERM --kill-after=5s 180s "$container_tool" run --rm --init \
   --name "$container" --network none --read-only --user 65532:65532 \
   --cap-drop ALL --security-opt no-new-privileges \
   --env "NUT_READINESS_SAMPLES=$samples" \
+  --env "NUT_READINESS_DIAGNOSTICS=$diagnostics" \
   --tmpfs /tmp:rw,nosuid,nodev,uid=65532,gid=65532,mode=0700 \
   --tmpfs /run/nut:rw,nosuid,nodev,uid=65532,gid=65532,mode=0700 \
   --mount "type=bind,src=$root/hack/nut-supervisor-smoke-container.sh,dst=/smoke.sh,readonly" \
   --mount "type=bind,src=$root/hack/nut-readiness-stress-container.sh,dst=/probe-stress.sh,readonly" \
+  --mount "type=bind,src=$root/hack/nut-readiness-diagnostic-container.sh,dst=/probe-diagnostic.sh,readonly" \
   --entrypoint /bin/sh "$image" /smoke.sh &
 run_pid=$!
 # Bash runs traps promptly while waiting on a background job, not a foreground command.
