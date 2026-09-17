@@ -2,6 +2,11 @@
 
 Scope: F-146. This is a dated investigation, not a CI health report or a proposed suite split.
 
+**Task scope superseded 2026-09-17:** [OM-1](../../tasks.md#operator-maturity--hardening)
+now owns targeted efficiency analysis. The controlled matrix below is historical, not an active
+completion requirement. Apply controlled comparisons to a concrete proposed optimization.
+The original F-146 entry is retained under [superseded tasks](../../tasks-completed.md#superseded-tasks).
+
 ## Decision So Far
 
 Retain the shared Kind suite and exact-image promotion gate. The reviewed log does not support

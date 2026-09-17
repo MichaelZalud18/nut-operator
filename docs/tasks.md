@@ -152,39 +152,35 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_*.go`, and the
   **Local blocker (2026-09-15):** the isolated three-node setup stopped at the existing inotify
   preflight (128 available; 512 required), before creating a cluster. Preserve that guardrail;
   use a suitably provisioned runner. Local image/envtest passes are not Kind evidence.
-  F-97 remains a separate root-cause investigation.
+  `NS-6` below owns the startup-stability verification within this acceptance gate;
+  `NS-1` separately owns readiness correctness. F-97 is superseded in the completed tracker.
   [Detailed design, migration order, and test matrix](contributing/design/nut-supervisor-migration.md).
 
-- `F-97` [High] find out why a driver `upsd` is still talking to fails a fresh `upsdrvctl status`
-  connection, and only in the minutes after a pod start. The recovery half is done and measured in
-  the 2026-08-30 focused Kind run: a killed driver is back in 4.32s against a 30s budget
-  (`test/e2e/driver_recovery_test.go`). The readiness-gate half named here is also done —
-  `internal/controller/nutserver_readiness_probe_component_test.go` runs the real readiness probe
-  script against fake `upsdrvctl status` output and a real kubelet-counting simulation, covering a
-  delayed driver start, isolated probe misses that never flap readiness, and a sustained run that
-  correctly does. See the 2026-09-03 pass in `operator-maturity-benchmarks.md`. What remains is the
-  root cause itself. Testability: **Testable now; Conditional** — build a stress reproducer using
-  the actual `dummy-ups`/`upsd`/`upsmon` binaries in an image or isolated Kind cluster, and run it when
-  NUT packaging, supervision, probes, or fixtures change. The 2026-08-24 isolated fixture did not
-  reproduce the failure; that leaves the reproducer incomplete, not dependent on physical UPS
-  hardware. Real USB/SNMP device behavior remains a separate hardware-compatibility boundary.
-  **Stress harness (2026-09-13):** `make docker-stress-nut-readiness` runs actual `dummy-ups`,
-  `upsd`, and authenticated secondary `upsmon` in a private non-root container, comparing fresh
-  driver probes with four concurrent server reads per sample. It reports probe misses, server
-  failures, and disagreements separately; misses and the overall timeout fail the run. The sample
-  count is bounded, and the owning harness removes the container on exit. This opt-in component
-  test is separate from ordinary image smoke and should accompany NUT/probe/supervision changes.
-  **Validated:** final 60-sample local run with authenticated upsmon had zero probe misses, server
-  failures, or disagreements, and passed lifecycle cleanup; a three-sample run also passed. Both
-  used the cached ARM64 operand image. The original intermittent root cause remains open. One
-  image architecture and dummy data do not establish Kind or hardware compatibility.
-  **2026-09-17 research:** real NUT 2.8.5 reports `RESPONSIVE` for a STOP-confirmed driver
-  after a timed-out handshake, while upsd initially serves cached `OL`. The current five-second
-  readiness deadline masks the observed seven-second false positive; shorter/partial-response
-  variants still need qualification. The Go supervisor no longer restarts on probe misses.
-  **High follow-up:** qualify/fix readiness classification separately from capturing the original
-  spontaneous startup failure. Preserve the existing timeout; increasing it is not a fix.
-  [Pinned upstream analysis, diagnostic, and remaining experiment matrix](contributing/audits/nut-readiness-investigation-2026-09-17.md).
+- [ ] `NS-1` [High] make NUT readiness prove a responsive driver within a bounded probe.
+  Preserve the at-least-one-responsive-device contract and align the rendered probe with the
+  image HEALTHCHECK. The real NUT 2.8.5 diagnostic demonstrates a false-positive `RESPONSIVE`
+  result for a stopped driver; the current five-second deadline masks that observed case,
+  but shorter or partial replies remain unqualified. Select a narrow upstream fix or a stronger
+  check backed by actual driver replies, not cached upsd values or the status flag alone.
+  **Acceptance; Testable now; Conditional:** real-binary tests cover absent sockets, frozen
+  drivers, delayed/partial replies, recovery, and mixed healthy/unhealthy devices in either
+  order. All-unresponsive configurations fail; a responsive device can satisfy the contract
+  within the bounded check. Preserve security boundaries and avoid probe-driven driver restarts.
+  Update the NS-1/NS-2/NS-3 design contract and regression tests alongside the implementation.
+  [Evidence and diagnostic](contributing/audits/nut-readiness-investigation-2026-09-17.md).
+
+- [ ] `NS-6` [Medium] verify startup stability under the redesigned Go supervisor as part of
+  `ENG-1` acceptance, replacing the historical F-97 startup investigation.
+  Observe the actual current manager/NUT images from driver launch through a bounded window
+  covering the historical eleven-minute startup period, with representative monitor startup
+  and reconnect activity. Record driver exits/replacements, readiness changes, probe errors,
+  image identities, test inputs, and cleanup; distinguish injected failures from spontaneous ones.
+  **Acceptance; Testable now; Conditional:** retain the run evidence and confirm whether the
+  original symptom occurs with the new supervisor. A clean scoped run closes this verification,
+  not a claim that the old root cause was solved. If it reproduces, capture a specific failure
+  and track its fix/regression as current work; do not require reconstructing the old watchdog
+  merely to close ENG-1. Existing recovery and telemetry scenarios remain required.
+  [Historical evidence and hypotheses](contributing/audits/nut-readiness-investigation-2026-09-17.md).
 
 ---
 
@@ -239,19 +235,17 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   Coordinate with ENG-2 and the completed ENG-6/ENG-9 boundaries so file extraction and comment
   cleanup do not compete.
 
-- [ ] `F-146` [Medium, investigation] finish controlled Kind setup/cost comparisons before any
-  restructuring. Measure focused/full, PR/promotion, cache states, failures/retries/cancellations,
-  resource use, and setup/scenario/teardown separately; retain unsuccessful observations.
-  The existing single successful trace supports retaining shared setup, not an average or savings
-  claim. Compare selective fixtures and component tests against duplicated setup/maintenance costs.
-  **Acceptance:** a measured keep/change decision preserving full coverage, exact promoted images,
-  network-policy enforcement, cleanup, and required-check semantics. No suite split is approved.
-  **2026-09-17:** retained shared setup. Current failed CI observations stop before E2E;
-  the local preflight still rejects 128 inotify instances (512 required). Controlled comparisons
-  remain blocked on a provisioned runner, not established by historical aggregate timings.
-  The audit now specifies paired inputs, cache evidence, phase/resource records, and retention
-  of failed/canceled attempts. This is not a completed measurement gate.
-  [Evidence, dependency map, and measurement criteria](contributing/audits/kind-modularity-2026-09-13.md).
+- [ ] `OM-1` [Low, investigation] identify the largest measured Kind CI costs and propose
+  targeted efficiency improvements while retaining the shared cluster and full suite.
+  Use existing run/step/scenario evidence, distinguishing source-build and promoted-image paths,
+  successful completions, failures, retries, and cancellations. State the sample/revision scope
+  and measurement gaps; do not infer cache state or assertion cost from total job duration.
+  **Acceptance; Testable now; Conditional:** record ranked observed costs and a justified
+  targeted proposal or keep-as-is conclusion. Require controlled before/after measurements only
+  for a specific proposed optimization, not an exhaustive benchmark matrix to close this task.
+  Preserve exact promoted-image coverage, network-policy enforcement, ownership/cleanup,
+  required-check semantics, and all acceptance scenarios. No suite split is authorized.
+  [Existing evidence and dependency map](contributing/audits/kind-modularity-2026-09-13.md).
 
 - [ ] `TEST-1` [Low] qualify the refactored Kind scenarios in focused/full live runs.
   **Implementation complete; live Kind qualification remains.** Upgrade, metrics, webhook,
@@ -262,7 +256,7 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   **Remaining; Testable now; Conditional:** run focused/full Kind acceptance on a provisioned
   runner and verify cleanup on failure. The 2026-09-17 local preflight still reports 128 inotify
   instances against 512 required; no cluster was started. Keep the shared Kind suite/cluster
-  unless controlled `F-146` evidence supports changing it; no CI restructuring is approved.
+  while `OM-1` evaluates targeted improvements; no CI restructuring is approved.
   The [2026-09-17 image run](https://github.com/MichaelZalud18/nut-operator/actions/runs/35271792237)
   stopped at module tidiness before E2E. The direct-dependency declaration is corrected locally;
   this failed run is not Kind qualification evidence.
@@ -290,7 +284,7 @@ image/supply-chain hardening. Audit: `docs/contributing/audits/operator-maturity
   cancellation. Component failure/signal tests do not prove Docker/Kind lifecycle behavior.
   **Local blocker (2026-09-17):** the existing host preflight reports 128 inotify instances against
   512 required. No cluster was started and the guardrail is unchanged. Preserve shared-suite and
-  required-check semantics; coordinate with TEST-1/F-146. Hadron remains a separate harness.
+  required-check semantics; coordinate with TEST-1/OM-1. Hadron remains a separate harness.
 
 ### v1 Release Readiness
 
@@ -393,7 +387,8 @@ Keep High shutdown-safety work ahead of cleanup. The suggested test progression 
 Kind fixture/safety work and TEST-2 feasibility, then acceptance for approved
 profiles. Talos provisioning follows VM-8; TalosShutdown follows deterministic Talos bring-up.
 This is dependency guidance, not a requirement to serialize independent component work.
-ENG-1 begins with its stable-NUT gate and preserves F-97's separate investigation. MOD-4 is a
+ENG-1 includes NS-6 startup verification; NS-1 owns the separate readiness fix. OM-1 retains
+shared Kind setup while evaluating targeted costs, replacing F-146's exhaustive matrix. MOD-4 is a
 distinct managed-NUT profile, not an implicit expansion of MOD-3. ENG-4 must preserve the execution
 ownership established by F-132/ENG-3 when deleting resume state. Complete REL-5 before evaluating ENG-10.
 

@@ -10,6 +10,74 @@ fresh test results. Current behavior is owned by code and design contracts. Open
 Move completed entries here with their date and evidence; do not renumber task IDs or duplicate
 status across trackers. Historical run output and longer investigations remain in the linked audits.
 
+## Superseded Tasks
+
+Superseded means the task definition was replaced, not that its investigation or fix passed.
+Original scope and evidence are retained below; only the replacement entries own active status.
+
+### F-97: NUT Startup And Readiness
+
+**Superseded 2026-09-17:** split into [NS-1 readiness correctness and NS-6 startup verification](tasks.md#nut-server--upsd).
+NS-6 is part of ENG-1 acceptance of the redesigned supervisor. The old probe-driven restart
+mechanism has been replaced; investigating a current startup defect requires reproducing it
+under the new supervisor. The demonstrated readiness risk stays active for v1 under NS-1.
+
+Original entry (historical, not an additional open task):
+
+- `F-97` [High] find out why a driver `upsd` is still talking to fails a fresh `upsdrvctl status`
+  connection, and only in the minutes after a pod start. The recovery half is done and measured in
+  the 2026-08-30 focused Kind run: a killed driver is back in 4.32s against a 30s budget
+  (`test/e2e/driver_recovery_test.go`). The readiness-gate half named here is also done —
+  `internal/controller/nutserver_readiness_probe_component_test.go` runs the real readiness probe
+  script against fake `upsdrvctl status` output and a real kubelet-counting simulation, covering a
+  delayed driver start, isolated probe misses that never flap readiness, and a sustained run that
+  correctly does. See the 2026-09-03 pass in `operator-maturity-benchmarks.md`. What remains is the
+  root cause itself. Testability: **Testable now; Conditional** — build a stress reproducer using
+  the actual `dummy-ups`/`upsd`/`upsmon` binaries in an image or isolated Kind cluster, and run it when
+  NUT packaging, supervision, probes, or fixtures change. The 2026-08-24 isolated fixture did not
+  reproduce the failure; that leaves the reproducer incomplete, not dependent on physical UPS
+  hardware. Real USB/SNMP device behavior remains a separate hardware-compatibility boundary.
+  **Stress harness (2026-09-13):** `make docker-stress-nut-readiness` runs actual `dummy-ups`,
+  `upsd`, and authenticated secondary `upsmon` in a private non-root container, comparing fresh
+  driver probes with four concurrent server reads per sample. It reports probe misses, server
+  failures, and disagreements separately; misses and the overall timeout fail the run. The sample
+  count is bounded, and the owning harness removes the container on exit. This opt-in component
+  test is separate from ordinary image smoke and should accompany NUT/probe/supervision changes.
+  **Validated:** final 60-sample local run with authenticated upsmon had zero probe misses, server
+  failures, or disagreements, and passed lifecycle cleanup; a three-sample run also passed. Both
+  used the cached ARM64 operand image. The original intermittent root cause remains open. One
+  image architecture and dummy data do not establish Kind or hardware compatibility.
+  **2026-09-17 research:** real NUT 2.8.5 reports `RESPONSIVE` for a STOP-confirmed driver
+  after a timed-out handshake, while upsd initially serves cached `OL`. The current five-second
+  readiness deadline masks the observed seven-second false positive; shorter/partial-response
+  variants still need qualification. The Go supervisor no longer restarts on probe misses.
+  **High follow-up:** qualify/fix readiness classification separately from capturing the original
+  spontaneous startup failure. Preserve the existing timeout; increasing it is not a fix.
+  [Pinned upstream analysis, diagnostic, and remaining experiment matrix](contributing/audits/nut-readiness-investigation-2026-09-17.md).
+
+### F-146: Controlled Kind Cost Comparisons
+
+**Superseded 2026-09-17:** replaced by [OM-1 targeted Kind efficiency investigation](tasks.md#operator-maturity--hardening).
+Retain the shared suite. The exhaustive comparison matrix is no longer a prerequisite for
+closing an investigation; controlled measurements apply to a specific optimization proposal.
+This is a scope correction, not completion of the old matrix or deferral beyond v1.
+
+Original entry (historical, not an additional open task):
+
+- `F-146` [Medium, investigation] finish controlled Kind setup/cost comparisons before any
+  restructuring. Measure focused/full, PR/promotion, cache states, failures/retries/cancellations,
+  resource use, and setup/scenario/teardown separately; retain unsuccessful observations.
+  The existing single successful trace supports retaining shared setup, not an average or savings
+  claim. Compare selective fixtures and component tests against duplicated setup/maintenance costs.
+  **Acceptance:** a measured keep/change decision preserving full coverage, exact promoted images,
+  network-policy enforcement, cleanup, and required-check semantics. No suite split is approved.
+  **2026-09-17:** retained shared setup. Current failed CI observations stop before E2E;
+  the local preflight still rejects 128 inotify instances (512 required). Controlled comparisons
+  remain blocked on a provisioned runner, not established by historical aggregate timings.
+  The audit now specifies paired inputs, cache evidence, phase/resource records, and retention
+  of failed/canceled attempts. This is not a completed measurement gate.
+  [Evidence, dependency map, and measurement criteria](contributing/audits/kind-modularity-2026-09-13.md).
+
 ## Inventory System
 
 - [x] `TEST-4` [Medium] disposable real-NetBox compatibility suite (2026-09-17).

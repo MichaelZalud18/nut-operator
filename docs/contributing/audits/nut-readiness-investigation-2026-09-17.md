@@ -3,6 +3,12 @@
 Scope: F-97. Source review and disposable-container experiments on September 17, 2026.
 This does not claim the historical startup-only failure is reproduced or fixed.
 
+**Task scope superseded 2026-09-17:** [NS-1 and NS-6](../../tasks.md#nut-server--upsd)
+replace F-97. NS-1 owns readiness correctness; NS-6 verifies startup under the new supervisor
+as part of ENG-1 acceptance. The historical closure criteria and experiment ideas below are
+research context, not a requirement to solve the old watchdog's root cause after a clean
+scoped current-system verification. [Superseded task record](../../tasks-completed.md#superseded-tasks).
+
 ## Findings
 
 1. **High, confirmed upstream classification defect:** pinned NUT 2.8.5 can print `RESPONSIVE`

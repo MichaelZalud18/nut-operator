@@ -12,8 +12,9 @@ The runtime contract remains in [the operand design](nut-server-operand.md) and
 
 Preserve the existing singleton upsd plus stable sidecar boundary and NUT-owned driver semantics.
 The change replaces shell process bookkeeping, not the operand architecture. Historical
-F-144 completion is in [completed tasks](../../tasks-completed.md); F-97 remains a separate readiness
-investigation. Adoption must preserve those lifecycle contracts and establish actual NUT parity.
+F-144 completion is in [completed tasks](../../tasks-completed.md). F-97 is superseded:
+NS-1 owns readiness correctness and NS-6 owns startup verification within ENG-1 acceptance.
+Adoption must preserve those lifecycle contracts and establish actual NUT parity.
 
 ## Compatibility Decisions
 
@@ -109,5 +110,6 @@ shell remains a behavioral reference; compare real-NUT image contracts; switch r
 and run controller/image/Kind component/race coverage; then remove `supervisor.sh`, embed wrapper,
 shell-only state and injection code. Update operand, image, contributor, and supervisor docs to one
 implementation, retaining historical audit evidence as historical. Capture before/after
-`docker-stress-nut-readiness` results for F-97; changed reproduction frequency is evidence, not a
-root-cause conclusion or permission to weaken readiness.
+`docker-stress-nut-readiness` results as supporting evidence for NS-1/NS-6; warmed stress samples
+do not replace NS-6's observation from driver launch. Changed reproduction frequency is evidence,
+not a root-cause conclusion or permission to weaken readiness.
