@@ -397,6 +397,20 @@ Original entry (historical, not an additional open task):
 
 ## NUT Server / upsd
 
+- [x] `NS-1` [High] bounded, reply-backed NUT readiness (2026-09-17).
+  Patched upstream PING timeout classification and complete-line framing; retained upstream
+  configuration parsing and driver communication. Added a four-second parallel CLI checker with
+  bounded output, a documented 64-device fanout ceiling, exact device/response/PID checks, and
+  cancellation/reaping. Kubernetes and Docker use the same helper; privileges and supervisor
+  restart behavior are unchanged. Updated the NS-1/NS-2/NS-3 contract and image CI regressions.
+  **Validated:** original-image false-positive regression failed as expected; intermediate
+  framing regressions failed before their fix. Final real-NUT protocol and real dummy-driver
+  suites passed, including missing/frozen/partial/delayed replies, valid/malformed fragmentation,
+  mixed ordering, retired socket exclusion, recovery, and global deadlines. Supervisor lifecycle
+  smoke, broad API/internal/command tests, envtest, targeted race tests, and lint passed.
+  [Dated evidence and limits](contributing/audits/nut-readiness-investigation-2026-09-17.md#ns-1-implementation-and-validation).
+  ENG-1/NS-6 retain their separate manager/Kind acceptance scope.
+
 - [x] `ENG-1` implementation and local parity milestone (2026-09-15); the overall task remains
   open in the active tracker for Kind acceptance. Replaced shell supervision with the Go
   `nut-driver-supervisor`, invoked directly by the stable sidecar. NUT still owns enumeration,

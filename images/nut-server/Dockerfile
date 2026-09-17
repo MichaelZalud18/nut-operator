@@ -74,6 +74,12 @@ RUN curl -fsSL -o nut.tar.gz "https://networkupstools.org/source/2.8/nut-${NUT_V
 
 WORKDIR /build/nut-${NUT_VERSION}
 
+# NS-1: a timed-out PING must not be classified as a responsive driver.
+# Keep this patch explicit and fail the build if a NUT upgrade no longer applies it.
+COPY images/nut-server/patches/ /tmp/nut-patches/
+RUN patch --fuzz=0 -p1 < /tmp/nut-patches/upsdrvquery-require-pong.patch
+RUN patch --fuzz=0 -p1 < /tmp/nut-patches/upsdrvquery-pong-framing.patch
+
 # Network-reachable UPS devices are the supported baseline, so the local-attachment
 # drivers are not built at all. That is the API's position (UPSDevice rejects USB and
 # serial drivers) expressed in the image: a driver that cannot be configured should
@@ -117,7 +123,10 @@ COPY go.mod go.sum ./
 RUN go mod download golang.org/x/sys
 COPY cmd/nut-driver-supervisor/ cmd/nut-driver-supervisor/
 COPY internal/nutsupervisor/ internal/nutsupervisor/
+COPY cmd/nut-driver-ready/ cmd/nut-driver-ready/
+COPY internal/nutreadiness/ internal/nutreadiness/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-X main.version=${VERSION}" -o nut-driver-supervisor ./cmd/nut-driver-supervisor
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -o nut-driver-ready ./cmd/nut-driver-ready
 
 FROM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST}
 
@@ -154,6 +163,7 @@ RUN apk add --no-cache \
 
 COPY --from=nut-builder /out/ /
 COPY --from=supervisor-builder /workspace/nut-driver-supervisor /usr/local/bin/nut-driver-supervisor
+COPY --from=supervisor-builder /workspace/nut-driver-ready /usr/local/bin/nut-driver-ready
 
 COPY images/nut-server/entrypoint.sh /usr/local/bin/nut-server-entrypoint
 
@@ -166,6 +176,7 @@ RUN chmod 0555 /usr/local/bin/nut-server-entrypoint \
 # exactly this check missing. It runs against the assembled image rather than the
 # staging directory so it verifies what actually ships.
 RUN test -x /usr/local/bin/nut-driver-supervisor \
+    && test -x /usr/local/bin/nut-driver-ready \
     && /usr/local/bin/nut-driver-supervisor --version \
     && upsd -V 2>&1 | grep -q "${NUT_VERSION}" \
     && ldd /usr/sbin/upsd | grep -q libcrypto \
@@ -173,16 +184,7 @@ RUN test -x /usr/local/bin/nut-driver-supervisor \
 
 USER 65532:65532
 EXPOSE 3493
-# Same check as the readiness probe the operator renders: at least one driver reports RESPONSIVE
-# from `upsdrvctl status` (F-46). Kubernetes ignores Docker HEALTHCHECK, so under this operator the
-# probe is what runs -- but the image is also runnable directly, and there it should answer the same
-# question the same way rather than drift into a second definition of healthy.
-#
-# The previous instruction ran `upsd -V`, which proves only that the binary executes: it would have
-# passed on a container whose driver never connected and whose upsd was dead. A check that cannot
-# fail is worse than none, because it reads as coverage.
-#
-# NOT_RESPONSIVE contains RESPONSIVE, so the match is field-exact for the same reason the probe's is.
+# Same bounded, at-least-one-responsive-driver check as the rendered readiness probe.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD upsdrvctl status 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "RESPONSIVE") { found = 1; exit } } END { exit !found }'
+    CMD exec nut-driver-ready
 ENTRYPOINT ["/usr/local/bin/nut-server-entrypoint"]

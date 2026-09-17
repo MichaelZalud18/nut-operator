@@ -24,174 +24,75 @@ import (
 	"testing"
 )
 
-// This file is the `F-97` "probes in the first minutes after pod start" half of `docs/tasks.md`
-// (NUT Server / upsd). The driver-supervisor's own crash isolation and recovery is covered by
-// nutserver_driver_supervisor_component_test.go; this file covers the separate mechanism that
-// actually decides whether Kubernetes routes traffic to the pod -- upsdReadinessProbeScript, which
-// the kubelet execs directly against the upsd container on its own timer.
-//
-// TestUpsdReadinessProbeScriptClassifiesRealisticStatusOutput is the same gap this codebase has
-// closed twice already for the driver-supervisor script: every existing test for this probe
-// (nutserver_render_test.go, nutserver_controller_test.go) checks the rendered text for a
-// substring. None of them have ever run it. The script's own comment warns about two specific
-// substring traps -- a version banner line and the NOT_RESPONSIVE/RESPONSIVE overlap -- and until
-// now nothing had actually fed it realistic upsdrvctl status output to confirm it avoids either.
-//
-// TestReadinessDoesNotFlapUnderTransientProbeFailures and
-// TestReadinessFlipsNotReadyOnlyAfterSustainedFailure are the part of F-97 a component test can
-// honestly answer. The still-open question -- why a driver upsd is still talking to fails a fresh
-// upsdrvctl status connection -- is real driver/socket behavior no fixture can manufacture; that is
-// Real-resource territory per the task's own testability note. What a fixture can prove is what the
-// readiness gate actually does once that happens: whether an isolated miss (which is what most of
-// the historical restarts were -- eight of ten invisible to upsd, per the 2026-08-24 correction in
-// operator-maturity-benchmarks.md) costs the pod its readiness under the FailureThreshold this
-// operator actually renders, or whether only a sustained run of misses does. This models the
-// kubelet's own exec-probe counting rule rather than a running kubelet -- envtest or Kind is the
-// tier that proves a real kubelet enforces it this way, and the task's Testability line already
-// draws that boundary.
-
-// readinessProbeHarness runs the real upsdReadinessProbeScript() under sh -c against a fake
-// `upsdrvctl` whose `status` output this test controls, so a "driver" here is a real process
-// producing real stdout through a real pipeline into a real awk, not a Go-level stand-in for one.
+// These component tests exercise the rendered shell invocation and model kubelet readiness
+// transitions. Driver socket semantics belong to the Go checker and real-image tests.
 type readinessProbeHarness struct {
-	t       *testing.T
-	binDir  string
-	outFile string
-	rcFile  string
+	t      *testing.T
+	binDir string
+	rcFile string
 }
 
 func newReadinessProbeHarness(t *testing.T) *readinessProbeHarness {
 	t.Helper()
 	dir := t.TempDir()
-	h := &readinessProbeHarness{
-		t:       t,
-		binDir:  filepath.Join(dir, "bin"),
-		outFile: filepath.Join(dir, "status.out"),
-		rcFile:  filepath.Join(dir, "status.rc"),
-	}
-	if err := os.MkdirAll(h.binDir, 0o755); err != nil {
-		t.Fatalf("create bin dir: %v", err)
-	}
-	// upsdReadinessProbeScript only ever calls `upsdrvctl status`, so the fake needs only that one
-	// subcommand -- unlike the fuller fake in nutserver_driver_supervisor_component_test.go, which
-	// also has to answer `list`, `-FF start`, and `stop` for the supervisor loop it drives.
+	h := &readinessProbeHarness{t: t, binDir: dir, rcFile: filepath.Join(dir, "ready.rc")}
 	fake := `#!/bin/sh
-if [ "$1" = "status" ]; then
-  cat "` + h.outFile + `" 2>/dev/null
-  rc="$(cat "` + h.rcFile + `" 2>/dev/null || echo 0)"
-  exit "$rc"
-fi
-echo "fake upsdrvctl: unhandled args: $*" >&2
-exit 2
+[ "$#" -eq 0 ] || exit 64
+printf 'diagnostic output does not determine readiness\n'
+exit "$(cat "` + h.rcFile + `")"
 `
-	if err := os.WriteFile(filepath.Join(h.binDir, "upsdrvctl"), []byte(fake), 0o755); err != nil {
-		t.Fatalf("write fake upsdrvctl: %v", err)
+	if err := os.WriteFile(filepath.Join(h.binDir, "nut-driver-ready"), []byte(fake), 0o755); err != nil {
+		t.Fatalf("write fake nut-driver-ready: %v", err)
 	}
-	// Ready before the first setStatusOutput call, matching a driver socket that does not exist
-	// yet: no output, exit 0. exit 0 rather than nonzero because a probe's own pipeline exit status
-	// here comes from awk, not from upsdrvctl -- see the package doc comment above.
-	h.setStatusOutput("", 0)
+	h.setExitCode(1)
 	return h
 }
 
-// setStatusOutput changes what the next probe invocation's `upsdrvctl status` reports, letting a
-// test walk a driver through startup, a run of transient misses, or a sustained outage across a
-// sequence of run() calls the way real polls would see it change over time.
-func (h *readinessProbeHarness) setStatusOutput(output string, exitCode int) {
+func (h *readinessProbeHarness) setExitCode(exitCode int) {
 	h.t.Helper()
-	if err := os.WriteFile(h.outFile, []byte(output), 0o644); err != nil {
-		h.t.Fatalf("set status output: %v", err)
-	}
 	if err := os.WriteFile(h.rcFile, []byte(strconv.Itoa(exitCode)), 0o644); err != nil {
-		h.t.Fatalf("set status exit code: %v", err)
+		h.t.Fatalf("set checker exit code: %v", err)
 	}
 }
 
-// run executes the real, unmodified upsdReadinessProbeScript() -- no path substitution is needed
-// here, unlike the driver-supervisor script, because this probe never touches a hardcoded
-// filesystem path; it only ever shells out to `upsdrvctl status` by name -- and reports whether the
-// kubelet would have scored this single poll a Success.
-func (h *readinessProbeHarness) run() bool {
+func (h *readinessProbeHarness) runExitCode() int {
 	h.t.Helper()
 	cmd := exec.Command("sh", "-c", upsdReadinessProbeScript())
 	cmd.Env = append(os.Environ(), "PATH="+h.binDir+":"+os.Getenv("PATH"))
-	return cmd.Run() == nil
+	err := cmd.Run()
+	if err == nil {
+		return 0
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode()
+	}
+	h.t.Fatalf("run readiness probe: %v", err)
+	return -1
 }
 
-// A realistic `upsdrvctl status` transcript: a banner line, a header row, then one TAB-separated
-// row per device. Built from the exact shape driver_recovery_test.go greps for on a real cluster,
-// not invented for this test.
-const upsdrvctlStatusBanner = "Network UPS Tools upsdrvctl - UPS driver controller 2.8.5 release\n"
-const upsdrvctlStatusHeader = "UPSNAME\tUPSDRV\tRUNNING\tPF_PID\tS_RESPONSIVE\tS_PID\tS_STATUS\n"
-
-func upsdrvctlStatusRow(name string, responsive bool) string {
-	if responsive {
-		return name + "\tdummy-ups\tRUNNING\t123\tRESPONSIVE\t123\t\"OL\"\n"
-	}
-	return name + "\tdummy-ups\tN/A\t123\tNOT_RESPONSIVE\tN/A\t\"OL\"\n"
-}
-
-func TestUpsdReadinessProbeScriptClassifiesRealisticStatusOutput(t *testing.T) {
-	cases := []struct {
-		name      string
-		output    string
-		exitCode  int
-		wantReady bool
-	}{
-		{
-			name:      "single device responsive",
-			output:    upsdrvctlStatusBanner + upsdrvctlStatusHeader + upsdrvctlStatusRow("a", true),
-			wantReady: true,
-		},
-		{
-			name:      "single device not responsive",
-			output:    upsdrvctlStatusBanner + upsdrvctlStatusHeader + upsdrvctlStatusRow("a", false),
-			wantReady: false,
-		},
-		{
-			name: "one responsive device among several is enough",
-			output: upsdrvctlStatusBanner + upsdrvctlStatusHeader +
-				upsdrvctlStatusRow("a", false) + upsdrvctlStatusRow("b", false) + upsdrvctlStatusRow("c", true),
-			wantReady: true,
-		},
-		{
-			name:      "every configured device not responsive",
-			output:    upsdrvctlStatusBanner + upsdrvctlStatusHeader + upsdrvctlStatusRow("a", false) + upsdrvctlStatusRow("b", false),
-			wantReady: false,
-		},
-		{
-			name: "header and banner alone, no device rows, must not read as responsive",
-			// Regression for the exact trap upsdReadinessProbeScript's own doc comment names: the
-			// header row's own token is S_RESPONSIVE, and matching on absence of RESPONSIVE would
-			// read the banner's "controller" line as a device. This is the first time either has
-			// actually been fed to the script rather than asserted about it in prose.
-			output:    upsdrvctlStatusBanner + upsdrvctlStatusHeader,
-			wantReady: false,
-		},
-		{
-			name:      "no ups.conf devices at all -- upsdrvctl prints nothing",
-			output:    "",
-			wantReady: false,
-		},
-		{
-			name: "upsdrvctl status itself exits nonzero -- driver socket does not exist yet",
-			// The pipeline's exit status comes from awk, not from upsdrvctl (see run()'s doc
-			// comment), so this must still correctly report not-ready from empty input rather than
-			// from upsdrvctl's own exit code, which the script never inspects.
-			output:    "",
-			exitCode:  1,
-			wantReady: false,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+func TestUpsdReadinessProbePropagatesCheckerExitCode(t *testing.T) {
+	for _, exitCode := range []int{0, 1, 2, 42, 124} {
+		t.Run(strconv.Itoa(exitCode), func(t *testing.T) {
 			h := newReadinessProbeHarness(t)
-			h.setStatusOutput(tc.output, tc.exitCode)
-			if got := h.run(); got != tc.wantReady {
-				t.Fatalf("expected ready=%v for output:\n%s\ngot ready=%v", tc.wantReady, tc.output, got)
+			h.setExitCode(exitCode)
+			if got := h.runExitCode(); got != exitCode {
+				t.Fatalf("probe exit code = %d, want checker exit code %d", got, exitCode)
 			}
 		})
+	}
+}
+
+func TestUpsdReadinessProbeFailsWhenCheckerIsMissing(t *testing.T) {
+	h := newReadinessProbeHarness(t)
+	if err := os.Remove(filepath.Join(h.binDir, "nut-driver-ready")); err != nil {
+		t.Fatal(err)
+	}
+	// Resolve sh first, then isolate PATH so a host-installed checker cannot satisfy the probe.
+	cmd := exec.Command("sh", "-c", upsdReadinessProbeScript())
+	cmd.Env = append(os.Environ(), "PATH="+h.binDir)
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 127 {
+		t.Fatalf("missing checker should exit 127, got %v", err)
 	}
 }
 
@@ -200,8 +101,7 @@ func TestUpsdReadinessProbeScriptClassifiesRealisticStatusOutput(t *testing.T) {
 // it takes upsdReadinessFailureThreshold consecutive Failures in a row to mark it NotReady again. A
 // Failure that does not extend an existing run of failures to the threshold changes nothing.
 //
-// This is the counting rule, not a running kubelet -- see the package doc comment for why that
-// split is honest and where the boundary the task's own Testability note draws sits.
+// This models the counting rule; it does not run a kubelet or establish socket behavior.
 func simulateKubeletReadiness(pollResults []bool) (finalReady bool, history []bool) {
 	ready := false
 	consecutiveFailures := 0
@@ -231,15 +131,15 @@ func pollSequence(t *testing.T, states []string) []bool {
 	for i, state := range states {
 		switch state {
 		case "responsive":
-			h.setStatusOutput(upsdrvctlStatusBanner+upsdrvctlStatusHeader+upsdrvctlStatusRow("a", true), 0)
+			h.setExitCode(0)
 		case "not-responsive":
-			h.setStatusOutput(upsdrvctlStatusBanner+upsdrvctlStatusHeader+upsdrvctlStatusRow("a", false), 0)
+			h.setExitCode(1)
 		case "no-driver":
-			h.setStatusOutput("", 0)
+			h.setExitCode(1)
 		default:
 			t.Fatalf("unknown simulated driver state %q", state)
 		}
-		results[i] = h.run()
+		results[i] = h.runExitCode() == 0
 	}
 	return results
 }

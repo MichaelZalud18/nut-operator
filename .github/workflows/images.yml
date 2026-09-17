@@ -246,8 +246,12 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Exercise NUT supervisor lifecycle and reloads
-        timeout-minutes: 4
+        timeout-minutes: 5
         run: bash hack/nut-supervisor-smoke.sh docker nut-server:tls-smoke
+
+      - name: Verify NUT readiness protocol failure cases
+        timeout-minutes: 4
+        run: bash hack/nut-readiness-protocol-smoke.sh docker nut-server:tls-smoke
 
       - name: Build the upsmon agent image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6

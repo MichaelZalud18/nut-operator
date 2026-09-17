@@ -1,0 +1,23 @@
+--- a/drivers/upsdrvquery.c
++++ b/drivers/upsdrvquery.c
+@@ -622,7 +622,7 @@
+-	upsdebugx(5, "%s: waiting for a while to flush server messages - posting a PING, waiting for PONG", __func__);
+-	switch (upsdrvquery_ping(conn, &tv, 1000)) {
+-		case -1:	goto socket_error;
+-		case  0:	goto finish;	/* No reply - maybe handle somehow? */
+-		case  1:	break;	/* Got PONG */
+-		default:	break;
+-	}
++	upsdebugx(5, "%s: waiting for a while to flush server messages - posting a PING, waiting for PONG", __func__);
++	switch (upsdrvquery_ping(conn, &tv, 1000)) {
++		case -1:	goto socket_error;
++		case  0:	goto socket_error;	/* A timeout is not a responsive driver. */
++		case  1:	break;	/* Got PONG */
++		default:	goto socket_error;
++	}
+@@ -648,3 +648,2 @@
+-finish:
+-	upsdebugx(5, "%s: ready for tracked commands", __func__);
+-	return 1;
++	upsdebugx(5, "%s: ready for tracked commands", __func__);
++	return 1;

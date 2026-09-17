@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -156,20 +157,38 @@ func TestRenderUPSConfRendersExactlyOneDriverLinePerDevice(t *testing.T) {
 	}
 }
 
-// F-46: readiness comes from NUT's own driver-state report, not from a shell reimplementation of it.
-func TestUpsdReadinessProbeUsesUpsdrvctlStatus(t *testing.T) {
-	script := upsdReadinessProbeScript()
+func TestUpsdReadinessProbeUsesDriverReady(t *testing.T) {
+	if got := upsdReadinessProbeScript(); got != "exec nut-driver-ready" {
+		t.Fatalf("readiness command = %q, want exec nut-driver-ready", got)
+	}
+	if upsdReadinessInitialDelaySeconds != 5 || upsdReadinessPeriodSeconds != 10 ||
+		upsdReadinessTimeoutSeconds != 5 || upsdReadinessFailureThreshold != 3 {
+		t.Fatal("readiness timing or failure threshold changed")
+	}
+}
 
-	if !strings.Contains(script, "upsdrvctl status") {
-		t.Fatalf("readiness probe must use NUT's built-in driver status report:\n%s", script)
+func TestUpsdReadinessProbeMatchesImageHealthcheck(t *testing.T) {
+	dockerfile, err := os.ReadFile("../../images/nut-server/Dockerfile")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(script, "upsc") {
-		t.Fatalf("readiness probe should not infer driver state from upsc queries:\n%s", script)
+	// Join Dockerfile continuations before comparing the complete shell command.
+	contents := strings.ReplaceAll(string(dockerfile), "\\\n", " ")
+	var commands []string
+	for _, line := range strings.Split(contents, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "HEALTHCHECK" {
+			continue
+		}
+		for i, field := range fields {
+			if field == "CMD" {
+				commands = append(commands, strings.Join(fields[i+1:], " "))
+				break
+			}
+		}
 	}
-	// NOT_RESPONSIVE contains RESPONSIVE. A substring match would pass on every dead driver,
-	// producing a readiness probe that can never fail -- worse than having none.
-	if !strings.Contains(script, `$i == "RESPONSIVE"`) {
-		t.Fatalf("readiness probe must match RESPONSIVE as a whole field, not a substring:\n%s", script)
+	if len(commands) != 1 || commands[0] != upsdReadinessProbeScript() {
+		t.Fatalf("image HEALTHCHECK commands = %q, want [%q]", commands, upsdReadinessProbeScript())
 	}
 }
 

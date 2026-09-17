@@ -373,9 +373,18 @@ docker-smoke-nut-server: ## Smoke test that the NUT server image contains real N
 docker-smoke-nut-supervisor: ## Exercise the supervisor with real NUT binaries, without Kubernetes.
 	bash hack/nut-supervisor-smoke.sh $(CONTAINER_TOOL) $(NUT_SERVER_IMG)
 
+.PHONY: docker-smoke-nut-readiness
+docker-smoke-nut-readiness: ## Check real NUT protocol replies and frozen-driver readiness.
+	bash hack/nut-readiness-protocol-smoke.sh $(CONTAINER_TOOL) $(NUT_SERVER_IMG)
+	bash hack/nut-driver-ready-smoke.sh $(CONTAINER_TOOL) $(NUT_SERVER_IMG)
+
 .PHONY: docker-stress-nut-readiness
 docker-stress-nut-readiness: ## Compare real driver probes and server reads with upsmon connected (F-97).
 	NUT_READINESS_SAMPLES=60 bash hack/nut-supervisor-smoke.sh $(CONTAINER_TOOL) $(NUT_SERVER_IMG)
+
+.PHONY: docker-smoke-nut-startup
+docker-smoke-nut-startup: ## Optional 11-minute single-UPS startup observation with eight authenticated clients; not Kind qualification.
+	bash hack/nut-startup-smoke.sh $(CONTAINER_TOOL) $(NUT_SERVER_IMG)
 
 .PHONY: docker-smoke-upsmon-agent
 docker-smoke-upsmon-agent: ## Smoke test that the upsmon image contains real NUT client tooling.

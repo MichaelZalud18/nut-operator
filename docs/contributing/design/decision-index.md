@@ -56,7 +56,7 @@ settled decisions by being indexed here; `scope-boundaries.md` remains the OD re
 | [NUT supervisor migration](nut-supervisor-migration.md) | Go replacement constraints, upstream compatibility decisions, and migration validation contract | [ENG-1](../../tasks.md#nut-server--upsd) |
 | [VM test research](../audits/vm-test-research-2026-09-15.md) | Recorded PEG/networking/deployment decisions, historical runs, and proposed guest qualification | [VM tasks](../../tasks.md#vm-test-coverage) |
 | [Kind component investigation](../audits/kind-modularity-2026-09-13.md) | Ranked observed costs and retain-shared-suite decision; controlled measurements apply to concrete optimizations | [Completed OM-1](../../tasks-completed.md#operator-maturity--hardening) (supersedes F-146) |
-| [NUT readiness investigation](../audits/nut-readiness-investigation-2026-09-17.md) | Real-binary readiness evidence and historical startup hypotheses | [NS-1 and NS-6](../../tasks.md#nut-server--upsd) (supersede F-97; NS-6 is part of ENG-1 acceptance) |
+| [NUT readiness investigation](../audits/nut-readiness-investigation-2026-09-17.md) | Real-binary readiness fixes and historical startup hypotheses | [Completed NS-1](../../tasks-completed.md#nut-server--upsd); [NS-6](../../tasks.md#nut-server--upsd) remains part of ENG-1 acceptance |
 
 Completed implementation records live in [tasks-completed.md](../../tasks-completed.md), not in
 the decision registry. Completion and proposal status do not silently alter settled scope.
@@ -87,7 +87,7 @@ Dated audit and findings records live in `docs/contributing/audits/` and share t
 | CR | Capability resolution rule | planner-requirements | CR-1 – CR-4 |
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
 | EX | Executor requirement | executor-requirements | EX-1 – EX-33 |
-| NS | NUT server operand requirement | nut-server-operand | NS-1 – NS-9 |
+| NS | NUT server operand requirement/task | nut-server-operand; tasks | NS-1 – NS-10 |
 | OM | Operator maturity and hardening task | tasks.md, Operator Maturity & Hardening | OM-1 |
 | NA | Node agent operand requirement | node-agent-operand | NA-1 – NA-9 |
 | HK | Shutdown hook requirement | shutdown-hooks | HK-1 – HK-10 |

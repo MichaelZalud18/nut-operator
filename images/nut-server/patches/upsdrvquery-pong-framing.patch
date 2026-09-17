@@ -1,0 +1,52 @@
+--- a/drivers/upsdrvquery.c
++++ b/drivers/upsdrvquery.c
+@@ -503,3 +503,5 @@
+-ssize_t upsdrvquery_ping(udq_pipe_conn_t *conn, struct timeval *ptv, useconds_t read_interval) {
+-	struct timeval	start, now, last, tv;
+-	double	maxdiff;
++ssize_t upsdrvquery_ping(udq_pipe_conn_t *conn, struct timeval *ptv, useconds_t read_interval) {
++	struct timeval	start, now, last, tv;
++	double	maxdiff;
++	size_t	pong_pos = 0;
++	int	pong_invalid = 0;
+@@ -520,3 +522,3 @@
+-	while (1) {
+-		char	*buf;
+-		ssize_t	read_ret;
++	while (1) {
++		size_t	i;
++		ssize_t	read_ret;
+@@ -551,15 +553,18 @@
+-		buf = conn->buf;
+-		while (buf && *buf) {
+-			if (!strncmp(buf, "PONG\n", 5)) {
+-				upsdebugx(5, "%s: got expected PONG", __func__);
+-				return 1;
+-			}
+-			buf = strchr(buf, '\n');
+-			if (buf) {
+-/*
+-				upsdebugx(5, "%s: trying next line of multi-line response: %s",
+-					__func__, buf);
+-*/
+-				buf++;	/* skip EOL char */
+-			}
+-		}
++		/* Preserve line framing across reads; never scan beyond received bytes. */
++		for (i = 0; read_ret > 0 && i < (size_t)read_ret; i++) {
++			char ch = conn->buf[i];
++			if (ch == '\n') {
++				if (!pong_invalid && pong_pos == 4) {
++					upsdebugx(5, "%s: got expected PONG", __func__);
++					return 1;
++				}
++				pong_pos = 0;
++				pong_invalid = 0;
++			} else if (!pong_invalid) {
++				if (pong_pos < 4 && ch == "PONG"[pong_pos]) {
++					pong_pos++;
++				} else {
++					pong_invalid = 1;
++				}
++			}
++		}

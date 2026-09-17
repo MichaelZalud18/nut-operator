@@ -10,64 +10,57 @@ Audience: contributors.
 
 ## Health reporting
 
-**NS-1 · Readiness means at least one driver is responsive, and NUT reports that itself.** The
-readiness probe runs `upsdrvctl status` — NUT's own driver-state report — and is ready when any row
-says the driver is responsive.
+**NS-1 · Readiness requires an actual reply from at least one configured driver.** The
+`nut-driver-ready` helper asks NUT to enumerate configured devices, then queries their status
+concurrently under one four-second deadline. NUT remains responsible for configuration parsing,
+the current driver/socket identity, and its driver protocol. A stalled first device cannot
+consume the whole budget before a healthy neighbor is checked.
 
-`upsdrvctl status` prints one TAB-separated row per device configured in `ups.conf`:
+The operand carries narrow patches to pinned NUT: `upsdrvquery_prepare` rejects a PING timeout,
+and PONG recognition preserves complete-line framing across reads. This is necessary even with
+an outer deadline; a timeout or malformed reply is not evidence of a valid handshake.
+The source patches are explicit in the Docker build and must be reassessed when upgrading NUT.
+[Investigation and upstream trace](../audits/nut-readiness-investigation-2026-09-17.md).
 
-```
-UPSNAME              UPSDRV  RUNNING PF_PID  S_RESPONSIVE    S_PID   S_STATUS
-dummy             dummy-ups  N/A     -3      NOT_RESPONSIVE  N/A
-eco650           usbhid-ups  RUNNING 3559207 RESPONSIVE      3559207 "OL"
-```
-
-`S_RESPONSIVE` is decided by probing the driver's own socket, which is the question readiness is
-actually asking: not "is a name configured" and not "is a port open", but "is a driver alive and
-answering". `RUNNING` is deliberately not the field consulted — a driver process can be running and
-not responding, and a pod that reports ready in that state is exactly the silent failure `RS-17`
-exists to surface.
+Readiness checks driver responsiveness, not whether the UPS itself is reachable or its data is
+fresh. Those remain per-device telemetry concerns. Process existence, cached `upsc` values, and
+an open socket alone do not satisfy readiness.
 
 **Aggregate ready, per-member visible.** One responsive driver is enough. A server configured with
 several devices stays ready while any one of them answers, and each device's individual state is
-still readable from the same command and from `upsc`. Marking the pod unready because one of four
+still readable from NUT and `UPSDevice` status. Marking the pod unready because one of four
 devices is unreachable would take telemetry for the other three away from every agent, which is a
 worse outcome than reporting a degraded set — and device-level health already surfaces on
 `UPSDevice` status, which is where a per-device consumer should read it.
 
-**NS-2 · The responsive check is field-exact.** `NOT_RESPONSIVE` contains `RESPONSIVE` as a
-substring, so a `grep` for the token matches a dead driver as readily as a live one. That failure
-mode is not a false alarm but its opposite: a readiness probe that can never fail, silently, on
-exactly the clusters where a driver has stopped answering. The probe therefore compares whole `awk`
-fields, which also skips the header row for free — its token is `S_RESPONSIVE`, not `RESPONSIVE`.
+**NS-2 · The responsive check is exact and fail-closed.** Accept only a successful bounded NUT
+query with the expected device name, exact responsive column, and positive socket-reported PID,
+never a substring elsewhere in the output or a PID file alone. Empty configuration, enumeration
+failure, missing sockets, and all-unresponsive devices fail. Command output and work are bounded;
+cancellation closes and reaps owned queries.
+The helper does not restart or signal drivers.
+
+The helper rejects more than 64 configured devices rather than launching an unbounded process
+set or serializing stalled probes ahead of healthy ones. This is a readiness safety ceiling, not
+a capacity guarantee: size operand resources for the inventory and split larger inventories among
+NUTServer instances. Enumeration and each query also have bounded captured output.
 
 **NS-3 · The Docker `HEALTHCHECK` runs the same command as the probe.** Kubernetes ignores the
 `HEALTHCHECK` directive, so under this operator the readiness probe is what actually runs. The image
 is still runnable directly, though, and there it should answer the same question the same way rather
-than drift into a second definition of healthy — so the instruction is the `upsdrvctl status` check
-verbatim.
-
-What it must not be is what it was: `CMD upsd -V`, which proves only that the binary executes and
-would pass on a container whose driver never connected and whose `upsd` had died. A check that cannot
-fail is worse than no check, because it reads as coverage — and removing it outright is not the fix
-either, since that trades a misleading check for an absent one.
+than drift into a second definition of healthy. Both execute `nut-driver-ready`, with a five-second
+outer timeout surrounding the helper's four-second budget. A parity test guards the two entry points.
 
 Liveness is left to the process model rather than a probe: the entrypoint `exec`s `upsd`, so if
 `upsd` exits the container exits and Kubernetes restarts it.
 
 ### Why not a bespoke `upsc` loop
 
-The original probe (`F-17`) listed devices with `upsc -l` and queried `ups.status` on each name,
-treating a failed query as a disconnected driver. It worked, and it was wrong in the way that
-matters here: it reimplemented in shell a state report NUT already publishes, so the operand's
-definition of "healthy" lived in this repository instead of in NUT.
-
-`upsc -l` alone genuinely cannot answer the question — it lists every name in `ups.conf` whether or
-not the driver ever connected — but the fix for that is to ask the component that knows, not to
-infer the answer from a client error string. `F-46` records the correction.
-
-This is the same rule as `GP-4` (consume signals, do not rebuild them) applied to health: where NUT
-reports something, the operator reads NUT's report.
+`upsc -l` lists configured names even without a connected driver, and `upsc` can return cached
+values while a driver is frozen. The helper therefore consumes NUT's driver-side response rather
+than reconstructing health from client values. A source fix plus a bounded CLI wrapper keeps
+configuration and protocol ownership upstream, without adding a second configuration parser or
+a new management service.
 
 ## Startup
 

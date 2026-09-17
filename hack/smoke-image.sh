@@ -26,6 +26,7 @@ case "$kind" in
       command -v upsd
       command -v upsdrvctl
       command -v upsc
+      command -v nut-driver-ready
       upsd -V >/dev/null
       upsc -V >/dev/null
       for driver in '"$ALLOWLISTED_DRIVERS"'; do
@@ -55,9 +56,7 @@ case "$kind" in
       NUT_QUIET_INIT_BANNER=true upsdrvctl -FF start bad >/tmp/bad-driver.log 2>&1 &
       bad_pid=$!
       sleep 2
-      NUT_QUIET_INIT_BANNER=true upsdrvctl status | awk '\''$1 == "good" {
-        for (i = 1; i <= NF; i++) if ($i == "RESPONSIVE") found = 1
-      } END { exit !found }'\''
+      NUT_QUIET_INIT_BANNER=true timeout -k 1 5 /usr/local/bin/nut-driver-ready
       healthy_rc=$?
       kill "$good_pid" 2>/dev/null || true
       wait "$good_pid" 2>/dev/null || true

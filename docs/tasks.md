@@ -163,24 +163,19 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_*.go`, and the
   preflight (128 available; 512 required), before creating a cluster. Preserve that guardrail;
   use a suitably provisioned runner. Local image/envtest passes are not Kind evidence.
   `NS-6` below owns the startup-stability verification within this acceptance gate;
-  `NS-1` separately owns readiness correctness. F-97 is superseded in the completed tracker.
+  readiness correctness (`NS-1`) is complete. F-97 is superseded in the completed tracker.
   [Detailed design, migration order, and test matrix](contributing/design/nut-supervisor-migration.md).
 
-- [ ] `NS-1` [High] make NUT readiness prove a responsive driver within a bounded probe.
-  Preserve the at-least-one-responsive-device contract and align the rendered probe with the
-  image HEALTHCHECK. The real NUT 2.8.5 diagnostic demonstrates a false-positive `RESPONSIVE`
-  result for a stopped driver; the current five-second deadline masks that observed case,
-  but shorter or partial replies remain unqualified. Select a narrow upstream fix or a stronger
-  check backed by actual driver replies, not cached upsd values or the status flag alone.
-  **Acceptance; Testable now; Conditional:** real-binary tests cover absent sockets, frozen
-  drivers, delayed/partial replies, recovery, and mixed healthy/unhealthy devices in either
-  order. All-unresponsive configurations fail; a responsive device can satisfy the contract
-  within the bounded check. Preserve security boundaries and avoid probe-driven driver restarts.
-  Update the NS-1/NS-2/NS-3 design contract and regression tests alongside the implementation.
-  [Evidence and diagnostic](contributing/audits/nut-readiness-investigation-2026-09-17.md).
+Completed readiness correctness (`NS-1`), including upstream timeout/framing fixes and real-binary
+regressions, is recorded in [completed tasks](tasks-completed.md#nut-server--upsd).
 
 - [ ] `NS-6` [Medium] verify startup stability under the redesigned Go supervisor as part of
   `ENG-1` acceptance, replacing the historical F-97 startup investigation.
+  **Component evidence complete (2026-09-17):** the patched ARM64 image passed 661 seconds from
+  launch with eight authenticated local clients and one intentional reconnect: 326 probes,
+  first readiness at three seconds, no later readiness failures, and no driver replacements/exits.
+  `make docker-smoke-nut-startup` retains scoped evidence and cleanup results. This does not run
+  a manager or kubelet; the remaining current-manager/Kind acceptance is below.
   Observe the actual current manager/NUT images from driver launch through a bounded window
   covering the historical eleven-minute startup period, with representative monitor startup
   and reconnect activity. Record driver exits/replacements, readiness changes, probe errors,
@@ -191,6 +186,14 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_*.go`, and the
   and track its fix/regression as current work; do not require reconstructing the old watchdog
   merely to close ENG-1. Existing recovery and telemetry scenarios remain required.
   [Historical evidence and hypotheses](contributing/audits/nut-readiness-investigation-2026-09-17.md).
+
+- [ ] `NS-10` [Low] reconcile auxiliary NUT tools shipped in the operand with their runtime
+  dependencies. The native image's `/usr/bin/nutconf --help` fails because `libstdc++.so.6` and
+  `libgcc_s.so.1` are absent. This unused utility is not part of the readiness or supervisor path.
+  Decide which auxiliary tools the image intentionally supports: remove unsupported ones or
+  supply their required runtime libraries, then add an image-level executable/dependency check.
+  **Testable now; Conditional:** run against the assembled non-root image; preserve the supported
+  driver allowlist, OpenSSL backend, and minimal runtime boundary.
 
 ---
 
@@ -397,7 +400,7 @@ Keep High shutdown-safety work ahead of cleanup. The suggested test progression 
 Kind fixture/safety work and TEST-2 feasibility, then acceptance for approved
 profiles. Talos provisioning follows VM-8; TalosShutdown follows deterministic Talos bring-up.
 This is dependency guidance, not a requirement to serialize independent component work.
-ENG-1 includes NS-6 startup verification; NS-1 owns the separate readiness fix. Completed OM-1
+ENG-1 includes NS-6 startup verification; the separate NS-1 readiness fix is complete. Completed OM-1
 retains shared Kind setup; controlled measurements apply to concrete optimizations. MOD-4 is a
 distinct managed-NUT profile, not an implicit expansion of MOD-3. ENG-4 must preserve the execution
 ownership established by F-132/ENG-3 when deleting resume state. Complete REL-5 before evaluating ENG-10.

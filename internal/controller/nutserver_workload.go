@@ -29,20 +29,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// upsdReadinessProbeScript accepts output from `upsdrvctl status` when at least one field
-// equals RESPONSIVE. This flag check does not establish live driver health (NS-1).
-//
-// `upsc -l` cannot answer it: it lists every name defined in ups.conf
-// whether or not the driver ever connected, so a fully-disconnected driver still reports as
-// present.
-//
-// The match is field-exact and deliberately so: NOT_RESPONSIVE contains RESPONSIVE as a
-// substring, so a grep for the token would report every dead driver as healthy -- a readiness
-// probe that can never fail. Comparing whole awk fields also skips the header row for free,
-// since its token is S_RESPONSIVE.
+// upsdReadinessProbeScript delegates NS-1 to the checker: at least one configured driver
+// must actually respond, without relying on cached upsd values. Its default global four-second
+// deadline fits within the five-second probe timeout; exec preserves its exit status.
 func upsdReadinessProbeScript() string {
-	return `upsdrvctl status 2>/dev/null | ` +
-		`awk '{for (i = 1; i <= NF; i++) if ($i == "RESPONSIVE") { found = 1; exit } } END { exit !found }'`
+	return "exec nut-driver-ready"
 }
 
 // upsdResources returns what the upsd container asks for, defaulting it when spec.resources says

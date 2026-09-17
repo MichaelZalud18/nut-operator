@@ -29,7 +29,7 @@ const (
 	defaultOperandNamespace = "power-system"
 	nutServerPortName       = "upsd"
 
-	// Timing for the readiness probe's upsdrvctl status flag check.
+	// The driver readiness check has a global four-second deadline within this probe timeout.
 	upsdReadinessInitialDelaySeconds = 5
 	upsdReadinessPeriodSeconds       = 10
 	upsdReadinessTimeoutSeconds      = 5

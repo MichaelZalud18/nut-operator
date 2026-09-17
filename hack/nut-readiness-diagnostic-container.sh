@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-# Invoked only inside the isolated supervisor fixture, with its single dummy UPS.
+# Optional upstream classification diagnostic inside the isolated supervisor fixture.
 driver_pid=$(cat /run/nut/dummy-ups-good.pid)
 cleanup() {
   rc=$?
@@ -31,14 +31,13 @@ grep -q '^State:.*T' "/proc/$driver_pid/status"
 test "$(upsc good@127.0.0.1 ups.status 2>/dev/null)" = OL
 echo 'diagnostic: STOP-confirmed driver; upsd still returns OL'
 bounded_rc=0
-bounded_start=$(date +%s)
-timeout 5 upsdrvctl status good >/tmp/bounded-status.out 2>&1 || bounded_rc=$?
-case "$bounded_rc" in
-  124|143) ;; # GNU timeout / the operand's BusyBox timeout.
-  *) echo "unexpected bounded probe exit: $bounded_rc" >&2; exit 1 ;;
-esac
-test "$(( $(date +%s) - bounded_start ))" -ge 5
-echo 'diagnostic: five-second probe deadline rejects the stopped driver'
+timeout -k 1 5 /usr/local/bin/nut-driver-ready >/tmp/bounded-status.out 2>&1 || bounded_rc=$?
+if [ "$bounded_rc" -ne 1 ]; then
+  echo "unexpected production readiness exit: $bounded_rc (expected 1, not a watchdog expiry)" >&2
+  cat /tmp/bounded-status.out >&2
+  exit 1
+fi
+echo 'diagnostic: production readiness rejects the stopped driver within its four-second deadline'
 probe_rc=0
 timeout 12 upsdrvctl -DDDDD status good >/tmp/paused-status.out 2>&1 || probe_rc=$?
 cat /tmp/paused-status.out
@@ -46,11 +45,11 @@ test "$probe_rc" -eq 0
 grep -q '^State:.*T' "/proc/$driver_pid/status"
 awk '$1 == "good" && $6 == "N/A" { found=1 } END { exit !found }' /tmp/paused-status.out
 if responsive /tmp/paused-status.out; then
-  echo 'diagnostic: upstream false-positive RESPONSIVE with missing socket PID'
-else
-  awk '$1 == "good" && $5 == "NOT_RESPONSIVE" { found=1 } END { exit !found }' /tmp/paused-status.out
-  echo 'diagnostic: upstream correctly reports NOT_RESPONSIVE; review pinned-version evidence'
+  echo 'diagnostic failed: upstream false-positive RESPONSIVE with missing socket PID' >&2
+  exit 1
 fi
+awk '$1 == "good" && $5 == "NOT_RESPONSIVE" { found=1 } END { exit !found }' /tmp/paused-status.out
+echo 'diagnostic: patched upstream reports NOT_RESPONSIVE after its socket timeout'
 kill -CONT "$driver_pid"
 timeout 12 upsdrvctl status good >/tmp/resumed-status.out 2>&1
 cat /tmp/resumed-status.out

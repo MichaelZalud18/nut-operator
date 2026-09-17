@@ -31,9 +31,7 @@ for sample in $(seq 1 "$NUT_READINESS_SAMPLES"); do
     pids="$pids $!"
   done
   probe_ok=1
-  upsdrvctl status > /tmp/driver-status.out 2>&1 || probe_ok=0
-  awk '$1 == "good" { for (i=1; i<=NF; i++) if ($i == "RESPONSIVE") ok=1 } END { exit !ok }' \
-    /tmp/driver-status.out || probe_ok=0
+  timeout -k 1 5 /usr/local/bin/nut-driver-ready > /tmp/driver-status.out 2>&1 || probe_ok=0
   server_ok=1
   for pid in $pids; do wait "$pid" || server_ok=0; done
   for client in 1 2 3 4; do

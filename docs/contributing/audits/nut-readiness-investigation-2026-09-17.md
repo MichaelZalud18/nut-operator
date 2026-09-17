@@ -9,7 +9,79 @@ as part of ENG-1 acceptance. The historical closure criteria and experiment idea
 research context, not a requirement to solve the old watchdog's root cause after a clean
 scoped current-system verification. [Superseded task record](../../tasks-completed.md#superseded-tasks).
 
-## Findings
+## NS-1 Implementation And Validation
+
+The readiness fix retains NUT's configuration parser and driver protocol rather than adding
+another parser or service. `nut-driver-ready` runs `upsdrvctl list`, then concurrent per-device
+status commands under a shared four-second deadline. Success requires the exact device row,
+responsive column, and a positive socket-reported PID. It bounds captured output, caps fanout
+at 64 configured devices (overflow fails closed), cancels outstanding queries, and reaps children.
+Both Kubernetes readiness and the image HEALTHCHECK execute this same helper inside a five-second
+outer deadline. Readiness never restarts drivers or changes the privilege boundary.
+
+Two explicit source patches apply to the signature/hash-verified NUT 2.8.5 archive:
+
+- Reject PING timeout instead of returning successful preparation.
+- Preserve complete-line PONG framing across reads, using constant space and scanning only received
+  bytes. A valid split reply succeeds; a malformed line cannot succeed just because a later read
+  begins with `PONG`.
+
+The second defect was found during independent review and then reproduced. Before the framing
+patch, `PO` followed by `NG\n` was rejected, while `NOT` followed by `PONG\n` was accepted.
+Both regressions pass with the framing fix. Patches apply with fuzzy matching disabled; the
+resulting `drivers/upsdrvquery.c` SHA-256 is
+`31bc0bf2f9f13965ef42121887c9889d876c79a5809fdc0f678dbc18714d6d4c`.
+See the [patch notes](../../../images/nut-server/patches/README.md).
+
+### Regression Evidence
+
+| Test scope | Result |
+| --- | --- |
+| Original unpatched image `8259f3eaacd9`, fresh protocol fixture with no PONG but valid GETPID/status replies | Failed the new regression: NUT printed RESPONSIVE after 4.00s |
+| Timeout-only patched image, valid and malformed fragmented replies | Failed both new framing cases; retained as intermediate failures |
+| Final ARM64 operand `sha256:f8869eb25c1ed9abf3023293f32cf3e72445f01d0ea21fb42ba06fef92d6c7b6` | Real-protocol suite passed: healthy/absent/frozen sockets, missing/partial/delayed PONG, missing PID, valid/malformed fragmentation, mixed ordering, recovery, and retired-driver identity |
+| Same final image, actual dummy-ups processes | Passed missing/empty configuration, STOP-confirmed failure, unconfigured healthy socket exclusion, same-PID recovery, mixed health in either order, and two frozen drivers under one deadline |
+| Same final image, Go supervisor smoke | Passed idle startup, partial failure, reload retry, PID preservation, live settings reload, port/driver replacement, crash recovery, and bounded termination |
+| Go regression checks | API/internal/command suite including controller/webhook envtest passed; readiness/command/supervisor race tests passed; lint reported zero issues |
+
+The final packaging rebuild, `sha256:2e93ed2f128293b7420ec3d864f6dda0d3ad4bc8cb400ae017f9251d58325110`,
+has identical SHA-256 hashes for upsd, upsdrvctl, dummy-ups, nut-driver-ready, and
+nut-driver-supervisor to the accepted framing image above. Additional real-protocol cases reject
+extra PONG fields and accept a complete PONG after an 8 KiB noise line. The framing image also
+passed the existing verified-TLS and certificate-rotation smoke with a real upsmon client.
+
+Reproduce the real-protocol and real-driver checks with
+`make docker-smoke-nut-readiness NUT_SERVER_IMG=<image>` and the supervisor checks with
+`make docker-smoke-nut-supervisor NUT_SERVER_IMG=<image>`. The image workflow runs these regression
+layers against its built image. Local results are native ARM64, not a promoted digest, another
+architecture, hardware qualification, or a Kind acceptance pass.
+
+### NS-6 Component Startup Observation
+
+The optional `make docker-smoke-nut-startup NUT_SERVER_IMG=<image>` fixture starts upsd, the shipped
+Go supervisor, one dummy-ups device, and eight authenticated secondary upsmon clients without
+prewarming. It restarts one owned client after 30 seconds to exercise reconnection, not a driver
+fault. Readiness and process identity are sampled from the initial launch. No host settings,
+external network, host namespaces, or extra capabilities are used.
+
+The final framing-patched image above completed a 661-second observation: 326 probe samples,
+one initial failure before first readiness at three seconds, zero subsequent readiness failures,
+zero watchdog expiries, zero driver replacements/exits, and eight authenticated clients. The
+restarted client authenticated twice; the other seven authenticated once. Artifacts were retained
+and owned container removal succeeded.
+
+This is one native ARM64, single-UPS, local-client component run, without Kubernetes resource
+limits, a manager, or a kubelet. It does not close ENG-1/NS-6's current-manager/Kind gate or prove
+the historical watchdog root cause. Reproduce with the full default window; shortened harness
+trials are not eleven-minute evidence.
+
+Earlier attempts remain distinct: a 20-second trial passed its observations but failed artifact
+export from a stopped tmpfs; switching to a private owned artifact mount fixed that. A 40-second
+trial passed export and reconnection. An intermediate timeout-only image's long run was explicitly
+canceled when the framing defect was found; it is partial evidence, not a pass. Failure-path
+review then added bounded create/start cleanup and unconditional child cleanup after artifact errors.
+
+## Historical Findings
 
 1. **High, confirmed upstream classification defect:** pinned NUT 2.8.5 can print `RESPONSIVE`
    for a kernel-confirmed stopped driver. A three-second PING timeout is accepted by

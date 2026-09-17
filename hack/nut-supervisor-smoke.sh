@@ -50,3 +50,7 @@ timeout --signal=TERM --kill-after=5s 180s "$container_tool" run --rm --init \
 run_pid=$!
 # Bash runs traps promptly while waiting on a background job, not a foreground command.
 wait "$run_pid"
+
+bash "$root/hack/nut-driver-ready-smoke.sh" "$container_tool" "$image" &
+run_pid=$!
+wait "$run_pid"

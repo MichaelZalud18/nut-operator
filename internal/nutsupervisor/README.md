@@ -82,16 +82,31 @@ unaffected worker/driver PIDs, live debug-level reload, port-driven restart, dri
 repeated crash recovery, and termination of a STOP-frozen driver. The non-root read-only container
 has no external network or added capabilities. The owning harness bounds the run and cleans up its
 container on failure or cancellation. The image workflow runs this same test after building NUT.
+It also runs the separate real-driver readiness regression: absent and frozen drivers fail,
+unconfigured sockets cannot mask failure, a healthy neighbor succeeds in either configuration
+order, and resumed drivers retain their PID.
+
+`make docker-smoke-nut-readiness NUT_SERVER_IMG=<image>` adds real `upsdrvctl` protocol fixtures
+for missing/partial/delayed replies, retired socket identity, recovery, and the upstream PING
+classification regression. The production checker delegates configuration and protocol handling
+to the patched NUT CLI; only tests implement fake socket replies.
 
 `make docker-stress-nut-readiness NUT_SERVER_IMG=<image>` additionally compares 60 fresh driver probes
 with four concurrent `upsc` reads per sample while authenticated secondary upsmon runs. Every miss
 and the overall 180-second timeout fail the run. The fixture confirms its final port replacement
-has converged before sampling. A pass does not close F-97 or establish hardware/Kind compatibility.
+has converged before sampling. A warmed pass does not establish startup or hardware/Kind compatibility.
 
 The opt-in `NUT_READINESS_DIAGNOSTICS=1 make docker-smoke-nut-supervisor NUT_SERVER_IMG=<image>`
 control pauses only the fixture's dummy driver, demonstrates cached upsd reads, checks a bounded
-probe, records upstream classification, and verifies same-PID recovery. It is diagnostic evidence,
-not a production-readiness pass; see the [F-97 investigation](../../docs/contributing/audits/nut-readiness-investigation-2026-09-17.md).
+probe, requires patched upstream negative classification, and verifies same-PID recovery.
+See the [readiness investigation](../../docs/contributing/audits/nut-readiness-investigation-2026-09-17.md).
+
+`make docker-smoke-nut-startup NUT_SERVER_IMG=<image>` observes the first eleven minutes with
+eight authenticated local upsmon clients. It retains image identity, per-probe outcomes, process
+identity, client login/notification evidence, and cleanup results in a private artifact directory.
+`NUT_STARTUP_SECONDS` can shorten harness-development trials; only the full window provides
+eleven-minute evidence. This component observation does not run the manager or a kubelet and is
+not a substitute for the ENG-1/NS-6 Kind acceptance gate.
 
 Controller tests own the rendered command, mounts, resources, and security context. The existing
 Kind recovery and telemetry scenarios own Kubernetes integration coverage. Implementation and
