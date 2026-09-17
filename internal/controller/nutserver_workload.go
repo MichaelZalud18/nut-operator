@@ -148,6 +148,8 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 		deployment.Spec.Template.Spec.Tolerations = server.Spec.Placement.Tolerations
 		deployment.Spec.Template.Spec.Affinity = server.Spec.Placement.Affinity
 		deployment.Spec.Template.Spec.PriorityClassName = server.Spec.Placement.PriorityClassName
+		// Neither NUT nor its supervisor needs Kubernetes API credentials.
+		deployment.Spec.Template.Spec.AutomountServiceAccountToken = ptrBool(false)
 		deployment.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
 			RunAsNonRoot: ptrBool(true),
 			RunAsUser:    ptrInt64(65532),

@@ -62,7 +62,8 @@ class KindTest(unittest.TestCase):
         self.state.mkdir(mode=0o700)
         self.normal = self.root / "user-config"
         self.normal.write_text("normal-context-must-stay-unchanged")
-        self.env = dict(os.environ, KUBECONFIG=str(self.normal), KIND_CLUSTER="test")
+        self.env = dict(os.environ, KUBECONFIG=str(self.normal), KIND_CLUSTER="test",
+                        NUT_OPERATOR_E2E_STARTUP="false")
         self.calls = []
         self.nodes = set()
         self.owned_id = "a" * 64
@@ -117,6 +118,30 @@ class KindTest(unittest.TestCase):
         self.assertFalse(self.state.exists())
         self.assertFalse(self.nodes)
         self.assertTrue(any(args[0] == "go" for args, _ in self.calls))
+
+    def test_startup_profile_extends_only_the_owned_suite_budget(self):
+        self.env["NUT_OPERATOR_E2E_STARTUP"] = "true"
+        budgets = []
+
+        def record(args, env, timeout=30, capture=False, deadline=None):
+            budgets.append((args, timeout, deadline))
+            return self.fake_run(args, env, timeout, capture, deadline)
+
+        with patch.object(runner.time, "monotonic", return_value=100):
+            self.invoke(record)
+        go = next(item for item in budgets if item[0][0] == "go")
+        self.assertIn("-timeout=45m", go[0])
+        self.assertEqual(go[1:], (2730, 3100))
+        deletion = next(item for item in budgets if item[0][:2] == ["docker", "rm"])
+        self.assertEqual(deletion[1:], (90, 250))
+        self.assert_external_untouched()
+        self.assertFalse(self.nodes)
+
+    def test_invalid_startup_profile_fails_before_cluster_creation(self):
+        self.env["NUT_OPERATOR_E2E_STARTUP"] = "yes"
+        with self.assertRaisesRegex(RuntimeError, "NUT_OPERATOR_E2E_STARTUP"):
+            self.invoke()
+        self.assertFalse(any(args[:2] == ["kind", "create"] for args, _ in self.calls))
 
     def test_failures_and_cancellation_clean_partial_resources(self):
         for phase in ("kind create cluster", "make --no-print-directory setup-test-e2e-cni", "go test -tags=e2e"):

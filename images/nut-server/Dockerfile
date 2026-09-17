@@ -113,6 +113,18 @@ RUN ./configure \
     && make DESTDIR=/out install \
     && rm -rf /out/usr/share/man /out/usr/share/doc
 
+# The operand needs only server/control, read-only queries, and the upsmon client
+# used by its isolated startup/stress checks. Configuration is rendered by the
+# operator; discovery, mutation, logging, and scheduling CLIs are not supported.
+# Prune before copying so unused nutconf does not require a C++ runtime layer.
+RUN for tool in /out/usr/bin/* /out/usr/sbin/*; do \
+      case "$tool" in \
+        /out/usr/bin/upsc|/out/usr/sbin/upsd|/out/usr/sbin/upsdrvctl|/out/usr/sbin/upsmon) ;; \
+        *) rm -f "$tool" ;; \
+      esac; \
+    done \
+    && rm -f /out/usr/lib/libnutclient* /out/usr/lib/libnutscan*
+
 FROM --platform=$BUILDPLATFORM golang:1.26@sha256:26326682769ca980f8f1d3b1f52be2dd1c1d25270e3de3fe0c97d6bb65df3556 AS supervisor-builder
 
 ARG TARGETOS

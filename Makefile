@@ -214,6 +214,10 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated 
 	# before the suite reached its first assertion.
 	KIND="$(KIND)" KIND_CLUSTER="$(KIND_CLUSTER)" KIND_CONFIG="$(KIND_CONFIG)" python3 -B hack/test-kind.py
 
+.PHONY: test-e2e-nut-startup
+test-e2e-nut-startup: ## Run Kind acceptance including the eleven-minute NUT startup observation.
+	NUT_OPERATOR_E2E_STARTUP=true $(MAKE) test-e2e
+
 .PHONY: test-kind-harness
 test-kind-harness: ## Test Kind ownership and cancellation without creating a cluster.
 	python3 -B -m unittest discover -s hack -p test_kind.py

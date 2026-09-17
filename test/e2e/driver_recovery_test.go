@@ -20,46 +20,149 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/MichaelZalud18/nut-operator/test/utils"
 )
 
-// The first spec in this suite that breaks something on purpose (F-110).
-//
-// Every other spec asserts convergence on a healthy cluster; the closest any came to a failure was
-// checking that the manager's restart count did *not* change. For an operator whose entire purpose
-// is acting during failure, the untested half was the half that matters, and it showed: F-97 and
-// F-105 are both defects in what happens after something dies, and both were found by running the
-// thing for hours rather than by any gate.
-//
-// What is asserted here is a bound, not just recovery. The driver dying is survivable; the driver
-// staying dead longer than upsmon's DEADTIME is not, because every agent then concludes "too few
-// UPS(es) are healthy" and runs SHUTDOWNCMD. That is a timing relationship between two components
-// that never appear in the same test: a watchdog that recovers eventually passes a liveness check
-// and still shuts down the cluster.
-//
-// This is not F-105, which the 2026-08-24 correction in operator-maturity-benchmarks.md separated
-// out. F-105 is an orphaned secondary reaching HOSTSYNC on low battery with the driver perfectly
-// healthy, and no recovery budget touches it. The path bounded here is the other one -- silence long
-// enough to expire DEADTIME -- which is the one a driver outage can actually cause.
-//
-// driverRecoveryBudget is deliberately below the smallest DEADTIME the operator renders (45s
-// default, settable per agent). Detection is one to two watchdog intervals, the confirmation adds
-// its delay, and `upsdrvctl start` takes a second or two. If this ever needs raising to pass, the
-// thing to fix is the watchdog, not the number.
+// ENG-1 measures supervisor recovery from before fault injection, including kubectl latency.
 const driverRecoveryBudget = 30 * time.Second
 
-// driverRecoverySpecs is called from inside the Manager container rather than registered at the top
-// level, because it needs the operator installed and only that container owns installing
-// it. Registered standalone, these specs ran against whatever the Manager and BYO-cert
-// containers had last left behind, which was sometimes no CRDs at all.
+type recoveryDriver struct {
+	name, pid, startTicks string
+}
+
+// The fixture has exactly one dummy driver. Verify the PID names a live dummy-ups
+// process and preserve Linux start time so a stale/reused PID cannot identify it.
+const recoveryDriverIdentityScript = `set -eu
+set -- /run/nut/dummy-ups-*.pid
+[ "$#" -eq 1 ] && [ -f "$1" ]
+pidfile=$1
+name=${pidfile#/run/nut/dummy-ups-}
+name=${name%.pid}
+pid=$(cat "$pidfile")
+case "$pid" in ''|*[!0-9]*) exit 1;; esac
+[ "$pid" -gt 1 ]
+[ "$(cat "/proc/$pid/comm")" = dummy-ups ]
+stat=$(cat "/proc/$pid/stat")
+fields=${stat##*) }
+state=${fields%% *}
+[ "$state" != Z ] && [ "$state" != X ]
+ticks=$(printf '%s\n' "$fields" | awk '{print $20}')
+`
+
+const recoveryDriverSampleScript = recoveryDriverIdentityScript + `
+status=$(NUT_QUIET_INIT_BANNER=true timeout -k 1 5 upsdrvctl -- status "$name")
+[ "$(cat "$pidfile")" = "$pid" ]
+stat=$(cat "/proc/$pid/stat")
+fields=${stat##*) }
+[ "${fields%% *}" != Z ] && [ "${fields%% *}" != X ]
+[ "$(printf '%s\n' "$fields" | awk '{print $20}')" = "$ticks" ]
+printf 'IDENTITY\t%s\t%s\t%s\n%s\n' "$name" "$pid" "$ticks" "$status"
+`
+
+// Positional arguments contain the baseline identity, never an interpolated shell command.
+const recoveryDriverKillScript = `expected_pid=$1
+expected_ticks=$2
+` + recoveryDriverIdentityScript + `
+[ "$pid" = "$expected_pid" ] && [ "$ticks" = "$expected_ticks" ]
+kill -KILL "$pid"
+`
+
+func parseRecoveryDriver(output string) (recoveryDriver, error) {
+	var driver recoveryDriver
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) == 4 && fields[0] == "IDENTITY" {
+			driver = recoveryDriver{fields[1], fields[2], fields[3]}
+		}
+	}
+	pid, pidErr := strconv.ParseUint(driver.pid, 10, 32)
+	ticks, ticksErr := strconv.ParseUint(driver.startTicks, 10, 64)
+	if driver.name == "" || pidErr != nil || pid <= 1 || ticksErr != nil || ticks == 0 {
+		return recoveryDriver{}, fmt.Errorf("missing or invalid live driver identity: %q", output)
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) == 7 && strings.TrimSpace(fields[0]) == driver.name &&
+			strings.TrimSpace(fields[1]) == "dummy-ups" &&
+			strings.TrimSpace(fields[4]) == "RESPONSIVE" &&
+			strings.TrimSpace(fields[5]) == driver.pid {
+			return driver, nil
+		}
+	}
+	return recoveryDriver{}, fmt.Errorf("no responsive socket matching driver %+v: %q", driver, output)
+}
+
+func recoveryPodUnchanged(before, after corev1.Pod) error {
+	if before.UID == "" || before.UID != after.UID || after.DeletionTimestamp != nil {
+		return fmt.Errorf("recovery replaced or deleted the original pod: %s -> %s", before.UID, after.UID)
+	}
+	for _, pod := range []corev1.Pod{before, after} {
+		for _, group := range [][]corev1.ContainerStatus{pod.Status.ContainerStatuses, pod.Status.InitContainerStatuses} {
+			for _, status := range group {
+				if status.ContainerID == "" {
+					return fmt.Errorf("container %s has no runtime identity", status.Name)
+				}
+				if (status.Name == "upsd" || status.Name == "driver-supervisor") && status.State.Running == nil {
+					return fmt.Errorf("container %s is not Running", status.Name)
+				}
+			}
+		}
+	}
+	type identity struct {
+		ContainerID string
+		Restarts    int32
+	}
+	statuses := func(p corev1.Pod) map[string]identity {
+		result := make(map[string]identity)
+		for _, s := range p.Status.ContainerStatuses {
+			result["container/"+s.Name] = identity{s.ContainerID, s.RestartCount}
+		}
+		for _, s := range p.Status.InitContainerStatuses {
+			result["init/"+s.Name] = identity{s.ContainerID, s.RestartCount}
+		}
+		return result
+	}
+	old, current := statuses(before), statuses(after)
+	if len(old) == 0 || !reflect.DeepEqual(old, current) {
+		return fmt.Errorf("container identities/restart counts changed: before=%v after=%v", old, current)
+	}
+	if _, ok := old["container/upsd"]; !ok {
+		return fmt.Errorf("baseline has no upsd status")
+	}
+	if _, normal := old["container/driver-supervisor"]; !normal {
+		if _, init := old["init/driver-supervisor"]; !init {
+			return fmt.Errorf("baseline has no driver-supervisor status")
+		}
+	}
+	return nil
+}
+
+func recoveryDriverReplaced(original, current recoveryDriver) bool {
+	return current.name == original.name && current.pid != original.pid
+}
+
+func recoveryKubectl(ctx context.Context, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	cmd.WaitDelay = 100 * time.Millisecond
+	return utils.Run(cmd)
+}
+
+// Registered by the Manager suite, which owns operator installation.
 func driverRecoverySpecs() {
 	Describe("Driver recovery under failure", Ordered, func() {
 		const (
@@ -67,90 +170,78 @@ func driverRecoverySpecs() {
 			serverName = "recovery-e2e-nutserver"
 			upsName    = "recovery-e2e-ups"
 		)
-
 		var serverPod string
-		podSelector := "power.zalud.io/nutserver=" + serverName
-
-		// driverState returns the `upsdrvctl status` row for the device, which carries both whether a
-		// process is running and whether it answers. Read as one string because the two have to agree:
-		// a stale PID file leaves PF_PID populated while RUNNING and S_PID report N/A, which is exactly
-		// how F-97 was misread in the first place.
-		driverState := func() (string, error) {
-			return nutDriverState(namespace, serverPod)
-		}
-
 		BeforeAll(func() {
 			applyDummyUPSFixture(namespace, serverName, upsName, "Driver Recovery E2E Dummy UPS")
-			serverPod = waitForNUTServerPodReady(namespace, podSelector)
+			serverPod = waitForNUTServerPodReady(namespace, "power.zalud.io/nutserver="+serverName)
 		})
+		AfterAll(func() { teardownDummyUPSFixture(namespace, serverName, upsName) })
 
-		AfterAll(func() {
-			teardownDummyUPSFixture(namespace, serverName, upsName)
-		})
-
-		It("brings a killed driver back well inside DEADTIME", func() {
-			By("confirming the driver answers before anything is broken")
-			Eventually(func(g Gomega) {
-				state, err := driverState()
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(state).To(ContainSubstring("RESPONSIVE"))
-				g.Expect(state).NotTo(ContainSubstring("NOT_RESPONSIVE"))
-			}, 3*time.Minute, 5*time.Second).Should(Succeed(),
-				"the driver never came up, so killing it would prove nothing")
-
-			By("killing the driver through its own PID file")
-			// Through the PID file rather than by name: it is what upsdrvctl itself reads, so this
-			// reproduces the state a real exit leaves behind -- a dead process and a stale file -- and
-			// not merely an absent process.
-			//
-			// Globbed rather than spelled out, because the file is named for the section in ups.conf and
-			// not for the UPSDevice. There is one device in this fixture, so the glob is unambiguous, and
-			// a wrong guess at the name would kill nothing and pass the spec for the wrong reason.
-			_, err := utils.Run(exec.Command("kubectl", "-n", namespace, "exec", serverPod, "-c", "upsd",
-				"--", "sh", "-c", "set -e; pid=$(cat /run/nut/dummy-ups-*.pid); kill -9 \"$pid\""))
-			Expect(err).NotTo(HaveOccurred(), "Failed to kill the driver")
-
-			// The clock starts here and not after the check below. What upsmon experiences is silence
-			// from the moment the driver dies, so any window measured from later than this understates
-			// the outage by however long the confirmation took.
-			killedAt := time.Now()
-
-			By("confirming it is actually gone, so the recovery below is a recovery")
-			Eventually(func(g Gomega) {
-				state, stateErr := driverState()
-				g.Expect(stateErr).NotTo(HaveOccurred())
-				g.Expect(state).To(ContainSubstring("NOT_RESPONSIVE"))
-			}, 20*time.Second, time.Second).Should(Succeed(),
-				"the driver still answered after being killed, so this spec is not testing what it claims")
-
-			By(fmt.Sprintf("confirming the watchdog restores it within %s", driverRecoveryBudget))
-			Eventually(func(g Gomega) {
-				state, stateErr := driverState()
-				g.Expect(stateErr).NotTo(HaveOccurred())
-				g.Expect(state).To(ContainSubstring("RESPONSIVE"))
-				g.Expect(state).NotTo(ContainSubstring("NOT_RESPONSIVE"))
-			}, driverRecoveryBudget, time.Second).Should(Succeed(),
-				"the driver did not come back inside the budget. Every upsmon is accumulating silence "+
-					"toward its DEADTIME for this whole window, and on expiry each one runs SHUTDOWNCMD "+
-					"-- so a recovery slower than DEADTIME turns one driver exit into a cluster-wide "+
-					"shutdown signal (F-97)")
-
-			recovered := time.Since(killedAt)
-			AddReportEntry("driver recovery", recovered.String())
-			Expect(recovered).To(BeNumerically("<", driverRecoveryBudget))
-		})
-
-		It("keeps the pod itself running rather than restarting it", func() {
-			// The recovery has to happen inside the pod. Restarting the container would drop every
-			// upsmon session and NUT's login accounting with it, which is the damage F-15 and F-16
-			// exist to prevent -- a "recovery" that costs every client its connection is the outage.
-			out, err := utils.Run(exec.Command("kubectl", "-n", namespace, "get", "pod", serverPod,
-				"-o", "jsonpath={.status.containerStatuses[*].restartCount}"))
-			Expect(err).NotTo(HaveOccurred())
-			for _, count := range strings.Fields(out) {
-				Expect(count).To(Equal("0"),
-					"a container restarted during driver recovery, which drops every upsmon session")
+		It("replaces a killed driver within 30 seconds without restarting the pod or sidecar", func(ctx SpecContext) {
+			sample := func(ctx context.Context) (recoveryDriver, error) {
+				out, err := recoveryKubectl(ctx, "-n", namespace, "exec", serverPod, "-c", "upsd",
+					"--", "sh", "-c", recoveryDriverSampleScript)
+				if err != nil {
+					return recoveryDriver{}, err
+				}
+				return parseRecoveryDriver(out)
 			}
+			pod := func(ctx context.Context) (corev1.Pod, error) {
+				var p corev1.Pod
+				out, err := recoveryKubectl(ctx, "-n", namespace, "get", "pod", serverPod, "-o", "json")
+				if err != nil {
+					return p, err
+				}
+				err = json.Unmarshal([]byte(out), &p)
+				return p, err
+			}
+
+			By("recording a responsive driver process and the pod/container baseline")
+			var original recoveryDriver
+			Eventually(func(g Gomega) {
+				var err error
+				original, err = sample(ctx)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, 3*time.Minute, time.Second).Should(Succeed())
+			before, err := pod(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(recoveryPodUnchanged(before, before)).To(Succeed())
+			Expect(before.Spec.ShareProcessNamespace).NotTo(BeNil())
+			Expect(*before.Spec.ShareProcessNamespace).To(BeTrue())
+
+			By("killing only the verified original process and timing the whole recovery")
+			started := time.Now()
+			recoveryCtx, cancel := context.WithDeadline(ctx, started.Add(driverRecoveryBudget))
+			defer cancel()
+			_, err = recoveryKubectl(recoveryCtx, "-n", namespace, "exec", serverPod, "-c", "upsd",
+				"--", "sh", "-c", recoveryDriverKillScript, "driver-recovery", original.pid, original.startTicks)
+			Expect(err).NotTo(HaveOccurred(), "original driver identity changed or fault injection failed")
+
+			var replacement recoveryDriver
+			var lastErr error
+			for recoveryCtx.Err() == nil {
+				replacement, lastErr = sample(recoveryCtx)
+				if lastErr == nil && recoveryDriverReplaced(original, replacement) {
+					after, getErr := pod(recoveryCtx)
+					lastErr = getErr
+					if getErr == nil {
+						Expect(recoveryPodUnchanged(before, after)).To(Succeed())
+						break
+					}
+				} else if lastErr == nil {
+					lastErr = fmt.Errorf("still observing original driver or another device: %+v", replacement)
+				}
+				select {
+				case <-recoveryCtx.Done():
+				case <-time.After(time.Second):
+				}
+			}
+			Expect(recoveryCtx.Err()).NotTo(HaveOccurred(), "recovery did not complete in one budget: %v", lastErr)
+			Expect(lastErr).NotTo(HaveOccurred())
+			elapsed := time.Since(started)
+			Expect(elapsed).To(BeNumerically("<", driverRecoveryBudget))
+			AddReportEntry("driver recovery", fmt.Sprintf("old=%+v new=%+v podUID=%s elapsed=%s",
+				original, replacement, before.UID, elapsed))
 		})
 	})
 }

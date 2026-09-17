@@ -53,6 +53,13 @@ publish that directory: it contains credentials. Cancellation cleanup is bounded
 guaranteed after runner loss or SIGKILL. `make test-kind-harness` exercises ownership, failure,
 and cancellation paths without Docker, Kubernetes, or VMs. Python 3 is required by the runner.
 
+`make test-e2e-nut-startup` adds the NS-6 eleven-minute startup observation to that same owned
+Kind suite. It extends the suite timeout to 45 minutes (50 minutes including cluster setup),
+while preserving the independent cleanup deadline. The ordinary suite keeps its existing budget.
+The E2E Tests workflow also exposes this option through manual dispatch; it is not added to every
+pull request or image-promotion run. Keep the full window for acceptance; component Docker startup
+observations do not substitute for manager/kubelet evidence.
+
 `make test-kind-lifecycle` rehearses cancellation during partial startup and after API ownership
 is established, using the same owned runner and host preflight. It checks observed container
 cleanup and unchanged external kubeconfigs; failures retain private evidence for inspection.

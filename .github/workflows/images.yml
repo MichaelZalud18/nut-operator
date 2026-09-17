@@ -245,6 +245,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Verify packaged NUT server executables and startup
+        timeout-minutes: 3
+        run: bash hack/smoke-image.sh docker nut-server nut-server:tls-smoke
+
       - name: Exercise NUT supervisor lifecycle and reloads
         timeout-minutes: 5
         run: bash hack/nut-supervisor-smoke.sh docker nut-server:tls-smoke

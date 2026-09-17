@@ -22,17 +22,43 @@ case "$kind" in
     # the binaries here is the half of the guard that can see the image.
     ALLOWLISTED_DRIVERS="dummy-ups snmp-ups netxml-ups apcupsd-ups"
 
-    "$container_tool" run --rm --entrypoint /bin/sh "$image" -ec '
-      command -v upsd
-      command -v upsdrvctl
-      command -v upsc
-      command -v nut-driver-ready
-      upsd -V >/dev/null
-      upsc -V >/dev/null
+    "$container_tool" run --rm --network none --read-only --cap-drop ALL \
+      --security-opt no-new-privileges --entrypoint /bin/sh "$image" -ec '
+      test "$(id -u)" = 65532
+      for tool in upsd upsdrvctl upsc upsmon; do
+        path=$(command -v "$tool")
+        "$path" -V >/dev/null
+        ldd "$path" >/dev/null
+      done
+      for tool in nut-driver-ready nut-driver-supervisor; do
+        "$tool" --version >/dev/null
+      done
+      for tool in nutconf nut-scanner upslog upssched upssched-cmd upscmd upsrw; do
+        if command -v "$tool" >/dev/null 2>&1; then
+          echo "nut-server ships unsupported auxiliary tool: $tool" >&2
+          exit 1
+        fi
+      done
+      for library in /usr/lib/libnutclient* /usr/lib/libnutscan*; do
+        test ! -e "$library"
+      done
+      ldd /usr/sbin/upsd | grep -q libcrypto
+      if ldd /usr/sbin/upsd | grep -q libnss3; then
+        echo "nut-server has unexpected NSS linkage" >&2
+        exit 1
+      fi
       for driver in '"$ALLOWLISTED_DRIVERS"'; do
         if [ ! -x "/usr/lib/nut/$driver" ]; then
           echo "admission allowlists $driver but the image does not contain it (F-50)" >&2
           exit 1
+        fi
+        "/usr/lib/nut/$driver" -V >/dev/null
+      done
+      # Check every shipped driver, including non-admitted build artifacts, for
+      # unresolved runtime libraries without contacting hardware or starting it.
+      for driver in /usr/lib/nut/*; do
+        if [ -f "$driver" ] && [ -x "$driver" ]; then
+          ldd "$driver" >/dev/null
         fi
       done
     '

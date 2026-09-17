@@ -155,11 +155,15 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_*.go`, and the
   The binary, direct sidecar invocation, upstream reload decisions, owned process groups,
   rollback/cancellation regressions, image packaging, and shell removal are implemented;
   [implementation/local validation](tasks-completed.md#nut-server--upsd) records the evidence.
+  **Acceptance hardening (2026-09-17):** the recovery spec now proves old/new process identity
+  within one 30-second budget and checks pod/container continuity, instead of requiring a
+  transient unresponsive sample. The operand explicitly disables automatic Kubernetes API-token
+  mounting; creation, nil/true drift repair, and envtest rendering are covered.
   **Remaining; Testable now; Conditional:** run the existing Kind driver-recovery and real
   Online/OnBattery/LowBattery scenarios with the changed manager and NUT image. Verify the stable
   sidecar/shared PID namespace, unchanged privilege boundary, and recovery within DEADTIME.
   A matching successful CI run can satisfy this gate; no physical UPS is required.
-  **Local blocker (2026-09-15):** the isolated three-node setup stopped at the existing inotify
+  **Local blocker (rechecked 2026-09-17):** the isolated three-node setup stopped at the existing inotify
   preflight (128 available; 512 required), before creating a cluster. Preserve that guardrail;
   use a suitably provisioned runner. Local image/envtest passes are not Kind evidence.
   `NS-6` below owns the startup-stability verification within this acceptance gate;
@@ -176,6 +180,9 @@ regressions, is recorded in [completed tasks](tasks-completed.md#nut-server--ups
   first readiness at three seconds, no later readiness failures, and no driver replacements/exits.
   `make docker-smoke-nut-startup` retains scoped evidence and cleanup results. This does not run
   a manager or kubelet; the remaining current-manager/Kind acceptance is below.
+  **Kind harness:** `make test-e2e-nut-startup` and the manual E2E Tests workflow opt into the
+  full-window rendered-workload observation. Ordinary image-promotion runs explicitly skip NS-6;
+  a green default run alone does not close this task. Retain a successful enabled run before closure.
   Observe the actual current manager/NUT images from driver launch through a bounded window
   covering the historical eleven-minute startup period, with representative monitor startup
   and reconnect activity. Record driver exits/replacements, readiness changes, probe errors,
@@ -187,13 +194,9 @@ regressions, is recorded in [completed tasks](tasks-completed.md#nut-server--ups
   merely to close ENG-1. Existing recovery and telemetry scenarios remain required.
   [Historical evidence and hypotheses](contributing/audits/nut-readiness-investigation-2026-09-17.md).
 
-- [ ] `NS-10` [Low] reconcile auxiliary NUT tools shipped in the operand with their runtime
-  dependencies. The native image's `/usr/bin/nutconf --help` fails because `libstdc++.so.6` and
-  `libgcc_s.so.1` are absent. This unused utility is not part of the readiness or supervisor path.
-  Decide which auxiliary tools the image intentionally supports: remove unsupported ones or
-  supply their required runtime libraries, then add an image-level executable/dependency check.
-  **Testable now; Conditional:** run against the assembled non-root image; preserve the supported
-  driver allowlist, OpenSSL backend, and minimal runtime boundary.
+Completed runtime-tool packaging (`NS-10`) is recorded in
+[completed tasks](tasks-completed.md#nut-server--upsd); the supported tool boundary is in
+[the image guide](../images/README.md#nut-server-runtime-tools).
 
 ---
 

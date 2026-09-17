@@ -397,6 +397,19 @@ Original entry (historical, not an additional open task):
 
 ## NUT Server / upsd
 
+- [x] `NS-10` [Low] define and verify the operand's runtime-tool boundary (2026-09-17).
+  Removed unsupported auxiliary CLIs, including broken `nutconf`, and unused client/scanner
+  libraries from the runtime image instead of adding an unused C++ runtime. Retained server,
+  driver control, query, authenticated-monitor, and operator helper binaries; driver allowlist,
+  OpenSSL, and runtime privileges are unchanged. The image workflow now checks executable/link
+  dependencies, excluded tools, and startup as non-root with read-only root and no capabilities.
+  **Validated:** old-image packaging regression failed; rebuilt native ARM64 image
+  `sha256:09f76a2e8c15957e5dabd7fe633383c25bb943a01847121fe152a21652091e05` passed packaging,
+  supervisor lifecycle/reload, real-driver and protocol readiness, TLS/certificate rotation,
+  and a 40-second eight-client/reconnect smoke with retained artifacts and confirmed cleanup.
+  A negative shell regression also proves NSS linkage is rejected rather than ignored by `set -e`.
+  This short smoke is not NS-6's eleven-minute Kind qualification.
+
 - [x] `NS-1` [High] bounded, reply-backed NUT readiness (2026-09-17).
   Patched upstream PING timeout classification and complete-line framing; retained upstream
   configuration parsing and driver communication. Added a four-second parallel CLI checker with

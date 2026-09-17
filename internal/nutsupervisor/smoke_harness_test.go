@@ -7,10 +7,54 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestImageSmokeRejectsNSSLinkage(t *testing.T) {
+	source, err := os.ReadFile("../../hack/smoke-image.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Run the actual linkage checks with a successful command after them, as in
+	// the image smoke: a negated pipeline alone does not trigger shell errexit.
+	_, checks, found := strings.Cut(string(source), "      ldd /usr/sbin/upsd | grep -q libcrypto")
+	if !found {
+		t.Fatal("missing OpenSSL linkage check")
+	}
+	checks, _, found = strings.Cut(checks, "      for driver in ")
+	if !found {
+		t.Fatal("missing driver checks after linkage checks")
+	}
+	checks = "ldd /usr/sbin/upsd | grep -q libcrypto" + checks + "\n:"
+	for _, nss := range []bool{false, true} {
+		name := "openssl-only"
+		libraries := "libcrypto.so.3\n"
+		if nss {
+			name = "unexpected-nss"
+			libraries += "libnss3.so\n"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "ldd"), []byte("#!/bin/sh\nprintf '%s' '"+libraries+"'\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "sh", "-ec", checks)
+			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			output, err := cmd.CombinedOutput()
+			if ctx.Err() != nil || (err != nil) != nss {
+				t.Fatalf("NSS=%t: unexpected linkage check result: %v, %s", nss, err, output)
+			}
+			if nss && !strings.Contains(string(output), "unexpected NSS linkage") {
+				t.Fatalf("missing NSS failure diagnostic: %s", output)
+			}
+		})
+	}
+}
 
 func TestSmokeHarnessCancellationCleansOwnedContainer(t *testing.T) {
 	dir := t.TempDir()

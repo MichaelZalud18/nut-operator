@@ -219,6 +219,7 @@ var _ = Describe("Manager", Ordered, func() {
 	driverSoakSpecs()
 	podRestartSpecs()
 	logicalShutdownFlowSpecs()
+	nutStartupSpecs()
 })
 
 func currentControllerPodIdentity() (string, string, error) {

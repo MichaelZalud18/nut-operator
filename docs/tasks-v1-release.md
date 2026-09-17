@@ -110,6 +110,10 @@ evidence, not current release sign-off.
   and hash-compatibility fixtures. The targeted detect-secrets run still flags existing Secret
   object names, diagnostic text, and public hash snapshots outside the TEST changes. Review each
   reported location before adding narrow exceptions; the full repository scan is not signed off.
+  The [2026-09-17 hygiene run](https://github.com/MichaelZalud18/nut-operator/actions/runs/35284615638)
+  also rejects private-range literals in the Hadron/Talos fixtures and audit. Review these with
+  the VM workstream: distinguish required synthetic network constants from private deployment
+  data, and keep any justified exceptions narrow. Do not disable the public-data scan.
 - ASH grype low finding `GO-2026-5932` is tracked and triaged: `golang.org/x/crypto v0.56.0`
   (bumped 2026-09-04; see below) still has no fix version from `go list -m -u`, and `govulncheck`
   confirms it is required but not imported at all -- the OpenPGP package in the current dependency

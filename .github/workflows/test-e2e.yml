@@ -1,6 +1,7 @@
 name: E2E Tests
 
-# Two entry points, deliberately different in what they test (F-77).
+# PR and image-promotion entry points test different artifacts (F-77).
+# Manual dispatch adds optional slow startup qualification against checkout-built images.
 #
 # pull_request runs the suite against images it builds from the checkout, because a PR publishes
 # nothing there is anything to pull.
@@ -11,6 +12,12 @@ name: E2E Tests
 # workflow cannot gate it, and two independent e2e runs on one commit is the cost without the
 # benefit.
 on:
+  workflow_dispatch:
+    inputs:
+      nut-startup:
+        description: Include the eleven-minute NUT startup acceptance observation.
+        type: boolean
+        default: true
   pull_request:
     paths:
       - "**"
@@ -54,7 +61,7 @@ jobs:
       packages: read
     name: E2E on Kind
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.nut-startup && 55 || 40 }}
     steps:
       - name: Clone the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -121,6 +128,7 @@ jobs:
       # pull. It builds from the checkout on both paths.
       - name: Running Test e2e
         env:
+          NUT_OPERATOR_E2E_STARTUP: ${{ github.event_name == 'workflow_dispatch' && inputs.nut-startup && 'true' || 'false' }}
           E2E_MANAGER_IMAGE: ${{ inputs.manager-image }}
           E2E_NUT_SERVER_IMAGE: ${{ inputs.nut-server-image }}
           E2E_UPSMON_AGENT_IMAGE: ${{ inputs.upsmon-agent-image }}

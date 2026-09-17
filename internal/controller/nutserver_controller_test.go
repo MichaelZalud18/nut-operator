@@ -250,6 +250,8 @@ var _ = Describe("NUTServer Controller", func() {
 			// success, so this flag is load-bearing rather than incidental.
 			Expect(deployment.Spec.Template.Spec.ShareProcessNamespace).NotTo(BeNil())
 			Expect(*deployment.Spec.Template.Spec.ShareProcessNamespace).To(BeTrue())
+			Expect(deployment.Spec.Template.Spec.AutomountServiceAccountToken).NotTo(BeNil())
+			Expect(*deployment.Spec.Template.Spec.AutomountServiceAccountToken).To(BeFalse())
 
 			pdb := &policyv1.PodDisruptionBudget{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "test-resource-nut-server"}, pdb)).To(Succeed())

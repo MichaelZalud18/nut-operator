@@ -42,12 +42,17 @@ func TestKindSpecRegistration(t *testing.T) {
 		fmt.Printf("%s%s\n", marker, data)
 		return
 	}
-	t.Run("default", func(t *testing.T) {
-		assertKindSpecInventory(t, "false", "72858e7e90a4da80ccf775760dbd29712b6012d16e381fb23f5204533f012f0f")
-	})
-	t.Run("soak", func(t *testing.T) {
-		assertKindSpecInventory(t, "true", "1c10d539bf9fd0f09234de575efc6ef5b58893c18abc2d629e920d5b3ceb6845")
-	})
+	for _, startup := range []string{"false", "true"} {
+		t.Run("startup="+startup, func(t *testing.T) {
+			t.Setenv("NUT_OPERATOR_E2E_STARTUP", startup)
+			t.Run("default", func(t *testing.T) {
+				assertKindSpecInventory(t, "false", "fd61aa00f225597add30504e2f0c31097d04d7c217f8123d8090e900cdcce2e5")
+			})
+			t.Run("soak", func(t *testing.T) {
+				assertKindSpecInventory(t, "true", "b27ef03d5ec5709775595d166cb353d48fa9409411b3dcff3da6b87ebd2d8e2c")
+			})
+		})
+	}
 }
 
 func assertKindSpecInventory(t *testing.T, soak, want string) {
@@ -67,14 +72,17 @@ func assertKindSpecInventory(t *testing.T, soak, want string) {
 	}
 	for _, line := range strings.Split(string(output), "\n") {
 		if inventory, found := strings.CutPrefix(line, "SPEC-INVENTORY:"); found {
-			// Preserve the original 22/24-spec inventory byte for byte while explicitly
-			// allowing exactly one TEST-2 addition inside the shared Manager lifecycle.
+			// NS-6 stays registered when disabled so runtime reports an explicit skip.
+			// ENG-1 intentionally combines the two recovery assertions into one
+			// timed spec, leaving 21/23 baseline specs. TEST-2 and NS-6 add one each.
 			var specs []json.RawMessage
 			if err := json.Unmarshal([]byte(inventory), &specs); err != nil {
 				t.Fatal(err)
 			}
 			var original []json.RawMessage
 			additions := 0
+			startupAdditions := 0
+			recoveryAdditions := 0
 			for _, raw := range specs {
 				var spec struct {
 					Text            string
@@ -87,19 +95,30 @@ func assertKindSpecInventory(t *testing.T, soak, want string) {
 				}
 				if spec.Text == "Manager executes a logical ShutdownFlow from real dummy-ups telemetry through ordered drain and simulated actuation" {
 					additions++
-					if !spec.Ordered || spec.Serial || spec.State != "passed" || len(spec.Labels) != 1 || spec.Labels[0] != "TEST-2" {
+					if !validKindRegistration(spec.Ordered, spec.Serial, spec.State, spec.Labels, "TEST-2") {
 						t.Fatalf("TEST-2 registration changed: %s", raw)
 					}
+				} else if spec.Text == "Manager "+startupSpecName {
+					startupAdditions++
+					if !validKindRegistration(spec.Ordered, spec.Serial, spec.State, spec.Labels, "NS-6") {
+						t.Fatalf("NS-6 registration changed: %s", raw)
+					}
+				} else if strings.HasSuffix(spec.Text, "replaces a killed driver within 30 seconds without restarting the pod or sidecar") {
+					recoveryAdditions++
+					if !validKindRegistration(spec.Ordered, spec.Serial, spec.State, spec.Labels, "") {
+						t.Fatalf("ENG-1 recovery registration changed: %s", raw)
+					}
+					original = append(original, raw)
 				} else {
 					original = append(original, raw)
 				}
 			}
-			count := 22
+			count := 21
 			if soak == "true" {
-				count = 24
+				count = 23
 			}
-			if additions != 1 || len(original) != count {
-				t.Fatalf("want original %d specs plus one TEST-2, got %d + %d", count, len(original), additions)
+			if additions != 1 || startupAdditions != 1 || recoveryAdditions != 1 || len(original) != count {
+				t.Fatalf("want normalized original %d, TEST-2=1, NS-6=1, ENG-1=1; got %d, %d, %d, %d", count, len(original), additions, startupAdditions, recoveryAdditions)
 			}
 			baseline, err := json.Marshal(original)
 			if err != nil {
@@ -112,4 +131,14 @@ func assertKindSpecInventory(t *testing.T, soak, want string) {
 		}
 	}
 	t.Fatalf("preview returned no registration inventory:\n%s", output)
+}
+
+func validKindRegistration(ordered, serial bool, state string, labels []string, label string) bool {
+	if !ordered || serial || state != "passed" {
+		return false
+	}
+	if label == "" {
+		return len(labels) == 0
+	}
+	return len(labels) == 1 && labels[0] == label
 }

@@ -82,6 +82,11 @@ def node_ids(env, deadline=None):
 
 
 def suite(env):
+    startup = env.get("NUT_OPERATOR_E2E_STARTUP", "false")
+    if startup not in ("true", "false", ""):
+        raise RuntimeError("NUT_OPERATOR_E2E_STARTUP must be true or false")
+    # The optional eleven-minute observation needs extra time, not weaker cleanup.
+    test_minutes = 45 if startup == "true" else 30
     # Preserve the host guardrail before creating any cluster or changing tracked files.
     run(["make", "--no-print-directory", "check-test-e2e-host"], env)
     prefix = env.get("KIND_CLUSTER", "nut-operator-test-e2e")
@@ -97,7 +102,7 @@ def suite(env):
     # tempfile suffixes may contain underscores; Kind names may not.
     run_env["KIND_CLUSTER"] = run_env["KIND_CLUSTER"].replace("_", "-")
     kind = run_env.get("KIND", "kind")
-    deadline = time.monotonic() + 35 * 60
+    deadline = time.monotonic() + (test_minutes + 5) * 60
     try:
         clusters = run([kind, "get", "clusters"], run_env, capture=True, deadline=deadline).splitlines()
         if run_env["KIND_CLUSTER"] in clusters:
@@ -120,8 +125,8 @@ def suite(env):
         run(["make", "--no-print-directory", "setup-test-e2e-cni",
              "KIND_CLUSTER=" + run_env["KIND_CLUSTER"]], run_env, timeout=900, deadline=deadline)
         verify(run_env, deadline=deadline)
-        run(["go", "test", "-tags=e2e", "./test/e2e/", "-v", "-ginkgo.v", "-timeout=30m"],
-            run_env, timeout=1830, deadline=deadline)
+        run(["go", "test", "-tags=e2e", "./test/e2e/", "-v", "-ginkgo.v", f"-timeout={test_minutes}m"],
+            run_env, timeout=test_minutes * 60 + 30, deadline=deadline)
     finally:
         primary_error = sys.exc_info()[1]
         # A second cancellation must not interrupt bounded cleanup.
