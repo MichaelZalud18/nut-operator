@@ -524,6 +524,28 @@ Original entry (historical, not an additional open task):
   approval checks remain in force, and evidence failures stay separate from action outcomes.
   Local filesystem stalls are not covered by database deadlines; durable resume remains outside SB-1.
 
+## VM Test Coverage
+
+- [x] `VM-3` [High] shipped Linux actuator qualification, closed (2026-09-17).
+  Bare-pod milestones, the real rendered DaemonSet/RBAC (missing/expired/wrong-node signals,
+  absent approval, and the approved case's host-side shutdown-cause and process evidence), and
+  revoked approval are all live- or envtest-verified. Revoking an already-approved annotation is
+  itself rejected by the same admission gate (`ValidateUpdate` re-runs full admission on every
+  update), not a distinct runtime actuator behavior — confirmed with a new envtest case, not
+  guessed.
+  [Bare-pod evidence](contributing/audits/hadron-vm-3-actuator-2026-09-13.md);
+  [DaemonSet/RBAC and revoked-approval evidence](contributing/audits/hadron-vm-3-actuator-daemonset-2026-09-17.md).
+
+- [x] `VM-7` [Medium bring-up; High shutdown evidence] Talos qualification, closed (2026-09-17).
+  Bring-up (pinned artifacts, provisioning, reaching the maintenance API, bootstrap, kubeconfig,
+  host-side Ready, owned teardown with secret-safe logs) and the TalosShutdown actuator (negative
+  signals and revoked/missing approval leave the guest running; positive evidence distinguishes
+  guest shutdown from crash, host kill, or lost access) both have live guest evidence across
+  repeated runs, with two independent real root causes found and fixed (a maintenance-mode API gap
+  in the version probe, and Talos's own default control-plane scheduling taint).
+  [Bring-up evidence](contributing/audits/talos-vm-7-bootstrap-2026-09-17.md);
+  [Actuator evidence](contributing/audits/talos-vm-7-actuator-2026-09-17.md).
+
 ## Release Readiness
 
 - [x] `REL-5` quick-start implementation/component slice (2026-09-15). The configuration guide

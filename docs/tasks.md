@@ -312,16 +312,12 @@ own detailed prerequisites and prior milestones; the remaining work is below.
   keep scenario assertions visible and SSH/Kairos/k3s or Talos provisioning behind guest adapters.
   **Testable now; Conditional:** component failure/cancellation tests and existing live scenarios
   must retain isolation, artifacts, and shutdown-cause checks. Keep Kind separate; defer a standalone
-  library until varied scenarios justify it. This fixture boundary precedes VM-7.
+  library until varied scenarios justify it. Deliberately deferred until a third guest adapter makes
+  the overlap self-evident (`golangci-lint`'s own `dupl` check does not flag the current small
+  duplication across `test/hadron` and `test/talos`).
   [Detailed criteria](contributing/audits/vm-test-research-2026-09-15.md#vm-8).
-- [ ] `VM-7` [Medium bring-up; High shutdown evidence] qualify Talos on the existing VM harness.
-  First pin/verify artifacts, provision with supported Talos tooling, reach its API, bootstrap one
-  node, fetch kubeconfig, verify Ready from the host, and prove owned teardown with secret-safe logs.
-  Then run shipped TalosShutdown: negative signals and revoked/missing approval must leave the guest
-  running; positive evidence must distinguish guest shutdown from crash, host kill, or lost access.
-  **Testable now; Conditional:** component tests followed by real guest qualification. Preserve
-  targeting, privilege boundaries, cleanup, and VM-3 evidence standards; coordinate VM-5/VM-6.
-  [Milestones and constraints](contributing/audits/vm-test-research-2026-09-15.md#vm-7).
+
+VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-coverage).
 
 - [ ] `VM-2` [High] finish the reproducible two-guest Hadron/k3s harness. Single-guest boot,
   host-side kubeconfig access, and basic inter-guest connectivity have dated evidence; they do not
@@ -335,14 +331,6 @@ own detailed prerequisites and prior milestones; the remaining work is below.
   cannot guarantee cleanup. Six GiB combined RAM remains an estimate, not a demonstrated minimum.
   Keep Kind helpers and make test-e2e separate.
   [Evidence and full safety criteria](contributing/audits/vm-test-research-2026-09-15.md#vm-2).
-- [ ] `VM-3` [High] finish shipped Linux actuator qualification through the real rendered
-  DaemonSet/RBAC, including missing/expired/wrong-node signals and absent/revoked approval.
-  Prior bare-pod milestones are not full acceptance. Negative cases leave the guest running;
-  the approved case halts only its target with host-side shutdown-cause and process evidence.
-  **Testable now; Conditional:** negative controls must reject QEMU crashes, forced termination,
-  lost SSH, and timeout as successful shutdown. Capture evidence before bounded cleanup and reuse
-  it in VM-4; do not broaden privileges or substitute NotReady for actual guest shutdown.
-  [Milestone history and evidence contract](contributing/audits/vm-test-research-2026-09-15.md#vm-3).
 - [ ] `VM-4` [Medium] finish production outage-to-halt acceptance: live workload drain and
   guest-initiated power-off in the two-guest topology. Prove survivor availability, current
   authorization/release evidence, enforced network policy, and audit results. Measure capacity
