@@ -31,11 +31,19 @@ hypervisor-confirmed evidence, mirroring the bare-pod version's own pattern).
 
 VM-3's DaemonSet/RBAC milestone and absent-approval control are now closed.
 
+## Revoked approval
+
+Resolved via envtest, not a live guest run -- this is pure admission-webhook behavior with no
+guest-OS boundary to prove, so envtest is sufficient evidence rather than a gap. `ValidateUpdate`
+(`internal/webhook/v1alpha1/nodepoweragent_webhook.go`) re-runs the same full admission check
+against `newObj` on every update regardless of what changed, including an annotation-only patch;
+it is not scoped to spec changes. A new case in `nodepoweragent_webhook_test.go`
+("Should reject revoking an already-approved agent's annotation") confirms this directly: an update
+that only removes an already-`"true"` approval annotation from an otherwise-unchanged, approved
+PowerOff agent is itself rejected, with the same `"must be set to \"true\" for PowerOff actuation"`
+message the missing-annotation case produces. Approval is a ratchet at the admission layer, not a
+runtime actuator behavior -- confirmed, not guessed.
+
 ## Open, deliberately not attempted here
 
-- Revoked approval: whether removing an already-approved annotation is itself rejected by the same
-  admission gate (making revocation a ratchet, not a runtime actuator behavior) or takes effect
-  some other way has no live evidence yet. Guessing at it risks asserting the wrong mechanism
-  entirely rather than leaving it honestly open; see `actuator_daemonset_smoke_test.go`'s own doc
-  comment.
 - The two-guest survivor topology `VM-4` still needs -- this milestone's guest is standalone.

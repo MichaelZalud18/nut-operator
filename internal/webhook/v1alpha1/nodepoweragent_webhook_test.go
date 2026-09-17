@@ -141,6 +141,27 @@ var _ = Describe("NodePowerAgent Webhook", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		It("Should reject revoking an already-approved agent's annotation", func() {
+			// VM-3's own remaining open question (docs/tasks.md): does removing an
+			// already-approved annotation take effect, or is approval a ratchet the same
+			// admission gate refuses to move backwards? ValidateUpdate re-runs the full
+			// admission check against newObj regardless of what changed (nodepoweragent_webhook.go),
+			// so an update that only touches metadata.annotations is not exempt -- confirmed here,
+			// not guessed.
+			oldObj.Annotations = map[string]string{"power.zalud.io/approved-for-actuation": "true"}
+			oldObj.Spec = validNodePowerAgentSpec()
+			oldObj.Spec.Mode = powerv1alpha1.NodePowerAgentModeActuate
+			oldObj.Spec.Shutdown.ActuatorPolicy = powerv1alpha1.ActuatorPolicyPowerOff
+			oldObj.Spec.Shutdown.ApprovalAnnotation = "power.zalud.io/approved-for-actuation"
+
+			obj.Annotations = map[string]string{}
+			obj.Spec = oldObj.Spec
+
+			_, err := validator.ValidateUpdate(ctx, oldObj, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("must be set to \"true\" for PowerOff actuation"))
+		})
+
 		It("Should reject Talos shutdown without Talos configuration", func() {
 			obj.Annotations = map[string]string{"power.zalud.io/approved-for-actuation": "true"}
 			obj.Spec = validNodePowerAgentSpec()

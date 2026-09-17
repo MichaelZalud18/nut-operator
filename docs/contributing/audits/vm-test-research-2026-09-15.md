@@ -242,7 +242,13 @@ and RBAC, plus a PowerOff `NodePowerAgent` with no `approvalAnnotation` correctl
 admission. Full history and evidence table in
 [hadron-vm-3-actuator-daemonset-2026-09-17.md](hadron-vm-3-actuator-daemonset-2026-09-17.md)
 (`test/hadron/actuator_daemonset_smoke_test.go`, `hadron-actuator-daemonset-smoke.yml`).
-Revoked approval remains open.
+
+**Revoked approval resolved 2026-09-17** via envtest, not a live guest run -- pure admission-webhook
+behavior with no guest-OS boundary to prove. `ValidateUpdate` re-runs the full admission check
+against every update regardless of what changed, so removing an already-approved annotation is
+itself rejected: approval is a ratchet at the admission layer, not a runtime actuator behavior. See
+[hadron-vm-3-actuator-daemonset-2026-09-17.md](hadron-vm-3-actuator-daemonset-2026-09-17.md#revoked-approval)
+(`internal/webhook/v1alpha1/nodepoweragent_webhook_test.go`). `VM-3` is now fully closed.
 
 ## VM-4
 
