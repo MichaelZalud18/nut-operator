@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onsi/ginkgo/v2"
 	appsv1 "k8s.io/api/apps/v1"
 )
 
@@ -47,32 +48,49 @@ func (c *logicalFlowCleanup) removeFixtures(run func(*exec.Cmd) (string, error))
 	type target struct {
 		args     []string
 		manifest string
+		label    string
 	}
 	var targets []target
 	// Reverse creation order: flow, operands, storage, then their namespaces.
 	for i := len(c.manifests) - 1; i >= 0; i-- {
-		targets = append(targets, target{args: []string{"-f", "-"}, manifest: c.manifests[i]})
+		targets = append(targets, target{args: []string{"-f", "-"}, manifest: c.manifests[i], label: fmt.Sprintf("manifest[%d]", i)})
 	}
 	for i := len(c.namespaces) - 1; i >= 0; i-- {
-		targets = append(targets, target{args: []string{"namespace", c.namespaces[i]}})
+		targets = append(targets, target{args: []string{"namespace", c.namespaces[i]}, label: "namespace/" + c.namespaces[i]})
 	}
 	var cleanupErr error
 	for _, resource := range targets {
 		args := append([]string{"delete", "--ignore-not-found=true", "--wait=true", "--timeout=1m", "--cascade=foreground"}, resource.args...)
 		_, err := logicalFlowRunBounded(run, time.Minute, resource.manifest, args...)
-		cleanupErr = errors.Join(cleanupErr, err)
+		cleanupErr = errors.Join(cleanupErr, logicalFlowCleanupReportError("delete "+resource.label, err))
 	}
 	// Check again after all deletion attempts, including namespace contents and
 	// resources a still-running reconciler could have recreated during teardown.
 	for _, resource := range targets {
 		args := append([]string{"get", "--ignore-not-found=true", "-o", "name"}, resource.args...)
 		out, err := logicalFlowRunBounded(run, time.Minute, resource.manifest, args...)
-		cleanupErr = errors.Join(cleanupErr, err)
-		if strings.TrimSpace(out) != "" {
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("TEST-2 resources remain: %s", out))
+		cleanupErr = errors.Join(cleanupErr, logicalFlowCleanupReportError("get "+resource.label, err))
+		if err == nil && strings.TrimSpace(out) != "" {
+			cleanupErr = errors.Join(cleanupErr, logicalFlowCleanupReportError("get "+resource.label,
+				fmt.Errorf("TEST-2 resources remain: %s", out)))
 		}
 	}
 	return cleanupErr
+}
+
+func logicalFlowCleanupReportError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	err = fmt.Errorf("%s: %w", operation, err)
+	// Ginkgo hides secondary cleanup failures at -v. These delete/get commands
+	// return resource names and errors, never object bodies; do not log stdin.
+	message := err.Error()
+	if len(message) > 8192 {
+		message = message[:8192] + " [truncated]"
+	}
+	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "TEST-2 cleanup failed: %s\n", message)
+	return err
 }
 
 func logicalFlowRunBounded(run func(*exec.Cmd) (string, error), timeout time.Duration, manifest string, args ...string) (string, error) {

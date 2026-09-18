@@ -6,6 +6,7 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,10 +18,89 @@ import (
 	"testing"
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
+	"github.com/onsi/ginkgo/v2"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestLogicalFlowCleanupReportsSecondaryFailure(t *testing.T) {
+	var diagnostics bytes.Buffer
+	ginkgo.GinkgoWriter.TeeTo(&diagnostics)
+	t.Cleanup(ginkgo.GinkgoWriter.ClearTeeWriters)
+	failure := errors.New("timed out waiting for the condition on nodepoweragents/test2-agent")
+	cleanup := logicalFlowCleanupTestFixture()
+	// A real manifest contains credentials; diagnostics must identify its index,
+	// never dump stdin or successful command output.
+	cleanup.manifests[1] = logicalFlowStorage()
+	err := cleanup.run(func(cmd *exec.Cmd) (string, error) {
+		key := logicalFlowCleanupCommandKey(t, cmd)
+		if key == "delete:"+cleanup.manifests[1] {
+			return "", failure
+		}
+		if strings.HasPrefix(key, "delete:") {
+			return "successful-output-not-for-diagnostics", nil
+		}
+		return "", nil
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("lost cleanup failure: %v", err)
+	}
+	for _, want := range []string{"delete manifest[1]", failure.Error()} {
+		if !strings.Contains(diagnostics.String(), want) {
+			t.Fatalf("missing %q in diagnostics: %s", want, &diagnostics)
+		}
+	}
+	for _, forbidden := range []string{"stringData:", "postgres://", "test2-fixture", "successful-output-not-for-diagnostics"} {
+		if strings.Contains(diagnostics.String(), forbidden) {
+			t.Fatalf("diagnostics exposed %q", forbidden)
+		}
+	}
+}
+
+func TestLogicalFlowCleanupReportsSurvivingResource(t *testing.T) {
+	var diagnostics bytes.Buffer
+	ginkgo.GinkgoWriter.TeeTo(&diagnostics)
+	t.Cleanup(ginkgo.GinkgoWriter.ClearTeeWriters)
+	err := logicalFlowCleanupTestFixture().run(func(cmd *exec.Cmd) (string, error) {
+		if logicalFlowCleanupCommandKey(t, cmd) == "get:operands" {
+			return "namespace/operands\n", nil
+		}
+		return "", nil
+	})
+	if err == nil || !strings.Contains(diagnostics.String(), "get namespace/operands") ||
+		!strings.Contains(diagnostics.String(), "resources remain: namespace/operands") {
+		t.Fatalf("missing surviving-resource diagnostic: error=%v, diagnostics=%s", err, &diagnostics)
+	}
+}
+
+func TestLogicalFlowCleanupBoundsDiagnostics(t *testing.T) {
+	var diagnostics bytes.Buffer
+	ginkgo.GinkgoWriter.TeeTo(&diagnostics)
+	t.Cleanup(ginkgo.GinkgoWriter.ClearTeeWriters)
+	failure := errors.New(strings.Repeat("x", 9000))
+	err := logicalFlowCleanupReportError("delete manifest[1]", failure)
+	if !errors.Is(err, failure) || !strings.Contains(err.Error(), failure.Error()) {
+		t.Fatal("diagnostic truncation changed the returned error")
+	}
+	want := "TEST-2 cleanup failed: " + err.Error()[:8192] + " [truncated]\n"
+	if diagnostics.String() != want {
+		t.Fatal("oversized diagnostic was not bounded")
+	}
+}
+
+func TestLogicalFlowCleanupFailedGetIsNotSurvivorEvidence(t *testing.T) {
+	failure := errors.New("API unavailable")
+	err := logicalFlowCleanupTestFixture().run(func(cmd *exec.Cmd) (string, error) {
+		if logicalFlowCleanupCommandKey(t, cmd) == "get:operands" {
+			return "error: API unavailable", failure
+		}
+		return "", nil
+	})
+	if !errors.Is(err, failure) || strings.Contains(err.Error(), "resources remain") {
+		t.Fatalf("failed get must retain its error without claiming survivors: %v", err)
+	}
+}
 
 func logicalFlowCleanupTestFixture() *logicalFlowCleanup {
 	return &logicalFlowCleanup{
