@@ -157,6 +157,24 @@ Original entry (historical, not an additional open task):
   **Scope limit:** live feasibility remains TEST-2 in `tasks.md`;
   component/race passes are not a Kind or guest-shutdown pass.
 
+- [x] `TEST-1` extracted-scenario live qualification (2026-09-17). Two owned three-node Kind
+  runs passed upgrade/replacement, metrics, admission/certificates, signal handoff, scripted
+  Online/OnBattery/LowBattery telemetry, and SNMP conformance. Fixed metrics-token logging and
+  verified the projected-token probe live; fixed shared teardown ordering and observed fixture
+  restoration before manager removal on a real failed spec. Both runs removed their owned
+  clusters and restored the tracked manager manifest. Race/component regressions, unchanged
+  scenario registration, and tagged lint passed. Shared setup and CI remain intact.
+  **Scope:** both overall runs failed in the separate TEST-2 candidate and skipped NS-6;
+  this closes the extracted scenarios, not those tasks or full-suite/promotion acceptance.
+  [Dated evidence and findings](contributing/audits/kind-qualification-2026-09-17.md).
+
+- [x] `TEST-3` live cancellation qualification (2026-09-17). `make test-kind-lifecycle`
+  passed both partial-startup and post-API SIGTERM against disposable three-node Kind clusters.
+  Each case verified failure exit semantics, removal of captured and cluster-labeled node IDs,
+  private-state cleanup, preservation of pre-existing containers, and byte-identical external
+  kubeconfigs. The existing acceptance cluster and unrelated Kind cluster survived both cases.
+  Full-suite and exact-image acceptance remain tracked separately in the active TEST-3 entry.
+
 - [x] `TEST-3` cancellation qualification harness/component slice (2026-09-17).
   `make test-kind-lifecycle` invokes the shipped owned runner and observes partial-startup and
   API-owner milestones before SIGTERM. It checks captured and cluster-labeled container IDs,
@@ -560,6 +578,15 @@ Original entry (historical, not an additional open task):
   [Actuator evidence](contributing/audits/talos-vm-7-actuator-2026-09-17.md).
 
 ## Release Readiness
+
+- [x] `REL-5` two-UPS quickstart live qualification (2026-09-17). The owned Kind install-to-plan
+  spec passed in two independent clusters using the shipped installer and three-domain example,
+  actual admission, live NUT polling/profile matching, rendered agent coverage/readiness, and
+  documented published waves. Fixture cleanup completed. The inotify guard remained enforced.
+  These are local working-tree images, including the pre-existing planner refactor, not a
+  release/promotion digest or real-actuation qualification. Unrelated TEST-2 failures kept the
+  overall suites red and are recorded separately.
+  [Dated evidence](contributing/audits/kind-qualification-2026-09-17.md).
 
 - [x] `REL-5` quick-start implementation/component slice (2026-09-15). The configuration guide
   links a copyable two-UPS simulation with three actual Kubernetes Node bindings and a supporting

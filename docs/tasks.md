@@ -159,13 +159,16 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_*.go`, and the
   within one 30-second budget and checks pod/container continuity, instead of requiring a
   transient unresponsive sample. The operand explicitly disables automatic Kubernetes API-token
   mounting; creation, nil/true drift repair, and envtest rendering are covered.
-  **Remaining; Testable now; Conditional:** run the existing Kind driver-recovery and real
-  Online/OnBattery/LowBattery scenarios with the changed manager and NUT image. Verify the stable
-  sidecar/shared PID namespace, unchanged privilege boundary, and recovery within DEADTIME.
-  A matching successful CI run can satisfy this gate; no physical UPS is required.
-  **Local blocker (rechecked 2026-09-17):** the isolated three-node setup stopped at the existing inotify
-  preflight (128 available; 512 required), before creating a cluster. Preserve that guardrail;
-  use a suitably provisioned runner. Local image/envtest passes are not Kind evidence.
+  **Live recovery/telemetry passed (2026-09-17):** two owned Kind runs passed real
+  Online/OnBattery/LowBattery scenarios and driver recovery in 9.099 and 13.389 seconds,
+  retaining pod/container identity. These used current local manager/NUT images, including
+  the pre-existing staged planner work. [Evidence](contributing/audits/kind-qualification-2026-09-17.md).
+  **Remaining; Testable now; Conditional:** complete the enabled NS-6 startup observation
+  with the stable sidecar/shared PID namespace and unchanged privilege boundary.
+  **Host prerequisite resolved (2026-09-17):** the inotify instance limit is now 512 and
+  `make check-test-e2e-host` passes. The guardrail is unchanged; this prerequisite check is not
+  Kind acceptance evidence. Both overall suites failed TEST-2 and skipped NS-6; the separate
+  full-suite/image-promotion gate remains TEST-3.
   `NS-6` below owns the startup-stability verification within this acceptance gate;
   readiness correctness (`NS-1`) is complete. F-97 is superseded in the completed tracker.
   [Detailed design, migration order, and test matrix](contributing/design/nut-supervisor-migration.md).
@@ -254,19 +257,10 @@ Completed comment cleanup (`ENG-8`) and Kind-cost analysis (`OM-1`) are recorded
 [completed tasks](tasks-completed.md#operator-maturity--hardening). The Kind decision retains
 the shared suite and existing safety gates.
 
-- [ ] `TEST-1` [Low] qualify the refactored Kind scenarios in focused/full live runs.
-  **Implementation complete; live Kind qualification remains.** Upgrade, metrics, webhook,
-  signal handoff, scripted telemetry, and SNMP conformance have focused scenario files under
-  the same shared installation lifecycle. Reusable fixture helpers retain readable manifests,
-  assertions, image selection, and failure cleanup; Kind and VM fixtures remain separate.
-  [Implementation/component evidence](tasks-completed.md#operator-maturity--hardening).
-  **Remaining; Testable now; Conditional:** run focused/full Kind acceptance on a provisioned
-  runner and verify cleanup on failure. The 2026-09-17 local preflight still reports 128 inotify
-  instances against 512 required; no cluster was started. Keep the shared Kind suite/cluster
-  under the completed `OM-1` keep-as-is decision; no CI restructuring is approved.
-  The [2026-09-17 image run](https://github.com/MichaelZalud18/nut-operator/actions/runs/35271792237)
-  stopped at module tidiness before E2E. The direct-dependency declaration is corrected locally;
-  this failed run is not Kind qualification evidence.
+Completed extracted-scenario qualification (`TEST-1`) is recorded in
+[completed tasks](tasks-completed.md#operator-maturity--hardening). Its scoped live passes do not
+close the separate logical-flow, startup, or full-suite/image-promotion gates below.
+
 - [ ] `TEST-2` [Medium, investigation] prove a full logical ShutdownFlow scenario is feasible in
   Kind before treating it as a qualified permanent gate. The candidate scenario now connects
   controlled dummy-ups telemetry transitions to an eligible ShutdownFlow, production trigger
@@ -279,6 +273,13 @@ the shared suite and existing safety gates.
   publication with a hand-written positive halt Secret. Kind ends at simulated actuation;
   real guest shutdown stays in VM-3/VM-4/VM-7. Retain exact promoted-image coverage and network
   policy enforcement. This investigation does not authorize splitting CI or dropping VM evidence.
+  **Live progress (2026-09-17):** real telemetry adoption, DryRun isolation, ordered
+  scale/drain/signal delivery, Simulate acceptance, audit actions, and survivor pod continuity
+  passed in focused iteration. Corrected the initial dummy-loop timer, shared storage placement,
+  and reused JSON snapshot fixture bugs. The full scenario still needs a passing survivor-node
+  check, expired-signal control, and fixture cleanup; cleanup returned an additional error
+  whose cause remains under investigation. Owned cluster teardown completed.
+  [Run evidence and related fixes](contributing/audits/kind-qualification-2026-09-17.md).
 - [ ] `TEST-3` [Medium; High for mutation isolation] harden Kind reproducibility and kubeconfig
   handling. **Implementation complete; live Kind qualification remains.** The runner now owns a
   private kubeconfig and unique cluster, guards context/cluster UID before mutation, and checks
@@ -286,11 +287,12 @@ the shared suite and existing safety gates.
   CONTRIBUTING.md. [Component evidence](tasks-completed.md#operator-maturity--hardening).
   **Remaining; Testable now; Conditional:** run the existing full Kind suite on a provisioned
   runner, confirm policy-enforcing CNI setup, exact promoted-image coverage, unchanged external
-  kubeconfig/context, and successful owned teardown. Run `make test-kind-lifecycle` (also available
-  through the manual Kind Lifecycle Qualification workflow) for partial-startup and post-API
-  cancellation. Component failure/signal tests do not prove Docker/Kind lifecycle behavior.
-  **Local blocker (2026-09-17):** the existing host preflight reports 128 inotify instances against
-  512 required. No cluster was started and the guardrail is unchanged. Preserve shared-suite and
+  kubeconfig/context, and successful owned teardown. **Live cancellation passed (2026-09-17):**
+  `make test-kind-lifecycle` verified partial-startup and post-API SIGTERM, owned-node removal,
+  private-state cleanup, preservation of pre-existing containers, and unchanged external kubeconfigs.
+  This supplements, rather than replaces, the remaining full-suite and exact-image gate.
+  **Host prerequisite resolved (2026-09-17):** the existing inotify preflight passes at 512
+  instances; the guardrail is unchanged. Live qualification remains open. Preserve shared-suite and
   required-check semantics; coordinate with TEST-1 and retain OM-1's shared-suite decision.
   Hadron remains a separate harness.
 

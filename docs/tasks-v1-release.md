@@ -47,15 +47,9 @@ registry cleanup, and publishing require explicit authorization; this checklist 
   resource. True previous-release schema compatibility starts after there is a previous released API
   to install.
 
-- [ ] `REL-5` [Medium] qualify the documented two-UPS quick start on a disposable cluster.
-  The [copyable example](examples/quickstart/README.md), three-domain guide, schema/component
-  coverage, and owned Kind install-to-plan spec are implemented; see the
-  [completed implementation slice](tasks-completed.md#release-readiness).
-  **Remaining acceptance:** run the Kind quickstart spec through the owned harness on a suitable
-  host and verify actual installer/admission, NUT polling/profile match, agent coverage/readiness,
-  and the documented published waves. Retain the three-domain UX and explicit separate opt-in to
-  real actuation. Local preflight on 2026-09-15 blocked cluster creation at 128 inotify instances
-  (minimum 512); component/schema passes do not close this live gate. Do not lower the host guard.
+Completed two-UPS quickstart qualification (`REL-5`) is recorded in
+[completed tasks](tasks-completed.md#release-readiness). Release promotion and real actuation
+retain their separate gates.
 
 ## Qualification
 
