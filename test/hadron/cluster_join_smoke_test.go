@@ -202,35 +202,20 @@ func TestHadronClusterJoin(t *testing.T) {
 	agentIface := assignClusterLinkAddress(ctx, t, agentCreds, agentMAC, clusterJoinAgentIP)
 	t.Logf("agent ClusterLink interface: %s (%s/%s)", agentIface, clusterJoinAgentIP, clusterJoinSubnetLen)
 
-	// The first two live runs (2026-09-17/18) showed the agent's k3s-agent service never reaching
-	// the server, and by the time of the first diagnostic snapshot (roughly a minute later), the
-	// agent's own ens5 had vanished entirely from `ip -4 addr show` -- not merely link-down, gone
-	// from the listing altogether, while the server's own ens5 (same ClusterLink mechanism, only
-	// the Server()/Client() role differs -- network.go's own socket netdev listen/connect split)
-	// persisted unchanged across every sample. This check narrows down exactly when that happens,
-	// with a kernel-log capture at the moment it's first observed missing, instead of waiting out
-	// the full final wait's generic diagnostics.
-	t.Log("confirming the agent's ClusterLink address persists past the initial assignment")
-	waitForWithDiagnostics(t, ctx, 2*time.Minute, "agent ClusterLink address still present", func(ctx context.Context) error {
-		out, err := guestCommand(ctx, agentCreds, fmt.Sprintf("ip -4 addr show dev %s 2>&1", agentIface))
-		if err != nil {
-			return err
-		}
-		if !strings.Contains(out, clusterJoinAgentIP) {
-			return fmt.Errorf("agent ClusterLink address %s no longer present on %s:\n%s", clusterJoinAgentIP, agentIface, out)
-		}
-		return nil
-	}, func(ctx context.Context) {
-		out, err := guestCommand(ctx, agentCreds, "echo ---dmesg-tail---; sudo dmesg 2>&1 | tail -80; "+
-			"echo ---kernel-journal---; sudo journalctl -k --no-pager -n 80 2>&1; "+
-			"echo ---ip-link-all---; ip link show 2>&1; "+
-			"true")
-		if err != nil {
-			t.Logf("agent address-loss diagnostic command itself failed: %v\noutput so far:\n%s", err, out)
-			return
-		}
-		t.Logf("agent address-loss diagnostic snapshot:\n%s", out)
-	})
+	// The first three live runs (2026-09-17/18) showed the agent's k3s-agent service never
+	// reaching the server. The first two showed the agent's own ens5 vanished entirely from
+	// `ip -4 addr show` by the first later diagnostic snapshot -- not merely link-down, gone from
+	// the listing altogether -- while the server's own ens5 (same ClusterLink mechanism, only the
+	// Server()/Client() role differs -- network.go's own socket netdev listen/connect split)
+	// persisted unchanged across every sample. The third run's own attempt at catching this
+	// (waitForWithDiagnostics) proved the address present, moved on immediately, and the interface
+	// was still gone about a minute later -- waitForWithDiagnostics returns on the *first* success,
+	// so it only ever proved a single instant, not that the address survives. This checks
+	// continuously across a fixed window instead, failing the moment it's ever observed missing,
+	// with a kernel-log capture at exactly that point rather than waiting out the full final
+	// wait's generic diagnostics.
+	t.Log("confirming the agent's ClusterLink address survives the two minutes after assignment")
+	confirmAgentClusterLinkAddressSurvives(ctx, t, agentCreds, agentIface, clusterJoinAgentIP, 2*time.Minute)
 
 	t.Log("fetching kubeconfig and waiting for two distinct Ready nodes from outside both guests")
 	var nodeNames []string
@@ -281,7 +266,7 @@ func TestHadronClusterJoin(t *testing.T) {
 			"echo ---agent-curl-server-6443---; "+
 			"curl -sk --max-time 5 -o /dev/null -w 'http_code=%{http_code} time_total=%{time_total}\\n' "+
 			"https://"+clusterJoinServerIP+":6443/cacerts 2>&1; "+
-			"echo ---agent-ping-server---; ping -c2 -W2 "+clusterJoinServerIP+" 2>&1; "+
+			"echo ---agent-ping-server---; sudo ping -c2 -W2 "+clusterJoinServerIP+" 2>&1; "+
 			"echo ---agent-iface---; ip -4 addr show 2>&1; ip route show 2>&1; "+
 			"true")
 		if err != nil {
@@ -335,6 +320,45 @@ func bootClusterJoinGuest(ctx context.Context, t *testing.T, name string, cfg Co
 		t.Fatalf("Create (%s): %v", name, err)
 	}
 	return m, creds
+}
+
+// confirmAgentClusterLinkAddressSurvives polls dev's address every 3s across the whole of window,
+// failing the instant ip is missing rather than the first time it merely reappears -- unlike
+// waitForWithDiagnostics, which returns on the check function's *first* success and so can only
+// prove the address existed at one instant, not that it survives. Live evidence (2026-09-17/18)
+// showed the agent's ClusterLink address present immediately after assignment and gone again
+// within about a minute, with the loss itself never observed directly; this exists to catch it in
+// the act and dump kernel/journal state at the moment it first goes missing.
+func confirmAgentClusterLinkAddressSurvives(ctx context.Context, t *testing.T, creds Credentials, dev, ip string, window time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(window)
+	for {
+		out, err := guestCommand(ctx, creds, fmt.Sprintf("ip -4 addr show dev %s 2>&1", dev))
+		if err != nil {
+			t.Fatalf("checking agent ClusterLink address on %s: %v\n%s", dev, err, out)
+		}
+		if !strings.Contains(out, ip) {
+			diagOut, diagErr := guestCommand(ctx, creds, "echo ---dmesg-tail---; sudo dmesg 2>&1 | tail -100; "+
+				"echo ---kernel-journal---; sudo journalctl -k --no-pager -n 100 2>&1; "+
+				"echo ---recent-journal---; sudo journalctl --no-pager -n 150 2>&1; "+
+				"echo ---ip-link-all---; ip link show 2>&1; "+
+				"true")
+			if diagErr != nil {
+				t.Logf("agent address-loss diagnostic command itself failed: %v\noutput so far:\n%s", diagErr, diagOut)
+			} else {
+				t.Logf("agent address-loss diagnostic snapshot:\n%s", diagOut)
+			}
+			t.Fatalf("agent ClusterLink address %s disappeared from %s within %s of assignment:\n%s", ip, dev, window, out)
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context canceled confirming agent ClusterLink address survives: %v", ctx.Err())
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 // nodeReadyCondition matches the actual Ready condition, not the substring also present in
