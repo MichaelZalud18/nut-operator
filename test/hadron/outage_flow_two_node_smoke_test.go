@@ -679,12 +679,17 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 // separately afterward.
 func pinK3sNodeIP(ctx context.Context, t *testing.T, creds Credentials, service, nodeIP string) {
 	t.Helper()
-	if _, err := guestCommand(ctx, creds,
-		fmt.Sprintf("echo 'node-ip: %s' | sudo tee -a /etc/rancher/k3s/config.yaml >/dev/null", nodeIP)); err != nil {
-		t.Fatalf("writing %s node-ip override: %v", service, err)
+	// 2026-09-18 first live attempt: the server's own write succeeded, but the agent's failed
+	// identically on both this run and the next -- deterministic, not a flake. A k3s-agent install
+	// has no reason to have already created /etc/rancher/k3s/ itself (unlike the server, which
+	// writes its own generated certs/config there), so `tee`'s open() fails with the directory
+	// missing. `mkdir -p` first is safe and idempotent either way.
+	if out, err := guestCommand(ctx, creds,
+		fmt.Sprintf("sudo mkdir -p /etc/rancher/k3s && echo 'node-ip: %s' | sudo tee -a /etc/rancher/k3s/config.yaml >/dev/null", nodeIP)); err != nil {
+		t.Fatalf("writing %s node-ip override: %v\n%s", service, err, out)
 	}
-	if _, err := guestCommand(ctx, creds, "sudo systemctl restart --no-block "+service); err != nil {
-		t.Fatalf("restarting %s: %v", service, err)
+	if out, err := guestCommand(ctx, creds, "sudo systemctl restart --no-block "+service); err != nil {
+		t.Fatalf("restarting %s: %v\n%s", service, err, out)
 	}
 }
 
