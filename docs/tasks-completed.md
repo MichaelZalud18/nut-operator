@@ -620,6 +620,15 @@ Original entry (historical, not an additional open task):
   [Bring-up evidence](contributing/audits/talos-vm-7-bootstrap-2026-09-17.md);
   [Actuator evidence](contributing/audits/talos-vm-7-actuator-2026-09-17.md).
 
+- [x] `VM-2` two-node k3s join, closed (2026-09-18). A real k3s server and agent, joined over the
+  `ClusterLink` segment, confirmed by listing two genuinely distinct Ready nodes through the
+  server's forwarded kube-API from outside both guests. Six real, distinct bugs found and fixed
+  across six failing live runs; the root cause was the agent guest not yet done settling past when
+  its `k3s-agent` systemd unit file already exists, not a networking or firewall defect.
+  [Evidence](contributing/audits/hadron-vm-2-cluster-join-2026-09-17.md).
+  **Scope limit:** the join itself only. `VM-2`'s own identity-mismatch and concurrent-run
+  isolation checklist remains open in `tasks.md`, explicitly not closeable as N/A.
+
 ## Release Readiness
 
 - [x] `REL-5` two-UPS quickstart live qualification (2026-09-17). The owned Kind install-to-plan

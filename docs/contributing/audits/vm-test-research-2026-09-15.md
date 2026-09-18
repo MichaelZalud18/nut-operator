@@ -215,6 +215,21 @@ two-node harness exists (do not close as N/A without building these):**
    must be run-scoped and verified not to collide, not merely assumed unique the way a single
    `os.MkdirTemp`/`freeport.GetFreePort()` call already is today.
 
+**Two-node join closed 2026-09-18** ([run passing after
+35284990119](https://github.com/MichaelZalud18/nut-operator/actions/runs/35298330408), six earlier
+failing runs each found one real, distinct bug): a real k3s server and a real k3s agent, joined
+over the `ClusterLink` segment, confirmed by listing two genuinely distinct Ready nodes through
+the server's forwarded kube-API from outside both guests. The real root cause, found only after
+ruling out an inactive host firewall, a vanished-then-reappearing interface, and a diagnostic that
+only ever proved one instant: the agent guest was not yet done settling (a still-unidentified
+internal boot-stage window past when its `k3s-agent` systemd unit file already exists) when this
+test assumed it was, and touching its network during that window caused the downstream failures.
+Full evidence table, all seven runs, in
+[hadron-vm-2-cluster-join-2026-09-17.md](hadron-vm-2-cluster-join-2026-09-17.md)
+(`test/hadron/cluster_join_smoke_test.go`, `hadron-cluster-join-smoke.yml`).
+This closes the join itself, not `VM-2` as a whole: the identity-mismatch and concurrent-run
+isolation checklist immediately above remains open, real work, not to be closed as N/A.
+
 ## VM-3
 
 test the shipped Linux actuator on Hadron, including missing/expired/

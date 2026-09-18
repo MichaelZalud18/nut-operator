@@ -267,17 +267,15 @@ own detailed prerequisites and prior milestones; the remaining work is below.
 
 VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-coverage).
 
-- [ ] `VM-2` [High] finish the reproducible two-guest Hadron/k3s harness. Single-guest boot,
-  host-side kubeconfig access, and basic inter-guest connectivity have dated evidence; they do not
-  prove a joined two-node cluster. Establish reliable cluster-link addressing and server/worker join.
-  Pin artifacts and images; use private networking, fresh credentials/storage, and explicit context.
-  Keep manager, PostgreSQL, and simulated UPS on the survivor; observe outside stopped guests.
-  **Testable now; Conditional:** refuse mismatched cluster/VM/node identity before mutation;
-  verify port-collision handling and concurrent-run isolation, partial/never-started VM cleanup,
-  process ownership before deleting state, and bounded cancellation. Run live cancellation rehearsal.
-  Preserve external workflow deadlines for PEG/seed tooling and reserve cleanup margin; runner loss
-  cannot guarantee cleanup. Six GiB combined RAM remains an estimate, not a demonstrated minimum.
-  Keep Kind helpers and make test-e2e separate.
+- [ ] `VM-2` [High] finish the two-guest Hadron/k3s harness's identity and isolation safety.
+  The real two-node join itself is closed: a genuine k3s server/agent pair over the `ClusterLink`
+  segment, confirmed by listing two distinct Ready nodes from outside both guests. Remaining:
+  refuse mismatched cluster/VM/node identity before mutation; verify port-collision handling and
+  concurrent-run isolation, partial/never-started VM cleanup, process ownership before deleting
+  state, and bounded cancellation. Run live cancellation rehearsal.
+  **Testable now; Conditional:** preserve external workflow deadlines for PEG/seed tooling and
+  reserve cleanup margin; runner loss cannot guarantee cleanup. Six GiB combined RAM remains an
+  estimate, not a demonstrated minimum. Keep Kind helpers and make test-e2e separate.
   [Evidence and full safety criteria](contributing/audits/vm-test-research-2026-09-15.md#vm-2).
 - [ ] `VM-4` [Medium] finish production outage-to-halt acceptance: live workload drain and
   guest-initiated power-off in the two-guest topology. Prove survivor availability, current
