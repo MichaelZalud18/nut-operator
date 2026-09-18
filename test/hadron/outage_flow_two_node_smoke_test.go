@@ -547,6 +547,19 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 	t.Log("assigning the server's static ClusterLink address")
 	assignClusterLinkAddress(ctx, t, serverCreds, serverMAC, clusterJoinServerIP)
 
+	t.Log("pinning k3s's own node-ip to the ClusterLink address and restarting")
+	pinK3sNodeIP(ctx, t, serverCreds, "k3s", clusterJoinServerIP)
+	waitForWithDiagnostics(t, ctx, 3*time.Minute, "server k3s readiness after node-ip restart", func(ctx context.Context) error {
+		out, err := guestCommand(ctx, serverCreds, "sudo k3s kubectl get nodes --request-timeout=20s -o json")
+		if err != nil {
+			return err
+		}
+		if !hasReadyNode(out) {
+			return fmt.Errorf("no Ready node yet:\n%s", out)
+		}
+		return nil
+	}, nil)
+
 	t.Log("reading the server's own generated node-token")
 	token, err := guestCommand(ctx, serverCreds, "sudo cat /var/lib/rancher/k3s/server/node-token")
 	if err != nil {
@@ -594,6 +607,9 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 	t.Log("assigning the agent's static ClusterLink address")
 	agentIface := assignClusterLinkAddress(ctx, t, agentCreds, agentMAC, clusterJoinAgentIP)
 	confirmAgentClusterLinkAddressSurvives(ctx, t, agentCreds, agentIface, clusterJoinAgentIP, 2*time.Minute)
+
+	t.Log("pinning k3s-agent's own node-ip to the ClusterLink address and restarting")
+	pinK3sNodeIP(ctx, t, agentCreds, "k3s-agent", clusterJoinAgentIP)
 
 	kubeconfig, err := Kubeconfig(ctx, serverCreds)
 	if err != nil {
@@ -643,6 +659,33 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 	t.Logf("server (survivor) node: %s; agent (drained/target) node: %s", serverNodeName, agentNodeName)
 
 	return serverCreds, agentCreds, kubeconfigPath, clientset, serverNodeName, agentNodeName
+}
+
+// pinK3sNodeIP overrides node-ip via /etc/rancher/k3s/config.yaml -- appended, never overwritten,
+// so an existing --tls-san or other Kairos-provisioned setting already in that file survives --
+// and restarts service to pick it up.
+//
+// Without this, k3s auto-selects its own node IP by default-route reachability (confirmed against
+// k3s's own flannel-options documentation), which lands on each guest's isolated per-guest NAT
+// interface rather than the ClusterLink segment TestHadronClusterJoin's own join explicitly
+// targets only for control-plane traffic (K3S_URL, --tls-san). Confirmed live (2026-09-18): both
+// nodes reported an identical InternalIP (the shared NAT address), and every cross-node pod/Service
+// probe this package's own two-node network-policy and drain milestones need failed identically --
+// TestHadronClusterJoin itself never noticed because listing two distinct Ready nodes never
+// exercises cross-node pod traffic at all.
+//
+// --no-block returns as soon as the restart is queued rather than waiting for k3s to finish
+// reinitializing, which can exceed guestCommand's own 30-second bound; callers poll for readiness
+// separately afterward.
+func pinK3sNodeIP(ctx context.Context, t *testing.T, creds Credentials, service, nodeIP string) {
+	t.Helper()
+	if _, err := guestCommand(ctx, creds,
+		fmt.Sprintf("echo 'node-ip: %s' | sudo tee -a /etc/rancher/k3s/config.yaml >/dev/null", nodeIP)); err != nil {
+		t.Fatalf("writing %s node-ip override: %v", service, err)
+	}
+	if _, err := guestCommand(ctx, creds, "sudo systemctl restart --no-block "+service); err != nil {
+		t.Fatalf("restarting %s: %v", service, err)
+	}
 }
 
 // applyWorkloadDeploymentOnNode creates the plain, evictable Deployment (no DaemonSet ownership,
