@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/onsi/ginkgo/v2"
@@ -115,12 +116,12 @@ func logicalFlowCleanupTestFixture() *logicalFlowCleanup {
 
 func logicalFlowCleanupCommandKey(t *testing.T, cmd *exec.Cmd) string {
 	t.Helper()
-	if cmd.Cancel == nil || cmd.WaitDelay <= 0 || cmd.Args[1] != "--request-timeout=15s" {
+	if cmd.Cancel == nil || cmd.WaitDelay != time.Second || cmd.Args[1] != "--request-timeout=15s" {
 		t.Fatalf("unbounded cleanup command: %v", cmd.Args)
 	}
 	action := cmd.Args[2]
 	if action == "delete" {
-		for _, flag := range []string{"--ignore-not-found=true", "--wait=true", "--timeout=1m", "--cascade=foreground"} {
+		for _, flag := range []string{"--ignore-not-found=true", "--wait=true", "--timeout=2m", "--cascade=foreground"} {
 			if !slices.Contains(cmd.Args, flag) {
 				t.Fatalf("missing deletion guard %s: %v", flag, cmd.Args)
 			}
@@ -140,6 +141,31 @@ func logicalFlowCleanupCommandKey(t *testing.T, cmd *exec.Cmd) string {
 		return action + ":" + strings.TrimPrefix(cmd.Args[4], "deployment/")
 	default:
 		return action
+	}
+}
+
+func TestLogicalFlowCleanupDeleteBudget(t *testing.T) {
+	var deletes, reads, restores int
+	err := logicalFlowCleanupTestFixture().run(func(cmd *exec.Cmd) (string, error) {
+		logicalFlowCleanupCommandKey(t, cmd)
+		switch cmd.Args[2] {
+		case "delete":
+			deletes++
+		case "get":
+			reads++
+		case "rollout":
+			restores++
+			if !slices.Contains(cmd.Args, "--timeout=3m") {
+				t.Fatalf("restoration rollout budget changed: %v", cmd.Args)
+			}
+		}
+		if cmd.Args[2] != "delete" && slices.Contains(cmd.Args, "--timeout=2m") {
+			t.Fatalf("delete budget leaked to another operation: %v", cmd.Args)
+		}
+		return "", nil
+	})
+	if err != nil || deletes != 5 || reads != 5 || restores != 2 {
+		t.Fatalf("unexpected cleanup coverage: deletes=%d reads=%d restores=%d error=%v", deletes, reads, restores, err)
 	}
 }
 

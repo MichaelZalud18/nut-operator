@@ -141,3 +141,24 @@ tagged lint. This is successful startup-spec and cleanup evidence, not a green
 overall command or image-promotion gate. The separate TEST-2 rerun uses the frozen
 committed test sources. No reconstruction of the old watchdog or historical root
 cause is claimed.
+
+## Frozen-Source Shutdown-Flow Rerun
+
+The focused readiness/TEST-2 run completed all positive and negative scenario assertions,
+including the corrected survivor-node check and expired-signal rejection. It failed only
+in scenario cleanup: foreground deletion timed out waiting for `nodepoweragents/test2-agent`.
+The new operation-labeled diagnostic exposed that exact error. Subsequent absence checks
+found the fixtures gone, but the earlier error correctly kept the reservation in place
+until owned-cluster teardown. The tracked manager manifest was restored and all owned
+node containers were removed.
+
+**Medium, fixture deadline:** the deletion deadline was one minute, equal to the rendered
+agent pod's 60-second termination grace, with no allowance for foreground garbage
+collection. Give deletion a bounded two-minute budget while retaining request deadlines,
+all deletion/absence checks, and fail-closed reservation handling. This changes fixture
+cleanup timing, not production termination behavior or scenario acceptance assertions.
+
+Ginkgo reported one passed, one failed, and 21 filtered specs in 567.834 seconds. All
+cluster-free component tests, including the cleanup-diagnostic tests that failed in the
+earlier startup command, passed after Ginkgo with coherent committed sources. TEST-2
+remains open until the corrected cleanup budget passes live.

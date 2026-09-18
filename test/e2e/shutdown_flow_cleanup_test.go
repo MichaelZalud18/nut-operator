@@ -60,8 +60,9 @@ func (c *logicalFlowCleanup) removeFixtures(run func(*exec.Cmd) (string, error))
 	}
 	var cleanupErr error
 	for _, resource := range targets {
-		args := append([]string{"delete", "--ignore-not-found=true", "--wait=true", "--timeout=1m", "--cascade=foreground"}, resource.args...)
-		_, err := logicalFlowRunBounded(run, time.Minute, resource.manifest, args...)
+		// Agent pods allow 60s to terminate; foreground GC needs time beyond that.
+		args := append([]string{"delete", "--ignore-not-found=true", "--wait=true", "--timeout=2m", "--cascade=foreground"}, resource.args...)
+		_, err := logicalFlowRunBounded(run, 2*time.Minute, resource.manifest, args...)
 		cleanupErr = errors.Join(cleanupErr, logicalFlowCleanupReportError("delete "+resource.label, err))
 	}
 	// Check again after all deletion attempts, including namespace contents and
