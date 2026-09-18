@@ -30,6 +30,7 @@ func TestSmokeWorkflowsReserveCleanupBudget(t *testing.T) {
 		{"../../.github/workflows/hadron-outage-flow-smoke.yml", "outage-flow-produces-signal"},
 		{"../../.github/workflows/hadron-actuator-daemonset-smoke.yml", "actuator-daemonset"},
 		{"../../.github/workflows/hadron-cluster-join-smoke.yml", "cluster-join"},
+		{"../../.github/workflows/hadron-outage-flow-two-node-smoke.yml", "outage-flow-two-node-drains-workload"},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			data, err := os.ReadFile(tc.file)

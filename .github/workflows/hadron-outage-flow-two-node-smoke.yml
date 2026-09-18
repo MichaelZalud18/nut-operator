@@ -1,0 +1,122 @@
+name: Hadron Outage Flow Two-Node Smoke Test
+
+# VM-4's own remaining text, after its third (single-guest) milestone closed: "The two-guest
+# topology, real drain/eviction against a live workload Pod, and the network-policy/audit
+# assertions remain open." This closes the first two, reusing VM-2's own now-proven two-node join
+# (hadron-cluster-join-smoke.yml) instead of duplicating it.
+#
+# Chain under test: a real k3s server and agent join over the ClusterLink segment -> the manager,
+# PostgreSQL, and simulated UPS are pinned to the server (the survivor) -> a real workload Pod is
+# scheduled on the agent node -> real telemetry transitions the UPSDevice to OnBattery -> a real
+# ShutdownFlow's DrainNodes step (shutdownTier 2) really cordons the agent Node and really evicts
+# that workload Pod (Kubernetes eviction API) -> only then does its AgentShutdown step
+# (shutdownTier 1, Simulate) proceed -> the real actuator observes and accepts the signal -> the
+# survivor node is confirmed still Ready and schedulable throughout.
+#
+# NodePowerAgent stays Simulate here, matching every other milestone's own incremental-scope
+# discipline: VM-3 already separately proved real Actuate/PowerOff halts a guest
+# (hypervisor-confirmed), so combining that with a brand-new two-guest drain mechanism in the same
+# run would make a live failure ambiguous about which of two new things broke. Real actuation plus
+# a survivor-availability assertion under an actual halt, and network-policy enforcement, are left
+# for following milestones once this one is itself proven live.
+#
+# Unverified against real guests as of this writing; the budget below is a first estimate --
+# expect it to need adjustment after a first live run, the same as every other milestone in this
+# session did.
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  outage-flow-two-node-drains-workload:
+    permissions:
+      contents: read
+    name: Boot a real two-node k3s cluster and confirm a real drain/eviction before actuation
+    runs-on: ubuntu-latest
+    # Sum of bounded steps below is 77 minutes; reserve additional cancellation margin.
+    timeout-minutes: 90
+    steps:
+      - name: Clone the code
+        timeout-minutes: 2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        timeout-minutes: 5
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Record free disk before installing tooling
+        timeout-minutes: 1
+        run: df -h /
+
+      - name: Install QEMU and genisoimage
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils acl genisoimage
+
+      # Same fix as every other Hadron smoke workflow: /dev/kvm is present but not group/user
+      # accessible by default on this runner image.
+      - name: Grant KVM device access
+        timeout-minutes: 1
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-hadron-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo setfacl -m u:"$(whoami)":rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm && echo "/dev/kvm is read/write accessible"
+
+      - name: Allocate private smoke state
+        timeout-minutes: 1
+        run: echo "HADRON_STATE_ROOT=$(mktemp -d "$RUNNER_TEMP/hadron-smoke-XXXXXXXX")" >> "$GITHUB_ENV"
+
+      # GNU timeout bounds compilation, the five image builds/pulls/saves, two guest boots/joins,
+      # make install/deploy-byo-cert, and the test binary as a whole. TERM permits cooperative
+      # cancellation; KILL bounds a hung library call. The Go deadline reserves cleanup time. This
+      # budget is roughly the single-guest outage-flow milestone's own plus VM-2's two-node join
+      # overhead plus double image-import time (both guests need the full image set).
+      - name: Boot a real two-node cluster and confirm a real drain/eviction before actuation
+        timeout-minutes: 55
+        run: TMPDIR="$HADRON_STATE_ROOT" timeout --signal=TERM --kill-after=15s 54m go test -tags=hadron,hadron_smoke ./test/hadron -run TestHadronOutageFlowTwoNodeDrainsWorkload -v -timeout=52m
+
+      - name: Stop leftover guests owned by this run
+        id: cleanup
+        if: always() && env.HADRON_STATE_ROOT != ''
+        timeout-minutes: 1
+        run: python3 hack/hadron-cleanup.py "$HADRON_STATE_ROOT"
+
+      - name: Dump both guests' console logs on failure
+        timeout-minutes: 1
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for dir in "$HADRON_STATE_ROOT"/nut-operator-hadron-*; do
+            echo "::group::$dir/stdout"
+            grep -iE 'error|fail|panic|k3s|link|addr|join|drain|cordon|evict' "$dir/stdout" 2>/dev/null \
+              || echo "(no matching lines, or nothing captured)"
+            echo "::endgroup::"
+          done
+
+      - name: Upload full guest console logs on failure
+        timeout-minutes: 3
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hadron-outage-flow-two-node-smoke-console
+          path: ${{ env.HADRON_STATE_ROOT }}/nut-operator-hadron-*/std*
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove stopped guest state
+        if: always() && steps.cleanup.outcome == 'success'
+        timeout-minutes: 1
+        run: rm -rf -- "$HADRON_STATE_ROOT"
+
+      - name: Record free disk after the run
+        timeout-minutes: 1
+        if: always()
+        run: df -h /
