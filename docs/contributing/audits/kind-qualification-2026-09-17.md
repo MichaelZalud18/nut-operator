@@ -112,3 +112,32 @@ signal control was not reached, and NS-6 was again skipped. TEST-2 remains open.
 
 An isolated manager-readiness plus NS-6 run separates startup qualification from TEST-2's
 ordered-spec failure. This is local focused iteration, not a change to the shared CI suite.
+
+## Isolated Startup Qualification
+
+The enabled manager-readiness and NS-6 specs both passed. The real rendered startup
+observation collected 86 samples over 663.603 seconds from first driver identity to
+last sample, with eight authenticated monitors and an intentional monitor replacement
+that authenticated after deletion of the original. There were zero probe errors,
+one unchanged driver identity, no spontaneous driver exits/replacements, and no
+manager or operand pod/container restarts. The restricted security and shared-PID
+sidecar assertions passed. NS-6 resource cleanup returned no errors; the manager
+manifest was restored and the owned cluster containers were removed.
+
+Observed container-runtime image identities:
+
+- Manager: `sha256:d8baf98a62d49bbf3cfc12c48054f3298bb44b8930d392698c056b93710bc7da`.
+- NUT server and supervisor: `sha256:a1cec32573083443ccf1a28cd9b1ea785e809fc8bdfda64ea9e64c8d1241e256`.
+- Monitor: `sha256:730627623b1208c3c4a44330de7fd59789c9fa072a67beb3a153d9067f686077`.
+
+**Scope:** Ginkgo reported two passed, zero failed, and 21 filtered specs in 867.729
+seconds. The overall Go command returned failure because two cleanup-diagnostic
+component tests failed afterward. Their failure output matches the observed test-first
+RED state and lacks the new operation wrappers required by those tests. Capturing that
+intermediate edit state during compilation is the likely explanation, not a confirmed
+compiler-timing fact; no Ginkgo writer defect has been reproduced.
+The coherent committed cleanup implementation passes its focused race tests and
+tagged lint. This is successful startup-spec and cleanup evidence, not a green
+overall command or image-promotion gate. The separate TEST-2 rerun uses the frozen
+committed test sources. No reconstruction of the old watchdog or historical root
+cause is claimed.

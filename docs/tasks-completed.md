@@ -415,6 +415,32 @@ Original entry (historical, not an additional open task):
 
 ## NUT Server / upsd
 
+- [x] `ENG-1` [Medium] supervisor Kind acceptance (2026-09-17). Two owned three-node Kind
+  runs passed real Online/OnBattery/LowBattery telemetry and driver replacement within one
+  30-second budget: 9.099 and 13.389 seconds, retaining pod/container identity. The enabled
+  NS-6 spec below passed with the stable shared-PID sidecar and unchanged privilege boundary.
+  Operand API-token mounting is explicitly disabled; creation and drift repair are covered.
+  The inotify preflight passed at 512 without weakening its guard. Earlier implementation and
+  real-binary parity evidence remain below; the migration contract remains in
+  [the supervisor design](contributing/design/nut-supervisor-migration.md).
+  **Scope:** local working-tree images include the staged planner refactor. Overall commands
+  still had unrelated TEST-2 or component-test failures. This closes the supervisor acceptance
+  scope, not TEST-2 or TEST-3 full-suite/exact-image promotion.
+
+- [x] `NS-6` [Medium] redesigned-supervisor startup verification (2026-09-17). The enabled
+  current-manager Kind spec collected 86 samples across 663.603 seconds with eight authenticated
+  monitors and one intentional replacement/reconnect. Zero probe errors, unchanged driver and
+  pod/container identities, no spontaneous exits/restarts, unchanged security, and successful
+  fixture/cluster cleanup. Runtime image identities and the failed overall command's separate
+  cleanup-component assertions are recorded in the [dated evidence](contributing/audits/kind-qualification-2026-09-17.md).
+  Independent evidence review approved scoped closure. The earlier ARM64 Docker observation also
+  passed 661 seconds, 326 probes, and an eight-client reconnect scenario through
+  `make docker-smoke-nut-startup`; Kind supplies the missing manager/kubelet qualification.
+  `make test-e2e-nut-startup` and the manual workflow retain explicit opt-in; ordinary image
+  promotion skips the soak. No historical watchdog/root-cause claim or physical UPS evidence
+  is implied; [the earlier investigation](contributing/audits/nut-readiness-investigation-2026-09-17.md)
+  remains historical context.
+
 - [x] `NS-10` [Low] define and verify the operand's runtime-tool boundary (2026-09-17).
   Removed unsupported auxiliary CLIs, including broken `nutconf`, and unused client/scanner
   libraries from the runtime image instead of adding an unused C++ runtime. Retained server,

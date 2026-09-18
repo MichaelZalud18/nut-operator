@@ -151,51 +151,11 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_*.go`, and the
 `F-46`–`F-49`, `F-51`, `F-53`, `F-76`, `F-85`, `F-124`); relevant findings from `docs/contributing/audits/nut-usage-audit.md`
 (`F-20`–`F-22`, `F-24`, `F-50`, `OD-36`).
 
-- [ ] `ENG-1` [Medium] finish the Go supervisor migration's **Kind acceptance gate**.
-  The binary, direct sidecar invocation, upstream reload decisions, owned process groups,
-  rollback/cancellation regressions, image packaging, and shell removal are implemented;
-  [implementation/local validation](tasks-completed.md#nut-server--upsd) records the evidence.
-  **Acceptance hardening (2026-09-17):** the recovery spec now proves old/new process identity
-  within one 30-second budget and checks pod/container continuity, instead of requiring a
-  transient unresponsive sample. The operand explicitly disables automatic Kubernetes API-token
-  mounting; creation, nil/true drift repair, and envtest rendering are covered.
-  **Live recovery/telemetry passed (2026-09-17):** two owned Kind runs passed real
-  Online/OnBattery/LowBattery scenarios and driver recovery in 9.099 and 13.389 seconds,
-  retaining pod/container identity. These used current local manager/NUT images, including
-  the pre-existing staged planner work. [Evidence](contributing/audits/kind-qualification-2026-09-17.md).
-  **Remaining; Testable now; Conditional:** complete the enabled NS-6 startup observation
-  with the stable sidecar/shared PID namespace and unchanged privilege boundary.
-  **Host prerequisite resolved (2026-09-17):** the inotify instance limit is now 512 and
-  `make check-test-e2e-host` passes. The guardrail is unchanged; this prerequisite check is not
-  Kind acceptance evidence. Both overall suites failed TEST-2 and skipped NS-6; the separate
-  full-suite/image-promotion gate remains TEST-3.
-  `NS-6` below owns the startup-stability verification within this acceptance gate;
-  readiness correctness (`NS-1`) is complete. F-97 is superseded in the completed tracker.
-  [Detailed design, migration order, and test matrix](contributing/design/nut-supervisor-migration.md).
-
-Completed readiness correctness (`NS-1`), including upstream timeout/framing fixes and real-binary
-regressions, is recorded in [completed tasks](tasks-completed.md#nut-server--upsd).
-
-- [ ] `NS-6` [Medium] verify startup stability under the redesigned Go supervisor as part of
-  `ENG-1` acceptance, replacing the historical F-97 startup investigation.
-  **Component evidence complete (2026-09-17):** the patched ARM64 image passed 661 seconds from
-  launch with eight authenticated local clients and one intentional reconnect: 326 probes,
-  first readiness at three seconds, no later readiness failures, and no driver replacements/exits.
-  `make docker-smoke-nut-startup` retains scoped evidence and cleanup results. This does not run
-  a manager or kubelet; the remaining current-manager/Kind acceptance is below.
-  **Kind harness:** `make test-e2e-nut-startup` and the manual E2E Tests workflow opt into the
-  full-window rendered-workload observation. Ordinary image-promotion runs explicitly skip NS-6;
-  a green default run alone does not close this task. Retain a successful enabled run before closure.
-  Observe the actual current manager/NUT images from driver launch through a bounded window
-  covering the historical eleven-minute startup period, with representative monitor startup
-  and reconnect activity. Record driver exits/replacements, readiness changes, probe errors,
-  image identities, test inputs, and cleanup; distinguish injected failures from spontaneous ones.
-  **Acceptance; Testable now; Conditional:** retain the run evidence and confirm whether the
-  original symptom occurs with the new supervisor. A clean scoped run closes this verification,
-  not a claim that the old root cause was solved. If it reproduces, capture a specific failure
-  and track its fix/regression as current work; do not require reconstructing the old watchdog
-  merely to close ENG-1. Existing recovery and telemetry scenarios remain required.
-  [Historical evidence and hypotheses](contributing/audits/nut-readiness-investigation-2026-09-17.md).
+Completed supervisor Kind acceptance (`ENG-1`), startup verification (`NS-6`), and readiness
+correctness (`NS-1`) are recorded in [completed tasks](tasks-completed.md#nut-server--upsd).
+The [dated qualification](contributing/audits/kind-qualification-2026-09-17.md) distinguishes
+passing component/spec evidence from failed overall commands. Full-suite and exact-image
+promotion remain the separate TEST-3 gate.
 
 Completed runtime-tool packaging (`NS-10`) is recorded in
 [completed tasks](tasks-completed.md#nut-server--upsd); the supported tool boundary is in
@@ -393,7 +353,7 @@ Keep High shutdown-safety work ahead of cleanup. The suggested test progression 
 Kind fixture/safety work and TEST-2 feasibility, then acceptance for approved
 profiles. Talos provisioning follows VM-8; TalosShutdown follows deterministic Talos bring-up.
 This is dependency guidance, not a requirement to serialize independent component work.
-ENG-1 includes NS-6 startup verification; the separate NS-1 readiness fix is complete. Completed OM-1
+Completed ENG-1 includes NS-6 startup verification; NS-1 readiness is also complete. Completed OM-1
 retains shared Kind setup; controlled measurements apply to concrete optimizations. MOD-4 is a
 distinct managed-NUT profile, not an implicit expansion of MOD-3. ENG-4 must preserve the execution
 ownership established by F-132/ENG-3 when deleting resume state. Complete REL-5 before evaluating ENG-10.
