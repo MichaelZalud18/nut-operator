@@ -98,10 +98,78 @@ class KindTest(unittest.TestCase):
             raise subprocess.CalledProcessError(42, args)
         return ""
 
-    def invoke(self, fake=None):
+    def invoke(self, fake=None, args=None):
         with patch.object(runner.tempfile, "mkdtemp", return_value=str(self.state)), \
                 patch.object(runner, "run", side_effect=fake or self.fake_run):
-            runner.suite(self.env)
+            if args is None:
+                runner.suite(self.env)
+            else:
+                runner.main(args, self.env)
+
+    def test_cli_default_is_unfiltered(self):
+        self.env.update(GINKGO_FOCUS="not-a-cli-focus", GOFLAGS="-mod=readonly")
+        original = dict(self.env)
+        self.invoke(args=[])
+        args, env = next(call for call in self.calls if call[0][0] == "go")
+        self.assertEqual(args, ["go", "test", "-tags=e2e", "./test/e2e/", "-v",
+                                "-ginkgo.v", "-timeout=30m"])
+        self.assertEqual(env["GOFLAGS"], original["GOFLAGS"])
+        self.assertEqual(self.env, original)
+        self.assert_external_untouched()
+        self.assertFalse(self.nodes)
+        self.assertFalse(self.state.exists())
+
+    def test_cli_focus_is_one_literal_argument_with_existing_boundaries(self):
+        patterns = ["should run successfully|logical ShutdownFlow|NS-6",
+                    r"$(touch forbidden); `echo x` & 'quoted' \"double\" \\ $HOME",
+                    r"\p{L}+", "["]
+        for focus in patterns:
+            for startup, minutes in (("false", 30), ("true", 45)):
+                with self.subTest(focus=focus, startup=startup):
+                    self.state.mkdir(mode=0o700, exist_ok=True)
+                    self.calls = []
+                    self.env.update(NUT_OPERATOR_E2E_STARTUP=startup, GOFLAGS="-mod=readonly")
+                    original = dict(self.env)
+                    with patch("builtins.print") as log:
+                        self.invoke(args=["--focus", focus])
+                    args, env = next(call for call in self.calls if call[0][0] == "go")
+                    self.assertEqual(args, ["go", "test", "-tags=e2e", "./test/e2e/", "-v",
+                                            "-ginkgo.v", f"-timeout={minutes}m", "-ginkgo.focus", focus,
+                                            "-ginkgo.fail-on-empty"])
+                    self.assertEqual(env["GOFLAGS"], original["GOFLAGS"])
+                    self.assertEqual(self.env, original)
+                    self.assertEqual(self.calls[0][0], ["make", "--no-print-directory", "check-test-e2e-host"])
+                    self.assertTrue(any("setup-test-e2e-cni" in args for args, _ in self.calls))
+                    self.assertEqual(sum("current-context" in args for args, _ in self.calls), 2)
+                    self.assertTrue(any("not full acceptance" in str(call) and repr(focus) in call.args[0]
+                                        for call in log.call_args_list))
+                    self.assert_external_untouched()
+                    self.assertFalse(self.nodes)
+                    self.assertFalse(self.state.exists())
+
+    def test_cli_invalid_arguments_have_no_preflight_side_effects(self):
+        invalid = [["--focus"], ["--focus", ""], ["--focus", " \t\n"],
+                   ["--focus", "a\0b"], ["--focus=spec"], ["spec"],
+                   ["--focus", "one", "two"], ["--focus", "one", "--focus", "two"],
+                   ["verify", "--focus", "one"], ["--focus", "one", "verify"]]
+        for args in invalid:
+            with self.subTest(args=args), \
+                    patch.object(runner, "run") as run, \
+                    patch.object(runner, "suite") as suite, \
+                    patch.object(runner, "verify") as verify, \
+                    patch.object(runner.tempfile, "mkdtemp") as mkdtemp:
+                with self.assertRaisesRegex(RuntimeError, "usage"):
+                    runner.main(args, self.env)
+                run.assert_not_called()
+                suite.assert_not_called()
+                verify.assert_not_called()
+                mkdtemp.assert_not_called()
+
+    def test_cli_verify_is_unchanged(self):
+        with patch.object(runner, "verify") as verify, patch.object(runner, "suite") as suite:
+            runner.main(["verify"], self.env)
+            verify.assert_called_once_with(self.env)
+            suite.assert_not_called()
 
     def assert_external_untouched(self):
         self.assertEqual(self.normal.read_text(), "normal-context-must-stay-unchanged")

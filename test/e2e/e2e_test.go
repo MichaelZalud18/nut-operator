@@ -49,7 +49,7 @@ var _ = Describe("Manager", Ordered, func() {
 	// Before running the tests, set up the environment by creating the namespace,
 	// enforce the restricted security policy to the namespace, installing CRDs,
 	// and deploying the controller.
-	BeforeAll(func() {
+	registerManagerLifecycle(func() {
 		By("creating manager namespace")
 		cmd := exec.Command("kubectl", "create", "ns", namespace)
 		_, err := utils.Run(cmd)
@@ -86,11 +86,7 @@ var _ = Describe("Manager", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to patch controller-manager imagePullPolicy for Kind")
 
 		waitForPowerManagementClusterAdmissionReady()
-	})
-
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
-	// and deleting the namespace.
-	AfterAll(func() {
+	}, func() {
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
 		_, _ = utils.Run(cmd)
@@ -115,11 +111,7 @@ var _ = Describe("Manager", Ordered, func() {
 		By("removing manager namespace")
 		cmd = exec.Command("kubectl", "delete", "ns", namespace)
 		_, _ = utils.Run(cmd)
-	})
-
-	// After each test, check for failures and collect logs, events,
-	// and pod descriptions for debugging.
-	AfterEach(func() {
+	}, func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
 			By("Fetching controller manager pod logs")
@@ -221,6 +213,16 @@ var _ = Describe("Manager", Ordered, func() {
 	logicalShutdownFlowSpecs()
 	nutStartupSpecs()
 })
+
+func registerManagerLifecycle(setup, cleanup, diagnostics func()) {
+	BeforeAll(func() {
+		// CleanupAfterAll follows spec DeferCleanup callbacks, unlike AfterAll.
+		// Register before setup so partial installs are also torn down.
+		DeferCleanup(cleanup)
+		setup()
+	})
+	AfterEach(diagnostics)
+}
 
 func currentControllerPodIdentity() (string, string, error) {
 	out, err := utils.Run(exec.Command("kubectl", "get", "pods", "-n", namespace,

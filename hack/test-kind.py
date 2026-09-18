@@ -81,7 +81,7 @@ def node_ids(env, deadline=None):
     return set(ids.split())
 
 
-def suite(env):
+def suite(env, focus=None):
     startup = env.get("NUT_OPERATOR_E2E_STARTUP", "false")
     if startup not in ("true", "false", ""):
         raise RuntimeError("NUT_OPERATOR_E2E_STARTUP must be true or false")
@@ -125,8 +125,10 @@ def suite(env):
         run(["make", "--no-print-directory", "setup-test-e2e-cni",
              "KIND_CLUSTER=" + run_env["KIND_CLUSTER"]], run_env, timeout=900, deadline=deadline)
         verify(run_env, deadline=deadline)
-        run(["go", "test", "-tags=e2e", "./test/e2e/", "-v", "-ginkgo.v", f"-timeout={test_minutes}m"],
-            run_env, timeout=test_minutes * 60 + 30, deadline=deadline)
+        test_args = ["go", "test", "-tags=e2e", "./test/e2e/", "-v", "-ginkgo.v", f"-timeout={test_minutes}m"]
+        if focus is not None:
+            test_args.extend(["-ginkgo.focus", focus, "-ginkgo.fail-on-empty"])
+        run(test_args, run_env, timeout=test_minutes * 60 + 30, deadline=deadline)
     finally:
         primary_error = sys.exc_info()[1]
         # A second cancellation must not interrupt bounded cleanup.
@@ -160,16 +162,24 @@ def interrupted(signum, _frame):
     raise KeyboardInterrupt(f"received signal {signum}")
 
 
+def main(args, env):
+    if args == ["verify"]:
+        verify(env)
+    elif not args:
+        suite(env)
+    elif len(args) == 2 and args[0] == "--focus" and args[1].strip() and "\0" not in args[1]:
+        # Validate only CLI shape; Ginkgo uses Go regexp semantics, not Python's.
+        print(f"Focused Kind scope: {args[1]!r}; local iteration, not full acceptance", flush=True)
+        suite(env, focus=args[1])
+    else:
+        raise RuntimeError("usage: test-kind.py [verify | --focus <nonempty-ginkgo-regexp>]")
+
+
 if __name__ == "__main__":
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, interrupted)
     try:
-        if sys.argv[1:] == ["verify"]:
-            verify(os.environ)
-        elif not sys.argv[1:]:
-            suite(os.environ)
-        else:
-            raise RuntimeError("usage: test-kind.py [verify]")
+        main(sys.argv[1:], os.environ)
     except (Exception, KeyboardInterrupt) as error:
         print(f"Kind suite failed: {error}", file=sys.stderr)
         sys.exit(1)

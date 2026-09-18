@@ -30,8 +30,10 @@ func logicalFlowSequence(outage bool) string {
 	if outage {
 		sequence += "TIMER 5\n\nups.status: OB\nbattery.charge: 40\nbattery.runtime: 1800\nups.load: 10\n\nTIMER 900\n"
 	} else {
-		// Loop Online indefinitely until readiness and the ineligible flow are observed.
-		sequence += "TIMER 900\n"
+		// Stay Online across short loops. dummy-loop closes its parser at EOF and
+		// reopens the projected pathname on the next loop, adopting replacement data
+		// without a driver restart. A pending TIMER is not reset by file replacement.
+		sequence += "TIMER 5\n"
 	}
 	return logicalFlowJSONList(corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
 		ObjectMeta: metav1.ObjectMeta{Name: "test2-sequence", Namespace: flowOperandNamespace},

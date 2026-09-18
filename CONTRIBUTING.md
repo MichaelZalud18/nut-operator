@@ -53,6 +53,19 @@ publish that directory: it contains credentials. Cancellation cleanup is bounded
 guaranteed after runner loss or SIGKILL. `make test-kind-harness` exercises ownership, failure,
 and cancellation paths without Docker, Kubernetes, or VMs. Python 3 is required by the runner.
 
+For focused local iteration, run from the repository root:
+
+```sh
+python3 -B hack/test-kind.py --focus 'should run successfully|logical ShutdownFlow|NS-6'
+```
+
+This explicit CLI option forwards one nonempty regexp to Ginkgo, which validates Go regexp
+syntax, and enables `-ginkgo.fail-on-empty` so an unmatched focus fails. Focused runs are not
+full acceptance. They retain the shared `BeforeSuite` image setup,
+host preflight, private cluster ownership checks, CNI setup, timeouts, and cleanup. No arguments
+still runs the unfiltered suite; `verify` is unchanged. The existing
+`NUT_OPERATOR_E2E_STARTUP=true` opt-in is still required to execute NS-6 rather than skip it.
+
 `make test-e2e-nut-startup` adds the NS-6 eleven-minute startup observation to that same owned
 Kind suite. It extends the suite timeout to 45 minutes (50 minutes including cluster setup),
 while preserving the independent cleanup deadline. The ordinary suite keeps its existing budget.

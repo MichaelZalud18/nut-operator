@@ -111,8 +111,10 @@ func logicalShutdownFlowSpecs() {
 			g.Expect(flow.Status.TriggerEvaluation).NotTo(BeNil())
 			g.Expect(flow.Status.TriggerEvaluation.Eligible).To(BeFalse())
 		}, time.Minute, time.Second).Should(Succeed())
-		// ConfigMap changes are watched by the production NUTServer controller and
-		// roll the real dummy-ups operand. No telemetry/status field is patched.
+		// The controller projects the updated sequence without rolling the operand.
+		// The short Online loop lets dummy-ups reopen the pathname after EOF; allow
+		// projection and polling latency, not an immediate reset of a pending TIMER.
+		// No telemetry/status field is patched and no driver restart is requested.
 		Expect(applyFixtureManifest(logicalFlowSequence(true))).To(Succeed())
 		Eventually(func(g Gomega) {
 			var ups power.UPSDevice
@@ -232,11 +234,15 @@ func logicalFlowWorkers(nodes []corev1.Node, pods []corev1.Pod) (string, string,
 	return "", "", fmt.Errorf("no worker separate from manager")
 }
 
+func logicalFlowSharedNamespaces() []string {
+	return []string{"kube-system", "cert-manager", "local-path-storage"}
+}
+
 func logicalFlowRelocateSystemDeployments(target, survivor string, cleanup *logicalFlowCleanup) {
 	By("temporarily placing shared system Deployments on the surviving worker")
 	_, err := utils.Run(exec.Command("kubectl", "taint", "node", target, flowDrainTaint+"=true:NoSchedule"))
 	Expect(err).NotTo(HaveOccurred())
-	for _, ns := range []string{"kube-system", "cert-manager"} {
+	for _, ns := range logicalFlowSharedNamespaces() {
 		var deployments appsv1.DeploymentList
 		Expect(logicalFlowGet(&deployments, "deployments", "-n", ns)).To(Succeed())
 		for _, deployment := range deployments.Items {
@@ -308,14 +314,24 @@ func logicalFlowDrainBlockers(node string, pods []corev1.Pod) []string {
 	return blockers
 }
 
-func logicalFlowGet(object any, args ...string) error {
+func logicalFlowGet[T any](object *T, args ...string) error {
+	return logicalFlowGetWithRunner(utils.Run, object, args...)
+}
+
+func logicalFlowGetWithRunner[T any](run func(*exec.Cmd) (string, error), object *T, args ...string) error {
 	args = append([]string{"get"}, args...)
 	args = append(args, "-o", "json")
-	out, err := utils.Run(exec.Command("kubectl", args...))
+	out, err := run(exec.Command("kubectl", args...))
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal([]byte(out), object)
+	// Each API response replaces the previous snapshot, including omitted fields.
+	var fresh T
+	if err := json.Unmarshal([]byte(out), &fresh); err != nil {
+		return err
+	}
+	*object = fresh
+	return nil
 }
 
 func logicalFlowRead(g Gomega) power.ShutdownFlow {
