@@ -198,6 +198,18 @@ func TestHadronClusterJoin(t *testing.T) {
 		return nil
 	}, nil)
 
+	// The sixth live run's own evidence: the address-persistence check below started failing with
+	// "ssh: handshake failed: ... connection reset by peer" on the loopback hostfwd port itself --
+	// not a guest-internal symptom at all, but the kind of reset a fresh post-reboot network stack
+	// sends for a stray packet. "the k3s-agent unit exists" only proves Kairos has provisioned the
+	// installed system enough to write that unit file; it does not prove the guest has finished
+	// settling (a possible second internal reboot/finalization stage this project has not
+	// confirmed against Kairos's own docs either way). Proving basic SSH reachability stays stable
+	// across a real window, before this test ever touches the guest's network, directly tests that
+	// gap instead of assuming the earlier check already covers it.
+	t.Log("confirming the agent's SSH session is stable before configuring its network")
+	waitForStableSSH(ctx, t, agentCreds, 9, 5*time.Second, 2*time.Minute)
+
 	t.Log("assigning the agent's static ClusterLink address")
 	agentIface := assignClusterLinkAddress(ctx, t, agentCreds, agentMAC, clusterJoinAgentIP)
 	t.Logf("agent ClusterLink interface: %s (%s/%s)", agentIface, clusterJoinAgentIP, clusterJoinSubnetLen)
@@ -320,6 +332,39 @@ func bootClusterJoinGuest(ctx context.Context, t *testing.T, name string, cfg Co
 		t.Fatalf("Create (%s): %v", name, err)
 	}
 	return m, creds
+}
+
+// waitForStableSSH blocks until creds answers a trivial command successfully required times in a
+// row, each spaced interval apart, resetting the count to zero on any failure -- proving the guest
+// stays reachable across a real window, not merely that it answered once (the same gap
+// waitForWithDiagnostics's single-success return leaves, see confirmAgentClusterLinkAddressSurvives's
+// own doc comment). Bounded overall by timeout.
+func waitForStableSSH(ctx context.Context, t *testing.T, creds Credentials, required int, interval, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	consecutive := 0
+	for {
+		_, err := guestCommand(ctx, creds, "true")
+		if err != nil {
+			if consecutive > 0 {
+				t.Logf("SSH dropped after %d consecutive successes: %v", consecutive, err)
+			}
+			consecutive = 0
+		} else {
+			consecutive++
+			if consecutive >= required {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("SSH never stayed reachable for %d consecutive checks within %s (reached %d)", required, timeout, consecutive)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context canceled waiting for stable SSH: %v", ctx.Err())
+		case <-time.After(interval):
+		}
+	}
 }
 
 // confirmAgentClusterLinkAddressSurvives polls dev's address every 3s across the whole of window,
