@@ -162,3 +162,20 @@ Ginkgo reported one passed, one failed, and 21 filtered specs in 567.834 seconds
 cluster-free component tests, including the cleanup-diagnostic tests that failed in the
 earlier startup command, passed after Ginkgo with coherent committed sources. TEST-2
 remains open until the corrected cleanup budget passes live.
+
+## Successful Shutdown-Flow Confirmation
+
+The frozen-source confirmation based on `dbfd9e6` passed both selected Ginkgo specs in
+603.018 seconds. All package component tests also passed; Go completed in 607.815 seconds
+and the owned runner exited zero. The 21 other Ginkgo specs were deliberately filtered,
+not silently treated as covered.
+
+All positive and negative assertions passed again. Foreground fixture deletion and every
+absence check succeeded with the corrected budget, followed by worker uncordon, reservation
+removal, and restoration/rollout of the shared deployments. The manager manifest was restored,
+all three owned containers were removed, and a final Docker inventory contained only the
+pre-existing unrelated Kind cluster.
+
+This establishes TEST-2 end-to-end feasibility and cleanup. Full shared-suite coexistence,
+exact promoted images, and required CI-check semantics remain TEST-3 acceptance; the
+focused run does not close those gates or substitute for guest-shutdown evidence.

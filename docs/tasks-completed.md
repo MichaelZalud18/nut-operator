@@ -143,6 +143,23 @@ Original entry (historical, not an additional open task):
   not TEST-1/TEST-2/TEST-3 or an optimization implementation.
   [Evidence, ranking, and decision](contributing/audits/kind-modularity-2026-09-13.md#om-1-decision-september-17).
 
+- [x] `TEST-2` [Medium] logical ShutdownFlow feasibility (2026-09-17). The owned three-node
+  Kind run passed the complete scenario from real dummy-ups telemetry through production
+  trigger/planner/executor, ordered scale/drain, operator-generated signal, and rendered
+  Simulate acceptance. Verified PostgreSQL audit ordering/targets, survivor pod/node isolation,
+  missing-approval rejection, DryRun non-effects, and a separate expired-signal control.
+  No positive signal was injected. Corrected short-loop telemetry adoption, shared storage
+  placement, fresh JSON snapshots, cleanup ordering/diagnostics, and deletion grace budgeting.
+  All fixture deletions and absence checks passed before uncordon, reservation removal, and
+  shared deployment restoration. Manager configuration and owned cluster teardown completed.
+  **Validation:** focused Ginkgo two passed/zero failed; all package component tests passed;
+  command exited zero. Race regressions, tagged lint, scans, and independent review passed.
+  [Run evidence](contributing/audits/kind-qualification-2026-09-17.md).
+  **Remaining acceptance:** full shared-suite coexistence and exact promoted-image coverage
+  are retained under TEST-3 in the active tracker. The scenario stays in the shared suite;
+  no CI split, dropped network-policy coverage, or VM replacement is authorized. Kind ends
+  at simulated actuation; real guest shutdown remains separate VM qualification.
+
 - [x] `TEST-2` candidate fixture/component slice (2026-09-17). Added a shared-Manager scenario
   that drives dummy-ups from Online to OnBattery, observes eligible DryRun non-effects, and
   approves Enforce for ordered scale/drain and operator-published Simulate handoff. PostgreSQL
@@ -154,8 +171,8 @@ Original entry (historical, not an additional open task):
   alongside the new scenario. Checked bounded teardown verifies fixture removal before restoring
   shared scheduling; cleanup failures retain the reservation until owned cluster teardown.
   Tagged race tests, cleanup failure/ordering checks, and tagged lint passed.
-  **Scope limit:** live feasibility remains TEST-2 in `tasks.md`;
-  component/race passes are not a Kind or guest-shutdown pass.
+  **Scope limit at this milestone:** component/race passes were not live feasibility or
+  guest-shutdown evidence. The subsequent live feasibility result is recorded above.
 
 - [x] `TEST-1` extracted-scenario live qualification (2026-09-17). Two owned three-node Kind
   runs passed upgrade/replacement, metrics, admission/certificates, signal handoff, scripted
@@ -468,9 +485,9 @@ Original entry (historical, not an additional open task):
   [Dated evidence and limits](contributing/audits/nut-readiness-investigation-2026-09-17.md#ns-1-implementation-and-validation).
   ENG-1/NS-6 retain their separate manager/Kind acceptance scope.
 
-- [x] `ENG-1` implementation and local parity milestone (2026-09-15); the overall task remains
-  open in the active tracker for Kind acceptance. Replaced shell supervision with the Go
-  `nut-driver-supervisor`, invoked directly by the stable sidecar. NUT still owns enumeration,
+- [x] `ENG-1` implementation and local parity milestone (2026-09-15); Kind acceptance remained
+  open at this milestone and is qualified in the later entry above. Replaced shell supervision
+  with the Go `nut-driver-supervisor`, invoked directly by the stable sidecar. NUT still owns enumeration,
   foreground startup, and reload-or-exit decisions. An owned-leader SIGUSR1 fallback handles a
   changed driver name whose new PID filename cannot reach the old process. No new configuration
   parser, service, CRD, privileges, or supervisor state files. Process groups, unreaped-leader
@@ -486,8 +503,8 @@ Original entry (historical, not an additional open task):
   probe misses, server failures, or disagreements. One expanded run recorded two server failures
   during the fixture's final forced port restart. Waiting for the restored port's actual data fixed
   that sequencing error; the confirming 60-sample run passed. Failed samples were retained.
-  This does not close F-97 or prove Kind/hardware behavior; the Kind host-preflight blocker is
-  recorded in the active task.
+  This milestone did not close F-97 or prove Kind/hardware behavior; the later qualification
+  above records resolution of the host-preflight blocker and scoped Kind acceptance.
 
 - [x] `F-144` [Medium] isolate and harden NUT supervision (2026-09-13).
   Runtime shell, configuration, and process tests now belong to `internal/nutsupervisor`;

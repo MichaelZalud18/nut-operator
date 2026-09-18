@@ -217,36 +217,19 @@ Completed comment cleanup (`ENG-8`) and Kind-cost analysis (`OM-1`) are recorded
 [completed tasks](tasks-completed.md#operator-maturity--hardening). The Kind decision retains
 the shared suite and existing safety gates.
 
-Completed extracted-scenario qualification (`TEST-1`) is recorded in
-[completed tasks](tasks-completed.md#operator-maturity--hardening). Its scoped live passes do not
-close the separate logical-flow, startup, or full-suite/image-promotion gates below.
+Completed extracted-scenario qualification (`TEST-1`) and logical-flow feasibility (`TEST-2`)
+are recorded in [completed tasks](tasks-completed.md#operator-maturity--hardening).
+TEST-2's focused live pass proves feasibility, not full-suite coexistence or image promotion;
+that outstanding acceptance is consolidated under TEST-3 below rather than duplicated.
 
-- [ ] `TEST-2` [Medium, investigation] prove a full logical ShutdownFlow scenario is feasible in
-  Kind before treating it as a qualified permanent gate. The candidate scenario now connects
-  controlled dummy-ups telemetry transitions to an eligible ShutdownFlow, production trigger
-  evaluation, planner/executor, scale/drain ordering, an operator-generated node signal, and
-  rendered Simulate actuation. It checks real audit records, unchanged survivor workloads,
-  missing approval, DryRun non-effects, and a separate expired-signal control.
-  **Remaining; Testable now; Conditional:** run the candidate with the shared full Kind suite,
-  resolve any live failures, and capture positive execution/order and negative-control evidence.
-  Component fixture checks do not establish end-to-end feasibility. Never replace production
-  publication with a hand-written positive halt Secret. Kind ends at simulated actuation;
-  real guest shutdown stays in VM-3/VM-4/VM-7. Retain exact promoted-image coverage and network
-  policy enforcement. This investigation does not authorize splitting CI or dropping VM evidence.
-  **Live progress (2026-09-17):** real telemetry adoption, DryRun isolation, ordered
-  scale/drain/signal delivery, Simulate acceptance, audit actions, and survivor pod continuity
-  passed in focused iteration. Corrected the initial dummy-loop timer, shared storage placement,
-  and reused JSON snapshot fixture bugs. The full scenario still needs a passing survivor-node
-  check, expired-signal control, and fixture cleanup; cleanup returned an additional error
-  whose cause remains under investigation. Owned cluster teardown completed.
-  [Run evidence and related fixes](contributing/audits/kind-qualification-2026-09-17.md).
 - [ ] `TEST-3` [Medium; High for mutation isolation] harden Kind reproducibility and kubeconfig
   handling. **Implementation complete; live Kind qualification remains.** The runner now owns a
   private kubeconfig and unique cluster, guards context/cluster UID before mutation, and checks
   original container IDs before deletion. Kind/curl helpers are versioned; pinning policy lives in
   CONTRIBUTING.md. [Component evidence](tasks-completed.md#operator-maturity--hardening).
   **Remaining; Testable now; Conditional:** run the existing full Kind suite on a provisioned
-  runner, confirm policy-enforcing CNI setup, exact promoted-image coverage, unchanged external
+  runner, including the now-proven TEST-2 scenario alongside all existing scenarios. Confirm
+  policy-enforcing CNI setup, exact promoted-image coverage, unchanged external
   kubeconfig/context, and successful owned teardown. **Live cancellation passed (2026-09-17):**
   `make test-kind-lifecycle` verified partial-startup and post-API SIGTERM, owned-node removal,
   private-state cleanup, preservation of pre-existing containers, and unchanged external kubeconfigs.
@@ -350,8 +333,8 @@ The public VM test guide (`VM-6`) lives in the
 
 The 2026-09-15 proposal's tracker split is complete; the work above remains open unless checked.
 Keep High shutdown-safety work ahead of cleanup. The suggested test progression is VM-8 fixtures,
-Kind fixture/safety work and TEST-2 feasibility, then acceptance for approved
-profiles. Talos provisioning follows VM-8; TalosShutdown follows deterministic Talos bring-up.
+Kind fixture/safety work and full-suite acceptance of the proven TEST-2 scenario, then acceptance
+for approved profiles. Talos provisioning follows VM-8; TalosShutdown follows deterministic Talos bring-up.
 This is dependency guidance, not a requirement to serialize independent component work.
 Completed ENG-1 includes NS-6 startup verification; NS-1 readiness is also complete. Completed OM-1
 retains shared Kind setup; controlled measurements apply to concrete optimizations. MOD-4 is a
