@@ -236,22 +236,37 @@ func TestHadronClusterJoin(t *testing.T) {
 		}
 		return nil
 	}, func(ctx context.Context) {
-		// docs.k3s.io/installation/requirements documents port 6443 and recommends disabling
-		// firewalld/ufw; the raw curl isolates whether the path from agent to server is even
-		// reachable at the TCP/TLS level, independent of k3s's own retry/backoff logic.
+		// The first live run (2026-09-17) showed firewalld/ufw already "inactive" on both guests
+		// (disabling them was a no-op, ruling that theory out with direct evidence) and a raw curl
+		// to the server timing out at exactly the 5s budget (http_code=000), consistent with either
+		// nothing listening on the far end or the underlying link itself not passing traffic once
+		// k3s/flannel are running -- but the first attempt at checking "is anything listening on
+		// 6443" used `ss` piped through a `grep` that can exit non-zero and swallow output on zero
+		// matches, and this minimal Kairos image's `ss` was never actually confirmed present. Every
+		// command below appends "; true" so a real answer is captured regardless of any individual
+		// tool's own exit code, and falls back across tools rather than assuming one exists.
 		out, err := guestCommand(ctx, agentCreds, "sudo systemctl status k3s-agent --no-pager -l 2>&1 | head -30; "+
 			"echo ---k3s-agent-journal---; sudo journalctl -u k3s-agent --no-pager -n 40 2>&1; "+
 			"echo ---agent-firewall---; sudo systemctl is-active firewalld ufw 2>&1; "+
 			"echo ---agent-curl-server-6443---; "+
 			"curl -sk --max-time 5 -o /dev/null -w 'http_code=%{http_code} time_total=%{time_total}\\n' "+
-			"https://"+clusterJoinServerIP+":6443/cacerts 2>&1")
+			"https://"+clusterJoinServerIP+":6443/cacerts 2>&1; "+
+			"echo ---agent-ping-server---; ping -c2 -W2 "+clusterJoinServerIP+" 2>&1; "+
+			"echo ---agent-iface---; ip -4 addr show 2>&1; ip route show 2>&1; "+
+			"true")
 		if err != nil {
 			t.Logf("diagnostic snapshot command itself failed: %v\noutput so far:\n%s", err, out)
 		} else {
 			t.Logf("agent diagnostic snapshot:\n%s", out)
 		}
 		serverOut, err := guestCommand(ctx, serverCreds, "echo ---server-firewall---; sudo systemctl is-active firewalld ufw 2>&1; "+
-			"echo ---server-listening---; sudo ss -tlnp 2>&1 | grep -E ':6443|State' ")
+			"echo ---server-k3s-status---; sudo systemctl is-active k3s 2>&1; "+
+			"echo ---server-k3s-journal---; sudo journalctl -u k3s --no-pager -n 20 2>&1; "+
+			"echo ---server-listening---; "+
+			"(sudo ss -tlnp 2>&1 || true; sudo netstat -tlnp 2>&1 || true; sudo cat /proc/net/tcp 2>&1 || true) | head -40; "+
+			"echo ---server-iptables---; sudo iptables -S 2>&1 | head -30; "+
+			"echo ---server-iface---; ip -4 addr show 2>&1; "+
+			"true")
 		if err != nil {
 			t.Logf("server diagnostic snapshot command itself failed: %v\noutput so far:\n%s", err, serverOut)
 			return
