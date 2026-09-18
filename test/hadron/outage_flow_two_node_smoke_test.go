@@ -139,7 +139,7 @@ func TestHadronOutageFlowTwoNodeDrainsWorkload(t *testing.T) {
 	runKubectl(ctx, t, kubeconfigPath, "create", "ns", twoNodeWorkloadNamespace)
 
 	t.Log("applying the real workload Deployment DrainNodes must evict, pinned to the agent node")
-	applyWorkloadDeploymentOnNode(ctx, t, kubeconfigPath, agentNodeName)
+	applyWorkloadDeploymentOnNode(ctx, t, kubeconfigPath, clientset, agentNodeName)
 
 	nutServerRepo, nutServerTag := splitImageRef(t, nutServerImage)
 	upsmonRepo, upsmonTag := splitImageRef(t, upsmonImage)
@@ -632,7 +632,7 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 // not in any protected namespace) DrainNodes must remove for real. A single replica, no
 // PodDisruptionBudget -- this milestone proves the base eviction path works at all; a PDB
 // override is internal/kubeactions/runner.go's own already-implemented branch, not re-proven here.
-func applyWorkloadDeploymentOnNode(ctx context.Context, t *testing.T, kubeconfigPath, nodeName string) {
+func applyWorkloadDeploymentOnNode(ctx context.Context, t *testing.T, kubeconfigPath string, clientset *kubernetes.Clientset, nodeName string) {
 	t.Helper()
 	manifest := fmt.Sprintf(`
 apiVersion: apps/v1
@@ -666,11 +666,25 @@ spec:
 		t.Fatalf("kubectl apply workload Deployment: %v\n%s", err, out)
 	}
 
+	// A typed List, not a `kubectl get -o jsonpath={.items[0]...}` shellout: before the Deployment's
+	// own controller has created any Pod yet, that jsonpath template errors on the empty list
+	// (`array index out of bounds: index 0, length 0`), which runKubectlOutput turns into an
+	// immediate t.Fatalf -- aborting the whole test on a normal, expected transient state instead of
+	// retrying it. Confirmed live (2026-09-18, first run of this milestone): the failure landed at
+	// this exact check, seconds after the Deployment was applied, with every prior step (real
+	// two-node join, controller-manager Ready) already passed.
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, "workload Pod Running", func(ctx context.Context) error {
-		out := runKubectlOutput(ctx, t, kubeconfigPath, "get", "pods", "-n", twoNodeWorkloadNamespace,
-			"-l", "app=hadron-outage-workload", "-o", "jsonpath={.items[0].status.phase}")
-		if out != "Running" {
-			return fmt.Errorf("workload pod phase=%q, not Running yet", out)
+		pods, err := clientset.CoreV1().Pods(twoNodeWorkloadNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "app=hadron-outage-workload",
+		})
+		if err != nil {
+			return err
+		}
+		if len(pods.Items) == 0 {
+			return fmt.Errorf("workload pod not created yet")
+		}
+		if phase := pods.Items[0].Status.Phase; phase != corev1.PodRunning {
+			return fmt.Errorf("workload pod phase=%q, not Running yet", phase)
 		}
 		return nil
 	}, nil)

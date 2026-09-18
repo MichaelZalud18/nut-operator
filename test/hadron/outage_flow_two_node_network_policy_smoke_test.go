@@ -54,7 +54,9 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 // networkPolicyOutageNamespace hosts the UPSDevice/NUTServer fixture and the authorized (same-
@@ -234,10 +236,10 @@ spec:
 	}
 
 	t.Log("starting the authorized (same-namespace) probe pod on the agent node")
-	applyProbePod(ctx, t, kubeconfigPath, networkPolicyOutageNamespace, "netpol-authorized-probe", agentNodeName, nutServerImage)
+	applyProbePod(ctx, t, kubeconfigPath, clientset, networkPolicyOutageNamespace, "netpol-authorized-probe", agentNodeName, nutServerImage)
 
 	t.Log("starting the unauthorized (unrelated-namespace) probe pod on the agent node")
-	applyProbePod(ctx, t, kubeconfigPath, networkPolicyUnauthorizedNamespace, "netpol-unauthorized-probe", agentNodeName, nutServerImage)
+	applyProbePod(ctx, t, kubeconfigPath, clientset, networkPolicyUnauthorizedNamespace, "netpol-unauthorized-probe", agentNodeName, nutServerImage)
 
 	probe := func(namespace, podName string) error {
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, 10*time.Second)
@@ -273,7 +275,7 @@ spec:
 // applyProbePod starts a minimal pod on nodeName carrying only what the nc-based probe above
 // needs. image is the already-imported nut-server operand image (Alpine-based, ships busybox nc)
 // so this adds no extra pull or registry dependency.
-func applyProbePod(ctx context.Context, t *testing.T, kubeconfigPath, namespace, podName, nodeName, image string) {
+func applyProbePod(ctx context.Context, t *testing.T, kubeconfigPath string, clientset *kubernetes.Clientset, namespace, podName, nodeName, image string) {
 	t.Helper()
 	manifest := fmt.Sprintf(`
 apiVersion: v1
@@ -298,11 +300,18 @@ spec:
 		t.Fatalf("kubectl apply probe pod %s: %v\n%s", podName, err, out)
 	}
 
+	// A typed Get, not a kubectl/jsonpath shellout: outage_flow_two_node_smoke_test.go's own
+	// TestHadronOutageFlowTwoNodeDrainsWorkload found live (2026-09-18) that a kubectl jsonpath
+	// query against a not-yet-existent object errors out, and runKubectlOutput turns that into an
+	// immediate t.Fatalf instead of a retryable error -- aborting the whole test on a normal,
+	// momentary race between kubectl apply returning and the object actually existing.
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, podName+" Running", func(ctx context.Context) error {
-		out := runKubectlOutput(ctx, t, kubeconfigPath, "get", "pod", podName, "-n", namespace,
-			"-o", "jsonpath={.status.phase}")
-		if out != "Running" {
-			return fmt.Errorf("probe pod phase=%q, not Running yet", out)
+		pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if pod.Status.Phase != corev1.PodRunning {
+			return fmt.Errorf("probe pod phase=%q, not Running yet", pod.Status.Phase)
 		}
 		return nil
 	}, nil)
