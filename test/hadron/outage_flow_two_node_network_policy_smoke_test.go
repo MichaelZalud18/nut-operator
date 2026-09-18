@@ -241,27 +241,44 @@ spec:
 	t.Log("starting the unauthorized (unrelated-namespace) probe pod on the agent node")
 	applyProbePod(ctx, t, kubeconfigPath, clientset, networkPolicyUnauthorizedNamespace, "netpol-unauthorized-probe", agentNodeName, nutServerImage)
 
-	probe := func(namespace, podName string) error {
+	// Returns nc's own combined output alongside the error: "exit status 1" alone does not
+	// distinguish a timeout (the -w budget firing, consistent with a real deny) from a DNS/exec
+	// failure (consistent with the probe pod or command itself being broken), and the first live
+	// run of this test had only the bare error to go on.
+	probe := func(namespace, podName string) (string, error) {
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer attemptCancel()
 		cmd := exec.CommandContext(attemptCtx, "kubectl", "-n", namespace, "exec", podName, "--",
-			"nc", "-z", "-w", "3", clusterIP, fmt.Sprintf("%d", 3493))
+			"nc", "-z", "-v", "-w", "3", clusterIP, fmt.Sprintf("%d", 3493))
 		cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfigPath)
-		return cmd.Run()
+		out, err := cmd.CombinedOutput()
+		return string(out), err
 	}
 
 	t.Log("confirming the same-namespace probe reaches the real upsd port -- otherwise a later denial would prove nothing")
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, "authorized probe reaches NUTServer", func(ctx context.Context) error {
-		if err := probe(networkPolicyOutageNamespace, "netpol-authorized-probe"); err != nil {
-			return fmt.Errorf("same-namespace probe could not reach the real upsd port yet: %w", err)
+		if out, err := probe(networkPolicyOutageNamespace, "netpol-authorized-probe"); err != nil {
+			return fmt.Errorf("same-namespace probe could not reach the real upsd port yet: %w\n%s", err, out)
 		}
 		return nil
-	}, nil)
+	}, func(ctx context.Context) {
+		policy := runKubectlOutput(ctx, t, kubeconfigPath, "get", "networkpolicy", policyName,
+			"-n", networkPolicyOutageNamespace, "-o", "yaml")
+		t.Logf("diagnostic rendered NetworkPolicy:\n%s", policy)
+		pods := runKubectlOutput(ctx, t, kubeconfigPath, "get", "pods", "-n", networkPolicyOutageNamespace, "-o", "wide")
+		t.Logf("diagnostic pod listing in %s:\n%s", networkPolicyOutageNamespace, pods)
+		// Both probes run cross-node (probe pod on the agent, NUTServer on the server); if both
+		// nodes' InternalIP is identical, they registered the isolated per-guest NAT address
+		// instead of a distinct ClusterLink address, and cross-node pod traffic (Flannel's own
+		// VXLAN encapsulation target) would be unrouteable regardless of any NetworkPolicy.
+		nodes := runKubectlOutput(ctx, t, kubeconfigPath, "get", "nodes", "-o", "wide")
+		t.Logf("diagnostic node listing (watch for identical InternalIP values):\n%s", nodes)
+	})
 
 	t.Log("confirming the unrelated-namespace probe is reliably denied, not merely slow")
 	const denialChecks = 6
 	for i := 0; i < denialChecks; i++ {
-		if err := probe(networkPolicyUnauthorizedNamespace, "netpol-unauthorized-probe"); err == nil {
+		if _, err := probe(networkPolicyUnauthorizedNamespace, "netpol-unauthorized-probe"); err == nil {
 			t.Fatalf("an unrelated-namespace pod reached the real upsd port on attempt %d/%d -- the "+
 				"rendered NetworkPolicy did not deny it (or this guest's CNI does not enforce "+
 				"NetworkPolicy at all, which the same-namespace pass above rules out as the whole "+

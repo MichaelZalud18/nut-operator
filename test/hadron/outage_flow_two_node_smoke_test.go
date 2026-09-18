@@ -372,6 +372,14 @@ spec:
 		t.Logf("diagnostic NodePowerAgent status:\n%s", status)
 		pods := runKubectlOutput(ctx, t, kubeconfigPath, "get", "pods", "-n", twoNodeOutageNamespace, "-o", "wide")
 		t.Logf("diagnostic pod listing in %s:\n%s", twoNodeOutageNamespace, pods)
+		// If upsmon's own readiness probe is what's failing, the next question is whether it can
+		// reach NUTServer's Service at all -- InternalIP tells us whether both nodes actually
+		// registered distinct, mutually routable addresses (the ClusterLink segment) or ended up
+		// with the same isolated per-guest NAT address, which would make cross-node pod traffic
+		// (Flannel's own VXLAN encapsulation target) fundamentally unrouteable regardless of any
+		// NetworkPolicy.
+		nodes := runKubectlOutput(ctx, t, kubeconfigPath, "get", "nodes", "-o", "wide")
+		t.Logf("diagnostic node listing (watch for identical InternalIP values):\n%s", nodes)
 	})
 
 	t.Log("waiting for the real PostgreSQL Deployment to become Ready")
