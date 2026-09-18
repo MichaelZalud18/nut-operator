@@ -215,7 +215,7 @@ spec:
 
 	t.Log("waiting for the real NUTServer Deployment to become Ready")
 	waitForWithDiagnostics(t, ctx, 3*time.Minute, "NUTServer Ready", func(ctx context.Context) error {
-		dep, err := clientset.AppsV1().Deployments(networkPolicyOutageNamespace).Get(ctx, serverName, metav1.GetOptions{})
+		dep, err := clientset.AppsV1().Deployments(networkPolicyOutageNamespace).Get(ctx, serverName+"-nut-server", metav1.GetOptions{})
 		if err != nil {
 			return err
 		}

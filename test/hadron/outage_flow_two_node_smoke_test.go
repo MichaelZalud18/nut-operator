@@ -357,13 +357,22 @@ spec:
 	})
 
 	t.Log("waiting for the NodePowerAgent to report Ready")
+	// 2026-09-18 second live run: this timed out with no diagnostic capture at all, leaving no
+	// evidence of whether the DaemonSet's own pod ever started, pulled its images, or failed a
+	// readiness probe -- added before guessing at a fix, matching every other wait in this package
+	// that can plausibly stall.
 	waitForWithDiagnostics(t, ctx, 3*time.Minute, "NodePowerAgent Ready", func(ctx context.Context) error {
 		phase := runKubectlOutput(ctx, t, kubeconfigPath, "get", "nodepoweragent", "hadron-two-node-outage-agent", "-o", "jsonpath={.status.phase}")
 		if phase != "Ready" {
 			return fmt.Errorf("NodePowerAgent phase=%q, not Ready yet", phase)
 		}
 		return nil
-	}, nil)
+	}, func(ctx context.Context) {
+		status := runKubectlOutput(ctx, t, kubeconfigPath, "get", "nodepoweragent", "hadron-two-node-outage-agent", "-o", "yaml")
+		t.Logf("diagnostic NodePowerAgent status:\n%s", status)
+		pods := runKubectlOutput(ctx, t, kubeconfigPath, "get", "pods", "-n", twoNodeOutageNamespace, "-o", "wide")
+		t.Logf("diagnostic pod listing in %s:\n%s", twoNodeOutageNamespace, pods)
+	})
 
 	t.Log("waiting for the real PostgreSQL Deployment to become Ready")
 	waitForWithDiagnostics(t, ctx, 3*time.Minute, "PostgreSQL Ready", func(ctx context.Context) error {
