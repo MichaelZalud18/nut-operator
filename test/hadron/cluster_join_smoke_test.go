@@ -323,32 +323,51 @@ func bootClusterJoinGuest(ctx context.Context, t *testing.T, name string, cfg Co
 }
 
 // confirmAgentClusterLinkAddressSurvives polls dev's address every 3s across the whole of window,
-// failing the instant ip is missing rather than the first time it merely reappears -- unlike
+// failing once a bad observation (address missing, or the SSH check itself erroring) repeats on
+// the very next poll rather than the first time it merely reappears -- unlike
 // waitForWithDiagnostics, which returns on the check function's *first* success and so can only
-// prove the address existed at one instant, not that it survives. Live evidence (2026-09-17/18)
-// showed the agent's ClusterLink address present immediately after assignment and gone again
-// within about a minute, with the loss itself never observed directly; this exists to catch it in
-// the act and dump kernel/journal state at the moment it first goes missing.
+// prove the address existed at one instant, not that it survives. Live evidence (2026-09-17/18):
+// two runs showed the agent's ClusterLink address present immediately after assignment and gone
+// again within about a minute; a third run's SSH check itself started erroring with "context
+// deadline exceeded" at almost exactly the same point instead, which the first version of this
+// function (added for the first two runs) treated as an immediate hard failure with no
+// diagnostics at all -- if that's the same underlying event surfacing differently (the guest
+// itself briefly unresponsive, not only its second NIC), failing on one isolated SSH blip would
+// misdiagnose transient CI noise as the bug and never capture anything. Tolerating exactly one bad
+// poll (while still logging and attempting diagnostics on it) separates the two before deciding.
 func confirmAgentClusterLinkAddressSurvives(ctx context.Context, t *testing.T, creds Credentials, dev, ip string, window time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(window)
+	const maxConsecutiveBad = 2
+	consecutiveBad := 0
 	for {
 		out, err := guestCommand(ctx, creds, fmt.Sprintf("ip -4 addr show dev %s 2>&1", dev))
-		if err != nil {
-			t.Fatalf("checking agent ClusterLink address on %s: %v\n%s", dev, err, out)
+		var badReason string
+		switch {
+		case err != nil:
+			badReason = fmt.Sprintf("checking address: %v", err)
+		case !strings.Contains(out, ip):
+			badReason = fmt.Sprintf("address %s no longer present on %s:\n%s", ip, dev, out)
 		}
-		if !strings.Contains(out, ip) {
+		if badReason != "" {
+			consecutiveBad++
+			t.Logf("agent ClusterLink address check failed (%d/%d consecutive): %s", consecutiveBad, maxConsecutiveBad, badReason)
 			diagOut, diagErr := guestCommand(ctx, creds, "echo ---dmesg-tail---; sudo dmesg 2>&1 | tail -100; "+
 				"echo ---kernel-journal---; sudo journalctl -k --no-pager -n 100 2>&1; "+
 				"echo ---recent-journal---; sudo journalctl --no-pager -n 150 2>&1; "+
 				"echo ---ip-link-all---; ip link show 2>&1; "+
+				"echo ---uptime---; uptime 2>&1; "+
 				"true")
 			if diagErr != nil {
-				t.Logf("agent address-loss diagnostic command itself failed: %v\noutput so far:\n%s", diagErr, diagOut)
+				t.Logf("agent diagnostic snapshot itself failed: %v\noutput so far:\n%s", diagErr, diagOut)
 			} else {
-				t.Logf("agent address-loss diagnostic snapshot:\n%s", diagOut)
+				t.Logf("agent diagnostic snapshot at consecutive-bad=%d:\n%s", consecutiveBad, diagOut)
 			}
-			t.Fatalf("agent ClusterLink address %s disappeared from %s within %s of assignment:\n%s", ip, dev, window, out)
+			if consecutiveBad >= maxConsecutiveBad {
+				t.Fatalf("agent ClusterLink address %s did not survive on %s: %s", ip, dev, badReason)
+			}
+		} else {
+			consecutiveBad = 0
 		}
 		if time.Now().After(deadline) {
 			return

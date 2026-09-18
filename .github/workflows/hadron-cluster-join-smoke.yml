@@ -74,6 +74,24 @@ jobs:
         timeout-minutes: 42
         run: TMPDIR="$HADRON_STATE_ROOT" timeout --signal=TERM --kill-after=15s 41m go test -tags=hadron,hadron_smoke ./test/hadron -run TestHadronClusterJoin -v -timeout=39m
 
+      # Two guests (4096+2048 MiB) running full k3s bootstraps concurrently is a real amount of
+      # concurrent load; this checks whether the runner itself was under memory/CPU pressure during
+      # the run, an alternative explanation for intermittent guest-side unresponsiveness worth
+      # ruling in or out with direct evidence rather than assuming the guest OS alone is at fault.
+      - name: Record host resource state on failure
+        timeout-minutes: 1
+        if: failure()
+        run: |
+          echo "::group::free -h"
+          free -h
+          echo "::endgroup::"
+          echo "::group::uptime (load average)"
+          uptime
+          echo "::endgroup::"
+          echo "::group::host dmesg OOM/memory pressure"
+          sudo dmesg 2>&1 | grep -iE 'out of memory|oom-kill|oom_kill|killed process' || echo "(no matching lines)"
+          echo "::endgroup::"
+
       - name: Stop leftover guests owned by this run
         id: cleanup
         if: always() && env.HADRON_STATE_ROOT != ''
