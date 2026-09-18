@@ -202,6 +202,36 @@ func TestHadronClusterJoin(t *testing.T) {
 	agentIface := assignClusterLinkAddress(ctx, t, agentCreds, agentMAC, clusterJoinAgentIP)
 	t.Logf("agent ClusterLink interface: %s (%s/%s)", agentIface, clusterJoinAgentIP, clusterJoinSubnetLen)
 
+	// The first two live runs (2026-09-17/18) showed the agent's k3s-agent service never reaching
+	// the server, and by the time of the first diagnostic snapshot (roughly a minute later), the
+	// agent's own ens5 had vanished entirely from `ip -4 addr show` -- not merely link-down, gone
+	// from the listing altogether, while the server's own ens5 (same ClusterLink mechanism, only
+	// the Server()/Client() role differs -- network.go's own socket netdev listen/connect split)
+	// persisted unchanged across every sample. This check narrows down exactly when that happens,
+	// with a kernel-log capture at the moment it's first observed missing, instead of waiting out
+	// the full final wait's generic diagnostics.
+	t.Log("confirming the agent's ClusterLink address persists past the initial assignment")
+	waitForWithDiagnostics(t, ctx, 2*time.Minute, "agent ClusterLink address still present", func(ctx context.Context) error {
+		out, err := guestCommand(ctx, agentCreds, fmt.Sprintf("ip -4 addr show dev %s 2>&1", agentIface))
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(out, clusterJoinAgentIP) {
+			return fmt.Errorf("agent ClusterLink address %s no longer present on %s:\n%s", clusterJoinAgentIP, agentIface, out)
+		}
+		return nil
+	}, func(ctx context.Context) {
+		out, err := guestCommand(ctx, agentCreds, "echo ---dmesg-tail---; sudo dmesg 2>&1 | tail -80; "+
+			"echo ---kernel-journal---; sudo journalctl -k --no-pager -n 80 2>&1; "+
+			"echo ---ip-link-all---; ip link show 2>&1; "+
+			"true")
+		if err != nil {
+			t.Logf("agent address-loss diagnostic command itself failed: %v\noutput so far:\n%s", err, out)
+			return
+		}
+		t.Logf("agent address-loss diagnostic snapshot:\n%s", out)
+	})
+
 	t.Log("fetching kubeconfig and waiting for two distinct Ready nodes from outside both guests")
 	var nodeNames []string
 	waitForWithDiagnostics(t, ctx, 5*time.Minute, "two Ready nodes", func(ctx context.Context) error {
