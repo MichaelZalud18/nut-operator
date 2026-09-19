@@ -313,7 +313,10 @@ no ClusterIP fallback, unlike the agent's own monitoring, which F-71 already fix
 and the nine-run evidence table in
 [hadron-vm-4-operator-2026-09-13.md](hadron-vm-4-operator-2026-09-13.md).
 The two-guest topology, real drain/eviction against a live workload Pod, and the
-network-policy/audit assertions remain open.
+network-policy/audit assertions remain open. In progress as of 2026-09-19: real two-node join,
+drain/eviction, and network-policy enforcement, plus a genuine cross-node Flannel networking bug
+found and fixed along the way. Full root-cause chain and 32-run evidence table in
+[hadron-vm-4-two-node-networking-2026-09-19.md](hadron-vm-4-two-node-networking-2026-09-19.md).
 
 ## VM-5
 

@@ -707,6 +707,8 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 	runKubectl(ctx, t, kubeconfigPath, "annotate", "node", agentNodeName,
 		"flannel.alpha.coreos.com/public-ip="+clusterJoinAgentIP, "--overwrite")
 
+	installIpsetForDiagnostics(ctx, t, agentCreds)
+
 	return serverCreds, agentCreds, kubeconfigPath, clientset, serverNodeName, agentNodeName
 }
 
@@ -773,6 +775,22 @@ func waitForAgentServiceRouting(ctx context.Context, t *testing.T, serverCreds, 
 		}
 		return nil
 	}, nil)
+}
+
+// installIpsetForDiagnostics installs the ipset CLI once per guest, right after the two-node join
+// completes, so any later diagnostic dump can inspect kube-router's own NetworkPolicy set
+// membership directly. Confirmed live (2026-09-19): available via apt on this guest OS; the ipset
+// kernel module and its `-m set --match-set` iptables rules already work without it (kube-proxy
+// itself talks to the kernel directly), so its absence only ever blocked this diagnostic, never
+// the actual Service/NetworkPolicy behavior under test. Best-effort and non-fatal -- this exists
+// purely to make a later diagnose callback's own ipset dump meaningful, never to gate the test.
+func installIpsetForDiagnostics(ctx context.Context, t *testing.T, agentCreds Credentials) {
+	t.Helper()
+	if out, err := guestCommand(ctx, agentCreds, "sudo apt-get install -y ipset 2>&1"); err != nil {
+		if out2, err2 := guestCommand(ctx, agentCreds, "sudo apt-get update -y >/dev/null 2>&1 && sudo apt-get install -y ipset 2>&1"); err2 != nil {
+			t.Logf("installing ipset on the agent for diagnostics failed (non-fatal): %v\n%s\n%s", err2, out, out2)
+		}
+	}
 }
 
 // dumpKubeProxyState is a diagnostic-only SSH probe of the agent's own kube-proxy state, never
