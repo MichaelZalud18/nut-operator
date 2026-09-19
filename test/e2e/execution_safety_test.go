@@ -60,10 +60,12 @@ func executionSafetySpecs() {
 			case "flow mode change":
 				var before power.ShutdownFlow
 				Expect(logicalFlowGet(&before, "shutdownflow", flowName)).To(Succeed())
-				out, err := utils.Run(exec.Command("kubectl", "patch", "shutdownflow", flowName, "--type=merge", "-p", `{"spec":{"mode":"DryRun"}}`, "-o", "json"))
+				_, err := utils.Run(exec.Command("kubectl", "patch", "shutdownflow", flowName, "--type=merge", "-p", `{"spec":{"mode":"DryRun"}}`))
 				Expect(err).NotTo(HaveOccurred())
+				// Admission warnings share utils.Run's output with stdout. Read the
+				// accepted object separately so warnings cannot corrupt JSON decoding.
 				var changed power.ShutdownFlow
-				Expect(json.Unmarshal([]byte(out), &changed)).To(Succeed())
+				Expect(logicalFlowGet(&changed, "shutdownflow", flowName)).To(Succeed())
 				Expect(changed.Spec.Mode).To(Equal(power.ShutdownFlowModeDryRun))
 				Expect(changed.Generation).To(BeNumerically(">", before.Generation))
 				_, _ = fmt.Fprintf(GinkgoWriter, "API acknowledged flow generation=%d resourceVersion=%s\n", changed.Generation, changed.ResourceVersion)
@@ -72,10 +74,10 @@ func executionSafetySpecs() {
 				Expect(logicalFlowGet(&before, "nodepoweragent", flowAgent)).To(Succeed())
 				// An admitted Simulate setting change changes generation while preserving
 				// selected nodes. The old execution must not adopt the new generation.
-				out, err := utils.Run(exec.Command("kubectl", "patch", "nodepoweragent", flowAgent, "--type=merge", "-p", `{"spec":{"shutdown":{"signalTTL":"3m"}}}`, "-o", "json"))
+				_, err := utils.Run(exec.Command("kubectl", "patch", "nodepoweragent", flowAgent, "--type=merge", "-p", `{"spec":{"shutdown":{"signalTTL":"3m"}}}`))
 				Expect(err).NotTo(HaveOccurred())
 				var changed power.NodePowerAgent
-				Expect(json.Unmarshal([]byte(out), &changed)).To(Succeed())
+				Expect(logicalFlowGet(&changed, "nodepoweragent", flowAgent)).To(Succeed())
 				Expect(changed.Generation).To(BeNumerically(">", before.Generation))
 				Expect(changed.UID).To(Equal(before.UID))
 				_, _ = fmt.Fprintf(GinkgoWriter, "API acknowledged agent generation=%d resourceVersion=%s\n", changed.Generation, changed.ResourceVersion)
