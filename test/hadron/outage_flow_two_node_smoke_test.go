@@ -610,6 +610,7 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 
 	t.Log("pinning k3s-agent's own node-ip to the ClusterLink address and restarting")
 	pinK3sNodeIP(ctx, t, agentCreds, "k3s-agent", clusterJoinAgentIP)
+	waitForAgentServiceRouting(ctx, t, agentCreds)
 
 	kubeconfig, err := Kubeconfig(ctx, serverCreds)
 	if err != nil {
@@ -691,6 +692,27 @@ func pinK3sNodeIP(ctx context.Context, t *testing.T, creds Credentials, service,
 	if out, err := guestCommand(ctx, creds, "sudo systemctl restart --no-block "+service); err != nil {
 		t.Fatalf("restarting %s: %v\n%s", service, err, out)
 	}
+}
+
+// waitForAgentServiceRouting confirms the agent's own kube-proxy has finished syncing its Service
+// routing rules after the node-ip restart, from the node's own network namespace over SSH (the
+// same iptables NAT rules a pod's traffic would traverse). Without this, the fixth live attempt at
+// this milestone got past two distinct Ready nodes but still failed real cross-node Service
+// traffic minutes later with "Host is unreachable" for a ClusterIP -- a kernel routing failure
+// consistent with kube-proxy not yet having reprogrammed its rules right after the agent's
+// pinK3sNodeIP restart, not a node-ip or overlay problem (both were already confirmed correct by
+// that point). kubernetes.default's own Service always exists and is always reachable once
+// kube-proxy is caught up, so it needs no fixture of its own.
+func waitForAgentServiceRouting(ctx context.Context, t *testing.T, agentCreds Credentials) {
+	t.Helper()
+	waitForWithDiagnostics(t, ctx, 2*time.Minute, "agent Service routing (kube-proxy)", func(ctx context.Context) error {
+		out, err := guestCommand(ctx, agentCreds,
+			`ip=$(sudo k3s kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}') && timeout 3 bash -c "cat < /dev/null > /dev/tcp/$ip/443"`)
+		if err != nil {
+			return fmt.Errorf("agent cannot reach the kubernetes.default Service ClusterIP yet: %w\n%s", err, out)
+		}
+		return nil
+	}, nil)
 }
 
 // applyWorkloadDeploymentOnNode creates the plain, evictable Deployment (no DaemonSet ownership,
