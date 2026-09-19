@@ -273,6 +273,14 @@ spec:
 		// VXLAN encapsulation target) would be unrouteable regardless of any NetworkPolicy.
 		nodes := runKubectlOutput(ctx, t, kubeconfigPath, "get", "nodes", "-o", "wide")
 		t.Logf("diagnostic node listing (watch for identical InternalIP values):\n%s", nodes)
+		// The prior live run's own iptables dump showed the Service's KUBE-SERVICES rule and a
+		// MASQ rule, but no visible KUBE-SEP-* endpoint-selection jump in that grep -- consistent
+		// with kube-proxy correctly installing a reject rule for a Service it believes has zero
+		// ready endpoints (this is real, documented kube-proxy behavior, not a bug: "Host
+		// unreachable" is exactly its ICMP response for that case). Endpoints is the direct,
+		// authoritative answer, not another inference from iptables text.
+		endpoints := runKubectlOutput(ctx, t, kubeconfigPath, "get", "endpoints", serverName, "-n", networkPolicyOutageNamespace, "-o", "yaml")
+		t.Logf("diagnostic Endpoints for %s:\n%s", serverName, endpoints)
 		dumpKubeProxyState(ctx, t, agentCreds, clusterIP)
 	})
 

@@ -380,6 +380,13 @@ spec:
 		// NetworkPolicy.
 		nodes := runKubectlOutput(ctx, t, kubeconfigPath, "get", "nodes", "-o", "wide")
 		t.Logf("diagnostic node listing (watch for identical InternalIP values):\n%s", nodes)
+		// A live sibling run's own iptables dump showed the Service's KUBE-SERVICES rule and a
+		// MASQ rule, but no visible KUBE-SEP-* endpoint-selection jump -- consistent with
+		// kube-proxy correctly installing a reject rule for a Service it believes has zero ready
+		// endpoints (real, documented kube-proxy behavior, not a bug: "Host unreachable" is
+		// exactly its ICMP response for that case). Endpoints is the direct, authoritative answer.
+		endpoints := runKubectlOutput(ctx, t, kubeconfigPath, "get", "endpoints", "hadron-two-node-outage-nutserver", "-n", twoNodeOutageNamespace, "-o", "yaml")
+		t.Logf("diagnostic Endpoints for hadron-two-node-outage-nutserver:\n%s", endpoints)
 		dumpKubeProxyState(ctx, t, agentCreds, "hadron-two-node-outage-nutserver")
 	})
 
