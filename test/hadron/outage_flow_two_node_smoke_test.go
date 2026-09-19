@@ -372,6 +372,11 @@ spec:
 		t.Logf("diagnostic NodePowerAgent status:\n%s", status)
 		pods := runKubectlOutput(ctx, t, kubeconfigPath, "get", "pods", "-n", twoNodeOutageNamespace, "-o", "wide")
 		t.Logf("diagnostic pod listing in %s:\n%s", twoNodeOutageNamespace, pods)
+		if podName := runKubectlOutput(ctx, t, kubeconfigPath, "get", "pods", "-n", twoNodeOutageNamespace,
+			"-l", "app.kubernetes.io/component=node-power-agent", "-o", "jsonpath={.items[0].metadata.name}"); podName != "" {
+			upsmonLog := runKubectlOutput(ctx, t, kubeconfigPath, "logs", podName, "-c", "upsmon", "-n", twoNodeOutageNamespace, "--tail=50")
+			t.Logf("diagnostic upsmon container log:\n%s", upsmonLog)
+		}
 		// If upsmon's own readiness probe is what's failing, the next question is whether it can
 		// reach NUTServer's Service at all -- InternalIP tells us whether both nodes actually
 		// registered distinct, mutually routable addresses (the ClusterLink segment) or ended up
