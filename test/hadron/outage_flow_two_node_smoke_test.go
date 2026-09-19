@@ -759,6 +759,23 @@ func dumpKubeProxyState(ctx context.Context, t *testing.T, agentCreds Credential
 	} else {
 		t.Logf("diagnostic k3s-agent journal (proxy/error/fail lines):\n%s", logs)
 	}
+	// A live run's own full iptables dump (grepped by service name, not ClusterIP -- KUBE-SEP
+	// rules reference the pod IP, not the ClusterIP, so an IP-only grep misses them) showed a
+	// complete, correct KUBE-SERVICES -> KUBE-SVC -> KUBE-SEP -> DNAT chain pointing at the real
+	// pod IP. iptables/kube-proxy is not the problem. pinK3sNodeIP only sets kubelet/kube-proxy's
+	// own node-ip; Flannel has its own, separate interface-selection logic that does not
+	// necessarily follow node-ip, and waitForAgentServiceRouting's own passing check never actually
+	// exercised cross-node pod traffic -- kubernetes.default's Endpoints point at the API server's
+	// real host address directly, not an overlay pod IP, so that check only ever proved
+	// ClusterLink host-to-host reachability (already known to work), not Flannel's VXLAN overlay
+	// between the two nodes. subnet.env records exactly which address Flannel chose as its own
+	// public/tunnel endpoint.
+	subnetEnv, err := guestCommand(ctx, agentCreds, "cat /run/flannel/subnet.env 2>&1; echo ---; ip -d link show flannel.1 2>&1; echo ---; ip route show 2>&1")
+	if err != nil {
+		t.Logf("diagnostic flannel state fetch failed: %v", err)
+	} else {
+		t.Logf("diagnostic agent flannel subnet.env / flannel.1 / routes:\n%s", subnetEnv)
+	}
 }
 
 // applyWorkloadDeploymentOnNode creates the plain, evictable Deployment (no DaemonSet ownership,
