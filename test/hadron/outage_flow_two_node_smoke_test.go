@@ -679,6 +679,22 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 	}, nil)
 	t.Logf("server (survivor) node: %s; agent (drained/target) node: %s", serverNodeName, agentNodeName)
 
+	// Confirmed live (2026-09-19): both nodes' own flannel.alpha.coreos.com/public-ip annotation
+	// stayed at the old shared per-guest NAT address (10.0.2.15, identical on both) even after
+	// pinK3sNodeIP's restart -- Flannel's own VXLAN tunnel-endpoint announcement is independent of
+	// kubelet/kube-proxy's node-ip and evidently does not get re-derived by a mere process restart
+	// (most likely sticky once written at each node's first-ever registration). Every downstream
+	// iptables rule was already correct (KUBE-SERVICES -> KUBE-SVC -> KUBE-SEP -> DNAT to the real
+	// pod IP); packets were simply being VXLAN-encapsulated toward the wrong underlying address.
+	// Patched directly rather than guessing at why the restart did not do this itself -- Flannel's
+	// kube subnet manager watches Node objects continuously, so peers pick up the corrected
+	// annotation without needing their own restart.
+	t.Log("correcting each node's own Flannel public-ip annotation to its real ClusterLink address")
+	runKubectl(ctx, t, kubeconfigPath, "annotate", "node", serverNodeName,
+		"flannel.alpha.coreos.com/public-ip="+clusterJoinServerIP, "--overwrite")
+	runKubectl(ctx, t, kubeconfigPath, "annotate", "node", agentNodeName,
+		"flannel.alpha.coreos.com/public-ip="+clusterJoinAgentIP, "--overwrite")
+
 	return serverCreds, agentCreds, kubeconfigPath, clientset, serverNodeName, agentNodeName
 }
 
