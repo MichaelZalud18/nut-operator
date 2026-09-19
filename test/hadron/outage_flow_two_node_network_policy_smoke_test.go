@@ -273,6 +273,7 @@ spec:
 		// VXLAN encapsulation target) would be unrouteable regardless of any NetworkPolicy.
 		nodes := runKubectlOutput(ctx, t, kubeconfigPath, "get", "nodes", "-o", "wide")
 		t.Logf("diagnostic node listing (watch for identical InternalIP values):\n%s", nodes)
+		dumpKubeProxyState(ctx, t, agentCreds, clusterIP)
 	})
 
 	t.Log("confirming the unrelated-namespace probe is reliably denied, not merely slow")

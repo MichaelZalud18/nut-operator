@@ -380,6 +380,7 @@ spec:
 		// NetworkPolicy.
 		nodes := runKubectlOutput(ctx, t, kubeconfigPath, "get", "nodes", "-o", "wide")
 		t.Logf("diagnostic node listing (watch for identical InternalIP values):\n%s", nodes)
+		dumpKubeProxyState(ctx, t, agentCreds, "hadron-two-node-outage-nutserver")
 	})
 
 	t.Log("waiting for the real PostgreSQL Deployment to become Ready")
@@ -725,6 +726,32 @@ func waitForAgentServiceRouting(ctx context.Context, t *testing.T, serverCreds, 
 		}
 		return nil
 	}, nil)
+}
+
+// dumpKubeProxyState is a diagnostic-only SSH probe of the agent's own kube-proxy state, never
+// fataling the test itself: waitForAgentServiceRouting's own check (kubernetes.default's Service,
+// present since cluster bootstrap) has twice now passed while a Service created fresh during the
+// same run stayed unreachable with "Host is unreachable" -- consistent with kube-proxy's rules for
+// pre-existing Services surviving the pinK3sNodeIP restart while its reconcile loop stops picking
+// up newly-created ones, but that is still an inference from application-level symptoms, not
+// direct evidence. grepFor should be the specific Service's ClusterIP or name/namespace substring
+// (kube-proxy's own iptables rules carry a `--comment "<namespace>/<name>"` annotation).
+func dumpKubeProxyState(ctx context.Context, t *testing.T, agentCreds Credentials, grepFor string) {
+	t.Helper()
+	rules, err := guestCommand(ctx, agentCreds,
+		fmt.Sprintf("sudo iptables-save | grep -i %q || echo 'no matching iptables rules'", grepFor))
+	if err != nil {
+		t.Logf("diagnostic agent iptables dump failed: %v", err)
+	} else {
+		t.Logf("diagnostic agent iptables rules matching %q:\n%s", grepFor, rules)
+	}
+	logs, err := guestCommand(ctx, agentCreds,
+		"sudo journalctl -u k3s-agent --no-pager -n 300 | grep -iE 'proxy|error|fail' || echo 'no matching log lines'")
+	if err != nil {
+		t.Logf("diagnostic k3s-agent journal fetch failed: %v", err)
+	} else {
+		t.Logf("diagnostic k3s-agent journal (proxy/error/fail lines):\n%s", logs)
+	}
 }
 
 // applyWorkloadDeploymentOnNode creates the plain, evictable Deployment (no DaemonSet ownership,
