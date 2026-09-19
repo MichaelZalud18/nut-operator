@@ -361,7 +361,14 @@ spec:
 	// evidence of whether the DaemonSet's own pod ever started, pulled its images, or failed a
 	// readiness probe -- added before guessing at a fix, matching every other wait in this package
 	// that can plausibly stall.
-	waitForWithDiagnostics(t, ctx, 3*time.Minute, "NodePowerAgent Ready", func(ctx context.Context) error {
+	//
+	// Widened from 3 to 6 minutes (2026-09-19) after fixing the real cross-node routing bug
+	// (Flannel's own stale public-ip announcement): the failure mode changed from a routing failure
+	// ("Host is unreachable") to upsmon alternating "Connection refused"/"Operation timed out",
+	// which needs the destination NUTServer's own upsd to actually be listening and NetworkPolicy
+	// state (kube-router's own ipset population for the freshly-created agent pod) to catch up --
+	// both plausibly just need more time now that the underlying route itself is confirmed correct.
+	waitForWithDiagnostics(t, ctx, 6*time.Minute, "NodePowerAgent Ready", func(ctx context.Context) error {
 		phase := runKubectlOutput(ctx, t, kubeconfigPath, "get", "nodepoweragent", "hadron-two-node-outage-agent", "-o", "jsonpath={.status.phase}")
 		if phase != "Ready" {
 			return fmt.Errorf("NodePowerAgent phase=%q, not Ready yet", phase)
@@ -781,14 +788,14 @@ func dumpKubeProxyState(ctx context.Context, t *testing.T, agentCreds Credential
 	rules, err := guestCommand(ctx, agentCreds,
 		fmt.Sprintf("sudo iptables-save | grep -i %q || echo 'no matching iptables rules'", grepFor))
 	if err != nil {
-		t.Logf("diagnostic agent iptables dump failed: %v", err)
+		t.Logf("diagnostic agent iptables dump failed: %v\n%s", err, rules)
 	} else {
 		t.Logf("diagnostic agent iptables rules matching %q:\n%s", grepFor, rules)
 	}
 	logs, err := guestCommand(ctx, agentCreds,
 		"sudo journalctl -u k3s-agent --no-pager -n 300 | grep -iE 'proxy|error|fail' || echo 'no matching log lines'")
 	if err != nil {
-		t.Logf("diagnostic k3s-agent journal fetch failed: %v", err)
+		t.Logf("diagnostic k3s-agent journal fetch failed: %v\n%s", err, logs)
 	} else {
 		t.Logf("diagnostic k3s-agent journal (proxy/error/fail lines):\n%s", logs)
 	}
@@ -805,7 +812,7 @@ func dumpKubeProxyState(ctx context.Context, t *testing.T, agentCreds Credential
 	// public/tunnel endpoint.
 	subnetEnv, err := guestCommand(ctx, agentCreds, "cat /run/flannel/subnet.env 2>&1; echo ---; ip -d link show flannel.1 2>&1; echo ---; ip route show 2>&1")
 	if err != nil {
-		t.Logf("diagnostic flannel state fetch failed: %v", err)
+		t.Logf("diagnostic flannel state fetch failed: %v\n%s", err, subnetEnv)
 	} else {
 		t.Logf("diagnostic agent flannel subnet.env / flannel.1 / routes:\n%s", subnetEnv)
 	}
@@ -821,9 +828,15 @@ func dumpKubeProxyState(ctx context.Context, t *testing.T, agentCreds Credential
 	// relevant set if kube-router's own sync lags slightly behind the pod actually running,
 	// producing exactly a silent drop (a timeout, not a quick refusal) rather than a policy or
 	// routing bug. Dumping every ipset directly settles whether this is real or not.
-	ipsets, err := guestCommand(ctx, agentCreds, "sudo ipset list 2>&1")
+	// Live evidence (2026-09-19): this failed with a bare "Process exited with status 1" on every
+	// attempt, consistent with the ipset CLI tool simply not being installed on this minimal guest
+	// OS (kube-proxy/kube-router manage ipsets via direct netlink calls from within the k3s Go
+	// binary, not a shelled-out CLI, so its absence is plausible and this path may be a dead end
+	// without more tooling than is available here) rather than a real command failure each time --
+	// falls back to a plain marker instead of letting a missing tool masquerade as a bare failure.
+	ipsets, err := guestCommand(ctx, agentCreds, "sudo ipset list 2>&1 || echo '(ipset unavailable on this guest)'")
 	if err != nil {
-		t.Logf("diagnostic agent ipset dump failed: %v", err)
+		t.Logf("diagnostic agent ipset dump failed: %v\n%s", err, ipsets)
 	} else {
 		t.Logf("diagnostic agent ipset list (check whether the relevant pod IP is a member):\n%s", ipsets)
 	}

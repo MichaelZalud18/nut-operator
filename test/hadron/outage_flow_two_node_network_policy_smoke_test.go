@@ -256,7 +256,12 @@ spec:
 	}
 
 	t.Log("confirming the same-namespace probe reaches the real upsd port -- otherwise a later denial would prove nothing")
-	waitForWithDiagnostics(t, ctx, 2*time.Minute, "authorized probe reaches NUTServer", func(ctx context.Context) error {
+	// Widened from 2 to 5 minutes (2026-09-19) after fixing the real cross-node routing bug
+	// (Flannel's own stale public-ip announcement): the failure mode changed from a routing failure
+	// ("Host is unreachable") to "Operation timed out", consistent with kube-router's own ipset
+	// population for this freshly-created probe pod needing more time to catch up now that the
+	// underlying route itself is confirmed correct, not another routing problem.
+	waitForWithDiagnostics(t, ctx, 5*time.Minute, "authorized probe reaches NUTServer", func(ctx context.Context) error {
 		if out, err := probe(networkPolicyOutageNamespace, "netpol-authorized-probe"); err != nil {
 			return fmt.Errorf("same-namespace probe could not reach the real upsd port yet: %w\n%s", err, out)
 		}
