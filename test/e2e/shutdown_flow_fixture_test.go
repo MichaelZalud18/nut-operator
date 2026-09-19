@@ -178,6 +178,12 @@ kind: PowerManagementCluster
 metadata:
   name: test2-cluster
 spec:
+  hooks:
+    allowedEndpoints:
+      - scheme: http
+        host: mod2-receiver.%[1]s.svc
+        port: 8080
+        pathPrefix: /hooks
   storage:
     mode: ExternalPostgres
     externalPostgres:
@@ -223,7 +229,7 @@ func logicalFlowPostgres(survivor string) string {
 		ObjectMeta: metav1.ObjectMeta{Name: "test2-postgres", Namespace: flowOperandNamespace, Labels: map[string]string{"app": "test2-postgres"}},
 		Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/hostname": survivor}, Containers: []corev1.Container{{Name: "postgres", Image: flowPostgresImage,
 			Env:            []corev1.EnvVar{{Name: "POSTGRES_USER", Value: "test2"}, {Name: "POSTGRES_PASSWORD", Value: "test2-fixture"}, {Name: "POSTGRES_DB", Value: "test2"}},
-			ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"pg_isready", "-U", "test2"}}}},
+			ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"pg_isready", "-h", "127.0.0.1", "-U", "test2"}}}},
 		}}},
 	}
 	service := corev1.Service{

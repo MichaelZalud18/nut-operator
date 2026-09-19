@@ -211,6 +211,7 @@ var _ = Describe("Manager", Ordered, func() {
 	driverSoakSpecs()
 	podRestartSpecs()
 	logicalShutdownFlowSpecs()
+	executionSafetySpecs()
 	nutStartupSpecs()
 })
 

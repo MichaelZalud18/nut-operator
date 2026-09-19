@@ -456,11 +456,13 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		// so it tightens as the flow proceeds and the runtime drains.
 		waveState, adaptiveErr := e.evaluateWave(ctx, adaptiveInput, wave, remainingPlanDuration(input.Waves, waveIndex))
 		if adaptiveErr != nil {
+			canceled := ctx.Err() != nil
 			cancelExecution()
 			pendingErr, _, pendingRecordErr := waitForPending()
-			result.Phase = PhaseFailed
-			result.RecordError = errors.Join(recordErr, pendingRecordErr)
-			return result, errors.Join(adaptiveErr, pendingErr)
+			return e.recordObservationFailure(ctx, writer, input, &result, canceled, abortRecord{
+				ExecutionID: executionID, Mode: mode, Err: errors.Join(adaptiveErr, pendingErr),
+				DryRun: dryRun, StartedAt: startedAt, RecordError: errors.Join(recordErr, pendingRecordErr),
+			})
 		}
 
 		// An already-rendered actuator is not current authorization. Re-confirm approval
@@ -586,15 +588,33 @@ func (e Executor) Execute(ctx context.Context, input Input) (Result, error) {
 		recordErr = errors.Join(recordErr, pendingRecordErr)
 	}
 
-	recordErr = errors.Join(recordErr, e.recordCompletion(ctx, writer, input, &result, completionRecord{
+	return e.finishExecution(ctx, writer, input, &result, recordErr, completionRecord{
 		ExecutionID: executionID,
 		Mode:        mode,
 		Reason:      reason,
 		DryRun:      dryRun,
 		StartedAt:   startedAt,
-	}))
-	result.RecordError = recordErr
-	return result, nil
+	})
+}
+
+func (e Executor) recordObservationFailure(ctx context.Context, writer audit.Writer, input Input, result *Result, canceled bool, rec abortRecord) (Result, error) {
+	if canceled {
+		return e.recordAborted(ctx, writer, input, result, rec)
+	}
+	result.Phase = PhaseFailed
+	result.RecordError = rec.RecordError
+	return *result, rec.Err
+}
+
+func (e Executor) finishExecution(ctx context.Context, writer audit.Writer, input Input, result *Result, recordErr error, rec completionRecord) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return e.recordAborted(ctx, writer, input, result, abortRecord{
+			ExecutionID: rec.ExecutionID, Mode: rec.Mode, Err: err, DryRun: rec.DryRun,
+			StartedAt: rec.StartedAt, RecordError: recordErr,
+		})
+	}
+	result.RecordError = errors.Join(recordErr, e.recordCompletion(ctx, writer, input, result, rec))
+	return *result, nil
 }
 
 type abortRecord struct {
@@ -610,6 +630,14 @@ type abortRecord struct {
 func (e Executor) recordAborted(ctx context.Context, writer audit.Writer, input Input, result *Result, rec abortRecord) (Result, error) {
 	if result == nil {
 		return Result{}, rec.Err
+	}
+	// Superseding a flow cancels actions immediately, but must not prevent the
+	// final audit attempt from replacing its durable Running record. Only this
+	// terminal write gets a detached, bounded context; no action can use it.
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
 	}
 	result.Phase = PhaseAborted
 	completedAt := e.now()

@@ -85,8 +85,9 @@ def suite(env, focus=None):
     startup = env.get("NUT_OPERATOR_E2E_STARTUP", "false")
     if startup not in ("true", "false", ""):
         raise RuntimeError("NUT_OPERATOR_E2E_STARTUP must be true or false")
-    # The optional eleven-minute observation needs extra time, not weaker cleanup.
-    test_minutes = 45 if startup == "true" else 30
+    # EX-34 adds three isolated telemetry/barrier scenarios and their teardown.
+    # The optional eleven-minute observation retains its additional allowance.
+    test_minutes = 60 if startup == "true" else 45
     # Preserve the host guardrail before creating any cluster or changing tracked files.
     run(["make", "--no-print-directory", "check-test-e2e-host"], env)
     prefix = env.get("KIND_CLUSTER", "nut-operator-test-e2e")

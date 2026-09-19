@@ -83,6 +83,7 @@ func assertKindSpecInventory(t *testing.T, soak, want string) {
 			additions := 0
 			startupAdditions := 0
 			recoveryAdditions := 0
+			safetyAdditions := 0
 			for _, raw := range specs {
 				var spec struct {
 					Text            string
@@ -93,7 +94,12 @@ func assertKindSpecInventory(t *testing.T, soak, want string) {
 				if err := json.Unmarshal(raw, &spec); err != nil {
 					t.Fatal(err)
 				}
-				if spec.Text == "Manager executes a logical ShutdownFlow from real dummy-ups telemetry through ordered drain and simulated actuation" {
+				if strings.HasPrefix(spec.Text, "Manager EX-34 checks execution safety after a hook barrier: ") {
+					safetyAdditions++
+					if !validKindRegistration(spec.Ordered, spec.Serial, spec.State, spec.Labels, "EX-34") {
+						t.Fatalf("EX-34 registration changed: %s", raw)
+					}
+				} else if spec.Text == "Manager executes a logical ShutdownFlow from real dummy-ups telemetry through ordered drain and simulated actuation" {
 					additions++
 					if !validKindRegistration(spec.Ordered, spec.Serial, spec.State, spec.Labels, "TEST-2") {
 						t.Fatalf("TEST-2 registration changed: %s", raw)
@@ -116,6 +122,9 @@ func assertKindSpecInventory(t *testing.T, soak, want string) {
 			count := 21
 			if soak == "true" {
 				count = 23
+			}
+			if safetyAdditions != 3 {
+				t.Fatalf("want EX-34=3, got %d", safetyAdditions)
 			}
 			if additions != 1 || startupAdditions != 1 || recoveryAdditions != 1 || len(original) != count {
 				t.Fatalf("want normalized original %d, TEST-2=1, NS-6=1, ENG-1=1; got %d, %d, %d, %d", count, len(original), additions, startupAdditions, recoveryAdditions)

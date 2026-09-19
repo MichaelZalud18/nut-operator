@@ -112,7 +112,7 @@ class KindTest(unittest.TestCase):
         self.invoke(args=[])
         args, env = next(call for call in self.calls if call[0][0] == "go")
         self.assertEqual(args, ["go", "test", "-tags=e2e", "./test/e2e/", "-v",
-                                "-ginkgo.v", "-timeout=30m"])
+                                "-ginkgo.v", "-timeout=45m"])
         self.assertEqual(env["GOFLAGS"], original["GOFLAGS"])
         self.assertEqual(self.env, original)
         self.assert_external_untouched()
@@ -124,7 +124,7 @@ class KindTest(unittest.TestCase):
                     r"$(touch forbidden); `echo x` & 'quoted' \"double\" \\ $HOME",
                     r"\p{L}+", "["]
         for focus in patterns:
-            for startup, minutes in (("false", 30), ("true", 45)):
+            for startup, minutes in (("false", 45), ("true", 60)):
                 with self.subTest(focus=focus, startup=startup):
                     self.state.mkdir(mode=0o700, exist_ok=True)
                     self.calls = []
@@ -198,8 +198,8 @@ class KindTest(unittest.TestCase):
         with patch.object(runner.time, "monotonic", return_value=100):
             self.invoke(record)
         go = next(item for item in budgets if item[0][0] == "go")
-        self.assertIn("-timeout=45m", go[0])
-        self.assertEqual(go[1:], (2730, 3100))
+        self.assertIn("-timeout=60m", go[0])
+        self.assertEqual(go[1:], (3630, 4000))
         deletion = next(item for item in budgets if item[0][:2] == ["docker", "rm"])
         self.assertEqual(deletion[1:], (90, 250))
         self.assert_external_untouched()
@@ -381,7 +381,7 @@ class KindTest(unittest.TestCase):
             elif "setup-test-e2e-cni" in args:
                 duration = 800
             elif args[0] == "go":
-                duration = 2000
+                duration = 5000
 
             def communicate(timeout):
                 nonlocal duration
@@ -400,14 +400,14 @@ class KindTest(unittest.TestCase):
                 patch.object(runner.os, "killpg") as killpg:
             with self.assertRaises(subprocess.TimeoutExpired) as error:
                 self.invoke(bounded)
-        self.assertEqual(error.exception.timeout, 1100)
-        self.assertIn("-timeout=30m", error.exception.cmd)
+        self.assertEqual(error.exception.timeout, 2000)
+        self.assertIn("-timeout=45m", error.exception.cmd)
         self.assertEqual(next(wait[1] for wait in waits if wait[0][:3] == ["kind", "create", "cluster"]), 240)
         self.assertEqual(next(wait[1] for wait in waits if "setup-test-e2e-cni" in wait[0]), 900)
         go_wait = next(wait for wait in waits if wait[0][0] == "go")
-        self.assertEqual(go_wait[1:], (1100, 2200))
+        self.assertEqual(go_wait[1:], (2000, 3100))
         deletion = next(wait for wait in waits if wait[0][:2] == ["docker", "rm"])
-        self.assertEqual(deletion[1:], (90, 2350))
+        self.assertEqual(deletion[1:], (90, 3250))
         self.assertEqual([call.args[1] for call in killpg.call_args_list], [signal.SIGTERM, signal.SIGKILL])
         self.assertFalse(self.nodes)
         self.assertFalse(self.state.exists())
