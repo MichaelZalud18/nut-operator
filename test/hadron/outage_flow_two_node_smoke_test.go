@@ -380,7 +380,19 @@ spec:
 		// NetworkPolicy.
 		nodes := runKubectlOutput(ctx, t, kubeconfigPath, "get", "nodes", "-o", "wide")
 		t.Logf("diagnostic node listing (watch for identical InternalIP values):\n%s", nodes)
-		// A live sibling run's own iptables dump showed the Service's KUBE-SERVICES rule and a
+		// A prior live run's own route table showed a route to the other node's pod subnet via
+		// flannel.1 (the VXLAN device) that looks entirely normal -- but a route existing says
+		// nothing about whether Flannel's VXLAN tunnel endpoint (VTEP) for that peer actually
+		// targets the right underlying address. Flannel tracks this per node via its own
+		// flannel.alpha.coreos.com/public-ip and backend-data (VTEP MAC) annotations on the Node
+		// object; pinK3sNodeIP restarts kubelet/kube-proxy's own node-ip, but if Flannel does not
+		// re-announce these annotations on a mere process restart, the peer's VXLAN target could
+		// still be stale (the old shared NAT address), which would explain a route that exists but
+		// never actually delivers a packet.
+		flannelAnnotations := runKubectlOutput(ctx, t, kubeconfigPath, "get", "nodes",
+			"-o", `jsonpath={range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.flannel\.alpha\.coreos\.com/public-ip}{"\t"}{.metadata.annotations.flannel\.alpha\.coreos\.com/backend-data}{"\n"}{end}`)
+		t.Logf("diagnostic Flannel public-ip/backend-data annotations per node:\n%s", flannelAnnotations)
+		// A prior live run's own iptables dump showed the Service's KUBE-SERVICES rule and a
 		// MASQ rule, but no visible KUBE-SEP-* endpoint-selection jump -- consistent with
 		// kube-proxy correctly installing a reject rule for a Service it believes has zero ready
 		// endpoints (real, documented kube-proxy behavior, not a bug: "Host unreachable" is
