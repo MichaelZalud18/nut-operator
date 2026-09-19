@@ -296,7 +296,12 @@ spec:
 		// authoritative answer, not another inference from iptables text.
 		endpoints := runKubectlOutput(ctx, t, kubeconfigPath, "get", "endpoints", serverName, "-n", networkPolicyOutageNamespace, "-o", "yaml")
 		t.Logf("diagnostic Endpoints for %s:\n%s", serverName, endpoints)
-		dumpKubeProxyState(ctx, t, agentCreds, clusterIP)
+		// Grepping by ClusterIP misses KUBE-SEP-* rules entirely -- they DNAT to the pod IP and
+		// carry no reference to the ClusterIP at all in their own rule text, only in the KUBE-SVC
+		// jump comment. The sibling drain milestone's own diagnostic already grepped by service
+		// name instead and got the complete KUBE-SERVICES -> KUBE-SVC -> KUBE-SEP -> DNAT chain;
+		// this was the one remaining gap in this test's own copy of the same diagnostic.
+		dumpKubeProxyState(ctx, t, agentCreds, serverName)
 	})
 
 	t.Log("confirming the unrelated-namespace probe is reliably denied, not merely slow")
