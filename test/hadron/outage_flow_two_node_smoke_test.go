@@ -610,7 +610,7 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 
 	t.Log("pinning k3s-agent's own node-ip to the ClusterLink address and restarting")
 	pinK3sNodeIP(ctx, t, agentCreds, "k3s-agent", clusterJoinAgentIP)
-	waitForAgentServiceRouting(ctx, t, agentCreds)
+	waitForAgentServiceRouting(ctx, t, serverCreds, agentCreds)
 
 	kubeconfig, err := Kubeconfig(ctx, serverCreds)
 	if err != nil {
@@ -703,11 +703,23 @@ func pinK3sNodeIP(ctx context.Context, t *testing.T, creds Credentials, service,
 // pinK3sNodeIP restart, not a node-ip or overlay problem (both were already confirmed correct by
 // that point). kubernetes.default's own Service always exists and is always reachable once
 // kube-proxy is caught up, so it needs no fixture of its own.
-func waitForAgentServiceRouting(ctx context.Context, t *testing.T, agentCreds Credentials) {
+//
+// The ClusterIP is read from serverCreds, not agentCreds: the seventh live attempt showed a plain
+// k3s-agent node has no local kubeconfig at all (only a server generates
+// /etc/rancher/k3s/k3s.yaml), so `k3s kubectl` there falls back to the ancient insecure
+// localhost:8080 default and always fails with connection refused, regardless of node-ip or
+// kube-proxy state -- a bug in this check itself, not evidence of the routing problem it exists to
+// catch.
+func waitForAgentServiceRouting(ctx context.Context, t *testing.T, serverCreds, agentCreds Credentials) {
 	t.Helper()
+	clusterIP, err := guestCommand(ctx, serverCreds, "sudo k3s kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}'")
+	if err != nil {
+		t.Fatalf("reading kubernetes.default ClusterIP: %v\n%s", err, clusterIP)
+	}
+	clusterIP = strings.TrimSpace(clusterIP)
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, "agent Service routing (kube-proxy)", func(ctx context.Context) error {
 		out, err := guestCommand(ctx, agentCreds,
-			`ip=$(sudo k3s kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}') && timeout 3 bash -c "cat < /dev/null > /dev/tcp/$ip/443"`)
+			fmt.Sprintf(`timeout 3 bash -c "cat < /dev/null > /dev/tcp/%s/443"`, clusterIP))
 		if err != nil {
 			return fmt.Errorf("agent cannot reach the kubernetes.default Service ClusterIP yet: %w\n%s", err, out)
 		}
