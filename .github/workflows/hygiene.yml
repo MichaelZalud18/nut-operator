@@ -135,14 +135,20 @@ jobs:
       #
       # Both are single, named paths on purpose. A directory-wide or pattern-wide carve-out is how
       # this check stops being one.
+      # VM exceptions below allow only exact path/address pairs: QEMU's built-in NAT gateway
+      # and guest address, and the two harness-owned ClusterLink endpoints. Other addresses in
+      # these files still fail, as do the same addresses anywhere else in the repository.
       - name: Fail on RFC1918 IPv4 literals in tracked files
         run: |
           set -euo pipefail
           PATTERN='\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3})\b'
+          VM_EXCEPTIONS='^(test/talos/(actuator_smoke_test|registry_smoke_test|talosctl|talosctl_test)\.go|docs/contributing/audits/talos-vm-7-actuator-2026-09-17\.md):[0-9]+:10\.0\.2\.2$|^test/hadron/outage_flow_two_node_smoke_test\.go:[0-9]+:10\.0\.2\.15$|^test/hadron/cloudinit\.go:[0-9]+:192\.168\.100\.1$|^test/hadron/cluster_join_smoke_test\.go:[0-9]+:192\.168\.100\.[12]$'
+          VM_EXCEPTIONS+='|^docs/contributing/audits/hadron-vm-4-two-node-networking-2026-09-19\.md:[0-9]+:(10\.0\.2\.15|192\.168\.100\.1)$'
           if git ls-files -z \
               | grep -zv '^\.devcontainer/' \
               | grep -zv '^test/e2e/kind-config\.yaml$' \
-              | xargs -0 grep -EIno "$PATTERN" > /tmp/private-ip-matches.txt; then
+              | xargs -0 grep -EIno "$PATTERN" \
+              | grep -Ev "$VM_EXCEPTIONS" > /tmp/private-ip-matches.txt; then
             echo "::error::Found a private (RFC1918) IPv4 address literal in a tracked file. This repo is public -- use a *.example.net/*.example.com hostname (see config/samples/, docs/examples/) or an RFC 5737 documentation address (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24) instead."
             cat /tmp/private-ip-matches.txt
             exit 1
