@@ -809,6 +809,24 @@ func dumpKubeProxyState(ctx context.Context, t *testing.T, agentCreds Credential
 	} else {
 		t.Logf("diagnostic agent flannel subnet.env / flannel.1 / routes:\n%s", subnetEnv)
 	}
+	// The Flannel VTEP fix landed live (2026-09-19) and changed the failure mode from "Host is
+	// unreachable" (a routing failure) to "Connection refused"/"Operation timed out" (both require
+	// the packet to actually reach the destination and get a real network-layer response) -- real
+	// progress, but a different remaining question. This package's own earlier iptables dump showed
+	// k3s's bundled kube-router NetworkPolicy controller matches peers via named ipsets
+	// (KUBE-SRC-*/KUBE-DST-*, referenced from a KUBE-NWPLCY-* chain), populated from each matching
+	// pod's own IP. A pod created moments before its own traffic needs to be evaluated against that
+	// policy -- true for both this milestone's own fresh upsmon/actuator pod and the sibling
+	// network-policy milestone's own fresh probe pod -- could plausibly still be missing from the
+	// relevant set if kube-router's own sync lags slightly behind the pod actually running,
+	// producing exactly a silent drop (a timeout, not a quick refusal) rather than a policy or
+	// routing bug. Dumping every ipset directly settles whether this is real or not.
+	ipsets, err := guestCommand(ctx, agentCreds, "sudo ipset list 2>&1")
+	if err != nil {
+		t.Logf("diagnostic agent ipset dump failed: %v", err)
+	} else {
+		t.Logf("diagnostic agent ipset list (check whether the relevant pod IP is a member):\n%s", ipsets)
+	}
 }
 
 // applyWorkloadDeploymentOnNode creates the plain, evictable Deployment (no DaemonSet ownership,
