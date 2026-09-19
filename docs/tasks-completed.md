@@ -291,6 +291,40 @@ Original entry (historical, not an additional open task):
 
 ## Planning & Execution Logic
 
+- [x] `EX-34` [Medium] qualify execution authorization and selected-agent drift in owned Kind
+  (2026-09-19). **Follow-up to closed F-126 and F-127; requirements EX-4, EX-6 and EX-9.**
+  Three running-manager scenarios establish the Simulate baseline, then independently admit
+  a flow mode change to DryRun and a selected-agent specification/generation change while an
+  observable HTTP hook barrier holds the original execution. Each captures the execution ID
+  and API-acknowledged change before releasing the barrier, and checks persisted audit evidence
+  and signals for stale handoffs or effects. Cancellation retains its final aborted audit row
+  through a bounded audit-only context; action contexts remain canceled. Admission warnings
+  are kept separate from JSON reads of accepted changes.
+  **Validated:** [full Kind run 35473038637](https://github.com/MichaelZalud18/nut-operator/actions/runs/35473038637)
+  on `1ed8d803d825ac1e892cacc548f8694da767f5c7`: 25 passed, zero failed, including all three
+  scenarios; only the optional startup observation was skipped. The GitHub runner built the
+  checkout images. This proves API/watch integration before the recheck boundary, not atomic
+  read/write authorization, promoted-image qualification, or guest power-off. Original F-126
+  and F-127 completion records remain unchanged.
+
+- [x] `EX-35` [Medium] qualify quorum publication against a real API server (2026-09-19).
+  **Follow-up to closed F-128; requirement EX-18.** Added five controller envtest cases in
+  `internal/controller/shutdownflow_quorum_envtest_test.go`, using the production runner,
+  complete release validator and an uncached API reader. Pending signals consume the spare
+  voter while all three Nodes still report Ready; unavailable peers refuse publication;
+  explicitly synchronized competing agent channels publish exactly one signal. Terminal
+  create/update cases reject an unready agent Pod without partial keys, then publish all
+  three receipts after readiness is restored. Persisted payloads match their receipts.
+  **Validated:** focused five-case envtest run and controller/kubeactions/executor suites with
+  race detection passed; package lint passed. These cases run in the existing `make test`
+  controller/envtest workflow. Synthetic status is API integration evidence, not live HA,
+  direct etcd health, simultaneous guest delivery or halt evidence. Original F-128 unchanged.
+  **Additional CI evidence (2026-09-19):** [Tests run 35471886334](https://github.com/MichaelZalud18/nut-operator/actions/runs/35471886334)
+  passed the existing `make test`/envtest jobs for Kubernetes 1.34, 1.35 and 1.36 on
+  `94b869e675fd0f4070959f20709518306c4d2c0e`;
+  [Lint run 35471886333](https://github.com/MichaelZalud18/nut-operator/actions/runs/35471886333)
+  also passed.
+
 - [x] `ENG-4` [Medium] remove unsupported durable executor resume machinery (2026-09-15).
   Removed persisted reconstruction, completed-group skipping, and resume-only audit/executor
   interfaces. New executions start from current observations, not published historical adaptive
