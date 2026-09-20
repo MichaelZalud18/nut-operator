@@ -3,7 +3,7 @@
 Scope: TEST-1/TEST-2/TEST-3 and the ENG-1/NS-6 acceptance gates. Task status remains in
 the active and completed trackers; this document records evidence and failure analysis.
 
-## Environment And Boundaries
+## Local Run Environment And Boundaries
 
 - ARM64 Linux Docker host, three disposable Kind nodes, policy-enforcing Calico.
 - The existing inotify preflight passed at 512 instances; its threshold was unchanged.
@@ -179,3 +179,54 @@ pre-existing unrelated Kind cluster.
 This establishes TEST-2 end-to-end feasibility and cleanup. Full shared-suite coexistence,
 exact promoted images, and required CI-check semantics remain TEST-3 acceptance; the
 focused run does not close those gates or substitute for guest-shutdown evidence.
+
+## Full-Suite Published-Image Qualification
+
+Verified the completed [Images run 35298260968](https://github.com/MichaelZalud18/nut-operator/actions/runs/35298260968)
+at revision `7fe401659d7f109a9f09d1812c07a26ebb695608`. This was an existing CI run,
+reviewed for TEST-3 closure; no new run or promotion was triggered by the review.
+The run completed September 17 Pacific (September 18 UTC).
+
+The [E2E gate](https://github.com/MichaelZalud18/nut-operator/actions/runs/35298260968/job/105456800784)
+used an Ubuntu x64 runner, three owned Kind nodes, and Calico v3.32.1. It ran the
+unfiltered default suite through `make test-e2e`: **22 passed, zero failed, one skipped**
+in 1181.158 seconds; the entire Go package passed in 1185.786 seconds. TEST-2's logical
+shutdown scenario and both NetworkPolicy enforcement cases passed together with the
+other default scenarios. The only skipped spec explicitly required
+`NUT_OPERATOR_E2E_STARTUP=true`; NS-6's separate startup qualification above remains
+its evidence. This run does not claim to repeat that eleven-minute observation.
+
+The job also passed 28 Kind runner and 23 lifecycle regression tests. Cleanup-error
+messages in their deliberate failure cases, and in the later passing Go cleanup
+diagnostic tests, are expected test output, not live-cluster teardown failures.
+The suite restored the manager kustomization; the runner then removed its three
+owned node containers and exited successfully. The runner treats remaining owned
+nodes or private-state deletion failure as command failure. The earlier live
+cancellation rehearsal supplies direct external-kubeconfig and pre-existing-container
+preservation evidence; these were not independently hash-measured in this CI log.
+
+All four E2E input references were digest-addressed. Each successful promotion job
+used the same source digest when assigning its `main` tag:
+
+| Image (`ghcr.io/michaelzalud18/`) | Tested and promoted digest | Promotion job |
+| --- | --- | --- |
+| `nut-operator` | `sha256:b5ad427b32bb20c206787b961a4f337d95c972956480e975e511ebc790a658c2` | [105462005394](https://github.com/MichaelZalud18/nut-operator/actions/runs/35298260968/job/105462005394) |
+| `nut-server` | `sha256:ea3b5daad3d87155ee199b4b12c1c4af135ae6bcb22dbab8ae1311454523b6dc` | [105462005316](https://github.com/MichaelZalud18/nut-operator/actions/runs/35298260968/job/105462005316) |
+| `upsmon-agent` | `sha256:1506b267aa28f2349a4e3c45247e10f75eca59c850e69841a3fea99ef557aafd` | [105462005354](https://github.com/MichaelZalud18/nut-operator/actions/runs/35298260968/job/105462005354) |
+| `node-actuator` | `sha256:7729ac8f95885176733bb0df47b2afdef632e6b58c6b98e100570dc7d8e41351` | [105462005350](https://github.com/MichaelZalud18/nut-operator/actions/runs/35298260968/job/105462005350) |
+
+The workflow retains `promote` dependencies on digest resolution, E2E, and NUT TLS;
+neither the default suite nor the gate was narrowed. TEST-3 is complete for this
+revision and these artifacts. This does not qualify concurrent uncommitted planner
+work, prove guest shutdown, or verify remote branch protections, which remain REL-2.
+
+### September 19 Pacific / September 20 UTC Regression
+
+[Images run 35480435729](https://github.com/MichaelZalud18/nut-operator/actions/runs/35480435729)
+passed at `4e7bc7238a79667a130494eb581289c888bf8451`. Its published-digest Kind gate
+passed 25 of 26 specs in 1918.386 seconds, with zero failures and only the optional
+startup observation skipped. This includes all three EX-34 authorization/target-drift
+scenarios and their API-acknowledged mutations and persisted audit checks. All four
+image promotion jobs and NUT TLS checks passed; the other four CI workflows also passed.
+The earlier cancellation and external-kubeconfig preservation evidence remains separate.
+Concurrent uncommitted changes and real guest shutdown are outside this run's scope.

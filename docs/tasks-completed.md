@@ -185,6 +185,27 @@ Original entry (historical, not an additional open task):
   this closes the extracted scenarios, not those tasks or full-suite/promotion acceptance.
   [Dated evidence and findings](contributing/audits/kind-qualification-2026-09-17.md).
 
+- [x] `TEST-3` [Medium; High for mutation isolation] Kind reproducibility and full-suite
+  published-image qualification (2026-09-17, Pacific; CI timestamps 2026-09-18 UTC).
+  Verified the completed Images run at `7fe401659d7f109a9f09d1812c07a26ebb695608`:
+  the unfiltered default Kind suite passed 22 specs, including TEST-2 and enforced Calico
+  policy, with zero failures. Only the separate opt-in NS-6 startup observation was skipped.
+  Package component tests and 28 runner / 23 lifecycle regression tests passed. The owned
+  runner removed all three node containers and exited successfully. All four successful
+  promotion jobs named the exact published digests consumed by the E2E gate.
+  Earlier live cancellation qualification proved private-state cleanup, preservation of
+  pre-existing containers, and byte-identical external kubeconfigs; the ownership runner
+  is unchanged in this CI revision. The inotify preflight and existing suite/promotion
+  semantics remain intact. This qualifies the tested revision and artifacts, not concurrent
+  uncommitted planner changes, guest shutdown, or release branch protections (`REL-2`).
+  [Full evidence and immutable image identities](contributing/audits/kind-qualification-2026-09-17.md#full-suite-published-image-qualification).
+  **Additional qualification (2026-09-19 Pacific; 2026-09-20 UTC):**
+  [Images run 35480435729](https://github.com/MichaelZalud18/nut-operator/actions/runs/35480435729)
+  passed on `4e7bc7238a79667a130494eb581289c888bf8451`: 25 Kind specs passed, zero failed,
+  including all three EX-34 cases; only the opt-in startup observation was skipped.
+  All four image promotion jobs and NUT TLS checks passed. Hygiene, Lint, Security Scan,
+  and the three-version Tests matrix also passed on that revision.
+
 - [x] `TEST-3` live cancellation qualification (2026-09-17). `make test-kind-lifecycle`
   passed both partial-startup and post-API SIGTERM against disposable three-node Kind clusters.
   Each case verified failure exit semantics, removal of captured and cluster-labeled node IDs,
@@ -306,6 +327,12 @@ Original entry (historical, not an additional open task):
   checkout images. This proves API/watch integration before the recheck boundary, not atomic
   read/write authorization, promoted-image qualification, or guest power-off. Original F-126
   and F-127 completion records remain unchanged.
+  **Additional published-image evidence (2026-09-19 Pacific; 2026-09-20 UTC):**
+  [Kind gate 105997867439](https://github.com/MichaelZalud18/nut-operator/actions/runs/35480435729/job/105997867439)
+  passed all three EX-34 scenarios on `4e7bc7238a79667a130494eb581289c888bf8451` against
+  published image digests. The full suite passed 25 specs with zero failures, followed by
+  successful promotion of all four tested images. This adds published-image qualification
+  to the earlier checkout-built evidence; the authorization boundary and guest-halt limits remain.
 
 - [x] `EX-35` [Medium] qualify quorum publication against a real API server (2026-09-19).
   **Follow-up to closed F-128; requirement EX-18.** Added five controller envtest cases in
@@ -324,6 +351,9 @@ Original entry (historical, not an additional open task):
   `94b869e675fd0f4070959f20709518306c4d2c0e`;
   [Lint run 35471886333](https://github.com/MichaelZalud18/nut-operator/actions/runs/35471886333)
   also passed.
+  **Additional regression evidence (2026-09-19 Pacific; 2026-09-20 UTC):**
+  [Tests run 35480435623](https://github.com/MichaelZalud18/nut-operator/actions/runs/35480435623)
+  passed Kubernetes 1.34, 1.35 and 1.36 on `4e7bc7238a79667a130494eb581289c888bf8451`.
 
 - [x] `ENG-4` [Medium] remove unsupported durable executor resume machinery (2026-09-15).
   Removed persisted reconstruction, completed-group skipping, and resume-only audit/executor

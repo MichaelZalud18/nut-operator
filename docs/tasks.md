@@ -123,6 +123,10 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 Remaining default-calibration evidence (`OD-27`) lives in the
 [release qualification checklist](tasks-v1-release.md#qualification).
 
+Execution authorization and target-drift integration (`EX-34`) and quorum publication
+integration (`EX-35`) are complete; their dated CI evidence is in
+[completed tasks](tasks-completed.md#planning--execution-logic).
+
 - [ ] `ENG-2` [Medium] tighten the pure planner without redesigning it. Move normalization,
   base structural validation, and related setup out of `CompileWithHistory` into focused helpers
   so `compiler.go` reads as the compilation pipeline: scope, validate, graph/waves, estimates,
@@ -204,6 +208,15 @@ spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 No open work. Execution/audit ownership separation (`ENG-3`) and database component coverage
 (`F-145`) are recorded in [completed tasks](tasks-completed.md#storage--audit).
 
+- [ ] `SA-1` [Medium] refresh ExternalPostgres readiness after transient connection failures.
+  **Follow-up to closed F-131:** keep its startup-outage/spool completion unchanged and add
+  recovery of the management cluster's storage status without editing its specification.
+  EX-34's live fixture exposed a refused initial connection with `AuditStoreNotReady` persisting
+  after the Service became reachable; the reconciler schedules no external-storage retry.
+  **Acceptance:** failed readiness schedules a bounded retry; recovery and later failure update
+  status at the same generation. Healthy external storage also has periodic rechecks. Preserve
+  CNPG behavior and shutdown/spool policies; verify controller regression coverage.
+
 ---
 
 ### Operator Maturity & Hardening
@@ -219,25 +232,10 @@ the shared suite and existing safety gates.
 
 Completed extracted-scenario qualification (`TEST-1`) and logical-flow feasibility (`TEST-2`)
 are recorded in [completed tasks](tasks-completed.md#operator-maturity--hardening).
-TEST-2's focused live pass proves feasibility, not full-suite coexistence or image promotion;
-that outstanding acceptance is consolidated under TEST-3 below rather than duplicated.
-
-- [ ] `TEST-3` [Medium; High for mutation isolation] harden Kind reproducibility and kubeconfig
-  handling. **Implementation complete; live Kind qualification remains.** The runner now owns a
-  private kubeconfig and unique cluster, guards context/cluster UID before mutation, and checks
-  original container IDs before deletion. Kind/curl helpers are versioned; pinning policy lives in
-  CONTRIBUTING.md. [Component evidence](tasks-completed.md#operator-maturity--hardening).
-  **Remaining; Testable now; Conditional:** run the existing full Kind suite on a provisioned
-  runner, including the now-proven TEST-2 scenario alongside all existing scenarios. Confirm
-  policy-enforcing CNI setup, exact promoted-image coverage, unchanged external
-  kubeconfig/context, and successful owned teardown. **Live cancellation passed (2026-09-17):**
-  `make test-kind-lifecycle` verified partial-startup and post-API SIGTERM, owned-node removal,
-  private-state cleanup, preservation of pre-existing containers, and unchanged external kubeconfigs.
-  This supplements, rather than replaces, the remaining full-suite and exact-image gate.
-  **Host prerequisite resolved (2026-09-17):** the existing inotify preflight passes at 512
-  instances; the guardrail is unchanged. Live qualification remains open. Preserve shared-suite and
-  required-check semantics; coordinate with TEST-1 and retain OM-1's shared-suite decision.
-  Hadron remains a separate harness.
+Completed full-suite and exact-image qualification (`TEST-3`) is recorded in
+[completed tasks](tasks-completed.md#operator-maturity--hardening), with the
+[CI acceptance evidence](contributing/audits/kind-qualification-2026-09-17.md#full-suite-published-image-qualification).
+The shared suite, ownership safeguards, and image-promotion gate remain unchanged.
 
 ### v1 Release Readiness
 
