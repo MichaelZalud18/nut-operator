@@ -203,9 +203,16 @@ resolved.
   callback to this check regardless, so a future selector mismatch or genuine timeout is
   immediately distinguishable in the log instead of requiring this kind of after-the-fact
   reconstruction.
+- **Still blocked (2026-09-20):** the `vmprocess` ownership check's intermittent rejection is not
+  yet fixed, only instrumented. Three consecutive live attempts after `088f7d7` (the selector fix)
+  -- `35533818621` (passed the ownership check, hit the selector bug instead), `35534905207` and
+  my own `35539138390` (both rejected at agent `Create` with `cmdline bytes=0, monitor=[]`) -- show
+  it failing more often than not right now. This is Codex's own tracked investigation; see
+  `docs/contributing/audits/vm-process-ownership-2026-09-20.md` for their evidence and `VM-10` in
+  `docs/tasks.md`. Not duplicating their tracking here. Re-verifying the selector fix and
+  attempting the audit-row assertions below both wait on that.
 - Real audit-row assertions for the two-node drain flow (not yet attempted; `assertRealDrainAuditRecords`
-  exists in the test but has not yet passed live) -- next to verify now that both real blockers
-  (vmprocess ownership, agent-name selector) are fixed.
+  exists in the test but has not yet passed live) -- blocked on the `vmprocess` flake above.
 - Real actuation (`Actuate`/`PowerOff`) plus a survivor-availability assertion under an actual halt,
   deliberately deferred from this milestone's own scope (`Simulate` only, matching every other
   milestone's incremental-scope discipline).
