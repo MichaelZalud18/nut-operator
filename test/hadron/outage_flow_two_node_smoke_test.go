@@ -577,10 +577,10 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 	}, nil)
 
 	t.Log("assigning the server's static ClusterLink address")
-	assignClusterLinkAddress(ctx, t, serverCreds, serverMAC, clusterJoinServerIP)
+	serverIface := assignClusterLinkAddress(ctx, t, serverCreds, serverMAC, clusterJoinServerIP)
 
-	t.Log("pinning k3s's own node-ip to the ClusterLink address and restarting")
-	pinK3sNodeIP(ctx, t, serverCreds, "k3s", clusterJoinServerIP)
+	t.Log("pinning k3s's own node-ip and flannel-iface to the ClusterLink interface and restarting")
+	pinK3sNodeIP(ctx, t, serverCreds, "k3s", clusterJoinServerIP, serverIface)
 	waitForWithDiagnostics(t, ctx, 3*time.Minute, "server k3s readiness after node-ip restart", func(ctx context.Context) error {
 		out, err := guestCommand(ctx, serverCreds, "sudo k3s kubectl get nodes --request-timeout=20s -o json")
 		if err != nil {
@@ -640,8 +640,8 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 	agentIface := assignClusterLinkAddress(ctx, t, agentCreds, agentMAC, clusterJoinAgentIP)
 	confirmAgentClusterLinkAddressSurvives(ctx, t, agentCreds, agentIface, clusterJoinAgentIP, 2*time.Minute)
 
-	t.Log("pinning k3s-agent's own node-ip to the ClusterLink address and restarting")
-	pinK3sNodeIP(ctx, t, agentCreds, "k3s-agent", clusterJoinAgentIP)
+	t.Log("pinning k3s-agent's own node-ip and flannel-iface to the ClusterLink interface and restarting")
+	pinK3sNodeIP(ctx, t, agentCreds, "k3s-agent", clusterJoinAgentIP, agentIface)
 	waitForAgentServiceRouting(ctx, t, serverCreds, agentCreds)
 
 	kubeconfig, err := Kubeconfig(ctx, serverCreds)
@@ -726,16 +726,25 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 // --no-block returns as soon as the restart is queued rather than waiting for k3s to finish
 // reinitializing, which can exceed guestCommand's own 30-second bound; callers poll for readiness
 // separately afterward.
-func pinK3sNodeIP(ctx context.Context, t *testing.T, creds Credentials, service, nodeIP string) {
+func pinK3sNodeIP(ctx context.Context, t *testing.T, creds Credentials, service, nodeIP, iface string) {
 	t.Helper()
 	// 2026-09-18 first live attempt: the server's own write succeeded, but the agent's failed
 	// identically on both this run and the next -- deterministic, not a flake. A k3s-agent install
 	// has no reason to have already created /etc/rancher/k3s/ itself (unlike the server, which
 	// writes its own generated certs/config there), so `tee`'s open() fails with the directory
 	// missing. `mkdir -p` first is safe and idempotent either way.
+	//
+	// flannel-iface added 2026-09-20: node-ip alone was confirmed live to leave Flannel's own
+	// local VXLAN device (flannel.1) still bound to the isolated per-guest NAT interface --
+	// `ip -d link show flannel.1` showed `local 10.0.2.15 dev ens3` even after node-ip and the
+	// Flannel public-ip node annotation were both corrected. The annotation only tells *other*
+	// nodes where to send traffic destined for this one; it never rebinds this node's own local
+	// VXLAN source address/interface, which Flannel's own interface-selection logic derives
+	// separately and does not automatically follow node-ip. iface is the MAC-discovered
+	// ClusterLink interface name (assignClusterLinkAddress's own return value), never guessed.
 	if out, err := guestCommand(ctx, creds,
-		fmt.Sprintf("sudo mkdir -p /etc/rancher/k3s && echo 'node-ip: %s' | sudo tee -a /etc/rancher/k3s/config.yaml >/dev/null", nodeIP)); err != nil {
-		t.Fatalf("writing %s node-ip override: %v\n%s", service, err, out)
+		fmt.Sprintf("sudo mkdir -p /etc/rancher/k3s && printf 'node-ip: %s\\nflannel-iface: %s\\n' | sudo tee -a /etc/rancher/k3s/config.yaml >/dev/null", nodeIP, iface)); err != nil {
+		t.Fatalf("writing %s node-ip/flannel-iface override: %v\n%s", service, err, out)
 	}
 	if out, err := guestCommand(ctx, creds, "sudo systemctl restart --no-block "+service); err != nil {
 		t.Fatalf("restarting %s: %v\n%s", service, err, out)

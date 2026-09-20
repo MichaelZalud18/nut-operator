@@ -91,13 +91,15 @@ before being called a fix -- not guessed:
 | [35471537511](https://github.com/MichaelZalud18/nut-operator/actions/runs/35471537511) / [...538861](https://github.com/MichaelZalud18/nut-operator/actions/runs/35471538861) | `8dd4d2d` | fail | Widened both post-fix wait budgets (3m→6m, 2m→5m) to test whether this was a timing/sync-lag gap. **Disproven**: every retry across the full widened budget failed identically -- not intermittent. |
 | [35472978358](https://github.com/MichaelZalud18/nut-operator/actions/runs/35472978358) | `1ed8d80` | fail | Fixed the netpol test's own iptables grep to match by service name (the same blind spot fixed for the drain test). Showed the *complete* chain for this Service too: `KUBE-NWPLCY-*` (NetworkPolicy) and `KUBE-SERVICES -> KUBE-SVC -> KUBE-SEP -> DNAT` both fully correct and present. |
 | [35476832000](https://github.com/MichaelZalud18/nut-operator/actions/runs/35476832000) / [...833025](https://github.com/MichaelZalud18/nut-operator/actions/runs/35476833025) | `4e5be15` | fail | Attempted `apt-get install ipset` on the agent first. Failed outright: `sudo: apt-get: command not found` -- this guest's own base OS has no package manager at all, not just a missing package (see below). Same `ipset: command not found` result as before. |
+| [35526849636](https://github.com/MichaelZalud18/nut-operator/actions/runs/35526849636) / [...850709](https://github.com/MichaelZalud18/nut-operator/actions/runs/35526850709) | `b67884c` | fail | Corrected diagnostic tool paths (Codex's own finding) worked. `flannel.1` link dump directly showed `local 10.0.2.15 dev ens3` -- confirmed the annotation-only fix was incomplete. **Also settled the ipset question entirely**: `KUBE-SRC-*` (egress/source match, same-namespace selector) correctly contained the cross-node agent probe pod's own IP (`10.42.1.4`) alongside same-namespace pods, and `KUBE-DST-*` (ingress/destination match) correctly contained the NUTServer pod's own IP (`10.42.0.10`) -- ipset population is correct on both sides, ruling out the kube-router cross-node sync-gap theory outright. The entire remaining symptom is fully explained by the Flannel VXLAN local-binding bug alone. |
 
 ## Current state
 
 Every layer that can be checked via `kubectl` and iptables text is confirmed structurally correct
-end to end, for both milestones, on both the drain and network-policy fixtures. The remaining
-unconfirmed layer is whether the specific ipset membership (`KUBE-SRC-*`/`KUBE-DST-*`, referenced
-from the `KUBE-NWPLCY-*` chain) actually contains the cross-node peer pod's IP.
+end to end, for both milestones, on both the drain and network-policy fixtures, including ipset
+membership itself (confirmed correct on both sides as of 2026-09-20, below). The isolated remaining
+cause is Flannel's own local VXLAN device binding, also confirmed live as of 2026-09-20 and now
+fixed pending live re-verification.
 
 **Confirmed (2026-09-19): the host has no package manager.** Kairos's own Hadron base OS ships none
 at all by design --
@@ -123,18 +125,28 @@ does not by itself prove the local VXLAN device's own binding changed (annotatio
 `dumpKubeProxyState` now uses the real bundled tool paths, keeps each command's own success/failure
 visible separately (a masked failure was itself part of the earlier mistake), and dumps ipset state
 on both the agent and the server (an agent-only dump cannot show destination-side ingress
-membership for the NUTServer pod, which lives on the server). Investigation continues; not yet
+membership for the NUTServer pod, which lives on the server).
+
+**Confirmed (2026-09-20): Codex's hypothesis was correct.** The corrected diagnostic's own live
+`ip -d link show flannel.1` output was unambiguous:
+`vxlan id 1 local 10.0.2.15 dev ens3 srcport 0 0 dstport 8472 ...`
+(run 35526849636/35526850709) -- the device's own local source address and parent interface were
+still the shared, isolated per-guest NAT address on the management NIC, not the ClusterLink
+address, even after `node-ip` and the Flannel public-ip annotation were both already corrected.
+The annotation only tells *other* nodes where to send traffic destined for this node; it never
+rebinds this node's own local VXLAN source address, which Flannel derives independently and does
+not automatically follow `node-ip`. Fixed: `pinK3sNodeIP` now also sets `flannel-iface` (using the
+MAC-discovered `ClusterLink` interface `assignClusterLinkAddress` already returns for both the
+server and the agent -- the server's own call previously discarded that return value) alongside
+`node-ip`, before the same bounded restart. The Flannel annotation patch is left in place as a
+belt-and-braces safety net; it should now be a no-op once Flannel self-derives the correct value
+from the corrected interface binding. Not yet confirmed live. Investigation continues; not yet
 closed.
 
 ## Open
 
-- Read each guest's real `flannel.1` local address, parent interface, and neighbor (FDB) entries
-  (now possible via the corrected diagnostic) to confirm or rule out the device still binding to
-  the NAT interface despite the corrected node-ip/annotation, per
-  [hadron-vm-4-diagnostic-tools-2026-09-20.md](hadron-vm-4-diagnostic-tools-2026-09-20.md). If
-  bound to NAT, set `flannel-iface` explicitly (using the MAC-discovered `ClusterLink` interface
-  `assignClusterLinkAddress` already returns, not a guessed name) alongside `node-ip`, rather than
-  only patching the generated annotation.
+- Confirm live that `flannel-iface` actually rebinds `flannel.1`'s own `local`/`dev` to the
+  ClusterLink interface, and that real cross-node pod/Service traffic succeeds end to end.
 - Real audit-row assertions for the two-node drain flow (not yet attempted; `assertRealDrainAuditRecords`
   exists in the test but has not yet passed live).
 - Real actuation (`Actuate`/`PowerOff`) plus a survivor-availability assertion under an actual halt,
