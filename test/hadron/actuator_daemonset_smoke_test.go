@@ -577,26 +577,15 @@ func TestHadronActuatorDaemonSetHaltsOnAcceptedSignal(t *testing.T) {
 		Timestamp:      time.Now().UTC().Format(time.RFC3339Nano),
 	})
 
-	t.Log("waiting for the guest's own QEMU process to exit on its own -- this test never stops it itself")
-	process, err := machineProcess(guest.machine)
+	t.Log("waiting for QEMU's own QMP socket to report a real guest-initiated SHUTDOWN -- process disappearance alone cannot distinguish a genuine halt from a crash or an external kill (VM-9)")
+	socketPath, err := qmpSocketPath(guest.machine)
 	if err != nil {
-		t.Fatalf("getting machine process handle: %v", err)
+		t.Fatalf("getting machine QMP socket path: %v", err)
 	}
-	defer func() { _ = process.Release() }()
 	haltCtx, haltCancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer haltCancel()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	exited := false
-	for !exited {
-		select {
-		case <-haltCtx.Done():
-			t.Fatalf("guest process never exited on its own within the budget -- the actuator armed but the guest did not actually halt (a container outside the host PID namespace can call reboot(2) successfully and leave the machine running); podName=%s", podName)
-		case <-ticker.C:
-			if err := process.Signal(syscall.Signal(0)); err != nil {
-				exited = true
-			}
-		}
+	if err := waitForQMPShutdown(haltCtx, socketPath); err != nil {
+		t.Fatalf("guest did not report a real SHUTDOWN within the budget -- the actuator armed but the guest did not actually halt (a container outside the host PID namespace can call reboot(2) successfully and leave the machine running); podName=%s: %v", podName, err)
 	}
-	t.Log("confirmed: the guest's own QEMU process exited on its own, without this test stopping it, through the real rendered DaemonSet")
+	t.Log("confirmed: QEMU's own QMP socket reported a real guest-initiated SHUTDOWN, without this test stopping it, through the real rendered DaemonSet")
 }

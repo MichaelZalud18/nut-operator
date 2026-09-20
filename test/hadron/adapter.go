@@ -44,7 +44,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -198,7 +197,11 @@ func NewSafeMachineContext(ctx context.Context, cfg Config) (m types.Machine, cr
 		types.WithSSHUser(creds.User),
 		types.WithSSHPass(creds.Pass),
 		types.WithSSHPort(creds.Port),
-		withArgs("-enable-kvm", "-nic", managementNIC(creds)),
+		// -no-shutdown keeps QEMU (and its QMP socket) alive after the guest itself requests
+		// power-off, instead of exiting immediately -- see qmp.go's waitForQMPShutdown, which
+		// would otherwise race that exit for the socket read proving the shutdown was real.
+		withArgs("-enable-kvm", "-nic", managementNIC(creds), "-no-shutdown",
+			"-qmp", "unix:"+filepath.Join(stateDir, qmpSocketFile)+",server,nowait"),
 	}
 
 	if cfg.Memory != "" {
@@ -281,21 +284,6 @@ func SafeTeardown(m types.Machine, timeout time.Duration) error {
 // SafeStop retains diagnostics and uses the verified startup pidfd, never a PID-file lookup.
 func SafeStop(m types.Machine, timeout time.Duration) error {
 	return vmprocess.Stop(m, timeout)
-}
-
-func machineProcess(m types.Machine) (*os.Process, error) {
-	if m == nil || m.Config().StateDir == "" {
-		return nil, fmt.Errorf("machine state directory is required")
-	}
-	data, err := os.ReadFile(filepath.Join(m.Config().StateDir, "pid"))
-	if err != nil {
-		return nil, fmt.Errorf("reading machine PID before teardown: %w", err)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 1 || pid == os.Getpid() {
-		return nil, fmt.Errorf("invalid machine PID; refusing teardown")
-	}
-	return os.FindProcess(pid)
 }
 
 // withArgs is a types.MachineOption that appends raw QEMU arguments. The types package has no

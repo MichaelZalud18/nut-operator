@@ -256,8 +256,18 @@ VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-cover
   **Acceptance:** real Hadron and Talos power-off pass; external QEMU termination, unexpected
   process failure, and lost API/probe access cannot pass. Exercise false-pass controls and retain
   evidence outside the guest. Apply the same evidence contract to VM-4's composed acceptance.
+  **2026-09-20 (Hadron side):** both `test/hadron/actuator_smoke_test.go` and
+  `actuator_daemonset_smoke_test.go`'s accepted-signal halt tests now require a real QMP `SHUTDOWN`
+  event (`test/hadron/qmp.go`) instead of process disappearance alone. `NewSafeMachineContext`
+  passes QEMU `-qmp`/`-no-shutdown` unconditionally so the event can't race the process exiting on
+  its own. Component-level false-pass control: `TestWaitForQMPShutdownFailsClosedWhenSocketClosesWithoutShutdown`
+  proves a closed socket with no event is rejected, not accepted -- a fast unit test against a fake
+  QMP server, not yet a live external-kill rehearsal against a real guest. Talos's own halt
+  assertions are unchanged; that side is currently owned by the in-progress framework integration,
+  not this task.
   Review targets: [Hadron halt assertions](../test/hadron/actuator_daemonset_smoke_test.go),
-  [bare-pod assertions](../test/hadron/actuator_smoke_test.go), and
+  [bare-pod assertions](../test/hadron/actuator_smoke_test.go),
+  [QMP client](../test/hadron/qmp.go), and
   [Talos halt assertions](../test/talos/actuator_smoke_test.go).
 - [ ] `VM-10` [High] verify VM process ownership before Go cleanup signals a process or deletes
   state. Concrete follow-up within VM-2's remaining isolation scope, extending the closed
