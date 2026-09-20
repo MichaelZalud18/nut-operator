@@ -1,9 +1,11 @@
 # Hadron VM-4: two-node topology, real drain/eviction, and network-policy enforcement
 
-Status: in progress, 36 live runs across two workflows, 2026-09-18/20. Cross-node networking root
+Status: in progress, 37 live runs across two workflows, 2026-09-18/20. Cross-node networking root
 cause resolved 2026-09-20 (network-policy milestone passing live; drain milestone's own core
-mechanism proven, one smaller unrelated issue remains). See `docs/tasks.md`'s `VM-4`
-entry for current status.
+mechanism proven). The `waitForExactlyOneRunningAgentPod` timeout that blocked the drain
+milestone's final assertions is diagnosed and fixed (`483ba7c`). Re-verifying that fix live is now
+blocked on an unrelated new issue in a different, just-added file (see "Open"). See
+`docs/tasks.md`'s `VM-4` entry for current status.
 
 ## Scope
 
@@ -159,10 +161,35 @@ resolved.
 
 ## Open
 
-- Investigate the new, much smaller `waitForExactlyOneRunningAgentPod` timeout in the drain test
-  (run 35529203632) -- likely unrelated to the networking chain above, not yet diagnosed.
+- **Diagnosed and fixed (2026-09-20, commit `483ba7c`):** the `waitForExactlyOneRunningAgentPod`
+  timeout from run `35529203632` was not a networking issue. Its check closure passed the parent
+  (already 2-minute-bound) `ctx` straight into `clientset.CoreV1().Pods(...).List(...)` with no
+  per-attempt sub-context -- every other retry check in this package wraps its call with a fresh
+  15s sub-context for exactly this reason (a single hung request can otherwise consume the whole
+  retry budget before `pollGuest`'s 5s cadence gets a chance to retry). The log showed exactly
+  2:00.00 elapsed with a single "context deadline exceeded" and no interleaved retry attempts,
+  confirming this diagnosis. Fixed both `waitForExactlyOneRunningAgentPod`
+  (`outage_flow_smoke_test.go`) and its sibling `waitForExactlyOneRunningAgentPodNamed`
+  (`actuator_daemonset_smoke_test.go`), which had the identical bug.
+- **New blocker found while re-verifying the fix above, run `35532067290` (2026-09-20) --
+  unrelated to this document's networking investigation, not mine to fix:** the drain test now
+  fails during agent VM creation with `Create (agent): QEMU does not reference the owned state
+  directory`, from `test/internal/vmprocess/process_linux.go:51` (added in commit `047e917`,
+  "fix(test): retain verified QEMU ownership through VM cleanup" -- not authored by this
+  investigation). This is that file's first-ever live exercise. The server guest's own `Create()`
+  call in the same run passed the identical ownership check successfully; only the agent's failed.
+  I have not touched `process_linux.go`/`machine.go` and have not root-caused this further --
+  it is Codex's own new file. Evidence for whoever picks it up: the check reads the QEMU process's
+  `/proc/<pid>/cmdline` and requires an adjacent `-monitor`/`unix:<StateDir>/qemu-monitor.sock,server,nowait`
+  argument pair matching `m.Config().StateDir` (`vmprocess/machine.go`'s `capture`); PEG
+  (`pkg/machine/qemu.go:157`) builds the same string from `q.machineConfig.StateDir` via
+  `path.Join`, which is byte-identical to `filepath.Join` on Linux, so a naive path-format
+  mismatch looks unlikely from static reading alone -- this needs live diagnosis (e.g. dumping the
+  agent's actual `/proc/<pid>/cmdline` and `m.Config().StateDir` at the failure point), not another
+  static-code guess.
 - Real audit-row assertions for the two-node drain flow (not yet attempted; `assertRealDrainAuditRecords`
-  exists in the test but has not yet passed live).
+  exists in the test but has not yet passed live) -- blocked on the new blocker above until the
+  drain test can boot both guests again.
 - Real actuation (`Actuate`/`PowerOff`) plus a survivor-availability assertion under an actual halt,
   deliberately deferred from this milestone's own scope (`Simulate` only, matching every other
   milestone's incremental-scope discipline).
