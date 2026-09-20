@@ -133,7 +133,7 @@ func renderUPSConf(devices []powerv1alpha1.UPSDevice, credentials map[string]map
 			}
 			fmt.Fprintf(&out, "  port = %s\n", target)
 			fmt.Fprintf(&out, "  mode = repeater\n")
-			fmt.Fprintf(&out, "  authconf = %s\n", upstreamNUTAuthConf(device))
+			// NUT 2.8.5 has no authconf option. Validation rejects modes requiring it.
 			if !upstreamNUTStrictStart(device) {
 				fmt.Fprintf(&out, "  repeater_disable_strict_start = true\n")
 			}

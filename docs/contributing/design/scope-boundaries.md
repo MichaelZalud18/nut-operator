@@ -324,6 +324,15 @@ is the more resilient option, because a database outside the cluster is not in t
 of the event it exists to record. It cannot be the default — it requires infrastructure the user
 may not have — but it reduces reliance on the local spool during cluster shutdown.
 
+**Managed NUT-only exception (approved 2026-09-18, MOD-4):** the v1 NUT-only profile has no
+planner, executor, node actuation or PowerManagementCluster, and requires no PostgreSQL.
+Its baseline runs NUTServer reconciliation and UPSDevice/NUTServer admission, with telemetry
+consumed over the NUT protocol rather than a UPSDevice polling controller. Logs, events and
+current NUTServer status describe operation; durable shutdown execution history is not offered.
+This exception does not make `PowerStorageMode: Disabled` a supported production mode for the
+full installation or grant a storage exception to agents-only/external-execution proposals.
+See the [selected modular contracts](modular-deployment-proposals.md#decision-boundaries).
+
 ## SB-12 · Three-tier observability
 
 *Components: Storage & Audit, Outputs & Publishing.*
@@ -356,6 +365,11 @@ reachable over gRPC, for instance — not at the language level.
 
 The project is fully usable through Kubernetes resources, CRDs, Events, logs, and PostgreSQL audit
 records. A dedicated web UI is not part of v1.
+
+V1 onboarding uses a standalone quickstart with first-user validation (`REL-6`). A setup wizard
+is post-v1 authoring tooling (`ENG-10`), generating the same reviewable Kubernetes resources;
+it is not required to install or operate the product. This onboarding scope was settled on
+2026-09-18 after the [ENG-10 assessment](../audits/eng-10-onboarding-2026-09-18.md).
 
 If a UI exists later, it is a completely separate consumer of the operator's APIs and published
 planner artifacts. It must not become part of the core reconciliation, planning, or execution path.

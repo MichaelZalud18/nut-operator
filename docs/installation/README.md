@@ -6,6 +6,10 @@ Audience: operators.
 How to install and run the operator in a cluster. For building from source, see the Development
 section of the [README](../../README.md).
 
+For managed NUT telemetry without shutdown orchestration, use the
+[NUT-only profile](nut-only.md). Its two-CRD installation has no agents, planner or PostgreSQL
+dependency. The rest of this page describes the full operator.
+
 The operator ships as a single bundled manifest, the standard install shape for a kubebuilder
 operator. There is no Helm chart: the RBAC, CRDs, webhook configuration, and cert wiring are all
 generated from `config/` by Kustomize, and a hand-maintained chart would be a second source of truth

@@ -14,6 +14,9 @@ last-ditch workloads, and node actuation policy are operator decisions. Start wi
 
 ## First hour
 
+For a managed NUT service consumed by external systems, start with the
+[NUT-only installation](installation/nut-only.md).
+
 First [install the operator](installation/README.md) and configure its shared cluster settings.
 Then follow the [configuration quick start](installation/configuration.md) in three domains:
 

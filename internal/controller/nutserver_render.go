@@ -77,12 +77,18 @@ type renderedNUTServer struct {
 }
 
 func (r *NUTServerReconciler) reconcileNUTServerOperands(ctx context.Context, server *powerv1alpha1.NUTServer) (renderedNUTServer, error) {
+	if r.NUTOnly && server.Spec.ManagementClusterRef != nil {
+		return renderedNUTServer{}, fmt.Errorf("managementClusterRef is unavailable in the nut-only profile")
+	}
 	cluster, err := r.getManagementCluster(ctx, server)
 	if err != nil {
 		return renderedNUTServer{}, err
 	}
 	namespace := nutServerNamespace(server, cluster)
 	image, err := nutServerImage(server, cluster)
+	if server.Spec.Image == (powerv1alpha1.ImageReference{}) && cluster == nil && r.DefaultImage != "" {
+		image, err = r.DefaultImage, nil
+	}
 	if err != nil {
 		return renderedNUTServer{}, err
 	}

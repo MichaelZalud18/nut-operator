@@ -2,11 +2,14 @@
 
 Audience: product design and contributors.
 
-These stories capture requested user outcomes, not approved implementation designs or supported
-installation profiles. Investigations (`MOD-1` through `MOD-3`), the requested managed-NUT profile
-(`MOD-4`), and conditional profile acceptance (`MOD-5`) live in
-[project tasks](../../tasks.md#modular-deployment-profiles). Their entries own implementation and
-release decisions; these stories do not override current safety contracts.
+These stories capture requested user outcomes, not claims of supported installation profiles.
+The selected v1 work is advisory mixed actuation (MOD-2), managed NUT-only with telemetry-only
+consumption (MOD-4), and their acceptance (MOD-5), owned by
+[project tasks](../../tasks.md#modular-deployment-profiles). Agents-only (MOD-1) and externally
+authorized agent execution (MOD-3) are owned by the
+[post-v1 backlog](../../tasks-post-v1.md#modular-deployment-profiles).
+The [selected contracts](modular-deployment-proposals.md#decision-boundaries) narrow these stories;
+the stories do not override current safety contracts.
 
 ## US-1: Existing NUT, Shutdown Agents Only
 

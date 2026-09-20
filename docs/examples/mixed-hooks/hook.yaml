@@ -1,0 +1,26 @@
+# Research fixture. The .test receiver is intentionally not a deployable endpoint.
+apiVersion: power.zalud.io/v1alpha1
+kind: ShutdownHook
+metadata:
+  name: external-host-a
+  namespace: quickstart-power
+spec:
+  invocation:
+    transport: HTTP
+    timeout: 10s
+    http:
+      url: https://hooks.example.test/hosts/stop
+      secretHeaders:
+        - name: Authorization
+          valueFrom: {namespace: quickstart-power, name: external-hook-auth, key: token}
+      data: {host: external-a, operation: ensure-stopped}
+  dryRun:
+    transport: HTTP
+    timeout: 10s
+    http:
+      url: https://hooks.example.test/hosts/rehearse
+      secretHeaders:
+        - name: Authorization
+          valueFrom: {namespace: quickstart-power, name: external-hook-auth, key: token}
+      data: {host: external-a, operation: rehearse-stop}
+  failurePolicy: MarkDegraded

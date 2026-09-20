@@ -81,6 +81,12 @@ server-side NUT configuration, credentials, TLS material references, and service
 built-in NUT appliances it renders `dummy-ups` repeater mode rather than a hardware driver, which
 keeps appliance support non-privileged and network-only.
 
+`spec.clientAccess` adds explicit namespace/pod selector peers to NUT ingress; each entry
+matches both selectors. The [NUT-only profile](../installation/nut-only.md) manages this resource
+without orchestration or PostgreSQL and exposes telemetry through NUT instead of UPSDevice status.
+Upstream relay currently accepts only `auth.mode: None`; unsupported upstream auth/trust modes
+are rejected. See [the relay contract](../contributing/design/upstream-nut-relay.md).
+
 **`NodePowerAgent`** — one DaemonSet fleet. It references `NUTServer` objects, selects nodes, and
 declares whether the fleet is monitoring, dry-running, or allowed to actuate. Its three modes —
 `MonitorOnly`, `DryRun`, `Actuate` — are one half of the two-gate safety model; see

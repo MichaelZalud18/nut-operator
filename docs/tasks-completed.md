@@ -10,6 +10,41 @@ fresh test results. Current behavior is owned by code and design contracts. Open
 Move completed entries here with their date and evidence; do not renumber task IDs or duplicate
 status across trackers. Historical run output and longer investigations remain in the linked audits.
 
+## Modular Deployment Profiles
+
+- [x] `MOD-2` [Medium] v1 mixed built-in and advisory external actuation. Completed 2026-09-18:
+  added the mixed-flow example and receiver contract with explicit host/group targeting,
+  affected-power scope, Secret auth, endpoint allowlisting, rehearsal and repeat-safety guidance.
+  Extended existing TEST-2 with a harmless receiver and five ordered hook groups; the focused
+  owned Kind scenario passed real admission, ingress policy, dry-run, repetition, timeout/failure,
+  denied endpoint and PostgreSQL ordering through scale/drain/Simulate-agent publication.
+  Component checks and e2e lint passed. No external Node/agent, new actuator API, confirmed-halt
+  gate or physical/guest power-off claim.
+  [Example](examples/mixed-hooks/README.md);
+  [dated validation and limits](contributing/audits/mod-2-kind-acceptance-2026-09-18.md).
+
+- [x] `MOD-4` [Medium] managed NUT-only profile and NUT-protocol telemetry. Completed 2026-09-18:
+  selective manager startup, generated two-CRD/admission/RBAC installer, default operand image,
+  BYO webhook certificates, client selectors and installation guide. No planner, agents,
+  inventory, PMC, normalized UPSDevice status or database dependency. Owned Kind acceptance passed
+  real verified-TLS/auth queries, denied clients, device updates/add/remove, credential/certificate
+  rotation, isolated driver recovery, relay behavior and reapplication/manager restart.
+  Fixed the TLS init-container idempotency defect discovered by live testing. The SB-11 exception
+  is limited to this profile; arbitrary historical-schema upgrades are not qualified.
+  [Guide](installation/nut-only.md);
+  [implementation and live evidence](contributing/audits/mod-4-5-nut-only-acceptance-2026-09-18.md).
+
+- [x] `MOD-5` [Medium] acceptance for approved v1 MOD-2 and MOD-4. Completed 2026-09-18:
+  reusable modular component target, mixed hook/Simulate coverage in existing TEST-2 and a serial
+  clean NUT-only Kind scenario, including omitted APIs/permissions and NS-11 generated relays.
+  Both focused live scenarios passed; ordinary suites and lint passed. Existing Tests, Kind and
+  installer hygiene workflows own regression coverage. This does not claim full-suite coexistence
+  qualification after adding the new scenario, guest halt or physical UPS compatibility.
+  MOD-1 and external-execution MOD-3 remain with their post-v1 owners.
+  [Coverage map](contributing/design/modular-acceptance.md);
+  [component evidence](contributing/audits/mod-5-component-acceptance-2026-09-18.md);
+  [NUT-only evidence](contributing/audits/mod-4-5-nut-only-acceptance-2026-09-18.md).
+
 ## Superseded Tasks
 
 Superseded means the task definition was replaced, not that its investigation or fix passed.
@@ -143,6 +178,27 @@ Original entry (historical, not an additional open task):
   not TEST-1/TEST-2/TEST-3 or an optimization implementation.
   [Evidence, ranking, and decision](contributing/audits/kind-modularity-2026-09-13.md#om-1-decision-september-17).
 
+- [x] `TEST-3` [Medium; High for mutation isolation] Kind reproducibility and full-suite
+  published-image qualification (2026-09-17, Pacific; CI timestamps 2026-09-18 UTC).
+  Verified the completed Images run at `7fe401659d7f109a9f09d1812c07a26ebb695608`:
+  the unfiltered default Kind suite passed 22 specs, including TEST-2 and enforced Calico
+  policy, with zero failures. Only the separate opt-in NS-6 startup observation was skipped.
+  Package component tests and 28 runner / 23 lifecycle regression tests passed. The owned
+  runner removed all three node containers and exited successfully. All four successful
+  promotion jobs named the exact published digests consumed by the E2E gate.
+  Earlier live cancellation qualification proved private-state cleanup, preservation of
+  pre-existing containers, and byte-identical external kubeconfigs; the ownership runner
+  is unchanged in this CI revision. The inotify preflight and existing suite/promotion
+  semantics remain intact. This qualifies the tested revision and artifacts, not concurrent
+  uncommitted planner changes, guest shutdown, or release branch protections (`REL-2`).
+  [Full evidence and immutable image identities](contributing/audits/kind-qualification-2026-09-17.md#full-suite-published-image-qualification).
+  **Additional qualification (2026-09-19 Pacific; 2026-09-20 UTC):**
+  [Images run 35480435729](https://github.com/MichaelZalud18/nut-operator/actions/runs/35480435729)
+  passed on `4e7bc7238a79667a130494eb581289c888bf8451`: 25 Kind specs passed, zero failed,
+  including all three EX-34 cases; only the opt-in startup observation was skipped.
+  All four image promotion jobs and NUT TLS checks passed. Hygiene, Lint, Security Scan,
+  and the three-version Tests matrix also passed on that revision.
+
 - [x] `TEST-2` [Medium] logical ShutdownFlow feasibility (2026-09-17). The owned three-node
   Kind run passed the complete scenario from real dummy-ups telemetry through production
   trigger/planner/executor, ordered scale/drain, operator-generated signal, and rendered
@@ -184,27 +240,6 @@ Original entry (historical, not an additional open task):
   **Scope:** both overall runs failed in the separate TEST-2 candidate and skipped NS-6;
   this closes the extracted scenarios, not those tasks or full-suite/promotion acceptance.
   [Dated evidence and findings](contributing/audits/kind-qualification-2026-09-17.md).
-
-- [x] `TEST-3` [Medium; High for mutation isolation] Kind reproducibility and full-suite
-  published-image qualification (2026-09-17, Pacific; CI timestamps 2026-09-18 UTC).
-  Verified the completed Images run at `7fe401659d7f109a9f09d1812c07a26ebb695608`:
-  the unfiltered default Kind suite passed 22 specs, including TEST-2 and enforced Calico
-  policy, with zero failures. Only the separate opt-in NS-6 startup observation was skipped.
-  Package component tests and 28 runner / 23 lifecycle regression tests passed. The owned
-  runner removed all three node containers and exited successfully. All four successful
-  promotion jobs named the exact published digests consumed by the E2E gate.
-  Earlier live cancellation qualification proved private-state cleanup, preservation of
-  pre-existing containers, and byte-identical external kubeconfigs; the ownership runner
-  is unchanged in this CI revision. The inotify preflight and existing suite/promotion
-  semantics remain intact. This qualifies the tested revision and artifacts, not concurrent
-  uncommitted planner changes, guest shutdown, or release branch protections (`REL-2`).
-  [Full evidence and immutable image identities](contributing/audits/kind-qualification-2026-09-17.md#full-suite-published-image-qualification).
-  **Additional qualification (2026-09-19 Pacific; 2026-09-20 UTC):**
-  [Images run 35480435729](https://github.com/MichaelZalud18/nut-operator/actions/runs/35480435729)
-  passed on `4e7bc7238a79667a130494eb581289c888bf8451`: 25 Kind specs passed, zero failed,
-  including all three EX-34 cases; only the opt-in startup observation was skipped.
-  All four image promotion jobs and NUT TLS checks passed. Hygiene, Lint, Security Scan,
-  and the three-version Tests matrix also passed on that revision.
 
 - [x] `TEST-3` live cancellation qualification (2026-09-17). `make test-kind-lifecycle`
   passed both partial-startup and post-API SIGTERM against disposable three-node Kind clusters.
@@ -355,6 +390,23 @@ Original entry (historical, not an additional open task):
   [Tests run 35480435623](https://github.com/MichaelZalud18/nut-operator/actions/runs/35480435623)
   passed Kubernetes 1.34, 1.35 and 1.36 on `4e7bc7238a79667a130494eb581289c888bf8451`.
 
+- [x] `ENG-2` [Medium] tighten the pure planner without redesigning it (2026-09-16).
+  Extracted normalization/preparation, structural validation, scheduling/estimates, and hashing
+  into focused helpers. `CompileWithHistory` now presents the compilation pipeline directly.
+  One read-only, compile-scoped communication index shares upstream/dependent adjacency and
+  entity power-domain/supply derivation across scoping, validation, graph construction, budgets,
+  and explanations. Membership and service declarations remain on current scoped inputs so
+  pruned actions cannot leak back into artifacts. Public APIs, communication safety semantics,
+  diagnostic ordering, graph/provenance, diagrams, startup waves, feasibility, history outputs,
+  and deterministic hashes remain intact; no I/O, global cache, or public framework was added.
+  Comment-history cleanup remains `ENG-8`.
+  **Validated:** 13 full-output compatibility fingerprints captured against the original planner,
+  input-order permutations, index isolation/reuse tests, and ten repeated planner suite runs.
+  The API/internal/command/quickstart regression suite passed with local envtest assets;
+  planner and ShutdownFlow adapter race tests passed. Repository lint reported zero issues;
+  added-code safety checks found no credential or unsafe execution patterns. Independent scope
+  and correctness/security reviews passed.
+
 - [x] `ENG-4` [Medium] remove unsupported durable executor resume machinery (2026-09-15).
   Removed persisted reconstruction, completed-group skipping, and resume-only audit/executor
   interfaces. New executions start from current observations, not published historical adaptive
@@ -496,6 +548,14 @@ Original entry (historical, not an additional open task):
 
 ## NUT Server / upsd
 
+- [x] `NS-11` [High] align upstream rendering with the pinned NUT 2.8.5 driver. Completed
+  2026-09-18: omit unsupported `authconf` for None and reject Default/Secret during admission
+  and render validation. Owned Kind acceptance passed generated-config startup, real variable
+  and update propagation, auth rejection and strict/non-strict unavailable-upstream behavior.
+  No upstream authentication or certificate verification is promised, and no image pin changed.
+  [Contract](contributing/design/upstream-nut-relay.md);
+  [live evidence](contributing/audits/mod-4-5-nut-only-acceptance-2026-09-18.md).
+
 - [x] `ENG-1` [Medium] supervisor Kind acceptance (2026-09-17). Two owned three-node Kind
   runs passed real Online/OnBattery/LowBattery telemetry and driver replacement within one
   30-second budget: 9.099 and 13.389 seconds, retaining pod/container identity. The enabled
@@ -601,6 +661,21 @@ Original entry (historical, not an additional open task):
   verify service references and coverage survive storage; runtime and artifact fixtures agree.
 
 ## Storage & Audit
+
+- [x] `SA-1` [Medium] refresh ExternalPostgres readiness after transient connection failures
+  (2026-09-19 Pacific; CI completed 2026-09-20 UTC). **Follow-up to closed F-131.**
+  Accepted external-storage configurations retry unhealthy connections within 30 seconds and
+  recheck healthy storage every five minutes. Status and Ready conditions recover, and detect
+  later outages, without a specification/generation change. CNPG keeps its existing five-minute
+  retry; Disabled mode does not gain a timer. Shutdown/spool policies remain unchanged.
+  **Validated:** focused race-enabled controller regressions, controller lint, and all six CI
+  workflows on `309a128f47e0f1e28298a0d37c0437deee664880`, including the
+  [PostgreSQL suite](https://github.com/MichaelZalud18/nut-operator/actions/runs/35482734954),
+  [three-version test matrix](https://github.com/MichaelZalud18/nut-operator/actions/runs/35482735003),
+  and [published-image Kind gate](https://github.com/MichaelZalud18/nut-operator/actions/runs/35482735191).
+  Kind passed 25 specs with zero failures; only the optional startup observation was skipped.
+  All four image promotions passed. The outage transitions are controller regression evidence;
+  this does not claim a new live-database fault-injection scenario. Original F-131 unchanged.
 
 - [x] `ENG-3` [Medium] separate execution ownership from audit recording (2026-09-15).
   The manager-owned `runShutdownFlow` worker owns bounded storage, spool replay/reporting, and

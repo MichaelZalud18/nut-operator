@@ -111,8 +111,14 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run tests.
+test: manifests generate fmt vet setup-envtest kustomize ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile $(COVERAGE_PROFILE)
+
+.PHONY: test-modular-components
+test-modular-components: kustomize ## Run modular component acceptance; not profile installation qualification.
+	go test ./cmd ./hack/nut-only -count=1
+	go test ./internal/controller -run '^(TestModularMixedFlowAcceptance|TestMOD4NUTServerRendersWithOnlyDeviceAndServerKinds|TestNUTServerTLSReconcileIsIdempotent|TestNUTServerExistingUsersSecretWatch|TestLiveReleaseSafetyBeforePublication|TestNodeReleaseTelemetryAge|TestReleaseAuthorizationUsesFreshAgentState|TestReleaseAuthorizationRevokedBetweenSecretWrites|TestReleasePublicationRequiresValidator)$$' -count=1
+	go test ./internal/kubeactions ./test/quickstart -run '^TestMOD2' -count=1
 
 .PHONY: test-postgres
 test-postgres: ## Run audit component tests against an isolated disposable PostgreSQL container.
@@ -284,13 +290,13 @@ verify-actuation: ## DANGER: POWERS OFF NODE=<node> AND LEAVES IT OFF. Proves th
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+	go build -o bin/manager ./cmd
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	# --leader-elect=false: leader election defaults to true (F-2), but it needs an in-cluster
 	# namespace to create its lease in, which a host process running against kubeconfig doesn't have.
-	go run ./cmd/main.go --leader-elect=false
+	go run ./cmd --leader-elect=false
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
@@ -451,6 +457,12 @@ build-installer-byo-cert: manifests generate kustomize ## Generate the consolida
 	mkdir -p dist
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/byo-cert > dist/install-byo-cert.yaml
+
+build-installer-nut-only: manifests generate kustomize ## Generate the NUT-only installer with BYO webhook certificates.
+	mkdir -p dist
+	"$(KUSTOMIZE)" build config/byo-cert | go run ./hack/nut-only --image "$(IMG)" --nut-server-image "$(NUT_SERVER_IMG)" > dist/install-nut-only.yaml
+
+.PHONY: build-installer-nut-only
 
 .PHONY: build-catalog
 build-catalog: kustomize ## Generate a consolidated YAML with project-maintained capability profiles.

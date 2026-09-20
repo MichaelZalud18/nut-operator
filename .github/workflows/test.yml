@@ -8,12 +8,14 @@ on:
       - "**"
       - "!docs/**"
       - "docs/examples/quickstart/**"
+      - "docs/examples/mixed-hooks/**"
       - "!**.md"
   pull_request:
     paths:
       - "**"
       - "!docs/**"
       - "docs/examples/quickstart/**"
+      - "docs/examples/mixed-hooks/**"
       - "!**.md"
 
 concurrency:

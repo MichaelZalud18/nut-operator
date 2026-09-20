@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	metavalidation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -151,6 +152,11 @@ func validateNUTServerAdmission(obj *powerv1alpha1.NUTServer) error {
 		errs = append(errs, validateObjectNameReference(specPath.Child("deviceRefs").Index(i), ref)...)
 	}
 	errs = append(errs, validateNUTService(specPath.Child("service"), obj.Spec.Service)...)
+	for i, peer := range obj.Spec.ClientAccess {
+		path := specPath.Child("clientAccess").Index(i)
+		errs = append(errs, metavalidation.ValidateLabelSelector(&peer.NamespaceSelector, metavalidation.LabelSelectorValidationOptions{}, path.Child("namespaceSelector"))...)
+		errs = append(errs, metavalidation.ValidateLabelSelector(peer.PodSelector, metavalidation.LabelSelectorValidationOptions{}, path.Child("podSelector"))...)
+	}
 	errs = append(errs, validateNUTAuth(specPath.Child("auth"), obj.Spec.Auth)...)
 	errs = append(errs, validateNUTTLS(specPath.Child("tls"), obj.Spec.TLS)...)
 	errs = append(errs, validateNUTServerConfig(specPath.Child("config"), obj.Spec.Config)...)

@@ -30,6 +30,13 @@ make manifests generate
 `make test` sets up the required envtest assets. Use a writable `GOCACHE` when needed;
 do not mistake a sandbox restriction for a broken host setup.
 
+`make build-installer-nut-only` derives the standalone NUT profile from the canonical generated
+BYO-cert resources. Its packaging/component tests run in `make test` and
+`make test-modular-components`; the latter does not establish live installation behavior.
+Run `CERT_MANAGER_INSTALL_SKIP=true python3 -B hack/test-kind.py --focus 'NUT-only'` for the
+clean profile's real TLS/client-policy, lifecycle and upstream-relay acceptance. The scenario
+is serial and uses only owned disposable resources, with no VM or host actuation.
+
 `make test-postgres` runs the audit database component suite using Docker and a disposable,
 digest-pinned PostgreSQL container. It creates a private network and loopback-only ephemeral port,
 then removes its container and network on exit. No existing database is required. The `postgres`
@@ -59,6 +66,16 @@ For focused local iteration, run from the repository root:
 python3 -B hack/test-kind.py --focus 'should run successfully|logical ShutdownFlow|NS-6'
 ```
 
+Execution-safety integration has a separate focused selection:
+
+```sh
+python3 -B hack/test-kind.py --focus 'EX-34 checks execution safety'
+```
+
+It uses the normal certificate-manager fixture, real dummy-ups telemetry, an observable hook
+barrier, PostgreSQL evidence and Simulate agents. It covers a positive baseline, an admitted
+flow-mode change and a selected-agent generation change, following the original execution ID.
+
 This explicit CLI option forwards one nonempty regexp to Ginkgo, which validates Go regexp
 syntax, and enables `-ginkgo.fail-on-empty` so an unmatched focus fails. Focused runs are not
 full acceptance. They retain the shared `BeforeSuite` image setup,
@@ -67,8 +84,9 @@ still runs the unfiltered suite; `verify` is unchanged. The existing
 `NUT_OPERATOR_E2E_STARTUP=true` opt-in is still required to execute NS-6 rather than skip it.
 
 `make test-e2e-nut-startup` adds the NS-6 eleven-minute startup observation to that same owned
-Kind suite. It extends the suite timeout to 45 minutes (50 minutes including cluster setup),
-while preserving the independent cleanup deadline. The ordinary suite keeps its existing budget.
+Kind suite. It extends the suite timeout to 60 minutes (65 minutes including cluster setup),
+while preserving the independent cleanup deadline. The ordinary suite allows 45 minutes,
+including the three isolated EX-34 scenarios and their fixture teardown.
 The E2E Tests workflow also exposes this option through manual dispatch; it is not added to every
 pull request or image-promotion run. Keep the full window for acceptance; component Docker startup
 observations do not substitute for manager/kubelet evidence.
@@ -96,6 +114,13 @@ Keep upgrades routine. Actual versions belong in the owning Makefile, workflow, 
 not duplicated in guidance.
 
 ### Selecting checks
+
+`make test-modular-components` runs the available modular composition and dependency tests,
+including controller-to-HTTPS-hook-to-agent-signal ordering, negative authorization cases,
+the authored mixed-flow example, and the restricted NUTServer render probe. It uses fake
+Kubernetes/audit storage and a loopback TLS receiver; no cluster, guest or actuator is started.
+These tests also run under `make test`. It does not qualify an unimplemented install profile;
+see [modular acceptance coverage](docs/contributing/design/modular-acceptance.md).
 
 Inspect build tags and test entry points when selecting narrower checks. Component tests,
 Kind suites, and opt-in VM tests have different prerequisites and prove different things.

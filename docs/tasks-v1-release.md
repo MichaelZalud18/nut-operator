@@ -57,6 +57,24 @@ Owns: remaining release-facing evidence and public test documentation. Building 
 suites and VM/CI harnesses remains in [engineering tasks](tasks.md). OD-27's evidence target does
 not settle the separate, still-open decision below about making a physical plug-pull a v1 gate.
 
+- [ ] `REL-6` [Medium] validate and refine the standalone v1 quickstart with a first-time user.
+  Start from the public README on a clean, disposable environment and follow only linked
+  instructions through prerequisites, installation/certificates, UPS/NUT, topology, shutdown
+  flow, plan review, and cleanup. Document one supported three-node setup path, required tools,
+  image access, context selection, readiness waits, expected output, and actionable failure
+  guidance. Verify the documented image references and commands without hidden test-harness
+  substitutions or maintainer coaching. Confirm the reader can distinguish Accepted from ready,
+  simulation from real hardware, and DryRun from actuation; keep production TLS/Secrets/storage
+  guidance linked without expanding the first run into every supported configuration.
+  **Acceptance:** record the tested revision/artifacts, environment, observed walkthrough and
+  friction points; fix blocking documentation gaps and repeat affected steps through cleanup.
+  Retain schema/component and install-to-plan coverage for changed examples. A representative
+  first-time reader must reach and explain the expected safe plan using the docs alone;
+  automated E2E success does not by itself establish usability.
+  Completed `REL-5` remains the implementation/live-test baseline, not an open duplicate.
+  This task owns the remaining onboarding validation; post-v1 `ENG-10` consumes its findings
+  and is not a prerequisite. [Assessment](contributing/audits/eng-10-onboarding-2026-09-18.md).
+
 - [ ] `OD-27` [Medium] confirm the reserve and minimum-compression defaults against a real outage.
   Simulation coverage is done —
   `internal/controller/adaptive_boundary_simulation_test.go` compiles a real plan through

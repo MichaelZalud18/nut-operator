@@ -76,9 +76,10 @@ jobs:
           set -euo pipefail
           IMG="$(grep -m1 -oE 'ghcr\.io/[^[:space:]]+' dist/install.yaml)"
           echo "Rebuilding installers with IMG=$IMG"
-          make build-installer build-installer-byo-cert IMG="$IMG"
+          NUT_SERVER_IMG="$(sed -n 's/.*--nut-server-image=//p' dist/install-nut-only.yaml)"
+          make build-installer build-installer-byo-cert build-installer-nut-only IMG="$IMG" NUT_SERVER_IMG="$NUT_SERVER_IMG"
           if ! git diff --quiet -- dist/; then
-            echo "::error::dist/ is stale. Run: make build-installer build-installer-byo-cert IMG=$IMG"
+            echo "::error::dist/ is stale. Run: make build-installer build-installer-byo-cert build-installer-nut-only IMG=$IMG NUT_SERVER_IMG=$NUT_SERVER_IMG"
             git diff --stat -- dist/
             git diff -- dist/ | head -200
             exit 1
@@ -106,7 +107,7 @@ jobs:
       # Through the make target rather than inline, so the check a contributor runs before pushing
       # and the check that gates the push are the same script. The cluster it needs is created and
       # destroyed inside it; see hack/validate-installers.sh for what it does and why.
-      - name: Apply both installers against a throwaway cluster
+      - name: Apply all installers against a throwaway cluster
         run: make validate-installers
 
   private-ip-scan:

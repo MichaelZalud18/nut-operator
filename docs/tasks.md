@@ -13,7 +13,8 @@ Closed tasks retain their original scope, dates and evidence. Additional work ge
 and an explicit follow-up link to the closed task(s); do not reopen or rewrite completed records.
 Related requirement IDs are references, not available IDs for new follow-up tasks.
 
-Last reviewed: 2026-09-19 (execution safety, Kind qualification, and storage retry follow-up).
+Last reviewed: 2026-09-19 (execution safety, Kind qualification, storage recovery, and
+modular/planner publication).
 
 Last reviewed: 2026-09-15 (completed work and research extracted; task scope and recorded test
 results preserved). Proposed designs are not settled decisions or evidence of implementation.
@@ -47,46 +48,17 @@ tasks denotes priority; an implementation risk is not evidence that current beha
 **New task prefix:** `MOD` (modular deployment).
 
 Owns: installation and API boundaries across components, based on
-[US-1 through US-4](contributing/design/user-stories.md). `MOD-1` through `MOD-3` remain investigations;
-`MOD-4` defines the requested managed NUT-only profile, subject to its explicit dependency decisions.
-No profile is advertised as supported until its contract, packaging, and acceptance tests agree.
-Record conclusions in the owning design contracts and assign implementation work explicitly.
-Medium denotes product priority here, not a demonstrated security vulnerability. Reuse existing components before
-introducing new services or APIs.
-
-- [ ] `MOD-1` [Medium] investigate the minimum agents-only install for existing NUT endpoints.
-  Compare standalone operands with a selectively enabled manager; measure dependencies and resource
-  cost. Evaluate typed external targets and mutually exclusive Operator/LocalNUT authority.
-  LocalNUT requires explicit OD-37/SB-3 and multi-supply F-45 decisions, never automatic fallback.
-  Preserve approval, dry-run, stale/wrong-node rejection, and credential/privilege separation.
-  **Testable now:** isolated render/startup and real-NUT-to-Simulate experiments.
-  [Research, alternatives, and acceptance](contributing/design/modular-deployment-proposals.md#mod-1).
-- [ ] `MOD-2` [Medium] verify mixed built-in and custom host actuation using authored inventory,
-  ShutdownFlow, and ShutdownHook before adding a new actuator API. Demonstrate explicit host/group
-  targeting without fabricated Kubernetes Nodes or an assumed automatic RunHook fanout.
-  **Testable now:** fake receiver and public example covering auth/allowlisting, rehearsal/dry-run,
-  repeat safety, timeouts, and ordering. Preserve advisory delivery, distinct from confirmed halt.
-  [Research and detailed acceptance](contributing/design/modular-deployment-proposals.md#mod-2).
-- [ ] `MOD-3` [Medium] investigate aggregation with external planning, separating aggregation-only
-  from aggregation-plus-agents. Reuse MOD-1's dependency comparison; identify a supported telemetry
-  and authorized execution boundary without clients synthesizing plans or writing halt Secrets.
-  **Testable now:** startup without planning and request-contract tests for approval, targeting,
-  stale requests, and cancellation. Deliver a capability matrix and scoped implementation proposal.
-  [Research and detailed acceptance](contributing/design/modular-deployment-proposals.md#mod-3).
-- [ ] `MOD-4` [Medium] define and implement the managed NUT-only profile for US-4.
-  Reuse the manager binary and NUTServer operand; settle the minimal controller/admission set,
-  profile-scoped CRDs/RBAC, image default, TLS bootstrap, and explicit client-ingress policy.
-  No planner, agents, inventory, PowerManagementCluster, or PostgreSQL dependency; document the
-  profile-specific storage exception without changing the full-install contract implicitly.
-  **Testable now; Conditional:** clean-cluster real dummy-ups, auth/TLS and allowed/denied traffic,
-  device changes, driver isolation, upgrade/reconcile, and absent unrelated watches/permissions.
-  [Research, alternatives, and acceptance](contributing/design/modular-deployment-proposals.md#mod-4).
-- [ ] `MOD-5` [Medium] add representative acceptance for each approved modular deployment profile.
-  Prove intentionally omitted components are unnecessary; reuse existing component/Kind/VM tests
-  instead of a component-subset matrix or repeated physical-halt qualification.
-  **Testable now once selected; Conditional:** exercise the specific authorization, targeting,
-  ordering, failure, and packaging contract of each profile selected for v1.
-  [Per-story acceptance criteria](contributing/design/modular-deployment-proposals.md#mod-5).
+[US-1 through US-4](contributing/design/user-stories.md).
+**Approved v1 scope (2026-09-18):** MOD-2 advisory mixed actuation, MOD-4 managed NUT-only
+including telemetry-only consumption, and MOD-5 acceptance for those two contracts.
+MOD-1 agents-only and MOD-3 external execution are owned by the
+[post-v1 backlog](tasks-post-v1.md#modular-deployment-profiles).
+MOD-2, MOD-4 and MOD-5 are recorded in the
+[completed tracker](tasks-completed.md#modular-deployment-profiles), including component and
+owned Kind acceptance. The NS-11 relay compatibility dependency is also complete for the
+supported unauthenticated upstream mode; unsupported auth modes are explicitly rejected.
+See the [installation guide](installation/nut-only.md) and
+[coverage map](contributing/design/modular-acceptance.md) for the implemented boundaries.
 
 ---
 
@@ -129,26 +101,12 @@ controller wiring that connects them. Design docs: `planner-requirements.md`,
 Remaining default-calibration evidence (`OD-27`) lives in the
 [release qualification checklist](tasks-v1-release.md#qualification).
 
+Completed planner refactors are recorded in
+[completed tasks](tasks-completed.md#planning--execution-logic).
+
 Execution authorization and target-drift integration (`EX-34`) and quorum publication
 integration (`EX-35`) are complete; their dated CI evidence is in
 [completed tasks](tasks-completed.md#planning--execution-logic).
-
-- [ ] `ENG-2` [Medium] tighten the pure planner without redesigning it. Move normalization,
-  base structural validation, and related setup out of `CompileWithHistory` into focused helpers
-  so `compiler.go` reads as the compilation pipeline: scope, validate, graph/waves, estimates,
-  artifacts/diagnostics, feasibility, hash. Preserve behavior rather than targeting a line count.
-  The strongest duplication target is topology derivation across `communication.go`,
-  `communication_services.go`, and `scope.go`. Use a narrow immutable compile-scoped index only
-  where shared derivations justify it: upstream/dependent adjacency, carrier paths, power-domain
-  membership, group-node sets, carrier consumers, and supply constraints. No public framework,
-  global cache, or cached data used only once. Preserve deterministic ordering/hashing and no I/O.
-  Do not shrink `types.go` merely because StructuralInputs and Plan carry a broad contract; retain
-  graph/provenance, explanations, startup-wave projection, diagrams, feasibility, and duration/history
-  outputs. Keep communication semantics intact. Comment-history cleanup belongs to `ENG-8`.
-  **Testable now; Conditional:** all planner tests, including determinism/hash, validation,
-  provenance, feasibility, communication, and quorum stay green; equivalent inputs retain
-  equivalent semantic artifacts. Judge clearer ownership and less repeated derivation/plumbing,
-  not lines removed.
 
 ---
 
@@ -171,6 +129,10 @@ Completed runtime-tool packaging (`NS-10`) is recorded in
 [completed tasks](tasks-completed.md#nut-server--upsd); the supported tool boundary is in
 [the image guide](../images/README.md#nut-server-runtime-tools).
 
+Completed upstream relay compatibility (`NS-11`) and generated-config Kind evidence are recorded
+in [completed tasks](tasks-completed.md#nut-server--upsd). Authenticated and verified-TLS upstream
+relay remain unsupported; see the [relay contract](contributing/design/upstream-nut-relay.md).
+
 ---
 
 ### Node Agent / DaemonSet
@@ -186,8 +148,8 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 `F-33`–`F-36`, `F-54`–`F-92`, `OD-37`) and `operator-maturity-benchmarks.md` (`F-94`).
 
 Completed execution-side safety work (`F-126`, `F-127`, `F-128`) is recorded in
-[tasks-completed.md](tasks-completed.md). Remaining guest qualification is owned by VM-3/VM-4/VM-7
-below; it does not introduce a new actuator policy.
+[tasks-completed.md](tasks-completed.md). Remaining composed outage-to-halt qualification is
+owned by VM-4 below; it does not introduce a new actuator policy.
 
 ---
 
@@ -211,21 +173,11 @@ No open work. Communication-ordering artifact completion is in
 Owns: the PostgreSQL audit schema, storage backend resolution, retention, and the shutdown-time
 spool. Design doc: `docs/contributing/design/audit-storage-schema.md`.
 
-No open work. Execution/audit ownership separation (`ENG-3`) and database component coverage
-(`F-145`) are recorded in [completed tasks](tasks-completed.md#storage--audit).
+Execution/audit ownership separation (`ENG-3`) and database component coverage (`F-145`) are
+recorded in [completed tasks](tasks-completed.md#storage--audit).
 
-- [ ] `SA-1` [Medium] refresh ExternalPostgres readiness after transient connection failures.
-  **Follow-up to closed F-131:** keep its startup-outage/spool completion unchanged and add
-  recovery of the management cluster's storage status without editing its specification.
-  EX-34's live fixture exposed a refused initial connection with `AuditStoreNotReady` persisting
-  after the Service became reachable; the reconciler schedules no external-storage retry.
-  **Acceptance:** failed readiness schedules a bounded retry; recovery and later failure update
-  status at the same generation. Healthy external storage also has periodic rechecks. Preserve
-  CNPG behavior and shutdown/spool policies; verify controller regression coverage.
-  **Implementation validated locally (2026-09-19):** external-storage failures requeue within
-  30 seconds and healthy storage rechecks within five minutes. Race-enabled regressions pass
-  outage/recovery/outage at one generation, Ready-condition updates, and unchanged CNPG/Disabled
-  retry behavior. CI qualification remains before closure.
+ExternalPostgres readiness recovery (`SA-1`, follow-up to F-131) is complete; implementation
+and passing CI evidence are in [completed tasks](tasks-completed.md#storage--audit).
 
 ---
 
@@ -259,7 +211,7 @@ Release tasks and acceptance gates live in [tasks-v1-release.md](tasks-v1-releas
 
 Owns: the generic PEG/QEMU harness and Hadron/k3s and Talos guest qualification, separate from
 Kind and site deployment. Keep logical matrices in component/Kind tests and real guest shutdown
-proof at this boundary. Talos is proposed qualification, not a demonstrated pass.
+proof at this boundary.
 [VM research, decisions, and dated evidence](contributing/audits/vm-test-research-2026-09-15.md)
 own detailed prerequisites and prior milestones; the remaining work is below.
 
@@ -296,6 +248,10 @@ VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-cover
 - [ ] `VM-5` [Medium] integrate the proven harness into bounded, initially manual Actions jobs.
   Consume exact-revision immutable images built before guests run; keep minimal token permissions,
   cleanup/time/concurrency bounds, artifact retention, and zero site-secret dependencies.
+  Includes both Hadron and Talos. Run fast Talos component tests (`-tags=talos`, without
+  `talos_smoke`) and `hack/test_talos_cleanup.py` in ordinary CI alongside Hadron's component
+  checks; keep real guest runs in the separate bounded VM jobs. Verify the fast suites actually
+  execute rather than being omitted by build tags or smoke-test name filters.
   **Conditional:** after repeated reliable runs and resource measurements, add component triggers
   for actuation, planning/execution, NUT, policy, packaging, and harness changes; only then consider
   a required check. Reuse the pinned published OS artifact unless customization needs change.
@@ -325,27 +281,24 @@ component.
 The public VM test guide (`VM-6`) lives in the
 [release qualification checklist](tasks-v1-release.md#qualification).
 
-- [ ] `ENG-10` [Low, research] evaluate whether a first-time setup wizard improves usability after
-  the quick-start/examples in `REL-5` are available. Compare Kubernetes-native authored CRs with a
-  wizard generating the same standard resources, not a second configuration model. Evaluate the
-  UPS/NUT, topology, and shutdown-policy inputs, safe Secret collection/output, CLI/TUI or other
-  form, and maintenance/test burden versus usability benefit.
-  **Testable now after REL-5:** representative first-user walkthroughs and generated-resource
-  validation can inform an adopt/reject decision. This is research, not a wizard implementation
-  commitment or an embedded-UI scope change (SB-14). The quick-start must stand alone even if the
-  wizard is rejected; the research lives here, not in the release-only tracker.
+Setup wizard implementation (`ENG-10`) is deferred to the
+[post-v1 backlog](tasks-post-v1.md#foundation--documentation). V1 onboarding uses the standalone
+quickstart; remaining first-user validation is `REL-6` in the
+[release qualification checklist](tasks-v1-release.md#qualification).
 
 ## Implementation Dependencies
 
 The 2026-09-15 proposal's tracker split is complete; the work above remains open unless checked.
-Keep High shutdown-safety work ahead of cleanup. The suggested test progression is VM-8 fixtures,
-Kind fixture/safety work and full-suite acceptance of the proven TEST-2 scenario, then acceptance
-for approved profiles. Talos provisioning follows VM-8; TalosShutdown follows deterministic Talos bring-up.
+Keep High shutdown-safety work ahead of cleanup. VM-2's harness safety supports VM-4's composed
+guest acceptance; VM-5 owns Hadron/Talos regression wiring. VM-8 extraction is deferred and does
+not block those tasks. EX-34 Kind integration and EX-35 API publication checks are completed;
+their evidence does not expand VM-4 into a multi-control-plane topology.
 This is dependency guidance, not a requirement to serialize independent component work.
 Completed ENG-1 includes NS-6 startup verification; NS-1 readiness is also complete. Completed OM-1
 retains shared Kind setup; controlled measurements apply to concrete optimizations. MOD-4 is a
 distinct managed-NUT profile, not an implicit expansion of MOD-3. ENG-4 must preserve the execution
-ownership established by F-132/ENG-3 when deleting resume state. Complete REL-5 before evaluating ENG-10.
+ownership established by F-132/ENG-3 when deleting resume state. Completed REL-5 provides the
+quickstart baseline; REL-6 walkthrough findings inform post-v1 ENG-10 implementation.
 
 ---
 

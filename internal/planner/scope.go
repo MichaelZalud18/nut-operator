@@ -32,6 +32,10 @@ const DiagnosticReasonPowerDomainScopeApplied = "PowerDomainScopeApplied"
 // Groups with no membership, mixed membership, or a global trigger remain in the
 // plan.
 func scopeStructuralInputs(input StructuralInputs) (StructuralInputs, []Diagnostic) {
+	return scopeStructuralInputsWithIndex(input, newCommunicationIndex(input))
+}
+
+func scopeStructuralInputsWithIndex(input StructuralInputs, index *communicationIndex) (StructuralInputs, []Diagnostic) {
 	affectedDomains, scopedTrigger := affectedPowerDomains(input.Triggers, input.PowerDomains)
 	if input.ExecutionScope != nil {
 		if !executionRootsMapped(input.ExecutionScope.UPSDevices, input.PowerDomains) {
@@ -48,20 +52,20 @@ func scopeStructuralInputs(input StructuralInputs) (StructuralInputs, []Diagnost
 			work.Groups = append(work.Groups, Group{Name: step.ID})
 		}
 	}
-	if sharedCommunicationAffected(work, affectedDomains) {
+	if sharedCommunicationAffectedWithIndex(work, affectedDomains, index) {
 		return input, []Diagnostic{{Severity: DiagnosticInfo, Reason: "CommunicationServiceScopeRetained", Message: "all actions remain in scope because a shared service path is affected or released"}}
 	}
 
 	affectedNodes := nodesForPowerDomains(input.PowerDomains, affectedDomains)
 	// A healthy node can still lose its communication path with another UPS.
 	// Follow carries edges from affected carriers, including transit-only devices.
-	for entity := range communicationDependents(input, affectedDomains) {
+	for entity := range communicationDependentsWithIndex(input, affectedDomains, index) {
 		affectedNodes[entity] = struct{}{}
 	}
 	membership := groupNodeSets(input.GroupNodes)
 	unresolved := unresolvedGroupMembership(input.GroupNodes)
-	includeUnmappedNodes(input, membership, affectedNodes)
-	retainReleasedCarrierConsumers(work, membership, affectedNodes)
+	includeUnmappedNodesWithIndex(membership, affectedNodes, index)
+	retainReleasedCarrierConsumersWithIndex(work, membership, affectedNodes, index)
 	pruned := map[string]struct{}{}
 	groups := make([]Group, 0, len(work.Groups))
 	for _, group := range work.Groups {
@@ -126,16 +130,10 @@ func executionRootsMapped(roots []string, domains []PowerDomainMembership) bool 
 }
 
 // Membership without a resolved supply is not evidence of an unaffected target.
-func includeUnmappedNodes(input StructuralInputs, membership map[string]map[string]struct{}, retained map[string]struct{}) {
-	known := map[string]bool{}
-	for _, domain := range input.PowerDomains {
-		for _, entity := range domainEntities(domain) {
-			known[entity] = true
-		}
-	}
+func includeUnmappedNodesWithIndex(membership map[string]map[string]struct{}, retained map[string]struct{}, index *communicationIndex) {
 	for _, nodes := range membership {
 		for node := range nodes {
-			if !known[node] {
+			if _, known := index.supplies[node]; !known {
 				retained[node] = struct{}{}
 			}
 		}

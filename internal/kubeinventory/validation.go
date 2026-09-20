@@ -135,6 +135,9 @@ func validateUpstreamNUTUPSDevice(obj *powerv1alpha1.UPSDevice) ValidationResult
 	default:
 		return rejected("UpstreamNUTAuthModeUnsupported", "unsupported spec.upstreamNUT.auth.mode %q", upstream.Auth.Mode)
 	}
+	if authMode != powerv1alpha1.UPSUpstreamNUTAuthNone {
+		return rejected("UpstreamNUTAuthUnsupported", "the pinned NUT operand does not support upstream authconf; only auth.mode None is supported (no upstream authentication or verified TLS)")
+	}
 	if obj.Spec.Identity.Firmware != "" && obj.Spec.Identity.Model == "" {
 		return rejected("IdentityFirmwareRequiresModel", "spec.identity.firmware requires spec.identity.model")
 	}

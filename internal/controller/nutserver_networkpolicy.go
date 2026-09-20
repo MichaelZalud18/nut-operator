@@ -114,6 +114,12 @@ func (r *NUTServerReconciler) ensureNUTServerNetworkPolicy(ctx context.Context, 
 				},
 			},
 		}
+		for _, peer := range server.Spec.ClientAccess {
+			policy.Spec.Ingress[0].From = append(policy.Spec.Ingress[0].From, networkingv1.NetworkPolicyPeer{
+				NamespaceSelector: peer.NamespaceSelector.DeepCopy(),
+				PodSelector:       peer.PodSelector.DeepCopy(),
+			})
+		}
 		egress := upstreamNUTEgressRules(devices)
 		if len(egress) > 0 {
 			policy.Spec.PolicyTypes = append(policy.Spec.PolicyTypes, networkingv1.PolicyTypeEgress)

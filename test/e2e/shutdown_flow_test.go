@@ -64,9 +64,17 @@ func logicalShutdownFlowSpecs() {
 			Expect(applyFixtureManifest(manifest)).To(Succeed())
 		}
 		logicalFlowReadyPod(flowOperandNamespace, "app=test2-postgres")
+		By("starting a harmless MOD-2 receiver on the surviving worker")
+		Expect(applyFixtureManifest(modularReceiverManifest(other))).To(Succeed())
+		logicalFlowReadyPod(flowOperandNamespace, "app="+modularReceiverName)
 		logicalFlowReadyPod(flowWorkNamespace, "app=test2-scale")
 		logicalFlowReadyPod(flowWorkNamespace, "app=test2-drain")
 		untouched := logicalFlowReadyPod(flowWorkNamespace, "app=test2-untouched")
+		By("rejecting receiver access from an unapproved workload namespace")
+		_, toolErr := utils.Run(exec.Command("kubectl", "exec", "-n", flowWorkNamespace, untouched.Name, "--", "sh", "-c", "command -v wget"))
+		Expect(toolErr).NotTo(HaveOccurred(), "the denied-client check requires the image's wget")
+		_, deniedErr := utils.Run(exec.Command("kubectl", "exec", "-n", flowWorkNamespace, untouched.Name, "--", "wget", "-q", "-T", "3", "-O", "-", modularReceiverURL()+"/state"))
+		Expect(deniedErr).To(HaveOccurred())
 		storage := logicalFlowStorage()
 		cleanup.manifests = append(cleanup.manifests, storage)
 		Expect(applyFixtureManifest(storage)).To(Succeed())
@@ -96,7 +104,7 @@ func logicalShutdownFlowSpecs() {
 		}, 3*time.Minute, time.Second).Should(Succeed())
 
 		By("rejecting Enforce without approval at the real admission boundary")
-		unapproved := logicalFlowManifest(target, "Enforce", false)
+		unapproved := logicalMixedFlowManifest(target, "Enforce", false)
 		cleanup.manifests = append(cleanup.manifests, unapproved)
 		cmd := exec.Command("kubectl", "apply", "--dry-run=server", "-f", "-")
 		cmd.Stdin = strings.NewReader(unapproved)
@@ -105,7 +113,7 @@ func logicalShutdownFlowSpecs() {
 		Expect(out).To(ContainSubstring("metadata.annotations[" + flowApproval + "]"))
 
 		By("observing an eligible DryRun execution with no workload or signal effects")
-		Expect(applyFixtureManifest(logicalFlowManifest(target, "DryRun", false))).To(Succeed())
+		Expect(applyFixtureManifest(logicalMixedFlowManifest(target, "DryRun", false))).To(Succeed())
 		Eventually(func(g Gomega) {
 			flow := logicalFlowRead(g)
 			g.Expect(flow.Status.TriggerEvaluation).NotTo(BeNil())
@@ -138,6 +146,7 @@ func logicalShutdownFlowSpecs() {
 		Expect(logicalFlowGet(&drain, "pod", "test2-drain", "-n", flowWorkNamespace)).To(Succeed())
 		Expect(drain.DeletionTimestamp).To(BeNil())
 		logicalFlowNoSignal(Default, target)
+		modularAssertReceipts(dryExecution, true)
 		var node corev1.Node
 		Expect(logicalFlowGet(&node, "node", target)).To(Succeed())
 		Expect(node.Spec.Unschedulable).To(BeFalse())
@@ -145,7 +154,7 @@ func logicalShutdownFlowSpecs() {
 		By("approving Enforce and observing scale before drain before release")
 		Expect(logicalFlowGet(&allPods, "pods", "-A")).To(Succeed())
 		Expect(logicalFlowDrainBlockers(target, allPods.Items)).To(BeEmpty(), "non-fixture workloads appeared on the drain worker")
-		Expect(applyFixtureManifest(logicalFlowManifest(target, "Enforce", true))).To(Succeed())
+		Expect(applyFixtureManifest(logicalMixedFlowManifest(target, "Enforce", true))).To(Succeed())
 		Eventually(func(g Gomega) {
 			g.Expect(logicalFlowGet(&deployment, "deployment", "test2-scale", "-n", flowWorkNamespace)).To(Succeed())
 			g.Expect(*deployment.Spec.Replicas).To(BeZero())
@@ -193,6 +202,9 @@ func logicalShutdownFlowSpecs() {
 			g.Expect(logs).NotTo(ContainSubstring("simulate actuator accepted shutdown signal executionID=" + dryExecution))
 		}, 2*time.Minute, 2*time.Second).Should(Succeed())
 		logicalFlowAssertAudit(execution.ExecutionID, target)
+		By("proving advisory hook failures precede scale, drain and simulated agent publication")
+		modularAssertReceipts(execution.ExecutionID, false)
+		modularHookAudit(execution.ExecutionID)
 		var survivor corev1.Pod
 		Expect(logicalFlowGet(&survivor, "pod", untouched.Name, "-n", flowWorkNamespace)).To(Succeed())
 		Expect(survivor.UID).To(Equal(untouched.UID))

@@ -55,17 +55,6 @@ func upstreamNUTStrictStart(device powerv1alpha1.UPSDevice) bool {
 	return *device.Spec.UpstreamNUT.StrictStart
 }
 
-func upstreamNUTAuthConf(device powerv1alpha1.UPSDevice) string {
-	switch kubeinventory.UpstreamAuthMode(device.Spec.UpstreamNUT) {
-	case powerv1alpha1.UPSUpstreamNUTAuthDefault:
-		return "default"
-	case powerv1alpha1.UPSUpstreamNUTAuthSecret:
-		return "/etc/nut/upstream-auth/" + nutDeviceName(device) + ".nutauth.conf"
-	default:
-		return "none"
-	}
-}
-
 func upstreamNUTAuthProjections(devices []powerv1alpha1.UPSDevice, namespace string) ([]corev1.VolumeProjection, error) {
 	projections := make([]corev1.VolumeProjection, 0)
 	for _, device := range devices {

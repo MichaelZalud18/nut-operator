@@ -282,8 +282,9 @@ type UPSUpstreamNUTSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	UPSName string `json:"upsName"`
 
-	// auth configures how dummy-ups repeater mode discovers authentication and
-	// trust material for the upstream NUT server.
+	// auth reserves upstream authentication/trust configuration. The pinned operand
+	// supports only None: no upstream authentication or verified TLS. Default and
+	// Secret are rejected, not silently downgraded.
 	// +optional
 	Auth UPSUpstreamNUTAuthSpec `json:"auth,omitempty"`
 
@@ -311,8 +312,8 @@ const (
 
 // UPSUpstreamNUTAuthSpec configures upstream NUT authentication material.
 type UPSUpstreamNUTAuthSpec struct {
-	// mode selects the upstream authconf source. The default disables authconf
-	// parsing so unauthenticated appliances do not depend on image defaults.
+	// mode must be None with the pinned operand. It has no authconf support;
+	// Default and Secret are rejected until a compatible implementation is shipped.
 	// +kubebuilder:default=None
 	// +optional
 	Mode UPSUpstreamNUTAuthMode `json:"mode,omitempty"`

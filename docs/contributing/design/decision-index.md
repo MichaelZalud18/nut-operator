@@ -52,7 +52,7 @@ settled decisions by being indexed here; `scope-boundaries.md` remains the OD re
 
 | Record | Role | Task status owner |
 | --- | --- | --- |
-| [Modular deployment proposals](modular-deployment-proposals.md) | Research, alternatives, and acceptance for requested profiles; LocalNUT and profile dependencies require explicit decisions | [MOD-1 through MOD-5](../../tasks.md#modular-deployment-profiles) |
+| [Modular deployment proposals](modular-deployment-proposals.md) | Selected v1 contracts and deferred alternatives; LocalNUT remains a proposal | [v1 MOD-2/MOD-4/MOD-5](../../tasks.md#modular-deployment-profiles); [post-v1 MOD-1/MOD-3](../../tasks-post-v1.md#modular-deployment-profiles) |
 | [NUT supervisor migration](nut-supervisor-migration.md) | Go replacement constraints, upstream compatibility decisions, and migration validation contract | [ENG-1](../../tasks.md#nut-server--upsd) |
 | [VM test research](../audits/vm-test-research-2026-09-15.md) | Recorded PEG/networking/deployment decisions, historical runs, and proposed guest qualification | [VM tasks](../../tasks.md#vm-test-coverage) |
 | [Kind component investigation](../audits/kind-modularity-2026-09-13.md) | Ranked observed costs and retain-shared-suite decision; controlled measurements apply to concrete optimizations | [Completed OM-1](../../tasks-completed.md#operator-maturity--hardening) (supersedes F-146) |
@@ -86,7 +86,7 @@ Dated audit and findings records live in `docs/contributing/audits/` and share t
 | PL | Planner requirement | planner-requirements | PL-1 – PL-49 |
 | CR | Capability resolution rule | planner-requirements | CR-1 – CR-4 |
 | RS | Resolver requirement | resolver-requirements | RS-1 – RS-20 |
-| EX | Executor requirement | executor-requirements | EX-1 – EX-33 |
+| EX | Executor requirement/task | executor-requirements; tasks.md | Requirements EX-1 – EX-33; follow-up tasks EX-34 – EX-35 |
 | NS | NUT server operand requirement/task | nut-server-operand; tasks | NS-1 – NS-10 |
 | OM | Operator maturity and hardening task | tasks.md, Operator Maturity & Hardening | OM-1 |
 | NA | Node agent operand requirement | node-agent-operand | NA-1 – NA-9 |
@@ -105,13 +105,16 @@ unchanged, including legacy ENG/TEST and historical findings.
 | --- | --- | --- |
 | MOD | Modular Deployment Profiles | Existing tasks in tasks.md |
 | OP | Outputs & Publishing | Reserved; no numbered tasks yet |
-| SA | Storage & Audit | Reserved; no numbered tasks yet |
+| SA | Storage & Audit | SA-1 |
 | REL | v1 Release Readiness | Existing tasks in tasks-v1-release.md |
 | VM | VM Test Coverage | Existing tasks in tasks.md and release tracker |
 | TT | Telemetry & Triggers | Reserved; no numbered tasks yet |
 | FD | Foundation & Documentation | Reserved; no numbered tasks yet |
 
 Identifiers are stable: never reused, never renumbered. Superseded items are marked in place.
+Closed task records remain intact. New work receives a fresh ID in the owning component namespace,
+with an explicit follow-up link to the closed task and separate references to related requirements.
+Do not reopen a closed task or reuse its identifier to add acceptance work.
 
 The provisional `AE` namespace is retired. `AE-1`–`AE-6` were folded into `EX-25`–`EX-30`
 (executor-requirements), and the runtime-estimate capability gate that had also been carried as

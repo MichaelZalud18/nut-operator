@@ -46,6 +46,10 @@ type NUTServerReconciler struct {
 	Scheme         *runtime.Scheme
 	UpstreamProber upstreamNUTProber
 	Recorder       events.EventRecorder
+	// NUTOnly rejects references to APIs omitted by the standalone profile.
+	NUTOnly bool
+	// DefaultImage is supplied by the standalone distribution, not a synthetic PMC.
+	DefaultImage string
 }
 
 // +kubebuilder:rbac:groups=power.zalud.io,resources=nutservers,verbs=get;list;watch;create;update;patch;delete

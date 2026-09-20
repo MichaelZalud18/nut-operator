@@ -177,6 +177,9 @@ func validateUpstreamNUTAdmission(obj *powerv1alpha1.UPSDevice, specPath *field.
 		}
 	}
 	authPath := upstreamPath.Child("auth")
+	if mode := upstreamAuthMode(upstream); mode == powerv1alpha1.UPSUpstreamNUTAuthDefault || mode == powerv1alpha1.UPSUpstreamNUTAuthSecret {
+		errs = append(errs, field.Forbidden(authPath.Child("mode"), "the pinned NUT operand does not support upstream authconf; only None is supported (no upstream authentication or verified TLS)"))
+	}
 	switch upstreamAuthMode(upstream) {
 	case powerv1alpha1.UPSUpstreamNUTAuthNone, powerv1alpha1.UPSUpstreamNUTAuthDefault:
 		if upstream.Auth.SecretKeyRef != nil {

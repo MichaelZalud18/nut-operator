@@ -46,10 +46,10 @@ func TestKindSpecRegistration(t *testing.T) {
 		t.Run("startup="+startup, func(t *testing.T) {
 			t.Setenv("NUT_OPERATOR_E2E_STARTUP", startup)
 			t.Run("default", func(t *testing.T) {
-				assertKindSpecInventory(t, "false", "fd61aa00f225597add30504e2f0c31097d04d7c217f8123d8090e900cdcce2e5")
+				assertKindSpecInventory(t, "false", "808e7a8447bea5da2e837bd970e70138b5fbaf0942f17c6b2c8f10c3fe57994b")
 			})
 			t.Run("soak", func(t *testing.T) {
-				assertKindSpecInventory(t, "true", "b27ef03d5ec5709775595d166cb353d48fa9409411b3dcff3da6b87ebd2d8e2c")
+				assertKindSpecInventory(t, "true", "64eaba2b3b66be1af8b8a330d6ed890fa7f326fc23c65919de51d2f884001849")
 			})
 		})
 	}
@@ -74,7 +74,9 @@ func assertKindSpecInventory(t *testing.T, soak, want string) {
 		if inventory, found := strings.CutPrefix(line, "SPEC-INVENTORY:"); found {
 			// NS-6 stays registered when disabled so runtime reports an explicit skip.
 			// ENG-1 intentionally combines the two recovery assertions into one
-			// timed spec, leaving 21/23 baseline specs. TEST-2 and NS-6 add one each.
+			// timed spec, leaving 21/23 baseline specs. TEST-2, NS-6 and MOD-4 add one each.
+			// Adding MOD-4's top-level container changes seeded container ordering;
+			// fingerprints retain every original spec and its ordered/serial attributes.
 			var specs []json.RawMessage
 			if err := json.Unmarshal([]byte(inventory), &specs); err != nil {
 				t.Fatal(err)
@@ -83,6 +85,7 @@ func assertKindSpecInventory(t *testing.T, soak, want string) {
 			additions := 0
 			startupAdditions := 0
 			recoveryAdditions := 0
+			modularAdditions := 0
 			safetyAdditions := 0
 			for _, raw := range specs {
 				var spec struct {
@@ -98,6 +101,11 @@ func assertKindSpecInventory(t *testing.T, soak, want string) {
 					safetyAdditions++
 					if !validKindRegistration(spec.Ordered, spec.Serial, spec.State, spec.Labels, "EX-34") {
 						t.Fatalf("EX-34 registration changed: %s", raw)
+					}
+				} else if spec.Text == "NUT-only "+nutOnlySpecName {
+					modularAdditions++
+					if !spec.Ordered || !spec.Serial || spec.State != "passed" || strings.Join(spec.Labels, ",") != "Serial,MOD-4" {
+						t.Fatalf("MOD-4 registration changed: %s", raw)
 					}
 				} else if spec.Text == "Manager executes a logical ShutdownFlow from real dummy-ups telemetry through ordered drain and simulated actuation" {
 					additions++
@@ -122,6 +130,9 @@ func assertKindSpecInventory(t *testing.T, soak, want string) {
 			count := 21
 			if soak == "true" {
 				count = 23
+			}
+			if modularAdditions != 1 {
+				t.Fatalf("want MOD-4=1, got %d", modularAdditions)
 			}
 			if safetyAdditions != 3 {
 				t.Fatalf("want EX-34=3, got %d", safetyAdditions)

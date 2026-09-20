@@ -188,14 +188,15 @@ spec:
                 properties:
                   auth:
                     description: |-
-                      auth configures how dummy-ups repeater mode discovers authentication and
-                      trust material for the upstream NUT server.
+                      auth reserves upstream authentication/trust configuration. The pinned operand
+                      supports only None: no upstream authentication or verified TLS. Default and
+                      Secret are rejected, not silently downgraded.
                     properties:
                       mode:
                         default: None
                         description: |-
-                          mode selects the upstream authconf source. The default disables authconf
-                          parsing so unauthenticated appliances do not depend on image defaults.
+                          mode must be None with the pinned operand. It has no authconf support;
+                          Default and Secret are rejected until a compatible implementation is shipped.
                         enum:
                         - None
                         - Default

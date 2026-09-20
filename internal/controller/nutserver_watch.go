@@ -160,6 +160,9 @@ func (r *NUTServerReconciler) nutServerRequestsForSecret(ctx context.Context, ob
 	var requests []reconcile.Request
 	for _, server := range servers.Items {
 		matched := nutServerUsesTLSSecret(&server, secret)
+		if ref := server.Spec.Auth.ExistingSecretRef; ref != nil && ref.Name == secret.Name && ref.Namespace == secret.Namespace {
+			matched = true
+		}
 		for i := range referencing {
 			if matched {
 				break

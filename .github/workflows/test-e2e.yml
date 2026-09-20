@@ -23,6 +23,7 @@ on:
       - "**"
       - "!docs/**"
       - "docs/examples/quickstart/**"
+      - "docs/examples/mixed-hooks/**"
       - "!**.md"
   workflow_call:
     inputs:

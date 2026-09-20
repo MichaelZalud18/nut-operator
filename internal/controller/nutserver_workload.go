@@ -276,6 +276,10 @@ func (r *NUTServerReconciler) ensureNUTServerDeployment(ctx context.Context, ser
 				},
 			},
 		}
+		// CreateOrUpdate starts from the existing Deployment. Rebuild the owned init
+		// list too: appending TLS assembly on every reconcile creates duplicate names,
+		// and switching TLS off must remove its stale init container and mounts.
+		deployment.Spec.Template.Spec.InitContainers = nil
 		applyNUTServerTLSOperand(deployment, server, image, pullPolicy)
 		return controllerutil.SetControllerReference(server, deployment, r.Scheme)
 	})

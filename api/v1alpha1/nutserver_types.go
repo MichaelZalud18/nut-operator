@@ -65,6 +65,13 @@ type NUTServerSpec struct {
 	// +optional
 	Service NUTServiceSpec `json:"service,omitempty"`
 
+	// clientAccess adds cross-namespace clients to the default same-namespace and
+	// manager ingress. Each peer matches a namespace AND, when present, a pod selector.
+	// An empty namespace selector explicitly permits all namespaces; omission grants none.
+	// Service exposure alone does not grant network access.
+	// +optional
+	ClientAccess []NUTClientPeer `json:"clientAccess,omitempty"`
+
 	// auth configures NUT users and credential management.
 	// +optional
 	Auth NUTAuthSpec `json:"auth,omitempty"`
@@ -76,6 +83,16 @@ type NUTServerSpec struct {
 	// config tunes generated upsd and driver configuration.
 	// +optional
 	Config NUTServerConfigSpec `json:"config,omitempty"`
+}
+
+// NUTClientPeer grants TCP access to the NUT service from selected Kubernetes clients.
+type NUTClientPeer struct {
+	// namespaceSelector selects client namespaces and must be explicitly supplied.
+	// +required
+	NamespaceSelector metav1.LabelSelector `json:"namespaceSelector"`
+	// podSelector further restricts clients within the selected namespaces.
+	// +optional
+	PodSelector *metav1.LabelSelector `json:"podSelector,omitempty"`
 }
 
 // NUTServerStatus defines the observed state of NUTServer.

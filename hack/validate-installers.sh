@@ -21,7 +21,7 @@ KIND="${KIND:-kind}"
 CLUSTER="${INSTALLER_CHECK_CLUSTER:-nut-operator-installer-check}"
 BUNDLES=("$@")
 if [ "${#BUNDLES[@]}" -eq 0 ]; then
-  BUNDLES=(dist/install.yaml dist/install-byo-cert.yaml)
+  BUNDLES=(dist/install.yaml dist/install-byo-cert.yaml dist/install-nut-only.yaml)
 fi
 
 cd "$(dirname "$0")/.."
@@ -91,6 +91,6 @@ for bundle in "${BUNDLES[@]}"; do
 done
 
 if [ "$status" -eq 0 ]; then
-  echo "Both installers were accepted by the API server."
+  echo "All requested installers were accepted by the API server."
 fi
 exit "$status"

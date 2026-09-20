@@ -67,6 +67,9 @@ guess. (GP-2.)
 execution at the next wave boundary. In-flight actions in the current wave complete or time out;
 subsequent waves run dry. A spec change, including a mode change, also cancels the manager-owned
 run once reconciled; the wave gate remains a fail-closed backstop before cancellation arrives.
+Cancellation stops subsequent actions and makes one bounded terminal audit attempt with a
+context independent of action cancellation. The final record identifies the aborted execution;
+an unavailable audit backend remains a reported evidence failure, not permission to resume work.
 
 ---
 

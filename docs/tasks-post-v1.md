@@ -19,6 +19,68 @@ Use the testability labels defined in [tasks.md](tasks.md): **Testable now**, **
 
 ---
 
+## Modular Deployment Profiles
+
+Scope approved 2026-09-18: v1 implements advisory mixed actuation (MOD-2), managed NUT-only
+with NUT-protocol telemetry consumers (MOD-4), and acceptance for those contracts (MOD-5).
+The following retain their original IDs and remain open beyond v1.
+
+- [ ] `MOD-1` [Medium] design and implement an agents-only profile for existing NUT endpoints.
+  **Why post-v1:** shutdown authority without the built-in planner is unresolved; direct NUT
+  connectivity alone does not provide an authorized shutdown path. Decide authority, per-node
+  supplies, approval freshness/revocation and audit/storage scope before implementation.
+  Prefer reuse of the selectively enabled manager and existing renderer; add typed external
+  targets and remove inapplicable flow/inventory dependencies explicitly. Any LocalNUT mode
+  requires deliberate OD-37/SB-3/sequencing revisions and F-45 multi-supply work, never fallback
+  when the operator is unavailable. Do not weaken credential/privilege separation.
+  **Acceptance after contract selection:** external NUT without managed NUTServer or built-in
+  planner; approved-mode and dry-run behavior, stale/wrong-node rejection, no authority fallback,
+  and demonstrably absent unwanted APIs/controllers/storage dependencies. Its profile tests
+  belong here with implementation, not in the v1 MOD-5 completion criteria.
+  [Research evidence](contributing/audits/mod-1-agents-only-2026-09-18.md);
+  [alternatives and constraints](contributing/design/modular-deployment-proposals.md#mod-1).
+- [ ] `MOD-3` [Medium] define and implement authorized external execution using built-in agents.
+  **Why post-v1:** external ordering needs a new supported request/approval/result contract
+  preserving live release safeguards; raw halt-Secret writes and synthesized compiled plans
+  are not that interface. Telemetry-only aggregation is assigned to v1 MOD-4 and is not blocked
+  by this task. NS-11 remains a v1 fix in the NUT Server component.
+  Select the request boundary and caller identity/RBAC, targeting, approval, expiry, replay/rearm,
+  cancellation-before-publication, execution evidence and audit/storage contract. Preserve live
+  telemetry, clearance, pod/configuration and control-plane checks when extracting shared logic.
+  Reuse MOD-1/MOD-4 packaging work; no separate network service is presumed.
+  **Acceptance after implementation:** external planner submits supported requests without
+  ShutdownFlow or private Secret access; denied/expired/wrong-node/revoked requests do not
+  publish signals; cancellation and post-publication limits are explicit. Include the profile's
+  omitted-dependency and integration tests with this work.
+  [Research and capability matrix](contributing/audits/mod-3-external-planning-2026-09-18.md);
+  [contract proposal](contributing/design/modular-deployment-proposals.md#mod-3).
+
+---
+
+## Foundation & Documentation
+
+- [ ] `ENG-10` [Low] create a first-time setup wizard after v1.
+  Build a separate authoring tool that generates the existing Kubernetes resources for UPS/NUT,
+  topology, and shutdown policy. Choose CLI/TUI or another form from `REL-6` walkthrough findings;
+  reuse the quickstart's manifests, rendering, and validation where practical. Keep authored CRs
+  as the configuration model, with reviewable output and no operator runtime dependency on the
+  wizard. Collect actual node bindings, supply/communication edges, and policy explicitly;
+  do not infer physical wiring or shutdown priorities. Default to DryRun/Simulate and leave
+  application and real-actuation approval to separate explicit steps. Handle Secret references
+  and any credential input without exposing values in logs, shell arguments, or ordinary output.
+  **Acceptance; Testable now once implemented:** generated resources pass schema/admission and
+  production plan compilation; invalid/incomplete inputs and cancellation fail safely; output
+  is repeatable and reviewable; a first-time user can generate and review a working simulated
+  configuration. Include credential-leakage checks and a documented path back to ordinary CR
+  editing. Keep the standalone quickstart supported.
+  **Why post-v1:** v1 onboarding prioritizes a validated quickstart; wizard interaction,
+  packaging, credential handling, and API/template maintenance add a separate support surface.
+  This is implementation work, replacing the former adopt/reject research task.
+  [Scope decision](contributing/design/scope-boundaries.md#sb-14--no-embedded-ui-in-v1);
+  [2026-09-18 assessment](contributing/audits/eng-10-onboarding-2026-09-18.md).
+
+---
+
 ## Capability Profiles
 
 ### Actuation verification lifecycle (`F-27`)
@@ -112,9 +174,13 @@ behavior with simulated NUT peers; **Conditional** compatibility smoke if NUT pa
 
 ### `MONITOR` power value and `MINSUPPLIES` (`F-45`)
 
-Every agent renders `MONITOR ... 1 ... secondary` with `MINSUPPLIES 1`, so a host fed by two UPS
-devices shuts down when either one goes critical rather than when it actually loses its supplies
-([nut-usage-audit.md](contributing/audits/nut-usage-audit.md)).
+Every agent renders `MONITOR ... 1 ... secondary` with `MINSUPPLIES 1`. These fixed values do not
+model each node's actual supply wiring or minimum supply requirement. With two equal-weight
+monitors, one healthy supply still satisfies the minimum; the earlier claim that either critical
+UPS necessarily triggers local shutdown was too broad. An unrelated healthy UPS can instead
+mask loss of a node's actual supply. The
+[2026-09-18 MOD-1 probe](contributing/audits/mod-1-agents-only-2026-09-18.md) confirms the
+two-monitor case; the original [audit](contributing/audits/nut-usage-audit.md) remains historical.
 
 **Why it is post-v1:** `MINSUPPLIES` governs one host's own supplies and reaches nothing but
 `upsmon`'s local `SHUTDOWNCMD` decision. `OD-37` locks that path down for v1 — the operator path
@@ -122,7 +188,7 @@ plans from inventory, which already models a node in more than one power domain 
 hardcoded values are inert while the scaffold is disabled, and become real again only if it is ever
 unlocked.
 
-The proposed LocalNUT mode in [MOD-1](tasks.md#modular-deployment-profiles) would reopen this
+The proposed LocalNUT mode in [MOD-1](#modular-deployment-profiles) would reopen this
 assumption. Keep this item deferred while that mode is only an investigation; if selected, move the
 necessary multi-supply work into its implementation prerequisites before authorizing local signals.
 Consuming upstream FSD in that profile is distinct from OD-19's additional outbound release signal.

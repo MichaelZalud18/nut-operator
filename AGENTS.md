@@ -96,8 +96,17 @@ Keep active task entries focused on remaining work and acceptance. Move complete
 completed tracker; link substantial research and milestone history from the owning design/audit
 document. Proposals belong in clearly labeled research, not the settled decision registry.
 
+Closed task records are audit history. Do not reopen them, reuse their IDs for new work, or
+rewrite their scope, acceptance criteria, completion dates, or results to incorporate later work.
+Create a new task with a fresh ID for additional testing, a regression, or changed requirements.
+Label it as a follow-up and link the closed task(s) it extends, explaining the new scope.
+Keep the original completion record intact. If historical evidence needs correction, append a
+dated correction with supporting evidence rather than silently replacing the original account.
+
 Task prefixes follow the owning component/section, not the type of work. Reuse its established
-namespace and related requirement ID where applicable; do not introduce project-wide prefixes
+namespace, but allocate a fresh task ID for follow-up work and cite related requirement IDs
+separately. Check active, completed, deferred and requirement records before allocating an ID;
+do not repurpose an existing requirement ID as a new follow-up task. Do not introduce project-wide prefixes
 such as `ENG` or `TEST` merely to distinguish coding from testing. Consult the
 [decision index](docs/contributing/design/decision-index.md) before assigning an ID. Preserve
 existing identifiers and historical references; renaming them requires an explicit migration.

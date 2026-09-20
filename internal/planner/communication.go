@@ -26,8 +26,8 @@ import (
 // collectNodeCommunicationGraphEdges orders work on a dependent, including its own
 // release, before release of the node carrying its control path. Non-actuated
 // carriers stay topology entities; they do not become synthetic shutdown groups.
-func collectNodeCommunicationGraphEdges(groups []Group, membership []GroupNodeMembership, dependencies []CommunicationDependency) []GraphEdge {
-	if len(groups) == 0 || len(membership) == 0 || len(dependencies) == 0 {
+func collectNodeCommunicationGraphEdgesWithIndex(groups []Group, membership []GroupNodeMembership, index *communicationIndex) []GraphEdge {
+	if len(groups) == 0 || len(membership) == 0 || len(index.upstream) == 0 {
 		return nil
 	}
 	known := map[string]bool{}
@@ -43,10 +43,6 @@ func collectNodeCommunicationGraphEdges(groups []Group, membership []GroupNodeMe
 			releasers[node] = append(releasers[node], entry.Group)
 		}
 	}
-	upstream := map[string][]CommunicationDependency{}
-	for _, dependency := range normalizeCommunicationDependencies(dependencies) {
-		upstream[dependency.Dependent] = append(upstream[dependency.Dependent], dependency)
-	}
 	pathsByNode := map[string]map[string][]CommunicationDependency{}
 	type groupPair struct{ from, to string }
 	edges := map[groupPair]GraphEdge{}
@@ -57,7 +53,7 @@ func collectNodeCommunicationGraphEdges(groups []Group, membership []GroupNodeMe
 		for _, node := range slices.Concat(entry.Acts, entry.Releases) {
 			paths, found := pathsByNode[node]
 			if !found {
-				paths = communicationPathsFrom(upstream, node)
+				paths = communicationPathsFrom(index.upstream, node)
 				pathsByNode[node] = paths
 			}
 			for carrier, path := range paths {
@@ -160,11 +156,11 @@ func domainEntities(domain PowerDomainMembership) []string {
 
 // communicationDependents includes transitive consumers when a carrier loses power.
 // A visited set bounds cyclic carries topology without inventing a shutdown cycle.
-func communicationDependents(input StructuralInputs, affectedDomains map[string]struct{}) map[string]struct{} {
+func communicationDependentsWithIndex(input StructuralInputs, affectedDomains map[string]struct{}, index *communicationIndex) map[string]struct{} {
 	var seeds []string
 	// Unknown carrier power cannot prove its dependents are outside this outage.
 	for _, dependency := range input.CommunicationDependencies {
-		if len(carrierPowerDomains(input, dependency.Carrier)) == 0 {
+		if len(index.supplies[dependency.Carrier].PowerDomains) == 0 {
 			seeds = append(seeds, dependency.Carrier)
 		}
 	}
@@ -174,14 +170,10 @@ func communicationDependents(input StructuralInputs, affectedDomains map[string]
 		}
 		seeds = append(seeds, domainEntities(domain)...)
 	}
-	return communicationConsumers(input.CommunicationDependencies, seeds)
+	return index.consumers(seeds)
 }
 
-func communicationConsumers(dependencies []CommunicationDependency, seeds []string) map[string]struct{} {
-	dependents := map[string][]string{}
-	for _, dependency := range dependencies {
-		dependents[dependency.Carrier] = append(dependents[dependency.Carrier], dependency.Dependent)
-	}
+func (index *communicationIndex) consumers(seeds []string) map[string]struct{} {
 	visited := map[string]struct{}{}
 	consumers := map[string]struct{}{}
 	var pending []string
@@ -192,7 +184,7 @@ func communicationConsumers(dependencies []CommunicationDependency, seeds []stri
 		}
 	}
 	for i := 0; i < len(pending); i++ {
-		for _, dependent := range dependents[pending[i]] {
+		for _, dependent := range index.dependents[pending[i]] {
 			consumers[dependent] = struct{}{}
 			if _, seen := visited[dependent]; seen {
 				continue
@@ -206,7 +198,7 @@ func communicationConsumers(dependencies []CommunicationDependency, seeds []stri
 
 // Retaining one mixed-domain release group can bring another communication
 // consumer into scope. Grow to a fixed point before pruning any groups.
-func retainReleasedCarrierConsumers(input StructuralInputs, membership map[string]map[string]struct{}, affected map[string]struct{}) {
+func retainReleasedCarrierConsumersWithIndex(input StructuralInputs, membership map[string]map[string]struct{}, affected map[string]struct{}, index *communicationIndex) {
 	if len(input.CommunicationDependencies) == 0 {
 		return
 	}
@@ -224,7 +216,7 @@ func retainReleasedCarrierConsumers(input StructuralInputs, membership map[strin
 			}
 		}
 		changed := false
-		for consumer := range communicationConsumers(input.CommunicationDependencies, released) {
+		for consumer := range index.consumers(released) {
 			if _, included := affected[consumer]; !included {
 				affected[consumer] = struct{}{}
 				changed = true
@@ -236,61 +228,25 @@ func retainReleasedCarrierConsumers(input StructuralInputs, membership map[strin
 	}
 }
 
-func carrierPowerDomains(input StructuralInputs, carrier string) []string {
-	domains := map[string]struct{}{}
-	for _, domain := range input.PowerDomains {
-		for _, entity := range domainEntities(domain) {
-			if entity == carrier {
-				domains[domain.Name] = struct{}{}
-				break
-			}
-		}
-	}
-	return sortedSetKeys(domains)
-}
-
 // CommunicationSupplyDevices resolves UPS supplies of all upstream carriers for
 // the given consumers. Unknown supply remains explicit rather than disappearing
 // from a minimum-runtime calculation.
 func CommunicationSupplyDevices(input StructuralInputs, consumers []string) ([]string, bool) {
-	return communicationSupplySummary(communicationSupplyConstraints(input, consumers))
+	return communicationSupplySummary(newCommunicationIndex(input).consumerSupplyConstraints(consumers))
 }
 
-func communicationSupplyConstraints(input StructuralInputs, consumers []string) []CommunicationSupplyConstraint {
-	upstream := map[string][]CommunicationDependency{}
-	for _, dependency := range normalizeCommunicationDependencies(input.CommunicationDependencies) {
-		upstream[dependency.Dependent] = append(upstream[dependency.Dependent], dependency)
-	}
+func (index *communicationIndex) consumerSupplyConstraints(consumers []string) []CommunicationSupplyConstraint {
+	return index.supplyConstraints(sortedSetKeys(index.upstreamCarriers(consumers)))
+}
+
+func (index *communicationIndex) upstreamCarriers(consumers []string) map[string]struct{} {
 	carriers := map[string]struct{}{}
 	for _, consumer := range consumers {
-		for carrier := range communicationPathsFrom(upstream, consumer) {
+		for carrier := range communicationPathsFrom(index.upstream, consumer) {
 			carriers[carrier] = struct{}{}
 		}
 	}
-	return supplyConstraintsForCarriers(input, sortedSetKeys(carriers))
-}
-
-func supplyConstraintsForCarriers(input StructuralInputs, carriers []string) []CommunicationSupplyConstraint {
-	var constraints []CommunicationSupplyConstraint
-	for _, carrier := range carriers {
-		devices := map[string]struct{}{}
-		domains := map[string]struct{}{}
-		for _, domain := range input.PowerDomains {
-			if !slices.Contains(domainEntities(domain), carrier) {
-				continue
-			}
-			domains[domain.Name] = struct{}{}
-			for _, device := range domain.UPSDevices {
-				if device != "" {
-					devices[device] = struct{}{}
-				}
-			}
-		}
-		constraints = append(constraints, CommunicationSupplyConstraint{
-			Carrier: carrier, PowerDomains: sortedSetKeys(domains), UPSDevices: sortedSetKeys(devices), UnknownSupply: len(devices) == 0,
-		})
-	}
-	return constraints
+	return carriers
 }
 
 func communicationSupplySummary(constraints []CommunicationSupplyConstraint) ([]string, bool) {
@@ -308,6 +264,10 @@ func communicationSupplySummary(constraints []CommunicationSupplyConstraint) ([]
 // CommunicationBudgetForInputs is shared by publication and execution. Pass
 // only the compiled actions so pruned work cannot expand the runtime envelope.
 func CommunicationBudgetForInputs(input StructuralInputs) *CommunicationBudget {
+	return communicationBudgetWithIndex(input, newCommunicationIndex(input))
+}
+
+func communicationBudgetWithIndex(input StructuralInputs, index *communicationIndex) *CommunicationBudget {
 	var actions []string
 	for _, group := range input.Groups {
 		actions = append(actions, group.Name)
@@ -335,28 +295,24 @@ func CommunicationBudgetForInputs(input StructuralInputs) *CommunicationBudget {
 			consumers[node] = struct{}{}
 		}
 	}
-	coverage := communicationCoverage(input, sortedSetKeys(consumers))
+	coverage := communicationCoverageWithIndex(input, sortedSetKeys(consumers), index)
 	if len(unresolved) > 0 && (!completeServiceCoverage(coverage) || partialMembership) {
 		for _, dependency := range input.CommunicationDependencies {
 			consumers[dependency.Dependent] = struct{}{}
 		}
 	}
-	constraints := communicationSupplyConstraints(input, sortedSetKeys(consumers))
-	carriers := map[string]struct{}{}
-	for _, constraint := range constraints {
-		carriers[constraint.Carrier] = struct{}{}
-	}
-	for _, carrier := range sharedCommunicationCarriers(input) {
+	carriers := index.upstreamCarriers(sortedSetKeys(consumers))
+	for _, carrier := range sharedCommunicationCarriersWithIndex(input, index) {
 		carriers[carrier] = struct{}{}
 	}
-	constraints = supplyConstraintsForCarriers(input, sortedSetKeys(carriers))
+	constraints := index.supplyConstraints(sortedSetKeys(carriers))
 	names, _ := communicationSupplySummary(constraints)
 	return &CommunicationBudget{Scope: "WholePlan", UPSDevices: names, UnresolvedActions: sortedSetKeys(unresolved), Supplies: constraints, Coverage: coverage}
 }
 
-func communicationDiagnostics(input StructuralInputs) []Diagnostic {
+func communicationDiagnosticsWithIndex(input StructuralInputs, index *communicationIndex) []Diagnostic {
 	diagnostics := communicationServiceDiagnostics(input)
-	if budget := CommunicationBudgetForInputs(input); budget != nil {
+	if budget := communicationBudgetWithIndex(input, index); budget != nil {
 		for _, coverage := range budget.Coverage {
 			if coverage.State == "Unmodeled" {
 				diagnostics = append(diagnostics, Diagnostic{Severity: DiagnosticWarning, Reason: "CommunicationPathUnmodeled", Subject: coverage.Kind + "/" + coverage.Name, Message: fmt.Sprintf("%s %q has no modeled communication path; coverage is incomplete", coverage.Kind, coverage.Name)})
@@ -364,7 +320,7 @@ func communicationDiagnostics(input StructuralInputs) []Diagnostic {
 		}
 	}
 	unknown := map[string]struct{}{}
-	for _, supply := range supplyConstraintsForCarriers(input, sharedCommunicationCarriers(input)) {
+	for _, supply := range index.supplyConstraints(sharedCommunicationCarriersWithIndex(input, index)) {
 		if supply.UnknownSupply {
 			unknown[supply.Carrier] = struct{}{}
 		}
@@ -374,17 +330,17 @@ func communicationDiagnostics(input StructuralInputs) []Diagnostic {
 			diagnostics = append(diagnostics, Diagnostic{Severity: DiagnosticError, Reason: "CommunicationDependencyInvalid", Message: "communication dependencies require distinct, non-empty dependent and carrier identities"})
 			continue
 		}
-		if len(carrierPowerDomains(input, dependency.Carrier)) == 0 {
+		if len(index.supplies[dependency.Carrier].PowerDomains) == 0 {
 			unknown[dependency.Carrier] = struct{}{}
 		}
 	}
 	for _, carrier := range sortedSetKeys(unknown) {
 		diagnostics = append(diagnostics, Diagnostic{Severity: DiagnosticWarning, Reason: "CommunicationPowerDomainUnknown", Subject: carrier, Message: fmt.Sprintf("communication carrier %q has no resolved supplying power domain; its power-loss constraints are unknown", carrier)})
 	}
-	orderEdges := collectCommunicationGraphEdges(input.Groups, input.GroupNodes, input.CommunicationDependencies, input.CommunicationServices...)
+	orderEdges := collectCommunicationGraphEdgesWithIndex(input.Groups, input.GroupNodes, index, input.CommunicationServices...)
 	stepIndex := map[string]int{}
 	if len(input.Groups) == 0 {
-		orderEdges = collectLinearCommunicationGraphEdges(input)
+		orderEdges = collectLinearCommunicationGraphEdgesWithIndex(input, index)
 		for i, step := range input.Steps {
 			stepIndex[step.ID] = i
 		}
@@ -405,7 +361,7 @@ func communicationDiagnostics(input StructuralInputs) []Diagnostic {
 	return diagnostics
 }
 
-func collectLinearCommunicationGraphEdges(input StructuralInputs) []GraphEdge {
+func collectLinearCommunicationGraphEdgesWithIndex(input StructuralInputs, index *communicationIndex) []GraphEdge {
 	if len(input.CommunicationDependencies) == 0 && len(input.CommunicationServices) == 0 {
 		return nil
 	}
@@ -413,13 +369,13 @@ func collectLinearCommunicationGraphEdges(input StructuralInputs) []GraphEdge {
 	for _, step := range input.Steps {
 		groups = append(groups, Group{Name: step.ID})
 	}
-	return collectCommunicationGraphEdges(groups, input.GroupNodes, input.CommunicationDependencies, input.CommunicationServices...)
+	return collectCommunicationGraphEdgesWithIndex(groups, input.GroupNodes, index, input.CommunicationServices...)
 }
 
-func communicationExplanations(input StructuralInputs) []Explanation {
+func communicationExplanationsWithIndex(input StructuralInputs, index *communicationIndex) []Explanation {
 	var explanations []Explanation
 	for i, dependency := range input.CommunicationDependencies {
-		domains := carrierPowerDomains(input, dependency.Carrier)
+		domains := index.supplies[dependency.Carrier].PowerDomains
 		supply := strings.Join(domains, ", ")
 		if supply == "" {
 			supply = "unknown"

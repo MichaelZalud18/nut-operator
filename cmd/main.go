@@ -76,7 +76,10 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var profile, nutServerImage string
 	var tlsOpts []func(*tls.Config)
+	flag.StringVar(&profile, "profile", "full", "Controller profile: full or nut-only (NUTServer and device/server admission only).")
+	flag.StringVar(&nutServerImage, "nut-server-image", "", "Default operand image for the nut-only profile; required for that profile.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -104,6 +107,10 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	if err := validateProfile(profile, nutServerImage, os.Getenv("ENABLE_WEBHOOKS") != "false"); err != nil {
+		setupLog.Error(err, "Invalid manager profile")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -196,112 +203,118 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.PowerManagementClusterReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "powermanagementcluster")
-		os.Exit(1)
-	}
-	if err := (&controller.UPSDeviceReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "upsdevice")
-		os.Exit(1)
+	if profile == "full" {
+		if err := (&controller.PowerManagementClusterReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "powermanagementcluster")
+			os.Exit(1)
+		}
+		if err := (&controller.UPSDeviceReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "upsdevice")
+			os.Exit(1)
+		}
 	}
 	if err := (&controller.NUTServerReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("nutserver-controller"),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Recorder:     mgr.GetEventRecorder("nutserver-controller"),
+		NUTOnly:      profile == "nut-only",
+		DefaultImage: nutServerImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "nutserver")
 		os.Exit(1)
 	}
-	if err := (&controller.NodePowerAgentReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("nodepoweragent-controller"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "nodepoweragent")
-		os.Exit(1)
-	}
-	// Halt evidence is kept on this side of the exchange because the other side does not survive
-	// the event it would be reporting: the node logs its own syscall and then powers off. The
-	// observer is written to by the executor when a signal lands and read by the Node watch when a
-	// node stops answering, so both ends of the measurement come from things the operator can see.
-	haltObserver := haltwatch.NewObserver()
-	if err := (&controller.NodeHaltReconciler{
-		Client:   mgr.GetClient(),
-		Observer: haltObserver,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "nodehalt")
-		os.Exit(1)
-	}
-	shutdownFlowReconciler := &controller.ShutdownFlowReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		APIReader: mgr.GetAPIReader(),
-	}
-	shutdownFlowReconciler.ExecutorRunner = kubeactions.Runner{
-		ValidateNodeRelease: shutdownFlowReconciler.ValidateNodeRelease,
-		Client:              mgr.GetClient(),
-		ManagerNamespace:    os.Getenv("POD_NAMESPACE"),
-		Recorder:            mgr.GetEventRecorder("shutdownflow-executor"),
-		SignalWritten: func(node, shutdownFlow, executionID string, at time.Time) {
-			haltObserver.SignalWritten(haltwatch.Attempt{
-				Node:            node,
-				ShutdownFlow:    shutdownFlow,
-				ExecutionID:     executionID,
-				SignalWrittenAt: at,
-			})
-		},
-	}
-	if err := shutdownFlowReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "shutdownflow")
-		os.Exit(1)
-	}
-	if err := (&controller.PowerInfrastructureReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "powerinfrastructure")
-		os.Exit(1)
-	}
-	if err := (&controller.PowerInventoryNodeReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "powerinventorynode")
-		os.Exit(1)
-	}
-	if err := (&controller.PowerInventoryEdgeReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "powerinventoryedge")
-		os.Exit(1)
-	}
-	if err := (&controller.UPSCapabilityProfileReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "upscapabilityprofile")
-		os.Exit(1)
-	}
-	if err := (&controller.PDUCapabilityProfileReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "pducapabilityprofile")
-		os.Exit(1)
-	}
-	if err := (&controller.UPSCapabilityProbeReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "upscapabilityprobe")
-		os.Exit(1)
+	if profile == "full" {
+		if err := (&controller.NodePowerAgentReconciler{
+			Client:   mgr.GetClient(),
+			Scheme:   mgr.GetScheme(),
+			Recorder: mgr.GetEventRecorder("nodepoweragent-controller"),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "nodepoweragent")
+			os.Exit(1)
+		}
+		// Halt evidence is kept on this side of the exchange because the other side does not survive
+		// the event it would be reporting: the node logs its own syscall and then powers off. The
+		// observer is written to by the executor when a signal lands and read by the Node watch when a
+		// node stops answering, so both ends of the measurement come from things the operator can see.
+		haltObserver := haltwatch.NewObserver()
+		if err := (&controller.NodeHaltReconciler{
+			Client:   mgr.GetClient(),
+			Observer: haltObserver,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "nodehalt")
+			os.Exit(1)
+		}
+		shutdownFlowReconciler := &controller.ShutdownFlowReconciler{
+			Client:    mgr.GetClient(),
+			Scheme:    mgr.GetScheme(),
+			APIReader: mgr.GetAPIReader(),
+		}
+		shutdownFlowReconciler.ExecutorRunner = kubeactions.Runner{
+			ValidateNodeRelease: shutdownFlowReconciler.ValidateNodeRelease,
+			Client:              mgr.GetClient(),
+			ManagerNamespace:    os.Getenv("POD_NAMESPACE"),
+			Recorder:            mgr.GetEventRecorder("shutdownflow-executor"),
+			SignalWritten: func(node, shutdownFlow, executionID string, at time.Time) {
+				haltObserver.SignalWritten(haltwatch.Attempt{
+					Node:            node,
+					ShutdownFlow:    shutdownFlow,
+					ExecutionID:     executionID,
+					SignalWrittenAt: at,
+				})
+			},
+		}
+		if err := shutdownFlowReconciler.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "shutdownflow")
+			os.Exit(1)
+		}
+		if err := (&controller.PowerInfrastructureReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "powerinfrastructure")
+			os.Exit(1)
+		}
+		if err := (&controller.PowerInventoryNodeReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "powerinventorynode")
+			os.Exit(1)
+		}
+		if err := (&controller.PowerInventoryEdgeReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "powerinventoryedge")
+			os.Exit(1)
+		}
+		if err := (&controller.UPSCapabilityProfileReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "upscapabilityprofile")
+			os.Exit(1)
+		}
+		if err := (&controller.PDUCapabilityProfileReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "pducapabilityprofile")
+			os.Exit(1)
+		}
+		if err := (&controller.UPSCapabilityProbeReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "upscapabilityprobe")
+			os.Exit(1)
+		}
 	}
 	// nolint:goconst
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
@@ -309,48 +322,43 @@ func main() {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "UPSDevice")
 			os.Exit(1)
 		}
-		if err := webhookv1alpha1.SetupUPSCapabilityProfileWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "UPSCapabilityProfile")
-			os.Exit(1)
-		}
-		if err := webhookv1alpha1.SetupPowerInfrastructureWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "PowerInfrastructure")
-			os.Exit(1)
-		}
-		if err := webhookv1alpha1.SetupPowerInventoryNodeWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "PowerInventoryNode")
-			os.Exit(1)
-		}
-		if err := webhookv1alpha1.SetupPowerInventoryEdgeWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "PowerInventoryEdge")
-			os.Exit(1)
-		}
-		if err := webhookv1alpha1.SetupPowerManagementClusterWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "PowerManagementCluster")
-			os.Exit(1)
-		}
 		if err := webhookv1alpha1.SetupNUTServerWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "NUTServer")
 			os.Exit(1)
 		}
-		if err := webhookv1alpha1.SetupNodePowerAgentWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "NodePowerAgent")
-			os.Exit(1)
-		}
-		if err := webhookv1alpha1.SetupShutdownFlowWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "ShutdownFlow")
-			os.Exit(1)
-		}
-		if err := webhookv1alpha1.SetupShutdownHookWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "ShutdownHook")
-			os.Exit(1)
-		}
-	}
-	// nolint:goconst
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err := webhookv1alpha1.SetupShutdownHookWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "ShutdownHook")
-			os.Exit(1)
+		if profile == "full" {
+			if err := webhookv1alpha1.SetupUPSCapabilityProfileWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "Failed to create webhook", "webhook", "UPSCapabilityProfile")
+				os.Exit(1)
+			}
+			if err := webhookv1alpha1.SetupPowerInfrastructureWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "Failed to create webhook", "webhook", "PowerInfrastructure")
+				os.Exit(1)
+			}
+			if err := webhookv1alpha1.SetupPowerInventoryNodeWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "Failed to create webhook", "webhook", "PowerInventoryNode")
+				os.Exit(1)
+			}
+			if err := webhookv1alpha1.SetupPowerInventoryEdgeWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "Failed to create webhook", "webhook", "PowerInventoryEdge")
+				os.Exit(1)
+			}
+			if err := webhookv1alpha1.SetupPowerManagementClusterWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "Failed to create webhook", "webhook", "PowerManagementCluster")
+				os.Exit(1)
+			}
+			if err := webhookv1alpha1.SetupNodePowerAgentWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "Failed to create webhook", "webhook", "NodePowerAgent")
+				os.Exit(1)
+			}
+			if err := webhookv1alpha1.SetupShutdownFlowWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "Failed to create webhook", "webhook", "ShutdownFlow")
+				os.Exit(1)
+			}
+			if err := webhookv1alpha1.SetupShutdownHookWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "Failed to create webhook", "webhook", "ShutdownHook")
+				os.Exit(1)
+			}
 		}
 	}
 	// +kubebuilder:scaffold:builder
@@ -373,7 +381,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("Starting manager")
+	setupLog.Info("Starting manager", "profile", profile)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)

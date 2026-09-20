@@ -59,18 +59,14 @@ func communicationServiceDiagnostics(input StructuralInputs) []Diagnostic {
 
 // serviceCarrierPaths includes explicitly required entities themselves, as well
 // as upstream carries paths. A service endpoint's own UPS is also a constraint.
-func serviceCarrierPaths(dependencies []CommunicationDependency, service CommunicationServicePath) map[string][]CommunicationDependency {
+func (index *communicationIndex) serviceCarrierPaths(service CommunicationServicePath) map[string][]CommunicationDependency {
 	paths := map[string][]CommunicationDependency{}
 	if service.Exempt {
 		return paths
 	}
-	upstream := map[string][]CommunicationDependency{}
-	for _, dependency := range normalizeCommunicationDependencies(dependencies) {
-		upstream[dependency.Dependent] = append(upstream[dependency.Dependent], dependency)
-	}
 	for _, entity := range sortedUnique(service.Entities) {
 		paths[entity] = nil
-		for carrier, path := range communicationPathsFrom(upstream, entity) {
+		for carrier, path := range communicationPathsFrom(index.upstream, entity) {
 			if _, found := paths[carrier]; !found {
 				paths[carrier] = path
 			}
@@ -79,18 +75,18 @@ func serviceCarrierPaths(dependencies []CommunicationDependency, service Communi
 	return paths
 }
 
-func sharedCommunicationCarriers(input StructuralInputs) []string {
+func sharedCommunicationCarriersWithIndex(input StructuralInputs, index *communicationIndex) []string {
 	carriers := map[string]struct{}{}
 	for _, service := range input.CommunicationServices {
-		for carrier := range serviceCarrierPaths(input.CommunicationDependencies, service) {
+		for carrier := range index.serviceCarrierPaths(service) {
 			carriers[carrier] = struct{}{}
 		}
 	}
 	return sortedSetKeys(carriers)
 }
 
-func collectCommunicationGraphEdges(groups []Group, membership []GroupNodeMembership, dependencies []CommunicationDependency, services ...CommunicationServicePath) []GraphEdge {
-	edges := collectNodeCommunicationGraphEdges(groups, membership, dependencies)
+func collectCommunicationGraphEdgesWithIndex(groups []Group, membership []GroupNodeMembership, index *communicationIndex, services ...CommunicationServicePath) []GraphEdge {
+	edges := collectNodeCommunicationGraphEdgesWithIndex(groups, membership, index)
 	byID := map[string]int{}
 	for i, edge := range edges {
 		byID[edge.ID] = i
@@ -100,7 +96,7 @@ func collectCommunicationGraphEdges(groups []Group, membership []GroupNodeMember
 		known[group.Name] = true
 	}
 	for _, service := range normalizeCommunicationServices(services) {
-		paths := serviceCarrierPaths(dependencies, service)
+		paths := index.serviceCarrierPaths(service)
 		for _, release := range membership {
 			if !known[release.Group] {
 				continue
@@ -152,18 +148,15 @@ func collectCommunicationGraphEdges(groups []Group, membership []GroupNodeMember
 	return edges
 }
 
-func communicationCoverage(input StructuralInputs, consumers []string) []CommunicationCoverage {
+func communicationCoverageWithIndex(input StructuralInputs, consumers []string, index *communicationIndex) []CommunicationCoverage {
 	var coverage []CommunicationCoverage
 	for _, node := range consumers {
 		state := "Unmodeled"
 		if slices.Contains(input.CommunicationExemptNodes, node) {
 			state = "Exempt"
 		}
-		for _, dependency := range input.CommunicationDependencies {
-			if dependency.Dependent == node {
-				state = "Modeled"
-				break
-			}
+		if len(index.upstream[node]) > 0 {
+			state = "Modeled"
 		}
 		coverage = append(coverage, CommunicationCoverage{Kind: "Node", Name: node, State: state})
 	}
@@ -197,9 +190,9 @@ func completeServiceCoverage(coverage []CommunicationCoverage) bool {
 // A shared path is required by every action, including work outside the UPS
 // domain and actions with no node selector. Do not prune that work on an outage
 // of the shared path, or while a retained action releases one of its carriers.
-func sharedCommunicationAffected(input StructuralInputs, affected map[string]struct{}) bool {
-	carriers := sharedCommunicationCarriers(input)
-	for _, supply := range supplyConstraintsForCarriers(input, carriers) {
+func sharedCommunicationAffectedWithIndex(input StructuralInputs, affected map[string]struct{}, index *communicationIndex) bool {
+	carriers := sharedCommunicationCarriersWithIndex(input, index)
+	for _, supply := range index.supplyConstraints(carriers) {
 		if supply.UnknownSupply {
 			return true
 		}
@@ -212,11 +205,11 @@ func sharedCommunicationAffected(input StructuralInputs, affected map[string]str
 	membership := groupNodeSets(input.GroupNodes)
 	unresolved := unresolvedGroupMembership(input.GroupNodes)
 	affectedNodes := nodesForPowerDomains(input.PowerDomains, affected)
-	includeUnmappedNodes(input, membership, affectedNodes)
-	for entity := range communicationDependents(input, affected) {
+	includeUnmappedNodesWithIndex(membership, affectedNodes, index)
+	for entity := range communicationDependentsWithIndex(input, affected, index) {
 		affectedNodes[entity] = struct{}{}
 	}
-	retainReleasedCarrierConsumers(input, membership, affectedNodes)
+	retainReleasedCarrierConsumersWithIndex(input, membership, affectedNodes, index)
 	for _, entry := range input.GroupNodes {
 		if !unresolved[entry.Group] && outsideNodeSet(membership[entry.Group], affectedNodes) {
 			continue

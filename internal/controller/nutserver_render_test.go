@@ -65,7 +65,6 @@ func TestRenderUPSConfRendersUpstreamNUTRepeater(t *testing.T) {
 		"  driver = dummy-ups",
 		"  port = ups@ups-tower.example.net:3493",
 		"  mode = repeater",
-		"  authconf = none",
 		"  repeater_disable_strict_start = true",
 		"  desc = ubiquiti tower",
 	} {
@@ -75,7 +74,7 @@ func TestRenderUPSConfRendersUpstreamNUTRepeater(t *testing.T) {
 	}
 }
 
-func TestRenderUPSConfRendersUpstreamNUTSecretAuthPath(t *testing.T) {
+func TestRenderUPSConfRejectsUnsupportedUpstreamNUTSecretAuth(t *testing.T) {
 	conf, err := renderUPSConf([]powerv1alpha1.UPSDevice{
 		{
 			ObjectMeta: objectMeta("rack-a-ups"),
@@ -95,12 +94,8 @@ func TestRenderUPSConfRendersUpstreamNUTSecretAuthPath(t *testing.T) {
 			},
 		},
 	}, nil)
-	if err != nil {
-		t.Fatalf("renderUPSConf returned error: %v", err)
-	}
-
-	if !strings.Contains(conf, "  authconf = /etc/nut/upstream-auth/rack-a-ups.nutauth.conf") {
-		t.Fatalf("rendered upstream NUT config missing Secret authconf path:\n%s", conf)
+	if err == nil || conf != "" || !strings.Contains(err.Error(), "does not support upstream authconf") {
+		t.Fatalf("unsupported auth must fail before config rendering: conf=%q err=%v", conf, err)
 	}
 }
 

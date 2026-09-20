@@ -5,20 +5,32 @@ Audience: contributors.
 
 Research transferred and reconciled on 2026-09-15. This document preserves the implementation
 basis, alternatives, safety constraints, and detailed acceptance criteria for
-[US-1 through US-4](user-stories.md). Current task status and release placement belong to
-[MOD-1 through MOD-5](../../tasks.md#modular-deployment-profiles), not this document.
-These are proposals and evaluation criteria, not proof of supported deployment profiles.
+[US-1 through US-4](user-stories.md). Current status belongs to the
+[v1 MOD-2/MOD-4/MOD-5 tasks](../../tasks.md#modular-deployment-profiles) and
+[post-v1 MOD-1/MOD-3 tasks](../../tasks-post-v1.md#modular-deployment-profiles).
+The selected implementation contracts below are not proof of supported deployment profiles.
 
 ## Decision Boundaries
 
 The existing [scope registry](scope-boundaries.md) and [settled questions](settled-questions.md)
-remain authoritative. LocalNUT would require explicit changes to OD-37/SB-3 and the sequencing
-boundary; full-product storage requirements remain in place until a profile-specific exception is
-recorded. No OD is closed by moving this research. MOD-4 is the requested managed-NUT profile;
-its controller-set and packaging choices still need validation. Keep findings dated when the
-implementation basis changes, rather than turning a proposal into a current-behavior claim.
+remain authoritative. **Scope selected 2026-09-18:** v1 includes advisory mixed actuation
+(MOD-2), managed NUT-only including telemetry-only consumption (MOD-4), and their acceptance
+(MOD-5). Implement MOD-2 first, then MOD-4, with acceptance alongside each. MOD-1 agents-only
+and MOD-3 external execution are post-v1. NS-11 remains a v1 compatibility fix.
+
+MOD-4 uses the existing manager with NUTServer reconciliation and UPSDevice/NUTServer admission;
+the baseline excludes UPSDevice polling/normalized status. Its narrow no-PostgreSQL exception
+is recorded in SB-11. Full-product storage and OD-37 authority remain unchanged. LocalNUT is
+still only a proposal requiring explicit authority/sequencing revisions. Keep dated research
+as historical evidence; selection is not implementation or live qualification.
 
 ## MOD-1
+
+**Post-v1:** authority and profile design precede implementation. This task does not block v1.
+
+[2026-09-18 source trace, isolated probe, measurements, and recommendation](../audits/mod-1-agents-only-2026-09-18.md).
+The selective-manager recommendation remains conditional on explicit shutdown-authority and
+profile decisions; neither candidate is a supported agents-only shutdown installation today.
 
 investigate the minimum agents-only installation (`US-1`). Compare reusing
 the shipped operand images with standalone manifests against a selectively enabled, lightweight
@@ -56,13 +68,19 @@ inventory, PostgreSQL, or ShutdownFlow dependency in the agents-only package.
 
 ## MOD-2
 
-verify orchestration with an existing host-shutdown system (`US-2`) before
-designing another actuator mechanism. Build a public-safe example and component fixture using
+[Dated research, mixed-flow example and component evidence](../audits/mod-2-mixed-actuation-2026-09-18.md)
+support the selected v1 advisory integration. Confirmed halt, completion polling and hard
+completion gates are outside this commitment. This does not change OD-33/OD-34.
+
+Implement and qualify orchestration with an existing host-shutdown system (`US-2`) using
+the existing hook contract. Finish the public-safe example and component/Kind fixtures using
 authored inventory, `ShutdownHook`, and `ShutdownFlow` `RunHook`, with a fake HTTP receiver and
 explicit rehearsal invocation. Verify a mixed flow can use built-in agents for some nodes and
 hooks for others without requiring an agent for hook-only work. `PowerInventoryNode.nodeName`
-identifies a Kubernetes Node, not an arbitrary external host; establish how external-host
-identity, UPS scope, and communication dependencies are represented without fabricated Nodes.
+identifies a Kubernetes Node, not an arbitrary external host. External identity belongs in
+explicit static hook data; document affected-power scope through deliberately scoped flows and
+declarations, with authored communication dependencies, without fabricated Nodes or inferred
+external membership.
 `RunHook` does not enumerate node targets: verify explicit per-host/group hook declarations and
 static request data before claiming automatic per-host dispatch. **Testable now:** request
 targeting, Secret-backed authentication, endpoint allowlisting, dry-run with/without rehearsal,
@@ -72,6 +90,13 @@ which story outcomes already work and only open implementation tasks for demonst
 stronger completion/abort semantics require an explicit design decision.
 
 ## MOD-3
+
+**Post-v1:** this task owns authorized external execution through built-in agents. Telemetry-only
+aggregation is part of v1 MOD-4; it does not require the external execution API.
+
+[Dated research and capability matrix](../audits/mod-3-external-planning-2026-09-18.md)
+separate NUT telemetry from external execution. Plain relay worked in isolation, but generated
+authconf failed with the pinned operand (NS-11). A Kubernetes request boundary is proposed only.
 
 investigate aggregation with external planning (`US-3`), reusing `MOD-1`'s
 dependency comparison. Separate aggregation-only from aggregation-plus-agents requirements.
@@ -89,30 +114,37 @@ on their owning components, APIs, and packaging, independently of Hadron qualifi
 
 ## MOD-4
 
-define and implement a managed NUT-only profile (`US-4`), distinct from
-aggregation with external planning (`MOD-3`). Support operator-managed `UPSDevice`/`NUTServer`
+[Dated controller/dependency comparison](../audits/mod-4-managed-nut-only-2026-09-18.md)
+supports the selected NUTServer-plus-both-admissions baseline. The
+[NUT-only installation](../../installation/nut-only.md) implements that package;
+[dated implementation and acceptance evidence](../audits/mod-4-5-nut-only-acceptance-2026-09-18.md)
+records the validation scope and findings.
+
+Implement the selected v1 managed NUT-only profile (`US-4`), including NUT-protocol telemetry
+consumption by external systems, distinct from external execution (`MOD-3`). Support managed `UPSDevice`/`NUTServer`
 rather than making users reconstruct a working operand from a raw nut-server image.
 **Existing basis:** NUTServer can omit `managementClusterRef`, select UPSDevices, create its
 standalone namespace, and render configuration, auth, TLS, Deployment, Service, NetworkPolicy,
-readiness, and PodDisruptionBudget; currently this path needs `spec.image.repository`.
+readiness, and PodDisruptionBudget. The NUT-only profile supplies a distribution-owned default
+image; explicit `spec.image` still overrides it.
 The operand is one upsd plus a separate driver-supervisor sharing `/etc/nut` and `/run/nut`.
 Direct image use remains a low-level development/diagnostic building block, not the primary
 supported install: otherwise users must reimplement config/credential generation, sidecar
 lifecycle, TLS mounts, exposure, policy, readiness, reload/restart, and upgrade behavior.
-**Profile decisions first:** compare NUTServer plus UPSDevice/NUTServer admission against that
-set plus the UPSDevice reconciler. NUTServer reads and validates selected device specs itself;
-useful device status/telemetry must justify the reconciler's capability/telemetry dependencies.
-Inspect admission dependencies too. Prefer the existing manager binary with explicit controller
-selection and profile-scoped CRDs, admission, RBAC, and manifests over a second operator binary
-unless measurements justify one. Do not start unused controllers or grant their permissions.
+**Selected baseline:** NUTServer reconciliation plus UPSDevice/NUTServer admission, without
+the UPSDevice reconciler. NUTServer reads and validates selected device specs itself. Document
+NUT reads, identity, auth/TLS and unavailable/stale responses as the telemetry interface;
+normalized UPSDevice status is not part of this profile. Use the existing manager binary with
+explicit registration and profile-scoped CRDs, admission, RBAC and manifests. Do not start
+unused controllers or grant their permissions.
 No PowerManagementCluster, NodePowerAgent, ShutdownFlow, planner/executor, actuation, inventory,
-or PostgreSQL dependency. Record the profile-specific exception to full-product SB-11 rather
-than implying PostgreSQL is optional for the existing full installation.
+or PostgreSQL dependency. Apply the approved profile-specific SB-11 exception; PostgreSQL
+remains required for the full installation.
 **Usability/API work:** provide a release-owned operand image default. Retain OperatorManaged
 admin/monitor credentials and ExistingSecret support. Keep TLS Required and provide or document
-certificate bootstrap; do not weaken TLS for convenience. Current generated ingress permits
-same-namespace clients and the manager, not generic clients elsewhere. Add explicit reviewable
-namespace/pod selectors and/or CIDRs for cross-namespace or external clients; NodePort or
+certificate bootstrap; do not weaken TLS for convenience. Generated ingress permits
+same-namespace clients and the manager plus explicit `clientAccess` namespace/pod selectors.
+Off-cluster access still requires a reviewed network path and policy; NodePort or
 LoadBalancer exposure alone is not permission under an enforcing CNI. Account for actual source
 identity after service routing rather than promising CIDR behavior without testing it.
 **Testable now; Conditional:** install into a clean cluster with only this profile's resources;
@@ -124,17 +156,20 @@ RBAC inability to mutate planner/host-actuation resources. Profile testing follo
 
 ## MOD-5
 
-add representative acceptance coverage for each supported deployment
-profile, after the owning MOD decision approves it. This is a conditional follow-up, not approval
-of every proposed profile or a combinatorial matrix of component subsets.
-**US-1:** existing NUT with no managed NUTServer or built-in planner; preserve approved-mode
+[Executable component coverage and profile prerequisites](modular-acceptance.md) define the
+focused test entry point and the owning install-level evidence. Component success does not
+replace clean-cluster qualification of the selected profile.
+
+Complete v1 acceptance for MOD-2 and MOD-4, including MOD-4 telemetry-only consumption.
+Use representative scenarios, not a combinatorial matrix of component subsets.
+**Post-v1 US-1, owned by MOD-1:** existing NUT with no managed NUTServer or built-in planner; preserve approved-mode
 authorization, dry-run, targeting, stale-request rejection, and privilege separation (`MOD-1`).
 **US-2:** a real ShutdownFlow combining agents with ShutdownHook external actuation, including
 authentication, explicit targeting, timeout/failure evidence, repeat-safe delivery, and ordering.
 Delivery is not evidence that a host stopped; preserve the existing advisory hook contract.
-**US-3:** aggregation/telemetry without the built-in planner/ShutdownFlow path; exercise the
-authorized external execution boundary selected by `MOD-3`, including approval, targeting,
-stale requests, and cancellation. **US-4:** the clean managed-NUT-only install in `MOD-4`.
-**Testable now once selected; Conditional:** reuse component/Kind tests; run on owning API,
+**US-3 telemetry-only / US-4, v1:** the clean MOD-4 managed-NUT install serves telemetry without
+the built-in planner/ShutdownFlow path. **Post-v1 US-3, owned by MOD-3:** exercise its authorized
+external execution boundary, including approval, targeting, stale requests and cancellation.
+**Testable now; Conditional:** reuse component/Kind tests; run on owning API,
 component, and packaging changes. Reuse VM Linux/Talos qualification instead of re-proving host
 power-off in every package test. Only profiles selected for v1 become v1 release gates.

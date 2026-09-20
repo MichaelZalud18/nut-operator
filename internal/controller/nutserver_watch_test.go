@@ -89,6 +89,23 @@ func watchTestServer(name string, spec powerv1alpha1.NUTServerSpec) *powerv1alph
 	}
 }
 
+func TestNUTServerExistingUsersSecretWatch(t *testing.T) {
+	server := watchTestServer("users", powerv1alpha1.NUTServerSpec{Auth: powerv1alpha1.NUTAuthSpec{
+		Mode:              powerv1alpha1.NUTAuthExistingSecret,
+		ExistingSecretRef: &powerv1alpha1.NamespacedNameReference{Namespace: "operand", Name: "users"},
+	}})
+	scheme := nutServerWatchScheme(t)
+	r := NUTServerReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build(), Scheme: scheme}
+	for _, ns := range []string{"operand", "unrelated"} {
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "users", Namespace: ns}}
+		var want []string
+		if ns == "operand" {
+			want = []string{"users"}
+		}
+		assertSameServers(t, r.nutServerRequestsForSecret(context.Background(), secret), want)
+	}
+}
+
 func requestNames(t *testing.T, requests []reconcile.Request) []string {
 	t.Helper()
 	names := make([]string, 0, len(requests))
