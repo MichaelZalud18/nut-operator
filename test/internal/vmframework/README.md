@@ -77,7 +77,9 @@ python3 -B -m unittest discover -s hack -p test_vm_cleanup.py
 
 The composition tests prepare pinned HTTP fixture images and pass them to each adapter. They
 check configuration, private state, and artifact ownership without calling `Create`. They need
-loopback sockets but no Docker, QEMU, KVM, or guest cluster. Process tests use harmless subprocesses.
+loopback sockets but no Docker, QEMU, KVM, or guest cluster. Process ownership unit tests use
+harmless subprocesses. CI additionally requires the installed QEMU regression: a paused,
+device-free QEMU process without a guest OS or KVM, checked immediately and after a short delay.
 These results do not qualify live boot or actuator shutdown.
 
 Reproduce the original harness inventory from the repository root:

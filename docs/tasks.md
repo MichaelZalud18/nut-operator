@@ -229,20 +229,6 @@ own detailed prerequisites and prior milestones; the remaining work is below.
 
 VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-coverage).
 
-- [ ] `VM-13` [Medium] qualify the expanded shared framework in ordinary CI. Follow-up to
-  [VM-12](tasks-completed.md#vm-test-coverage) and its 2026-09-20 scope correction.
-  **Implemented 2026-09-20:** reproducible 56-file/194-function inventory and full file-disposition
-  map; shared command, workspace, lifecycle, Kubernetes observation, signal-fixture, image-plan,
-  workflow-policy and independent Python cleanup implementations; both-adapter composition
-  contracts and fast CI wiring. Artifact/readiness/process ownership modules are reused.
-  [Source review and extraction boundaries](contributing/audits/vm-framework-comprehensive-review-2026-09-20.md).
-  **Remaining acceptance:** ordinary CI must pass the exact published revision, including both
-  guest-tagged component suites and all three Python cleanup suites. Local validation is recorded
-  here; it is not a published CI result. **Local checks passed:** `make test`, `make lint`,
-  race-enabled Hadron/Talos component suites, tagged framework lint, full smoke-tagged
-  `go vet`, and all seven Python cleanup tests. Caller migration remains VM-8, and shutdown/rejection
-  evidence corrections remain VM-9/VM-11. No live guest qualification is claimed by these modules.
-
 - [ ] `VM-9` [High] require shutdown-cause evidence in Hadron and Talos halt acceptance.
   Follow-up to closed [VM-3 and VM-7](tasks-completed.md#vm-test-coverage), identified in the
   2026-09-20 review. The bare-pod and rendered-DaemonSet positive tests currently accept any

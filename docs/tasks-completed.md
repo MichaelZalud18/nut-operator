@@ -785,6 +785,19 @@ Original entry (historical, not an additional open task):
 
 ## VM Test Coverage
 
+- [x] `VM-13` [Medium] comprehensive Hadron/Talos duplication audit and shared framework
+  expansion, follow-up to VM-12's dated scope correction. Completed 2026-09-20: reproducible
+  inventory covers 56 original files and 194 Go functions, with a full file-disposition map.
+  Built command, workspace, lifecycle, kube observation, signal fixture, image-plan and workflow
+  modules plus independent Python emergency cleanup; reused artifact/readiness/process ownership.
+  Both-adapter composition contracts, race-enabled components and all seven Python cleanup tests
+  pass in [ordinary CI run 35534027894](https://github.com/MichaelZalud18/nut-operator/actions/runs/35534027894)
+  at `6a9a367`, as do all three Kubernetes unit/envtest matrix jobs. Local `make test`, `make lint`,
+  tagged lint and smoke-tag vet passed. This completes module construction and source review;
+  caller migration remains VM-8 and live shutdown/rejection evidence remains VM-9/VM-11.
+  [Comprehensive review](contributing/audits/vm-framework-comprehensive-review-2026-09-20.md).
+
+
 - [x] `VM-12` [Medium] Hadron/Talos duplication analysis and shared framework foundations,
   completed (2026-09-20). The [framework design](contributing/design/vm-test-framework.md)
   maps source functions across artifacts, readiness, cleanup, commands, clients, image delivery,
