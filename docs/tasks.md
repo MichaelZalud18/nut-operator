@@ -228,6 +228,58 @@ own detailed prerequisites and prior milestones; the remaining work is below.
 
 VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-coverage).
 
+- [ ] `VM-9` [High] require shutdown-cause evidence in Hadron and Talos halt acceptance.
+  Follow-up to closed [VM-3 and VM-7](tasks-completed.md#vm-test-coverage), identified in the
+  2026-09-20 review. The bare-pod and rendered-DaemonSet positive tests currently accept any
+  process-probe error as shutdown; QEMU disappearance alone cannot distinguish guest power-off
+  from a crash or external kill. Capture the owned process identity before releasing the signal,
+  distinguish confirmed exit from probe failures, and require host-retained guest shutdown-cause
+  evidence (for example, a QMP guest shutdown event) correlated with the accepted-signal scenario.
+  **Acceptance:** real Hadron and Talos power-off pass; external QEMU termination, unexpected
+  process failure, and lost API/probe access cannot pass. Exercise false-pass controls and retain
+  evidence outside the guest. Apply the same evidence contract to VM-4's composed acceptance.
+  Review targets: [Hadron halt assertions](../test/hadron/actuator_daemonset_smoke_test.go),
+  [bare-pod assertions](../test/hadron/actuator_smoke_test.go), and
+  [Talos halt assertions](../test/talos/actuator_smoke_test.go).
+- [ ] `VM-10` [High] verify VM process ownership before Go cleanup signals a process or deletes
+  state. Concrete follow-up within VM-2's remaining isolation scope, extending the closed
+  [VM-7 teardown qualification](tasks-completed.md#vm-test-coverage) to the stale/foreign-PID case
+  identified in the 2026-09-20 review. Both Go adapters trust a numeric PID file; a live foreign
+  process can therefore be selected for termination. Validate QEMU identity and its association
+  with the owned state directory, retain a stable process handle through termination, and avoid
+  a second unchecked PID lookup in PEG Stop. Use the Python cleanup ownership checks as a reference.
+  **Acceptance:** stale PID files naming live unrelated processes never cause termination or
+  state deletion; mismatched ownership and probe errors fail closed; owned QEMU cleanup remains
+  bounded and removes state only after confirmed exit. Cover PID-file replacement and both
+  SafeStop/SafeTeardown paths in Hadron and Talos component tests. VM-2 consumes this evidence;
+  this task does not close its other identity, isolation, or cancellation criteria.
+  **2026-09-20 implementation:** both adapters now capture a verified QEMU pidfd during Create
+  through `test/internal/vmprocess`; cleanup uses that retained identity and never calls PEG Stop.
+  Foreign/mismatched startup PIDs fail closed, PID-file replacement cannot redirect termination,
+  and already-exited guests remain cleanable. Race-enabled component tests cover these cases,
+  probe/signal errors, timeout preservation, and the pinned PEG launch path with a harmless
+  substitute executable. Full `make test`, smoke-tag vet, and scoped lint pass. Ordinary CI now
+  includes both adapters, the shared ownership tests, and both Python cleanup suites.
+  **Remaining:** published CI and live Hadron/Talos lifecycle confirmation with this revision;
+  component subprocess evidence is not a live VM result. Coordinate those runs with VM-5 and
+  Claude's ongoing VM-4 investigation. Publication was deferred on 2026-09-20 while Claude's
+  `f7cec40` image build and two-node drain validation were running, to avoid push-triggered
+  cancellation of that image build.
+  Review targets: [Hadron adapter](../test/hadron/adapter.go) and
+  [Talos adapter](../test/talos/adapter.go).
+- [ ] `VM-11` [Medium] distinguish controller revocation from actuator rejection in VM negative
+  signal tests. Follow-up to closed [VM-3 and VM-7](tasks-completed.md#vm-test-coverage), identified
+  in the 2026-09-20 review. The rendered-agent helpers can return success when a Secret key
+  disappears before checking actuator health or rejection evidence.
+  **Acceptance:** actuator-specific cases prove delivery to a healthy actuator and the expected
+  rejection; controller revocation is asserted separately and never substitutes for that proof.
+  Verify the same actuator remains healthy and the guest remains available through a bounded
+  observation window that covers signal projection/processing. A stopped or broken actuator,
+  undelivered signal, or premature controller deletion cannot pass an actuator-rejection case.
+  Exercise both Hadron and Talos without duplicating the full component/Kind logical matrix.
+  Review targets: [Hadron rejection helper](../test/hadron/actuator_daemonset_smoke_test.go) and
+  [Talos rejection helper](../test/talos/actuator_smoke_test.go).
+
 - [ ] `VM-2` [High] finish the two-guest Hadron/k3s harness's identity and isolation safety.
   The real two-node join itself is closed: a genuine k3s server/agent pair over the `ClusterLink`
   segment, confirmed by listing two distinct Ready nodes from outside both guests. Remaining:

@@ -46,8 +46,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmprocess"
 
 	"github.com/cavaliergopher/grab/v3"
 	"github.com/phayes/freeport"
@@ -220,7 +221,7 @@ func NewSafeMachineContext(ctx context.Context, cfg Config) (m types.Machine, cr
 	if err != nil {
 		return nil, Credentials{}, fmt.Errorf("configuring machine: %w", err)
 	}
-	return m, creds, nil
+	return vmprocess.Wrap(m), creds, nil
 }
 
 func downloadISO(ctx context.Context, location, stateDir string, digest []byte) (string, error) {
@@ -268,53 +269,18 @@ func parseISOChecksum(value string) ([]byte, error) {
 	return decoded, nil
 }
 
-// SafeTeardown retains an OS process handle before Stop can delete PEG's PID file. It only
-// removes state once that original process has exited. Missing or invalid process evidence
-// fails closed; callers must clean never-started machines separately, when no process exists.
-//
-// Stop() itself is host-driven process termination, not a guest-cooperative shutdown -- VM-3's
-// own shutdown-evidence design already accounts for this and must never treat this call's success
-// as proof of anything the actuator did.
+// SafeTeardown stops the QEMU process verified at Create, then removes its state.
+// Host-driven termination is never evidence of actuator-initiated guest shutdown.
 func SafeTeardown(m types.Machine, timeout time.Duration) error {
-	if timeout <= 0 {
-		return fmt.Errorf("teardown timeout must be positive")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	p, err := machineProcess(m)
-	if err != nil {
+	if err := SafeStop(m, timeout); err != nil {
 		return err
 	}
-	defer func() { _ = p.Release() }()
-	if err := p.Signal(syscall.Signal(0)); processExited(err) {
-		return m.Clean()
-	} else if err != nil {
-		return fmt.Errorf("checking machine process: %w", err)
-	}
-	stopErr := m.Stop()
-	if err := waitForProcessExit(ctx, p); err != nil {
-		return errors.Join(stopErr, fmt.Errorf("refusing to remove machine state: %w", err))
-	}
-	return errors.Join(stopErr, m.Clean())
+	return m.Clean()
 }
 
-// SafeStop retains diagnostic state and verifies exit through the original process handle.
-// Unlike PEG Stop, this does not spawn an unbounded external kill command or delete the PID file.
+// SafeStop retains diagnostics and uses the verified startup pidfd, never a PID-file lookup.
 func SafeStop(m types.Machine, timeout time.Duration) error {
-	if timeout <= 0 {
-		return fmt.Errorf("stop timeout must be positive")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	p, err := machineProcess(m)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = p.Release() }()
-	if err := p.Kill(); err != nil && !processExited(err) {
-		return err
-	}
-	return waitForProcessExit(ctx, p)
+	return vmprocess.Stop(m, timeout)
 }
 
 func machineProcess(m types.Machine) (*os.Process, error) {
@@ -330,27 +296,6 @@ func machineProcess(m types.Machine) (*os.Process, error) {
 		return nil, fmt.Errorf("invalid machine PID; refusing teardown")
 	}
 	return os.FindProcess(pid)
-}
-
-func processExited(err error) bool {
-	return errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH)
-}
-
-func waitForProcessExit(ctx context.Context, p *os.Process) error {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if err := p.Signal(syscall.Signal(0)); processExited(err) {
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("checking machine process: %w", err)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
 }
 
 // withArgs is a types.MachineOption that appends raw QEMU arguments. The types package has no
