@@ -785,6 +785,24 @@ Original entry (historical, not an additional open task):
 
 ## VM Test Coverage
 
+- [x] `VM-12` [Medium] Hadron/Talos duplication analysis and shared framework foundations,
+  completed (2026-09-20). The [framework design](contributing/design/vm-test-framework.md)
+  maps source functions across artifacts, readiness, cleanup, commands, clients, image delivery,
+  assertions, and workflow checks; records extraction/defer decisions and module boundaries;
+  and specifies incremental adoption with live migration gates.
+  Built [artifact preparation and readiness modules](../test/internal/vmframework/README.md)
+  alongside existing callers, reusing VM-10's process-ownership module. Pinned downloads publish
+  verified bytes exclusively and preserve diagnostics on failure; bounded checks and diagnostics
+  share cancellation and retain failure causes. Contract tests use both real adapter constructors
+  without starting guests. Fast CI includes the new modules and adapter contracts.
+  **Validated:** race-enabled framework, ownership, and both adapter suites; full `make test`;
+  repository lint and smoke-tag vet. Coverage includes corrupt/partial/cancelled downloads,
+  concurrent publication, local verification, timeout/cancellation, and private artifact/state
+  ownership. Existing vmprocess tests supply partial-start and process-cleanup failure coverage.
+  **Scope limit:** framework foundations and component composition only; existing live scenarios
+  remain unmigrated, no new live guest result is claimed, and this does not close VM-10's live
+  confirmation or VM-9/VM-11's evidence work. VM-8 owns incremental fixture adoption.
+
 - [x] `VM-3` [High] shipped Linux actuator qualification, closed (2026-09-17).
   Bare-pod milestones, the real rendered DaemonSet/RBAC (missing/expired/wrong-node signals,
   absent approval, and the approved case's host-side shutdown-cause and process evidence), and

@@ -221,9 +221,10 @@ own detailed prerequisites and prior milestones; the remaining work is below.
   keep scenario assertions visible and SSH/Kairos/k3s or Talos provisioning behind guest adapters.
   **Testable now; Conditional:** component failure/cancellation tests and existing live scenarios
   must retain isolation, artifacts, and shutdown-cause checks. Keep Kind separate; defer a standalone
-  library until varied scenarios justify it. Deliberately deferred until a third guest adapter makes
-  the overlap self-evident (`golangci-lint`'s own `dupl` check does not flag the current small
-  duplication across `test/hadron` and `test/talos`).
+  library until varied scenarios justify it. Build on the completed VM-12
+  [framework foundations and adoption plan](contributing/design/vm-test-framework.md).
+  Migrate callers incrementally alongside VM safety qualification; no third adapter or duplication
+  lint finding is required. The existing scenarios need not all move at once.
   [Detailed criteria](contributing/audits/vm-test-research-2026-09-15.md#vm-8).
 
 VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-coverage).
@@ -343,8 +344,9 @@ quickstart; remaining first-user validation is `REL-6` in the
 
 The 2026-09-15 proposal's tracker split is complete; the work above remains open unless checked.
 Keep High shutdown-safety work ahead of cleanup. VM-2's harness safety supports VM-4's composed
-guest acceptance; VM-5 owns Hadron/Talos regression wiring. VM-8 extraction is deferred and does
-not block those tasks. EX-34 Kind integration and EX-35 API publication checks are completed;
+guest acceptance; VM-5 owns Hadron/Talos regression wiring. Completed VM-12 supplies the shared
+framework foundations; VM-8's incremental caller migration does not block those tasks.
+EX-34 Kind integration and EX-35 API publication checks are completed;
 their evidence does not expand VM-4 into a multi-control-plane topology.
 This is dependency guidance, not a requirement to serialize independent component work.
 Completed ENG-1 includes NS-6 startup verification; NS-1 readiness is also complete. Completed OM-1

@@ -84,7 +84,7 @@ jobs:
       - name: VM adapter and cleanup regression tests
         if: matrix.k8s == '1.36'
         run: |
-          go test -tags=hadron,talos ./test/internal/vmprocess ./test/hadron ./test/talos -race -count=1 -timeout=2m
+          go test -tags=hadron,talos ./test/internal/... ./test/hadron ./test/talos -race -count=1 -timeout=2m
           python3 -B -m unittest discover -s hack -p test_hadron_cleanup.py
           python3 -B -m unittest discover -s hack -p test_talos_cleanup.py
 
