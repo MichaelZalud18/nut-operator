@@ -138,15 +138,6 @@ relay remain unsupported; see the [relay contract](contributing/design/upstream-
 
 **New task prefix:** `NA` (node agent).
 
-- [ ] `NA-13` [Medium] follow-up to completed TEST-3: remove the signal-handoff fixture's
-  startup-rollout race without weakening projected-volume acceptance. Wait for the current
-  DaemonSet generation and one owned Ready pod, then require the original actuator process to
-  accept the unique signal within its unchanged two-minute TTL. Regression: [Kind run
-  35485217695](https://github.com/MichaelZalud18/nut-operator/actions/runs/35485217695)
-  selected an old surge pod and kept reading its logs after deletion. Component rejection
-  cases cover overlapping revisions, stale status/config, termination, identity and readiness;
-  full Kind and exact-image promotion must pass before closure.
-
 Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_*.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
 `internal/nodeagent`, plus the operator-side halt evidence in `internal/haltwatch` and
@@ -158,6 +149,8 @@ and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-write
 Completed execution-side safety work (`F-126`, `F-127`, `F-128`) is recorded in
 [tasks-completed.md](tasks-completed.md). Remaining composed outage-to-halt qualification is
 owned by VM-4 below; it does not introduce a new actuator policy.
+The signal-projection rollout follow-up (`NA-13`) passed component checks and full Kind;
+see [its completion record](tasks-completed.md#node-agent--daemonset).
 
 ---
 

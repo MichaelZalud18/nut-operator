@@ -22,6 +22,9 @@ status across trackers. Historical run output and longer investigations remain i
   gate or physical/guest power-off claim.
   [Example](examples/mixed-hooks/README.md);
   [dated validation and limits](contributing/audits/mod-2-kind-acceptance-2026-09-18.md).
+  **Additional regression evidence, 2026-09-19 (Pacific; CI 2026-09-20 UTC):** the mixed
+  hook/Simulate scenario passed in the shared 26-spec Kind run on
+  `20e6017612593801374ff341e6c0f441b0738019`; see MOD-5's CI evidence below.
 
 - [x] `MOD-4` [Medium] managed NUT-only profile and NUT-protocol telemetry. Completed 2026-09-18:
   selective manager startup, generated two-CRD/admission/RBAC installer, default operand image,
@@ -33,6 +36,10 @@ status across trackers. Historical run output and longer investigations remain i
   is limited to this profile; arbitrary historical-schema upgrades are not qualified.
   [Guide](installation/nut-only.md);
   [implementation and live evidence](contributing/audits/mod-4-5-nut-only-acceptance-2026-09-18.md).
+  **Additional regression evidence, 2026-09-19 (Pacific; CI 2026-09-20 UTC):** NUT-only
+  acceptance passed alongside the full-profile suite on `20e6017612593801374ff341e6c0f441b0738019`,
+  including TLS/auth rejection, rotation, recovery, relays and restart/reapplication.
+  See MOD-5's CI evidence below.
 
 - [x] `MOD-5` [Medium] acceptance for approved v1 MOD-2 and MOD-4. Completed 2026-09-18:
   reusable modular component target, mixed hook/Simulate coverage in existing TEST-2 and a serial
@@ -44,6 +51,21 @@ status across trackers. Historical run output and longer investigations remain i
   [Coverage map](contributing/design/modular-acceptance.md);
   [component evidence](contributing/audits/mod-5-component-acceptance-2026-09-18.md);
   [NUT-only evidence](contributing/audits/mod-4-5-nut-only-acceptance-2026-09-18.md).
+  **Additional regression evidence, 2026-09-19 (Pacific; CI 2026-09-20 UTC):**
+  [Images run 35486741085](https://github.com/MichaelZalud18/nut-operator/actions/runs/35486741085)
+  passed the complete shared Kind suite on `20e6017612593801374ff341e6c0f441b0738019`:
+  **26 passed, zero failed, one skipped**, in 2533.005 seconds. The only skip was the optional
+  NS-6 startup observation. Both modular scenarios, all three EX-34 cases, and the NA-13
+  projection regression ran. This adds full-suite coexistence evidence to the earlier focused
+  results. The four exact published image digests passed Kind and were promoted successfully.
+  [Tests](https://github.com/MichaelZalud18/nut-operator/actions/runs/35486740996),
+  [lint](https://github.com/MichaelZalud18/nut-operator/actions/runs/35486740990),
+  [security](https://github.com/MichaelZalud18/nut-operator/actions/runs/35486741024), and
+  [hygiene](https://github.com/MichaelZalud18/nut-operator/actions/runs/35486740985) also passed.
+  The implementation revision `19acc0d2e5bf7eda9fd46c4ee38c08eb917f139b` additionally passed
+  [NetBox integration](https://github.com/MichaelZalud18/nut-operator/actions/runs/35485037379)
+  and [PostgreSQL components](https://github.com/MichaelZalud18/nut-operator/actions/runs/35485037380);
+  subsequent commits changed scanner triage and the signal-handoff test only.
 
 ## Superseded Tasks
 
@@ -406,6 +428,10 @@ Original entry (historical, not an additional open task):
   planner and ShutdownFlow adapter race tests passed. Repository lint reported zero issues;
   added-code safety checks found no credential or unsafe execution patterns. Independent scope
   and correctness/security reviews passed.
+  **Additional regression evidence, 2026-09-19 (Pacific; CI 2026-09-20 UTC):**
+  [Tests run 35486740996](https://github.com/MichaelZalud18/nut-operator/actions/runs/35486740996)
+  passed Kubernetes 1.34, 1.35 and 1.36 on `20e6017612593801374ff341e6c0f441b0738019`;
+  full Kind and exact-image promotion also passed (MOD-5 evidence above).
 
 - [x] `ENG-4` [Medium] remove unsupported durable executor resume machinery (2026-09-15).
   Removed persisted reconstruction, completed-group skipping, and resume-only audit/executor
@@ -555,6 +581,9 @@ Original entry (historical, not an additional open task):
   No upstream authentication or certificate verification is promised, and no image pin changed.
   [Contract](contributing/design/upstream-nut-relay.md);
   [live evidence](contributing/audits/mod-4-5-nut-only-acceptance-2026-09-18.md).
+  **Additional regression evidence, 2026-09-19 (Pacific; CI 2026-09-20 UTC):** generated
+  upstream relay acceptance passed in the full shared Kind suite and exact-image promotion
+  on `20e6017612593801374ff341e6c0f441b0738019` (MOD-5 evidence above).
 
 - [x] `ENG-1` [Medium] supervisor Kind acceptance (2026-09-17). Two owned three-node Kind
   runs passed real Online/OnBattery/LowBattery telemetry and driver replacement within one
@@ -647,6 +676,23 @@ Original entry (historical, not an additional open task):
   regression-tested. The container remains the final boundary for unexpected descendants and
   userspace deadlines cannot resolve kernel-level uninterruptible I/O. This closes the modularity
   and lifecycle task, not `F-97`'s intermittent readiness root cause or Kind/hardware qualification.
+
+## Node Agent / DaemonSet
+
+- [x] `NA-13` [Medium] follow-up to completed TEST-3: remove the signal-handoff fixture's
+  startup-rollout race without weakening projected-volume acceptance. Completed 2026-09-19
+  (Pacific; CI 2026-09-20 UTC). [Run 35485217695](https://github.com/MichaelZalud18/nut-operator/actions/runs/35485217695)
+  exposed selection of an old surge pod followed by log requests after its deletion. Setup now
+  waits for the current DaemonSet generation, current config hash, and one owned Ready pod on
+  the selected node. The original pod UID and actuator container identity/restart count must
+  remain unchanged while the unique signal is accepted within the existing two-minute TTL.
+  Component checks reject overlapping revisions, stale status/config, termination, foreign
+  ownership, wrong nodes, missing readiness and missing/restarted actuator processes.
+  Focused component/registration tests and e2e lint passed locally. [Full Kind and all four image
+  promotions](https://github.com/MichaelZalud18/nut-operator/actions/runs/35486741085) passed on
+  `20e6017612593801374ff341e6c0f441b0738019`: 26 specs passed, zero failed, only optional NS-6
+  skipped. This is live Secret projection with Simulate actuation, not guest or host power-off.
+  The original TEST-3 records remain unchanged.
 
 ## Outputs & Publishing
 
