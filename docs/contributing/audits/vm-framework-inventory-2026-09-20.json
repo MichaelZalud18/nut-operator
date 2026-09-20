@@ -1,0 +1,1844 @@
+{
+  "files": [
+    {
+      "path": ".github/workflows/hadron-actuator-daemonset-smoke.yml",
+      "sha256": "f20b892a0d49e9015a76ebc828c1ad2080e413a5d73f68638979218a3d39b8b1"
+    },
+    {
+      "path": ".github/workflows/hadron-actuator-smoke.yml",
+      "sha256": "2301186ad0e0ea84411b502a29f969e3c6031bac0d3dd8b04dd7b49692db0cfa"
+    },
+    {
+      "path": ".github/workflows/hadron-cluster-join-smoke.yml",
+      "sha256": "08e56b611a653ef70798a8129173fcdbd98d61d60c31cde6e1c6cca5b6180f67"
+    },
+    {
+      "path": ".github/workflows/hadron-cluster-link-smoke.yml",
+      "sha256": "e535fd7b57003165c516b41d154954d1482e1ba7ee3f6a0970de2ece7adbaae2"
+    },
+    {
+      "path": ".github/workflows/hadron-operator-smoke.yml",
+      "sha256": "004df661616342dcf84df7b72fcc9fbc2fd0a6404c5d8436319978557ebbeede"
+    },
+    {
+      "path": ".github/workflows/hadron-outage-flow-smoke.yml",
+      "sha256": "e5bbfca96e09316b41c7262d7504457201e79acefb19570b7f0d076707a3d16c"
+    },
+    {
+      "path": ".github/workflows/hadron-outage-flow-two-node-network-policy-smoke.yml",
+      "sha256": "184da297df9eaa370785c509eb4f26701678dcaa11dd06164ea3d49807dbc3e6"
+    },
+    {
+      "path": ".github/workflows/hadron-outage-flow-two-node-smoke.yml",
+      "sha256": "7ba0b20b3a1660fcbda64366e11fec15db87ea03c8dab32248c90476140e5d5d"
+    },
+    {
+      "path": ".github/workflows/hadron-ups-stack-smoke.yml",
+      "sha256": "67a7da6162ed67f34f8b16dde40306f81eae2465a1cb6a012a3a4f8e8cadfce6"
+    },
+    {
+      "path": ".github/workflows/hadron-vm-boot-smoke.yml",
+      "sha256": "708181cb0ebf51780b4446fd4efa3fe842a6e82014e7a544863d79944d8d32fd"
+    },
+    {
+      "path": ".github/workflows/hadron-vm-probe.yml",
+      "sha256": "4988684840699066a62d05347de6fbe7c9c83b0f87c4326ba66d4ce41f41090e"
+    },
+    {
+      "path": ".github/workflows/talos-actuator-smoke.yml",
+      "sha256": "ccf223bd3fc262284117d5c04cbc3d8c929a2b8331c44d96c6bab43090cda4c4"
+    },
+    {
+      "path": ".github/workflows/talos-vm-boot-smoke.yml",
+      "sha256": "e92fc68cdb7830c99cac0633f3efa8d0b47bd866115bfe60a11248c056f8b9c4"
+    },
+    {
+      "path": "Makefile",
+      "sha256": "cb27d2d2ed8f9a653376e38290214c124c79d24e711ac59bcf8804b4a4d26e98"
+    },
+    {
+      "path": "hack/hadron-cleanup.py",
+      "sha256": "53e1040fd50b81d91104c98887bb396528d5c45559fce0808b1b555dcffd0786"
+    },
+    {
+      "path": "hack/hadron-vm-probe.sh",
+      "sha256": "a049ff5300c6b72ef95c3abb2183e6b07c933cd5276de0e31258b6e762b5090a"
+    },
+    {
+      "path": "hack/talos-cleanup.py",
+      "sha256": "6648d9afc1e3a582728adb6218b54370050086a52df1de5ad387f5c728bf3c0f"
+    },
+    {
+      "path": "hack/test_hadron_cleanup.py",
+      "sha256": "af2195eb996298450fc1e52ab687d861cb718c30b8a14db86abbf5f5fba3b2b8"
+    },
+    {
+      "path": "hack/test_talos_cleanup.py",
+      "sha256": "d5c09132a4ce0f797ac33b88a15d2ee1ba70b690f0b4d286f2b8df4dd10efc8b"
+    },
+    {
+      "path": "hack/webhook-cert.sh",
+      "sha256": "7e0eeda873c625a1e3ac43ac99be8df5b2acdc535d588233e296d0f1d6e6de2b"
+    },
+    {
+      "path": "test/hadron/actuator_daemonset_smoke_test.go",
+      "sha256": "4fb39a98561d3f5933d4ef7395663faaf59e1dc2dd07cd6efe5041662d595cf5",
+      "functions": [
+        {
+          "name": "bootActuatorDaemonSetGuestReadyForNodePowerAgent",
+          "line": 93,
+          "end": 262,
+          "tokens": 1164
+        },
+        {
+          "name": "applyApprovedActuatorNodePowerAgent",
+          "line": 270,
+          "end": 324,
+          "tokens": 240
+        },
+        {
+          "name": "waitForExactlyOneRunningAgentPodNamed",
+          "line": 329,
+          "end": 354,
+          "tokens": 205
+        },
+        {
+          "name": "writeRealSignal",
+          "line": 371,
+          "end": 381,
+          "tokens": 87
+        },
+        {
+          "name": "waitForSignalRejectedOrRevoked",
+          "line": 400,
+          "end": 444,
+          "tokens": 399
+        },
+        {
+          "name": "TestHadronActuatorDaemonSetRejectsInvalidSignals",
+          "line": 452,
+          "end": 483,
+          "tokens": 244
+        },
+        {
+          "name": "TestHadronActuatorDaemonSetRejectsAbsentApproval",
+          "line": 493,
+          "end": 550,
+          "tokens": 250
+        },
+        {
+          "name": "TestHadronActuatorDaemonSetHaltsOnAcceptedSignal",
+          "line": 559,
+          "end": 602,
+          "tokens": 320
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/actuator_smoke_test.go",
+      "sha256": "93a662655a7183bd8e869f1306eacfada0c895b945e559345318582b43b8a02e",
+      "functions": [
+        {
+          "name": "bootActuatorReadyGuest",
+          "line": 63,
+          "end": 162,
+          "tokens": 722
+        },
+        {
+          "name": "actuatorPodSpec",
+          "line": 168,
+          "end": 217,
+          "tokens": 313
+        },
+        {
+          "name": "waitForActuatorLog",
+          "line": 222,
+          "end": 251,
+          "tokens": 267
+        },
+        {
+          "name": "TestHadronActuatorArmsWithNoSignal",
+          "line": 275,
+          "end": 308,
+          "tokens": 291
+        },
+        {
+          "name": "invalidActuatorSignalCases",
+          "line": 338,
+          "end": 415,
+          "tokens": 338
+        },
+        {
+          "name": "TestHadronActuatorRejectsInvalidSignals",
+          "line": 417,
+          "end": 480,
+          "tokens": 599
+        },
+        {
+          "name": "TestHadronActuatorHaltsOnAcceptedSignal",
+          "line": 509,
+          "end": 618,
+          "tokens": 776
+        },
+        {
+          "name": "streamActuatorLog",
+          "line": 626,
+          "end": 659,
+          "tokens": 187
+        },
+        {
+          "name": "repoRootDir",
+          "line": 664,
+          "end": 671,
+          "tokens": 55
+        },
+        {
+          "name": "buildActuatorImageTarball",
+          "line": 677,
+          "end": 680,
+          "tokens": 26
+        },
+        {
+          "name": "buildOperandImageTarball",
+          "line": 689,
+          "end": 706,
+          "tokens": 190
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/adapter.go",
+      "sha256": "1bb0c5ec81c9aba852b2f0e91f2d278c409fc89e5d6d6385fb887fcebb154304",
+      "functions": [
+        {
+          "name": "NewSafeMachine",
+          "line": 122,
+          "end": 124,
+          "tokens": 15
+        },
+        {
+          "name": "NewSafeMachineContext",
+          "line": 128,
+          "end": 225,
+          "tokens": 739
+        },
+        {
+          "name": "downloadISO",
+          "line": 227,
+          "end": 240,
+          "tokens": 117
+        },
+        {
+          "name": "verifyISO",
+          "line": 242,
+          "end": 256,
+          "tokens": 114
+        },
+        {
+          "name": "parseISOChecksum",
+          "line": 258,
+          "end": 270,
+          "tokens": 93
+        },
+        {
+          "name": "SafeTeardown",
+          "line": 274,
+          "end": 279,
+          "tokens": 29
+        },
+        {
+          "name": "SafeStop",
+          "line": 282,
+          "end": 284,
+          "tokens": 13
+        },
+        {
+          "name": "machineProcess",
+          "line": 286,
+          "end": 299,
+          "tokens": 129
+        },
+        {
+          "name": "withArgs",
+          "line": 305,
+          "end": 310,
+          "tokens": 33
+        },
+        {
+          "name": "allocateManagementPorts",
+          "line": 315,
+          "end": 330,
+          "tokens": 89
+        },
+        {
+          "name": "managementNIC",
+          "line": 337,
+          "end": 343,
+          "tokens": 41
+        },
+        {
+          "name": "freshCredentials",
+          "line": 345,
+          "end": 351,
+          "tokens": 40
+        },
+        {
+          "name": "randomToken",
+          "line": 355,
+          "end": 361,
+          "tokens": 61
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/adapter_test.go",
+      "sha256": "b6ff426f69cba7dfa406ef8eed6e9cb5263eb4a9f5730c7cbfa5dea73742b7d4",
+      "functions": [
+        {
+          "name": "TestNewSafeMachineEnablesKVMAndDisablesDefaultNetworking",
+          "line": 43,
+          "end": 67,
+          "tokens": 169
+        },
+        {
+          "name": "TestNewSafeMachineGeneratesFreshCredentialsEachTime",
+          "line": 69,
+          "end": 99,
+          "tokens": 243
+        },
+        {
+          "name": "TestNewSafeMachineAllocatesPrivateUniqueState",
+          "line": 101,
+          "end": 128,
+          "tokens": 257
+        },
+        {
+          "name": "TestNewSafeMachineRejectsUnpinnedRemoteISO",
+          "line": 130,
+          "end": 135,
+          "tokens": 33
+        },
+        {
+          "name": "TestNewSafeMachineRejectsInvalidChecksumsBeforeDownload",
+          "line": 137,
+          "end": 164,
+          "tokens": 245
+        },
+        {
+          "name": "TestNewSafeMachineDownloadFailureReturnsErrorWithoutLeakingState",
+          "line": 166,
+          "end": 189,
+          "tokens": 163
+        },
+        {
+          "name": "TestNewSafeMachineAcceptsPinnedRemoteISO",
+          "line": 191,
+          "end": 213,
+          "tokens": 191
+        },
+        {
+          "name": "TestNewSafeMachineRejectsFailedDownloadsAndRemovesPartialState",
+          "line": 215,
+          "end": 257,
+          "tokens": 349
+        },
+        {
+          "name": "TestNewSafeMachineRejectsCancelledConstruction",
+          "line": 259,
+          "end": 266,
+          "tokens": 61
+        },
+        {
+          "name": "TestNewSafeMachineVerifiesLocalISOWhenChecksumSupplied",
+          "line": 268,
+          "end": 284,
+          "tokens": 195
+        },
+        {
+          "name": "TestNewSafeMachineRejectsUnsupportedArtifactScheme",
+          "line": 286,
+          "end": 290,
+          "tokens": 33
+        },
+        {
+          "name": "TestRandomTokenIsURLAndShellSafe",
+          "line": 292,
+          "end": 311,
+          "tokens": 104
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/cloudinit.go",
+      "sha256": "b0b210e2e5ab1ef87072c5cc1578ae816a297c9f1257f81ddf4771956c85d13a",
+      "functions": [
+        {
+          "name": "buildNoCloudISO",
+          "line": 37,
+          "end": 61,
+          "tokens": 219
+        },
+        {
+          "name": "KairosAutoInstallCloudConfig",
+          "line": 89,
+          "end": 103,
+          "tokens": 21
+        },
+        {
+          "name": "KairosAutoInstallServerCloudConfig",
+          "line": 132,
+          "end": 148,
+          "tokens": 25
+        },
+        {
+          "name": "KairosAutoInstallAgentCloudConfig",
+          "line": 157,
+          "end": 174,
+          "tokens": 27
+        },
+        {
+          "name": "MinimalSSHCloudConfig",
+          "line": 184,
+          "end": 192,
+          "tokens": 19
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/cloudinit_test.go",
+      "sha256": "c16fe2794efc536a38dfa3c0a32cf541c5cc7097f8503ca8421e87a12d9d2696",
+      "functions": [
+        {
+          "name": "requireISOTool",
+          "line": 34,
+          "end": 43,
+          "tokens": 56
+        },
+        {
+          "name": "TestBuildNoCloudISOProducesANonEmptyImage",
+          "line": 45,
+          "end": 61,
+          "tokens": 90
+        },
+        {
+          "name": "TestBuildNoCloudISORejectsMissingTool",
+          "line": 63,
+          "end": 73,
+          "tokens": 82
+        },
+        {
+          "name": "TestKairosAutoInstallCloudConfigEmbedsCredentialsAndDevice",
+          "line": 75,
+          "end": 101,
+          "tokens": 133
+        },
+        {
+          "name": "TestMinimalSSHCloudConfigCreatesLoginWithNoInstallOrK3s",
+          "line": 103,
+          "end": 123,
+          "tokens": 160
+        },
+        {
+          "name": "TestNewSafeMachineAttachesCloudConfigAsDataSource",
+          "line": 125,
+          "end": 159,
+          "tokens": 182
+        },
+        {
+          "name": "TestNewSafeMachineOmitsDataSourceWithoutCloudConfig",
+          "line": 161,
+          "end": 171,
+          "tokens": 85
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/cluster_join_smoke_test.go",
+      "sha256": "190dbfaf6c7562ccfe576dc1a0648154d613a1d0b78bbf9f60cbac0e7292500e",
+      "functions": [
+        {
+          "name": "TestHadronClusterJoin",
+          "line": 78,
+          "end": 304,
+          "tokens": 1216
+        },
+        {
+          "name": "bootClusterJoinGuest",
+          "line": 309,
+          "end": 335,
+          "tokens": 203
+        },
+        {
+          "name": "waitForStableSSH",
+          "line": 342,
+          "end": 368,
+          "tokens": 148
+        },
+        {
+          "name": "confirmAgentClusterLinkAddressSurvives",
+          "line": 383,
+          "end": 426,
+          "tokens": 264
+        },
+        {
+          "name": "nodeReadyCondition",
+          "line": 433,
+          "end": 440,
+          "tokens": 40
+        },
+        {
+          "name": "assignClusterLinkAddress",
+          "line": 447,
+          "end": 470,
+          "tokens": 155
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/cluster_link_smoke_test.go",
+      "sha256": "3b51eec623af42fa71d2e17bec6ceff774bae32e9537b3c6b84c887dcce82fdc",
+      "functions": [
+        {
+          "name": "TestHadronClusterLinkConnectivity",
+          "line": 49,
+          "end": 136,
+          "tokens": 480
+        },
+        {
+          "name": "bootGuest",
+          "line": 144,
+          "end": 177,
+          "tokens": 241
+        },
+        {
+          "name": "linkLocalAddress",
+          "line": 184,
+          "end": 202,
+          "tokens": 122
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/command.go",
+      "sha256": "dc25fed9f64420f2ed36f0ea7cedb75c5a2a5b5835ce8d5781c87fea3b101e7a",
+      "functions": [
+        {
+          "name": "dialGuest",
+          "line": 21,
+          "end": 43,
+          "tokens": 195
+        },
+        {
+          "name": "guestCommand",
+          "line": 47,
+          "end": 62,
+          "tokens": 145
+        },
+        {
+          "name": "guestCommandStdin",
+          "line": 68,
+          "end": 90,
+          "tokens": 169
+        },
+        {
+          "name": "Write",
+          "line": 98,
+          "end": 102,
+          "tokens": 30
+        },
+        {
+          "name": "String",
+          "line": 104,
+          "end": 108,
+          "tokens": 29
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/command_test.go",
+      "sha256": "868aa84d14ec113b13c85fa895d1e64826f1ab42c3b52cdab6ff1ec3b868293f",
+      "functions": [
+        {
+          "name": "TestGuestCommandCancelsBlockedSSH",
+          "line": 19,
+          "end": 92,
+          "tokens": 508
+        },
+        {
+          "name": "TestGuestCommandStdinDeliversPayload",
+          "line": 99,
+          "end": 162,
+          "tokens": 500
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/kubeconfig.go",
+      "sha256": "790625d4a51eb59f5dcad5d17eb4d62b94d1efd6b73a4e0259422d91a6eabf87",
+      "functions": [
+        {
+          "name": "Kubeconfig",
+          "line": 48,
+          "end": 57,
+          "tokens": 68
+        },
+        {
+          "name": "rewriteKubeconfigServerPort",
+          "line": 61,
+          "end": 66,
+          "tokens": 38
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/kubeconfig_test.go",
+      "sha256": "0417d71ba41be6328a5906bdd9c2b9cae50907110ae319bd7f0a006e8d8a7837",
+      "functions": [
+        {
+          "name": "TestRewriteKubeconfigServerPortOnlyChangesThePort",
+          "line": 54,
+          "end": 72,
+          "tokens": 119
+        },
+        {
+          "name": "TestRewriteKubeconfigServerPortRejectsMissingServerLine",
+          "line": 74,
+          "end": 78,
+          "tokens": 28
+        },
+        {
+          "name": "TestKubeconfigRequiresForwardedAPIPort",
+          "line": 80,
+          "end": 84,
+          "tokens": 37
+        },
+        {
+          "name": "TestKubeconfigFetchesAndRewrites",
+          "line": 86,
+          "end": 145,
+          "tokens": 459
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/network.go",
+      "sha256": "0b9186820f62930661996387d20a312589f6706fa49d9e24689a464a6c55d3ae",
+      "functions": [
+        {
+          "name": "NewClusterLink",
+          "line": 54,
+          "end": 60,
+          "tokens": 44
+        },
+        {
+          "name": "Server",
+          "line": 66,
+          "end": 68,
+          "tokens": 13
+        },
+        {
+          "name": "Client",
+          "line": 71,
+          "end": 73,
+          "tokens": 13
+        },
+        {
+          "name": "newClusterNIC",
+          "line": 80,
+          "end": 95,
+          "tokens": 114
+        },
+        {
+          "name": "option",
+          "line": 99,
+          "end": 101,
+          "tokens": 12
+        },
+        {
+          "name": "RandomClusterMAC",
+          "line": 108,
+          "end": 114,
+          "tokens": 69
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/network_test.go",
+      "sha256": "4b15bd751ee86bcfd94f8eb1e33843890751a7fb3f23c25217b98e14170af53f",
+      "functions": [
+        {
+          "name": "TestClusterLinkServerAndClientDialTheSamePort",
+          "line": 28,
+          "end": 90,
+          "tokens": 407
+        },
+        {
+          "name": "TestClusterNICRejectsInvalidMAC",
+          "line": 92,
+          "end": 105,
+          "tokens": 100
+        },
+        {
+          "name": "TestClusterNICRejectsUnconstructedLink",
+          "line": 107,
+          "end": 119,
+          "tokens": 79
+        },
+        {
+          "name": "TestRandomClusterMACIsLocallyAdministeredAndUnique",
+          "line": 121,
+          "end": 136,
+          "tokens": 87
+        },
+        {
+          "name": "TestClusterNICAttachesToMachineConfig",
+          "line": 138,
+          "end": 163,
+          "tokens": 171
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/operator_smoke_test.go",
+      "sha256": "503fe3c32ddf9116aa920e727aa65baa3a702a1933fe4571c06c5b066de660f6",
+      "functions": [
+        {
+          "name": "TestHadronOperatorManagerDeploys",
+          "line": 63,
+          "end": 194,
+          "tokens": 1003
+        },
+        {
+          "name": "preserveFile",
+          "line": 199,
+          "end": 210,
+          "tokens": 76
+        },
+        {
+          "name": "runMake",
+          "line": 214,
+          "end": 223,
+          "tokens": 89
+        },
+        {
+          "name": "buildManagerImageTarball",
+          "line": 232,
+          "end": 248,
+          "tokens": 175
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/outage_flow_smoke_test.go",
+      "sha256": "1602e9f3144a98f44f76b5aa9dec35d04c4cf3c869bda13e87ac3baa4b64b377",
+      "functions": [
+        {
+          "name": "TestHadronShutdownFlowProducesRealSignal",
+          "line": 90,
+          "end": 520,
+          "tokens": 2025
+        },
+        {
+          "name": "assertRealAuditRecords",
+          "line": 531,
+          "end": 596,
+          "tokens": 430
+        },
+        {
+          "name": "removeUnneededKubeSystemWorkloads",
+          "line": 623,
+          "end": 652,
+          "tokens": 218
+        },
+        {
+          "name": "waitForExactlyOneRunningAgentPod",
+          "line": 660,
+          "end": 685,
+          "tokens": 203
+        },
+        {
+          "name": "createPostgresDSNSecret",
+          "line": 693,
+          "end": 718,
+          "tokens": 170
+        },
+        {
+          "name": "applyPowerManagementClusterAndWaitReady",
+          "line": 733,
+          "end": 795,
+          "tokens": 396
+        },
+        {
+          "name": "pullOperandImageTarball",
+          "line": 801,
+          "end": 821,
+          "tokens": 222
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/outage_flow_two_node_network_policy_smoke_test.go",
+      "sha256": "78d5d3cbd814d2a4a7863fb9fd971905a524b324c65a6bf5cb13b0cd6611d40d",
+      "functions": [
+        {
+          "name": "TestHadronOutageFlowTwoNodeEnforcesNetworkPolicy",
+          "line": 74,
+          "end": 319,
+          "tokens": 1477
+        },
+        {
+          "name": "applyProbePod",
+          "line": 324,
+          "end": 364,
+          "tokens": 199
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/outage_flow_two_node_smoke_test.go",
+      "sha256": "c24968a90e15cfc96393936867f7fc8c0132e7ac361813cbd61461231608c7a7",
+      "functions": [
+        {
+          "name": "TestHadronOutageFlowTwoNodeDrainsWorkload",
+          "line": 72,
+          "end": 514,
+          "tokens": 2064
+        },
+        {
+          "name": "bootAndJoinTwoNodeCluster",
+          "line": 524,
+          "end": 711,
+          "tokens": 1238
+        },
+        {
+          "name": "pinK3sNodeIP",
+          "line": 729,
+          "end": 752,
+          "tokens": 86
+        },
+        {
+          "name": "waitForAgentServiceRouting",
+          "line": 770,
+          "end": 785,
+          "tokens": 119
+        },
+        {
+          "name": "dumpKubeProxyState",
+          "line": 795,
+          "end": 872,
+          "tokens": 434
+        },
+        {
+          "name": "applyWorkloadDeploymentOnNode",
+          "line": 878,
+          "end": 934,
+          "tokens": 218
+        },
+        {
+          "name": "assertRealDrainAuditRecords",
+          "line": 939,
+          "end": 1007,
+          "tokens": 445
+        },
+        {
+          "name": "createPostgresDSNSecretNamed",
+          "line": 1012,
+          "end": 1037,
+          "tokens": 176
+        },
+        {
+          "name": "applyPowerManagementClusterAndWaitReadyNamed",
+          "line": 1042,
+          "end": 1096,
+          "tokens": 400
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/readiness.go",
+      "sha256": "c32ae127df75ebf0c387d9486392692deb7144cb2df05803b1a98aba3537ae81",
+      "functions": [
+        {
+          "name": "hasReadyNode",
+          "line": 12,
+          "end": 23,
+          "tokens": 83
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/readiness_test.go",
+      "sha256": "de82bf49812d4c5f2a68da9e6ddee97e86a32444962ad004ae7441d1c0b57658",
+      "functions": [
+        {
+          "name": "TestReadyNodeCondition",
+          "line": 7,
+          "end": 24,
+          "tokens": 102
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/smoke_test.go",
+      "sha256": "02394cf16fe64cbee9e47bc9604e9ac73a19f073686bb515a406ac696680a622",
+      "functions": [
+        {
+          "name": "TestHadronSingleNodeBoot",
+          "line": 62,
+          "end": 179,
+          "tokens": 681
+        },
+        {
+          "name": "waitForWithDiagnostics",
+          "line": 185,
+          "end": 192,
+          "tokens": 68
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/teardown_test.go",
+      "sha256": "ad2bee27bcca0ecb0f8d0ffd3c79dbe1c1fe6feb21f81bb6b7759826def31253",
+      "functions": [
+        {
+          "name": "Config",
+          "line": 35,
+          "end": 37,
+          "tokens": 15
+        },
+        {
+          "name": "Stop",
+          "line": 38,
+          "end": 38,
+          "tokens": 8
+        },
+        {
+          "name": "Clean",
+          "line": 39,
+          "end": 39,
+          "tokens": 8
+        },
+        {
+          "name": "TestCleanupRequiresVerifiedStartup",
+          "line": 41,
+          "end": 55,
+          "tokens": 132
+        },
+        {
+          "name": "TestNeverStartedMachineCanBeCleaned",
+          "line": 57,
+          "end": 69,
+          "tokens": 102
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/ups_stack_smoke_test.go",
+      "sha256": "458eb2c6f84587bca8e557793c5bcb689edeb234292e23d59e4a550cca82a30e",
+      "functions": [
+        {
+          "name": "TestHadronOperatorRunsRealUPSStack",
+          "line": 60,
+          "end": 326,
+          "tokens": 1607
+        },
+        {
+          "name": "splitImageRef",
+          "line": 331,
+          "end": 338,
+          "tokens": 51
+        },
+        {
+          "name": "importImageTarball",
+          "line": 341,
+          "end": 351,
+          "tokens": 89
+        },
+        {
+          "name": "runKubectl",
+          "line": 355,
+          "end": 362,
+          "tokens": 77
+        },
+        {
+          "name": "runKubectlOutput",
+          "line": 366,
+          "end": 375,
+          "tokens": 88
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/wait.go",
+      "sha256": "ab8d7360aca48720517fb1e21b31c4a15f13df9b102eb8460f79f3d10764ffd9",
+      "functions": [
+        {
+          "name": "pollGuest",
+          "line": 14,
+          "end": 35,
+          "tokens": 161
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/wait_test.go",
+      "sha256": "a7029740b126369902c8ad97c7b83a190ccdacd5390cb1bd7d27c00e7097579b",
+      "functions": [
+        {
+          "name": "TestPollGuestCancellation",
+          "line": 12,
+          "end": 31,
+          "tokens": 184
+        },
+        {
+          "name": "TestPollGuestCancelledBeforeCheck",
+          "line": 33,
+          "end": 43,
+          "tokens": 81
+        },
+        {
+          "name": "TestPollGuestSuccess",
+          "line": 45,
+          "end": 49,
+          "tokens": 50
+        }
+      ]
+    },
+    {
+      "path": "test/hadron/workflow_test.go",
+      "sha256": "f2b37b38975a8a9cb3468fbc98044f7ef82d1bf09d0fdbe9c1a290b2df331708",
+      "functions": [
+        {
+          "name": "TestSmokeWorkflowsReserveCleanupBudget",
+          "line": 20,
+          "end": 85,
+          "tokens": 410
+        }
+      ]
+    },
+    {
+      "path": "test/talos/actuator_smoke_test.go",
+      "sha256": "d605d543e2bbac691a712fd8e7435c75c2d03f26e9745346f511eba40c30944c",
+      "functions": [
+        {
+          "name": "bootTalosActuatorGuestReadyForNodePowerAgent",
+          "line": 95,
+          "end": 307,
+          "tokens": 1386
+        },
+        {
+          "name": "applyApprovedTalosActuatorNodePowerAgent",
+          "line": 312,
+          "end": 369,
+          "tokens": 188
+        },
+        {
+          "name": "waitForExactlyOneRunningTalosAgentPod",
+          "line": 371,
+          "end": 394,
+          "tokens": 183
+        },
+        {
+          "name": "writeRealTalosSignal",
+          "line": 399,
+          "end": 409,
+          "tokens": 87
+        },
+        {
+          "name": "waitForTalosSignalRejectedOrRevoked",
+          "line": 417,
+          "end": 461,
+          "tokens": 399
+        },
+        {
+          "name": "invalidTalosActuatorSignalCases",
+          "line": 475,
+          "end": 541,
+          "tokens": 338
+        },
+        {
+          "name": "TestTalosActuatorRejectsInvalidSignals",
+          "line": 547,
+          "end": 572,
+          "tokens": 240
+        },
+        {
+          "name": "TestTalosActuatorRejectsAbsentApproval",
+          "line": 579,
+          "end": 642,
+          "tokens": 262
+        },
+        {
+          "name": "TestTalosActuatorHaltsOnAcceptedSignal",
+          "line": 652,
+          "end": 695,
+          "tokens": 316
+        },
+        {
+          "name": "repoRootDir",
+          "line": 700,
+          "end": 707,
+          "tokens": 55
+        },
+        {
+          "name": "preserveFile",
+          "line": 711,
+          "end": 722,
+          "tokens": 76
+        },
+        {
+          "name": "runMake",
+          "line": 726,
+          "end": 735,
+          "tokens": 89
+        },
+        {
+          "name": "runKubectl",
+          "line": 739,
+          "end": 746,
+          "tokens": 77
+        },
+        {
+          "name": "runKubectlOutput",
+          "line": 750,
+          "end": 759,
+          "tokens": 88
+        },
+        {
+          "name": "splitImageRef",
+          "line": 763,
+          "end": 770,
+          "tokens": 51
+        },
+        {
+          "name": "applyManifest",
+          "line": 773,
+          "end": 781,
+          "tokens": 82
+        },
+        {
+          "name": "tryApplyManifest",
+          "line": 784,
+          "end": 792,
+          "tokens": 80
+        },
+        {
+          "name": "indentLines",
+          "line": 796,
+          "end": 802,
+          "tokens": 50
+        }
+      ]
+    },
+    {
+      "path": "test/talos/adapter.go",
+      "sha256": "31c20c049d271bb8e23e013f4f6a3b8d697316894bdbf456d9dcbebf37f64f9a",
+      "functions": [
+        {
+          "name": "NewSafeMachine",
+          "line": 99,
+          "end": 101,
+          "tokens": 15
+        },
+        {
+          "name": "NewSafeMachineContext",
+          "line": 106,
+          "end": 178,
+          "tokens": 523
+        },
+        {
+          "name": "downloadISO",
+          "line": 180,
+          "end": 193,
+          "tokens": 117
+        },
+        {
+          "name": "verifyISO",
+          "line": 195,
+          "end": 209,
+          "tokens": 114
+        },
+        {
+          "name": "parseISOChecksum",
+          "line": 211,
+          "end": 223,
+          "tokens": 93
+        },
+        {
+          "name": "SafeTeardown",
+          "line": 227,
+          "end": 232,
+          "tokens": 29
+        },
+        {
+          "name": "SafeStop",
+          "line": 235,
+          "end": 237,
+          "tokens": 13
+        },
+        {
+          "name": "machineProcess",
+          "line": 239,
+          "end": 252,
+          "tokens": 129
+        },
+        {
+          "name": "withArgs",
+          "line": 255,
+          "end": 260,
+          "tokens": 33
+        },
+        {
+          "name": "managementNIC",
+          "line": 264,
+          "end": 268,
+          "tokens": 49
+        }
+      ]
+    },
+    {
+      "path": "test/talos/boot_smoke_test.go",
+      "sha256": "2154ac5b2e4822c4e83774a31bf2bd2159c49dc4dcf2d90c38b56e9a789b75b4",
+      "functions": [
+        {
+          "name": "TestTalosNodeBootstraps",
+          "line": 59,
+          "end": 174,
+          "tokens": 762
+        },
+        {
+          "name": "nodeReady",
+          "line": 178,
+          "end": 185,
+          "tokens": 40
+        },
+        {
+          "name": "waitForWithDiagnostics",
+          "line": 189,
+          "end": 196,
+          "tokens": 68
+        }
+      ]
+    },
+    {
+      "path": "test/talos/registry_smoke_test.go",
+      "sha256": "4d2158ba859cdd129c2fff8d9f34907be5e8b37b15f60a36e08a0218a92b5319",
+      "functions": [
+        {
+          "name": "startLocalRegistry",
+          "line": 44,
+          "end": 75,
+          "tokens": 247
+        },
+        {
+          "name": "buildAndPushTalosImage",
+          "line": 81,
+          "end": 92,
+          "tokens": 133
+        },
+        {
+          "name": "buildAndPushManagerImage",
+          "line": 99,
+          "end": 109,
+          "tokens": 122
+        },
+        {
+          "name": "pushLocalImage",
+          "line": 115,
+          "end": 124,
+          "tokens": 84
+        },
+        {
+          "name": "registryMirrorFlag",
+          "line": 129,
+          "end": 132,
+          "tokens": 18
+        }
+      ]
+    },
+    {
+      "path": "test/talos/talosctl.go",
+      "sha256": "208c482837a946b93b3f37d0d3ed531ef6aae1d52dbeb10bc19cab538581d99c",
+      "functions": [
+        {
+          "name": "runTalosctl",
+          "line": 24,
+          "end": 33,
+          "tokens": 88
+        },
+        {
+          "name": "talosMaintenanceAPIReachable",
+          "line": 48,
+          "end": 51,
+          "tokens": 31
+        },
+        {
+          "name": "genConfig",
+          "line": 78,
+          "end": 93,
+          "tokens": 111
+        },
+        {
+          "name": "applyConfig",
+          "line": 99,
+          "end": 103,
+          "tokens": 33
+        },
+        {
+          "name": "talosSecureAPIReachable",
+          "line": 110,
+          "end": 114,
+          "tokens": 35
+        },
+        {
+          "name": "bootstrap",
+          "line": 120,
+          "end": 128,
+          "tokens": 73
+        },
+        {
+          "name": "fetchKubeconfig",
+          "line": 134,
+          "end": 140,
+          "tokens": 54
+        }
+      ]
+    },
+    {
+      "path": "test/talos/talosctl_test.go",
+      "sha256": "85214dfe8a8db0078239020bcaa5f0763d791910285b0054fd2d1dfe706d8e21",
+      "functions": [
+        {
+          "name": "withFakeTalosctl",
+          "line": 19,
+          "end": 27,
+          "tokens": 87
+        },
+        {
+          "name": "TestRunTalosctlSuccess",
+          "line": 29,
+          "end": 38,
+          "tokens": 61
+        },
+        {
+          "name": "TestRunTalosctlFailureIncludesOutput",
+          "line": 40,
+          "end": 46,
+          "tokens": 59
+        },
+        {
+          "name": "TestTalosMaintenanceAPIReachableArgs",
+          "line": 48,
+          "end": 53,
+          "tokens": 35
+        },
+        {
+          "name": "TestTalosMaintenanceAPIReachablePropagatesFailure",
+          "line": 55,
+          "end": 60,
+          "tokens": 35
+        },
+        {
+          "name": "TestTalosSecureAPIReachableNeverPassesInsecure",
+          "line": 65,
+          "end": 82,
+          "tokens": 142
+        },
+        {
+          "name": "TestGenConfigArgs",
+          "line": 84,
+          "end": 114,
+          "tokens": 203
+        },
+        {
+          "name": "TestGenConfigArgsWithRegistryMirror",
+          "line": 116,
+          "end": 129,
+          "tokens": 117
+        },
+        {
+          "name": "TestApplyConfigArgsNeverPassEndpointsWithInsecure",
+          "line": 131,
+          "end": 149,
+          "tokens": 138
+        },
+        {
+          "name": "TestBootstrapSetsEndpointsBeforeBootstrapping",
+          "line": 151,
+          "end": 171,
+          "tokens": 187
+        },
+        {
+          "name": "TestFetchKubeconfigReturnsExpectedPath",
+          "line": 173,
+          "end": 183,
+          "tokens": 79
+        },
+        {
+          "name": "TestFetchKubeconfigPropagatesFailure",
+          "line": 185,
+          "end": 190,
+          "tokens": 45
+        }
+      ]
+    },
+    {
+      "path": "test/talos/teardown_test.go",
+      "sha256": "40f3033bb0d16acea1ba7baca32561c165cd6f715d52c05b8580fd15743bbff2",
+      "functions": [
+        {
+          "name": "Stop",
+          "line": 15,
+          "end": 15,
+          "tokens": 8
+        },
+        {
+          "name": "Clean",
+          "line": 16,
+          "end": 16,
+          "tokens": 8
+        },
+        {
+          "name": "TestCleanupRequiresVerifiedStartup",
+          "line": 18,
+          "end": 28,
+          "tokens": 82
+        },
+        {
+          "name": "TestNeverStartedMachineCanBeCleaned",
+          "line": 30,
+          "end": 42,
+          "tokens": 100
+        }
+      ]
+    },
+    {
+      "path": "test/talos/wait.go",
+      "sha256": "e243cd989730f9f48e4b1f947ebf108fd9260fb627e311fde6c68da0dab86b18",
+      "functions": [
+        {
+          "name": "pollGuest",
+          "line": 15,
+          "end": 36,
+          "tokens": 161
+        }
+      ]
+    },
+    {
+      "path": "test/talos/wait_test.go",
+      "sha256": "b06cd771c2138675b6507c8e6ab44e7d8fd6d58eca26637f2921970e4a0d2687",
+      "functions": [
+        {
+          "name": "TestPollGuestCancellation",
+          "line": 12,
+          "end": 31,
+          "tokens": 184
+        },
+        {
+          "name": "TestPollGuestCancelledBeforeCheck",
+          "line": 33,
+          "end": 43,
+          "tokens": 81
+        },
+        {
+          "name": "TestPollGuestSuccess",
+          "line": 45,
+          "end": 49,
+          "tokens": 50
+        }
+      ]
+    },
+    {
+      "path": "test/talos/workflow_test.go",
+      "sha256": "0b9748adeeb3de28399b7ceaa99cda0874a35789b99f87b2a9f91bde101d1bf9",
+      "functions": [
+        {
+          "name": "TestSmokeWorkflowsReserveCleanupBudget",
+          "line": 22,
+          "end": 79,
+          "tokens": 362
+        }
+      ]
+    }
+  ],
+  "duplicate_candidates": [
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/actuator_smoke_test.go:664:repoRootDir",
+        "test/talos/actuator_smoke_test.go:700:repoRootDir"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": true,
+      "members": [
+        "test/hadron/adapter.go:122:NewSafeMachine",
+        "test/talos/adapter.go:99:NewSafeMachine"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:227:downloadISO",
+        "test/talos/adapter.go:180:downloadISO"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:242:verifyISO",
+        "test/talos/adapter.go:195:verifyISO"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:258:parseISOChecksum",
+        "test/talos/adapter.go:211:parseISOChecksum"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:274:SafeTeardown",
+        "test/talos/adapter.go:227:SafeTeardown"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": true,
+      "members": [
+        "test/hadron/adapter.go:282:SafeStop",
+        "test/talos/adapter.go:235:SafeStop"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:286:machineProcess",
+        "test/talos/adapter.go:239:machineProcess"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:305:withArgs",
+        "test/talos/adapter.go:255:withArgs"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/cluster_join_smoke_test.go:433:nodeReadyCondition",
+        "test/talos/boot_smoke_test.go:178:nodeReady"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/operator_smoke_test.go:199:preserveFile",
+        "test/talos/actuator_smoke_test.go:711:preserveFile"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/operator_smoke_test.go:214:runMake",
+        "test/talos/actuator_smoke_test.go:726:runMake"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/smoke_test.go:185:waitForWithDiagnostics",
+        "test/talos/boot_smoke_test.go:189:waitForWithDiagnostics"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": true,
+      "members": [
+        "test/hadron/teardown_test.go:38:Stop",
+        "test/talos/teardown_test.go:15:Stop"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": true,
+      "members": [
+        "test/hadron/teardown_test.go:39:Clean",
+        "test/talos/teardown_test.go:16:Clean"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/ups_stack_smoke_test.go:331:splitImageRef",
+        "test/talos/actuator_smoke_test.go:763:splitImageRef"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/ups_stack_smoke_test.go:355:runKubectl",
+        "test/talos/actuator_smoke_test.go:739:runKubectl"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/ups_stack_smoke_test.go:366:runKubectlOutput",
+        "test/talos/actuator_smoke_test.go:750:runKubectlOutput"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/wait.go:14:pollGuest",
+        "test/talos/wait.go:15:pollGuest"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/wait_test.go:12:TestPollGuestCancellation",
+        "test/talos/wait_test.go:12:TestPollGuestCancellation"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/wait_test.go:33:TestPollGuestCancelledBeforeCheck",
+        "test/talos/wait_test.go:33:TestPollGuestCancelledBeforeCheck"
+      ]
+    },
+    {
+      "kind": "exact",
+      "trivial": false,
+      "members": [
+        "test/hadron/wait_test.go:45:TestPollGuestSuccess",
+        "test/talos/wait_test.go:45:TestPollGuestSuccess"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/actuator_daemonset_smoke_test.go:371:writeRealSignal",
+        "test/talos/actuator_smoke_test.go:399:writeRealTalosSignal"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/actuator_daemonset_smoke_test.go:400:waitForSignalRejectedOrRevoked",
+        "test/talos/actuator_smoke_test.go:417:waitForTalosSignalRejectedOrRevoked"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/actuator_smoke_test.go:338:invalidActuatorSignalCases",
+        "test/talos/actuator_smoke_test.go:475:invalidTalosActuatorSignalCases"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/actuator_smoke_test.go:664:repoRootDir",
+        "test/talos/actuator_smoke_test.go:700:repoRootDir"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": true,
+      "members": [
+        "test/hadron/adapter.go:122:NewSafeMachine",
+        "test/talos/adapter.go:99:NewSafeMachine"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:227:downloadISO",
+        "test/talos/adapter.go:180:downloadISO"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:242:verifyISO",
+        "test/talos/adapter.go:195:verifyISO"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:258:parseISOChecksum",
+        "test/talos/adapter.go:211:parseISOChecksum"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:274:SafeTeardown",
+        "test/talos/adapter.go:227:SafeTeardown"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": true,
+      "members": [
+        "test/hadron/adapter.go:282:SafeStop",
+        "test/talos/adapter.go:235:SafeStop"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:286:machineProcess",
+        "test/talos/adapter.go:239:machineProcess"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/adapter.go:305:withArgs",
+        "test/talos/adapter.go:255:withArgs"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/cluster_join_smoke_test.go:433:nodeReadyCondition",
+        "test/talos/boot_smoke_test.go:178:nodeReady"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": true,
+      "members": [
+        "test/hadron/network.go:66:Server",
+        "test/hadron/network.go:71:Client"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/operator_smoke_test.go:199:preserveFile",
+        "test/talos/actuator_smoke_test.go:711:preserveFile"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/operator_smoke_test.go:214:runMake",
+        "test/talos/actuator_smoke_test.go:726:runMake"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/smoke_test.go:185:waitForWithDiagnostics",
+        "test/talos/boot_smoke_test.go:189:waitForWithDiagnostics"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": true,
+      "members": [
+        "test/hadron/teardown_test.go:38:Stop",
+        "test/hadron/teardown_test.go:39:Clean",
+        "test/talos/teardown_test.go:15:Stop",
+        "test/talos/teardown_test.go:16:Clean"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/ups_stack_smoke_test.go:331:splitImageRef",
+        "test/talos/actuator_smoke_test.go:763:splitImageRef"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/ups_stack_smoke_test.go:355:runKubectl",
+        "test/talos/actuator_smoke_test.go:739:runKubectl"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/ups_stack_smoke_test.go:366:runKubectlOutput",
+        "test/talos/actuator_smoke_test.go:750:runKubectlOutput"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/wait.go:14:pollGuest",
+        "test/talos/wait.go:15:pollGuest"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/wait_test.go:12:TestPollGuestCancellation",
+        "test/talos/wait_test.go:12:TestPollGuestCancellation"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/wait_test.go:33:TestPollGuestCancelledBeforeCheck",
+        "test/talos/wait_test.go:33:TestPollGuestCancelledBeforeCheck"
+      ]
+    },
+    {
+      "kind": "shape",
+      "trivial": false,
+      "members": [
+        "test/hadron/wait_test.go:45:TestPollGuestSuccess",
+        "test/talos/wait_test.go:45:TestPollGuestSuccess"
+      ]
+    }
+  ]
+}

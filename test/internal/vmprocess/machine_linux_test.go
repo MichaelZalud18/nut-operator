@@ -136,6 +136,9 @@ func TestRetainedOwnershipSurvivesPIDFileChanges(t *testing.T) {
 			if err := m.Clean(); err == nil {
 				t.Fatal("cleaned before confirmed exit")
 			}
+			if exited, err := Exited(m); err != nil || exited {
+				t.Fatalf("live process observation: exited=%v err=%v", exited, err)
+			}
 			pidFile := filepath.Join(root, "pid")
 			switch mutation {
 			case "replace":
@@ -151,6 +154,9 @@ func TestRetainedOwnershipSurvivesPIDFileChanges(t *testing.T) {
 			}
 			if err := Stop(m, time.Second); err != nil {
 				t.Fatal(err)
+			}
+			if exited, err := Exited(m); err != nil || !exited {
+				t.Fatalf("stopped process observation: exited=%v err=%v", exited, err)
 			}
 			if _, err := os.Stat(root); err != nil {
 				t.Fatalf("Stop removed diagnostic state: %v", err)

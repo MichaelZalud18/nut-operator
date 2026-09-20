@@ -87,6 +87,7 @@ jobs:
           go test -tags=hadron,talos ./test/internal/... ./test/hadron ./test/talos -race -count=1 -timeout=2m
           python3 -B -m unittest discover -s hack -p test_hadron_cleanup.py
           python3 -B -m unittest discover -s hack -p test_talos_cleanup.py
+          python3 -B -m unittest discover -s hack -p test_vm_cleanup.py
 
       # F-111: make test has always written a coverage profile and nothing read it. The total goes
       # in the job summary so a regression is visible without downloading anything, and the profile

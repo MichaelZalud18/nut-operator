@@ -75,6 +75,24 @@ func Stop(m types.Machine, timeout time.Duration) error {
 
 func (m *ownedMachine) Stop() error { return m.stop(30 * time.Second) }
 
+// Exited observes the verified startup identity without rereading a PID file.
+// This proves only process exit, never guest-initiated shutdown or its cause.
+func Exited(m types.Machine) (bool, error) {
+	owned, ok := m.(*ownedMachine)
+	if !ok {
+		return false, fmt.Errorf("machine has no verified startup ownership")
+	}
+	owned.mu.Lock()
+	defer owned.mu.Unlock()
+	if owned.stopped {
+		return true, nil
+	}
+	if owned.process == nil {
+		return false, fmt.Errorf("machine has no verified startup ownership")
+	}
+	return owned.process.exited()
+}
+
 func (m *ownedMachine) stop(timeout time.Duration) error {
 	if timeout <= 0 {
 		return fmt.Errorf("stop timeout must be positive")

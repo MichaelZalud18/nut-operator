@@ -229,6 +229,20 @@ own detailed prerequisites and prior milestones; the remaining work is below.
 
 VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-coverage).
 
+- [ ] `VM-13` [Medium] qualify the expanded shared framework in ordinary CI. Follow-up to
+  [VM-12](tasks-completed.md#vm-test-coverage) and its 2026-09-20 scope correction.
+  **Implemented 2026-09-20:** reproducible 56-file/194-function inventory and full file-disposition
+  map; shared command, workspace, lifecycle, Kubernetes observation, signal-fixture, image-plan,
+  workflow-policy and independent Python cleanup implementations; both-adapter composition
+  contracts and fast CI wiring. Artifact/readiness/process ownership modules are reused.
+  [Source review and extraction boundaries](contributing/audits/vm-framework-comprehensive-review-2026-09-20.md).
+  **Remaining acceptance:** ordinary CI must pass the exact published revision, including both
+  guest-tagged component suites and all three Python cleanup suites. Local validation is recorded
+  here; it is not a published CI result. **Local checks passed:** `make test`, `make lint`,
+  race-enabled Hadron/Talos component suites, tagged framework lint, full smoke-tagged
+  `go vet`, and all seven Python cleanup tests. Caller migration remains VM-8, and shutdown/rejection
+  evidence corrections remain VM-9/VM-11. No live guest qualification is claimed by these modules.
+
 - [ ] `VM-9` [High] require shutdown-cause evidence in Hadron and Talos halt acceptance.
   Follow-up to closed [VM-3 and VM-7](tasks-completed.md#vm-test-coverage), identified in the
   2026-09-20 review. The bare-pod and rendered-DaemonSet positive tests currently accept any
@@ -344,8 +358,8 @@ quickstart; remaining first-user validation is `REL-6` in the
 
 The 2026-09-15 proposal's tracker split is complete; the work above remains open unless checked.
 Keep High shutdown-safety work ahead of cleanup. VM-2's harness safety supports VM-4's composed
-guest acceptance; VM-5 owns Hadron/Talos regression wiring. Completed VM-12 supplies the shared
-framework foundations; VM-8's incremental caller migration does not block those tasks.
+guest acceptance; VM-5 owns Hadron/Talos regression wiring. VM-12 foundations and VM-13 expansion supply shared
+framework modules; VM-8's incremental caller migration does not block those tasks.
 EX-34 Kind integration and EX-35 API publication checks are completed;
 their evidence does not expand VM-4 into a multi-control-plane topology.
 This is dependency guidance, not a requirement to serialize independent component work.

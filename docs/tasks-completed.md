@@ -802,6 +802,11 @@ Original entry (historical, not an additional open task):
   **Scope limit:** framework foundations and component composition only; existing live scenarios
   remain unmigrated, no new live guest result is claimed, and this does not close VM-10's live
   confirmation or VM-9/VM-11's evidence work. VM-8 owns incremental fixture adoption.
+  **2026-09-20 correction:** the implementation above covers two new primitive modules and
+  constructor-level composition, not the full duplication/framework request. Its source inventory
+  grouped examples but did not enumerate every harness file or helper. Closing that broader
+  request was premature. VM-13 follows up with an exhaustive bounded source inventory and the
+  remaining justified shared modules; this original completion record is preserved.
 
 - [x] `VM-3` [High] shipped Linux actuator qualification, closed (2026-09-17).
   Bare-pod milestones, the real rendered DaemonSet/RBAC (missing/expired/wrong-node signals,

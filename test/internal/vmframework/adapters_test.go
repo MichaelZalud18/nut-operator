@@ -16,7 +16,12 @@ import (
 
 	"github.com/MichaelZalud18/nut-operator/test/hadron"
 	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/artifact"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/command"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/image"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/lifecycle"
 	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/readiness"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/signalfixture"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/workspace"
 	"github.com/MichaelZalud18/nut-operator/test/talos"
 	"github.com/spectrocloud/peg/pkg/machine/types"
 )
@@ -82,6 +87,50 @@ func TestSharedPreparationFeedsBothAdapters(t *testing.T) {
 			if _, err := os.Stat(path); err != nil {
 				t.Fatalf("machine cleanup removed caller-owned artifact: %v", err)
 			}
+			testFrameworkComposition(t, name, path)
 		})
+	}
+}
+
+func testFrameworkComposition(t *testing.T, guest, artifactPath string) {
+	t.Helper()
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "kustomization.yaml"), []byte("resources: []\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	copy, err := workspace.Clone(context.Background(), source, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := "docker.io/library/" + guest + "-test:contract"
+	if guest == "talos" {
+		ref = "localhost:5000/" + guest + "-test:contract"
+	}
+	build, err := image.ManagerBuild(copy, ref, time.Minute, nil)
+	if err != nil || build.Dir != copy {
+		t.Fatalf("build escaped private workspace: %+v %v", build, err)
+	}
+	payload := signalfixture.Invalid(guest+"-node", time.Now())[0].Payload
+	patch, err := signalfixture.SecretPatch(guest+"-node", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply, err := command.Kubectl(filepath.Join(copy, "kubeconfig"), time.Second, nil,
+		"patch", "secret", "agent-node-signals", "--type=json", "-p", string(patch))
+	if err != nil || apply.Args[1] != filepath.Join(copy, "kubeconfig") {
+		t.Fatalf("command lost private kubeconfig: %+v, %v", apply, err)
+	}
+	// These are command plans; this component contract never executes make or kubectl.
+	// Register the file-only resource to prove cleanup does not delete the boot artifact.
+	var scope lifecycle.Scope
+	if err := scope.Add("workspace", func(context.Context) error { return nil },
+		func(context.Context) error { return os.RemoveAll(copy) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := scope.Finish(context.Background(), time.Second, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(artifactPath); err != nil {
+		t.Fatal("workspace cleanup deleted adapter artifact")
 	}
 }
