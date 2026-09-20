@@ -200,6 +200,15 @@ Completed full-suite and exact-image qualification (`TEST-3`) is recorded in
 [CI acceptance evidence](contributing/audits/kind-qualification-2026-09-17.md#full-suite-published-image-qualification).
 The shared suite, ownership safeguards, and image-promotion gate remain unchanged.
 
+- [ ] `OM-2` [Low] triage below-threshold findings retained by the 2026-09-20 framework scan.
+  ASH passed its configured gate; no finding names the new scenario/diagnostics/fixture modules.
+  Review `GHSA-8wmf-6v46-5gfg` on the three OpenTelemetry modules at v1.44.0 (`otel/sdk`,
+  `exporters/otlp/otlptrace`, `exporters/otlp/otlptrace/otlptracegrpc`) for applicability and remediation.
+  Review the 18 Bandit low findings: B404/B603/B101 in the MOD-1/MOD-3 research probes,
+  B404/B607/B603 in the three Python VM cleanup test files, and B105 in
+  `test/e2e/fixtures/nut_client.py`. Record justified fixture-only dispositions or fixes per location;
+  do not suppress all low findings. `GO-2026-5932` already has an existing dependency triage record.
+
 ### v1 Release Readiness
 
 **New task prefix:** `REL` (release readiness).

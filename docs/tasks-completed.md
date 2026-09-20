@@ -785,6 +785,21 @@ Original entry (historical, not an additional open task):
 
 ## VM Test Coverage
 
+- [x] `VM-14` [Medium] unwired framework composition expansion, follow-up to VM-12/VM-13.
+  Completed 2026-09-20: added sequential scenario execution with step/total budgets, failure
+  diagnostics and independent cleanup; private bounded diagnostic bundles; and generated-name
+  namespace fixtures with cluster/owner/UID checks, deletion preconditions and disappearance
+  observation. Tests cover cancellation, panic/partial-start cleanup, swallowed deadlines/output
+  errors, finalizer timeout, conflicts, foreign/replaced objects and confirmed-create cancellation.
+  A framework-only composition contract combines workspace retention, diagnostics and fixture
+  cleanup. Local `make test`, `make lint`, race-enabled framework and both-adapter component suites,
+  and the configured ASH security gate pass. Below-threshold findings outside these modules are
+  tracked under OM-2 (the existing x/crypto finding retains its prior triage).
+  Existing Hadron/Talos callers, vmprocess and workflows are unchanged. No new modules are wired
+  into guest scenarios, and no live API/guest qualification or full-framework completion is claimed.
+  [Module contracts and composition example](../test/internal/vmframework/README.md).
+
+
 - [x] `VM-13` [Medium] comprehensive Hadron/Talos duplication audit and shared framework
   expansion, follow-up to VM-12's dated scope correction. Completed 2026-09-20: reproducible
   inventory covers 56 original files and 194 Go functions, with a full file-disposition map.

@@ -38,16 +38,23 @@ uses `vmprocess` to confirm the original process has exited before removing mach
 Kubernetes wait utility. Neither imports PEG, a guest adapter, Docker, or a Kubernetes client.
 `command`, `workspace`, `lifecycle`, `image` and `signalfixture` use standard-library mechanics;
 `kube` uses client-go and shared readiness, while `workflow` reads YAML declarations.
+`scenario` composes the lifecycle scope without importing either guest adapter; `diagnostics`
+retains explicitly selected, bounded streams. `fixture` composes cluster identity checks with
+server-assigned namespace identities and preconditioned deletion. These modules remain alongside
+the harnesses, with no existing scenario or adapter imports.
 `vmprocess` depends on PEG's machine interface and Linux pidfds and remains behind VM build tags.
-No shared module assumes SSH exists or installs a guest, applies a Kubernetes manifest, or
-performs a host shutdown on behalf of its caller.
+No shared module assumes SSH exists or installs a guest, applies an arbitrary Kubernetes manifest,
+or performs a host shutdown on behalf of its caller. The fixture module can explicitly create and
+delete its own namespace through the caller-supplied client; it never adopts an existing namespace.
 
 The [module README](../../../test/internal/vmframework/README.md) defines the public function
 contracts and test commands. The [adapter composition tests](../../../test/internal/vmframework/adapters_test.go)
 exercise both real constructors with prepared artifacts, keeping state directories distinct and
 proving that machine cleanup does not delete a caller-owned image. Additional contracts compose
 private workspaces, image/kubectl command plans, signal patches and lifecycle cleanup. These tests
-do not execute Docker/kubectl or boot VMs.
+do not execute Docker/kubectl or boot VMs. A separate framework-only composition contract combines
+scenario failure, private workspace retention, namespace cleanup and bounded diagnostic capture
+with a fake Kubernetes client. This is not API-server/garbage-collection qualification.
 
 ## Incremental adoption
 

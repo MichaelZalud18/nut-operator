@@ -14,6 +14,9 @@ They compose with the existing adapters; they do not own scenario policy or star
 | `signalfixture` | Clock-controlled invalid payloads and safe Secret patch encoding; assertions remain scenario-owned. |
 | `image` | Explicit tag/digest parsing and common operand/manager build command plans; archive/registry delivery remains adapter-owned. |
 | `workflow` | Common job-budget/cleanup-order checks, exercised against every checked-in Hadron/Talos smoke workflow. |
+| `scenario` | Validated sequential steps, per-step/total deadlines, bounded failure diagnostics and cleanup, structured outcomes, partial-start and panic cleanup. |
+| `diagnostics` | Explicit collectors, private retained bundles, per-stream byte limits, independent collector failures and total/per-collector deadlines. |
+| `fixture` | Fresh namespace creation in an explicitly identified cluster; retained owner/UID checks, preconditioned deletion and observed disappearance. |
 | `inventory` | Bounded source enumeration and exact/structural function-duplicate candidates, including smoke-tagged sources. |
 | [vmprocess](../vmprocess/machine.go) | Retain verified QEMU ownership from startup through confirmed cleanup; never substitute PID-file lookup for process identity. |
 | [Python emergency cleanup](../../../hack/vm_cleanup.py) | Independent pidfd cleanup for both guest smoke roots if the Go test process fails; preserve diagnostics. |
@@ -61,6 +64,41 @@ SHA-256 digests but is not a full OCI name validator; tag-only consumers reject 
 Workflow checks enforce the existing declared budget/order conventions. They do not interpret
 arbitrary GitHub expressions or prove shell-command ownership. The historical kernel-only KVM
 probe has a separate lifecycle and is inventoried rather than treated as a full guest smoke job.
+
+`scenario.Run` validates every step before starting. A failed step prevents later steps and
+suppresses resource-removal callbacks, while stop callbacks still run. Cleanup and optional
+failure diagnostics use fresh contexts with explicit budgets after parent cancellation.
+Diagnostics run before stops, so they can inspect live resources, and their budget is separate
+from cleanup. The maximum cooperative duration is execution + diagnostics + cleanup budgets;
+a timeout cannot forcibly interrupt a callback. Panics propagate after cleanup, retaining state;
+failure diagnostics are skipped during panic unwinding. Reports keep step, diagnostic and
+cleanup failures distinct, and none can silently become a successful result. A cleanup removal
+failure can leave partially removed state; this is reported, not rolled back.
+
+`diagnostics.Capture` only runs explicitly supplied collectors. It creates a new private directory
+and mode-0600 files, retains partial output after failure, and caps bytes per collector. A callback
+cannot hide truncation by ignoring its writer error. An individual collector failure does not
+prevent other collectors within the total budget. Callers must redact streams before writing and
+choose which artifacts to publish; callback errors are returned in memory, never automatically
+written to disk. Collector writes must be serialized and finish before the callback returns.
+Local filesystem calls are not forcibly cancellable. Artifact existence is not proof that a
+collector succeeded: inspect the returned entry errors and truncation flags.
+
+`fixture.CreateNamespace` requires an explicit client, trusted previously recorded cluster UID
+and positive API-operation budget. It creates a generated-name namespace with a random owner token
+and retains its server UID. A lost/ambiguous create response is not retried or adopted by name;
+inspect retained diagnostics instead. `Check` rechecks identity before scenario work, but cannot
+make arbitrary later caller API writes atomic with that check. `Delete` rechecks cluster and
+namespace identity, sends UID and resource-version preconditions, and waits for disappearance.
+Replacement, ownership changes, conflicts and stuck finalizers fail closed. No finalizer is
+removed. Retry a timed-out deletion through the retained handle; never create a new name-only
+cleanup handle. Register cleanup before creation and retain a nonnil returned handle even when
+creation also reports cancellation. The module does not manage manifests, guest power or clusters.
+
+The framework-only [composition test](scenario/composition_test.go) demonstrates a private
+workspace, owned namespace, failed assertion, pre-cleanup diagnostic collection and retained
+failure artifacts. It uses a fake Kubernetes client. Existing Hadron/Talos callers do not import
+these three modules; future adoption remains a separate change with real guest qualification.
 
 Run the primitive suites without guest tags:
 
