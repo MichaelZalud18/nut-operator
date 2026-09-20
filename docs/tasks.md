@@ -312,8 +312,9 @@ VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-cover
   Harness reset is not operator recovery; restart/resume continuity remains outside SB-1.
   **2026-09-20:** corrected the post-drain lookup's wrong agent selector in `088f7d7`.
   [Live qualification run 35534905207](https://github.com/MichaelZalud18/nut-operator/actions/runs/35534905207)
-  is pending; do not claim signal/audit acceptance until its result is inspected.
-  [Selector and ownership evidence](contributing/audits/vm-process-ownership-2026-09-20.md).
+  completed failure -- rejected by the `VM-10` ownership check before reaching the selector fix,
+  not a re-occurrence of the selector bug. Re-verification blocked on that check's intermittent
+  rejection; see `VM-10`. [Selector and ownership evidence](contributing/audits/vm-process-ownership-2026-09-20.md).
   [Prior milestones and remaining acceptance](contributing/audits/vm-test-research-2026-09-15.md#vm-4).
 - [ ] `VM-5` [Medium] integrate the proven harness into bounded, initially manual Actions jobs.
   Consume exact-revision immutable images built before guests run; keep minimal token permissions,
