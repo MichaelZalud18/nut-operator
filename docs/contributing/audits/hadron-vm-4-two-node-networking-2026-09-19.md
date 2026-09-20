@@ -1,6 +1,8 @@
 # Hadron VM-4: two-node topology, real drain/eviction, and network-policy enforcement
 
-Status: in progress, 34 live runs across two workflows, 2026-09-18/19. See `docs/tasks.md`'s `VM-4`
+Status: in progress, 36 live runs across two workflows, 2026-09-18/20. Cross-node networking root
+cause resolved 2026-09-20 (network-policy milestone passing live; drain milestone's own core
+mechanism proven, one smaller unrelated issue remains). See `docs/tasks.md`'s `VM-4`
 entry for current status.
 
 ## Scope
@@ -143,10 +145,22 @@ belt-and-braces safety net; it should now be a no-op once Flannel self-derives t
 from the corrected interface binding. Not yet confirmed live. Investigation continues; not yet
 closed.
 
+**Confirmed live (2026-09-20), run 35529204930: `flannel-iface` is the fix.**
+`TestHadronOutageFlowTwoNodeEnforcesNetworkPolicy` **passed completely** -- same-namespace probe
+allowed, unrelated-namespace probe denied, cross-node, for the first time ever. The sibling drain
+run (35529203632) got dramatically further too: NodePowerAgent reported Ready, PostgreSQL Ready,
+real telemetry transitioned OnBattery, and `DrainNodes` **really cordoned the agent Node and really
+evicted the workload Pod** -- the actual core mechanism this milestone exists to prove, working
+end to end for the first time. It failed later and separately: `waitForExactlyOneRunningAgentPod`'s
+own DaemonSet pod list call hit `context deadline exceeded` post-drain -- a new, much smaller, and
+likely unrelated issue (possibly transient API churn right after cordoning the node it's listing
+against). Not yet investigated. The cross-node networking root cause this whole document tracks is
+resolved.
+
 ## Open
 
-- Confirm live that `flannel-iface` actually rebinds `flannel.1`'s own `local`/`dev` to the
-  ClusterLink interface, and that real cross-node pod/Service traffic succeeds end to end.
+- Investigate the new, much smaller `waitForExactlyOneRunningAgentPod` timeout in the drain test
+  (run 35529203632) -- likely unrelated to the networking chain above, not yet diagnosed.
 - Real audit-row assertions for the two-node drain flow (not yet attempted; `assertRealDrainAuditRecords`
   exists in the test but has not yet passed live).
 - Real actuation (`Actuate`/`PowerOff`) plus a survivor-availability assertion under an actual halt,
