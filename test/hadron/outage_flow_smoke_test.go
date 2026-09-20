@@ -661,7 +661,9 @@ func waitForExactlyOneRunningAgentPod(ctx context.Context, t *testing.T, clients
 	t.Helper()
 	var agentPodName string
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, "exactly one NodePowerAgent DaemonSet pod", func(ctx context.Context) error {
-		agentPods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		attemptCtx, attemptCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer attemptCancel()
+		agentPods, err := clientset.CoreV1().Pods(namespace).List(attemptCtx, metav1.ListOptions{
 			LabelSelector: "power.zalud.io/nodepoweragent=hadron-outage-agent",
 		})
 		if err != nil {

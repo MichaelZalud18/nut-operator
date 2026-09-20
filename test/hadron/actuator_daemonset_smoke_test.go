@@ -330,7 +330,9 @@ func waitForExactlyOneRunningAgentPodNamed(ctx context.Context, t *testing.T, cl
 	t.Helper()
 	var podName string
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, "exactly one NodePowerAgent DaemonSet pod", func(ctx context.Context) error {
-		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		attemptCtx, attemptCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer attemptCancel()
+		pods, err := clientset.CoreV1().Pods(namespace).List(attemptCtx, metav1.ListOptions{
 			LabelSelector: "power.zalud.io/nodepoweragent=" + agentName,
 		})
 		if err != nil {
