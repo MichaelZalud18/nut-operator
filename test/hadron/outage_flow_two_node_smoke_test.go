@@ -411,7 +411,7 @@ spec:
 		// exactly its ICMP response for that case). Endpoints is the direct, authoritative answer.
 		endpoints := runKubectlOutput(ctx, t, kubeconfigPath, "get", "endpoints", "hadron-two-node-outage-nutserver", "-n", twoNodeOutageNamespace, "-o", "yaml")
 		t.Logf("diagnostic Endpoints for hadron-two-node-outage-nutserver:\n%s", endpoints)
-		dumpKubeProxyState(ctx, t, agentCreds, "hadron-two-node-outage-nutserver")
+		dumpKubeProxyState(ctx, t, serverCreds, agentCreds, "hadron-two-node-outage-nutserver")
 	})
 
 	t.Log("waiting for the real PostgreSQL Deployment to become Ready")
@@ -707,8 +707,6 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 	runKubectl(ctx, t, kubeconfigPath, "annotate", "node", agentNodeName,
 		"flannel.alpha.coreos.com/public-ip="+clusterJoinAgentIP, "--overwrite")
 
-	installIpsetForDiagnostics(ctx, t, agentCreds)
-
 	return serverCreds, agentCreds, kubeconfigPath, clientset, serverNodeName, agentNodeName
 }
 
@@ -777,22 +775,6 @@ func waitForAgentServiceRouting(ctx context.Context, t *testing.T, serverCreds, 
 	}, nil)
 }
 
-// installIpsetForDiagnostics installs the ipset CLI once per guest, right after the two-node join
-// completes, so any later diagnostic dump can inspect kube-router's own NetworkPolicy set
-// membership directly. Confirmed live (2026-09-19): available via apt on this guest OS; the ipset
-// kernel module and its `-m set --match-set` iptables rules already work without it (kube-proxy
-// itself talks to the kernel directly), so its absence only ever blocked this diagnostic, never
-// the actual Service/NetworkPolicy behavior under test. Best-effort and non-fatal -- this exists
-// purely to make a later diagnose callback's own ipset dump meaningful, never to gate the test.
-func installIpsetForDiagnostics(ctx context.Context, t *testing.T, agentCreds Credentials) {
-	t.Helper()
-	if out, err := guestCommand(ctx, agentCreds, "sudo apt-get install -y ipset 2>&1"); err != nil {
-		if out2, err2 := guestCommand(ctx, agentCreds, "sudo apt-get update -y >/dev/null 2>&1 && sudo apt-get install -y ipset 2>&1"); err2 != nil {
-			t.Logf("installing ipset on the agent for diagnostics failed (non-fatal): %v\n%s\n%s", err2, out, out2)
-		}
-	}
-}
-
 // dumpKubeProxyState is a diagnostic-only SSH probe of the agent's own kube-proxy state, never
 // fataling the test itself: waitForAgentServiceRouting's own check (kubernetes.default's Service,
 // present since cluster bootstrap) has twice now passed while a Service created fresh during the
@@ -801,7 +783,7 @@ func installIpsetForDiagnostics(ctx context.Context, t *testing.T, agentCreds Cr
 // up newly-created ones, but that is still an inference from application-level symptoms, not
 // direct evidence. grepFor should be the specific Service's ClusterIP or name/namespace substring
 // (kube-proxy's own iptables rules carry a `--comment "<namespace>/<name>"` annotation).
-func dumpKubeProxyState(ctx context.Context, t *testing.T, agentCreds Credentials, grepFor string) {
+func dumpKubeProxyState(ctx context.Context, t *testing.T, serverCreds, agentCreds Credentials, grepFor string) {
 	t.Helper()
 	rules, err := guestCommand(ctx, agentCreds,
 		fmt.Sprintf("sudo iptables-save | grep -i %q || echo 'no matching iptables rules'", grepFor))
@@ -821,42 +803,62 @@ func dumpKubeProxyState(ctx context.Context, t *testing.T, agentCreds Credential
 	// rules reference the pod IP, not the ClusterIP, so an IP-only grep misses them) showed a
 	// complete, correct KUBE-SERVICES -> KUBE-SVC -> KUBE-SEP -> DNAT chain pointing at the real
 	// pod IP. iptables/kube-proxy is not the problem. pinK3sNodeIP only sets kubelet/kube-proxy's
-	// own node-ip; Flannel has its own, separate interface-selection logic that does not
-	// necessarily follow node-ip, and waitForAgentServiceRouting's own passing check never actually
-	// exercised cross-node pod traffic -- kubernetes.default's Endpoints point at the API server's
-	// real host address directly, not an overlay pod IP, so that check only ever proved
-	// ClusterLink host-to-host reachability (already known to work), not Flannel's VXLAN overlay
-	// between the two nodes. subnet.env records exactly which address Flannel chose as its own
-	// public/tunnel endpoint.
-	subnetEnv, err := guestCommand(ctx, agentCreds, "cat /run/flannel/subnet.env 2>&1; echo ---; ip -d link show flannel.1 2>&1; echo ---; ip route show 2>&1")
-	if err != nil {
-		t.Logf("diagnostic flannel state fetch failed: %v\n%s", err, subnetEnv)
+	// own node-ip and patches Flannel's own public-ip node annotation, but never sets
+	// flannel-iface, and the annotation is what *other* nodes read to build their own peer
+	// forwarding entries -- it does not by itself prove this node's own local VXLAN device
+	// (flannel.1) is bound to the ClusterLink interface rather than still defaulting to the NAT
+	// one. Reading the device's own local address/parent interface and neighbor (FDB) entries
+	// directly is the only way to settle that, not an annotation dump.
+	//
+	// This guest's base OS (Kairos's Hadron flavor) ships no package manager, but that does not
+	// mean it lacks these tools: k3s vendors its own copies at a fixed data path (verified
+	// 2026-09-20 against the exact pinned k3s-root release archive, not assumed), which a plain
+	// `ip`/`ipset` invocation through sudo's own PATH never finds -- busybox's own minimal `ip`
+	// silently accepted `-d` as an unknown flag and printed its usage text instead of erroring,
+	// which is why an earlier run's own "successful" dump of this command actually carried no real
+	// evidence at all. Listing the binaries first, and keeping each command's own success/failure
+	// visible separately, avoids both mistakes happening again silently.
+	const k3sBinDir = "/var/lib/rancher/k3s/data/current/bin"
+	if out, err := guestCommand(ctx, agentCreds, "sudo ls -l "+k3sBinDir+"/ip "+k3sBinDir+"/ipset 2>&1"); err != nil {
+		t.Logf("diagnostic k3s bundled tool listing failed: %v\n%s", err, out)
 	} else {
-		t.Logf("diagnostic agent flannel subnet.env / flannel.1 / routes:\n%s", subnetEnv)
+		t.Logf("diagnostic k3s bundled tool listing:\n%s", out)
 	}
-	// The Flannel VTEP fix landed live (2026-09-19) and changed the failure mode from "Host is
-	// unreachable" (a routing failure) to "Connection refused"/"Operation timed out" (both require
-	// the packet to actually reach the destination and get a real network-layer response) -- real
-	// progress, but a different remaining question. This package's own earlier iptables dump showed
-	// k3s's bundled kube-router NetworkPolicy controller matches peers via named ipsets
-	// (KUBE-SRC-*/KUBE-DST-*, referenced from a KUBE-NWPLCY-* chain), populated from each matching
-	// pod's own IP. A pod created moments before its own traffic needs to be evaluated against that
-	// policy -- true for both this milestone's own fresh upsmon/actuator pod and the sibling
-	// network-policy milestone's own fresh probe pod -- could plausibly still be missing from the
-	// relevant set if kube-router's own sync lags slightly behind the pod actually running,
-	// producing exactly a silent drop (a timeout, not a quick refusal) rather than a policy or
-	// routing bug. Dumping every ipset directly settles whether this is real or not.
-	// Live evidence (2026-09-19): this failed with a bare "Process exited with status 1" on every
-	// attempt, consistent with the ipset CLI tool simply not being installed on this minimal guest
-	// OS (kube-proxy/kube-router manage ipsets via direct netlink calls from within the k3s Go
-	// binary, not a shelled-out CLI, so its absence is plausible and this path may be a dead end
-	// without more tooling than is available here) rather than a real command failure each time --
-	// falls back to a plain marker instead of letting a missing tool masquerade as a bare failure.
-	ipsets, err := guestCommand(ctx, agentCreds, "sudo ipset list 2>&1 || echo '(ipset unavailable on this guest)'")
-	if err != nil {
-		t.Logf("diagnostic agent ipset dump failed: %v\n%s", err, ipsets)
+	if out, err := guestCommand(ctx, agentCreds, "cat /run/flannel/subnet.env 2>&1"); err != nil {
+		t.Logf("diagnostic flannel subnet.env fetch failed: %v\n%s", err, out)
 	} else {
-		t.Logf("diagnostic agent ipset list (check whether the relevant pod IP is a member):\n%s", ipsets)
+		t.Logf("diagnostic agent flannel subnet.env:\n%s", out)
+	}
+	if out, err := guestCommand(ctx, agentCreds, "sudo "+k3sBinDir+"/ip -d link show flannel.1 2>&1"); err != nil {
+		t.Logf("diagnostic flannel.1 link dump failed: %v\n%s", err, out)
+	} else {
+		t.Logf("diagnostic agent flannel.1 link (local address/parent interface):\n%s", out)
+	}
+	if out, err := guestCommand(ctx, agentCreds, "sudo "+k3sBinDir+"/ip -d neigh show dev flannel.1 2>&1"); err != nil {
+		t.Logf("diagnostic flannel.1 neighbor (FDB) dump failed: %v\n%s", err, out)
+	} else {
+		t.Logf("diagnostic agent flannel.1 neighbor (FDB) entries:\n%s", out)
+	}
+	if out, err := guestCommand(ctx, agentCreds, "ip route show 2>&1"); err != nil {
+		t.Logf("diagnostic agent route dump failed: %v\n%s", err, out)
+	} else {
+		t.Logf("diagnostic agent routes:\n%s", out)
+	}
+	// This package's own iptables dump showed k3s's bundled kube-router NetworkPolicy controller
+	// matches peers via named ipsets (KUBE-SRC-*/KUBE-DST-*, referenced from a KUBE-NWPLCY-*
+	// chain), populated from each matching pod's own IP. An agent-side dump only ever shows the
+	// source-pod (egress) side of that match; the destination-side ingress membership lives on
+	// whichever node hosts the protected NUTServer pod -- the server in both this milestone and the
+	// sibling network-policy one -- so both sides are dumped here, not just the agent.
+	if out, err := guestCommand(ctx, agentCreds, "sudo "+k3sBinDir+"/ipset list 2>&1"); err != nil {
+		t.Logf("diagnostic agent ipset dump failed: %v\n%s", err, out)
+	} else {
+		t.Logf("diagnostic agent ipset list (source/egress side):\n%s", out)
+	}
+	if out, err := guestCommand(ctx, serverCreds, "sudo "+k3sBinDir+"/ipset list 2>&1"); err != nil {
+		t.Logf("diagnostic server ipset dump failed: %v\n%s", err, out)
+	} else {
+		t.Logf("diagnostic server ipset list (destination/ingress side -- check for the agent's own pod IP as a member):\n%s", out)
 	}
 }
 

@@ -301,7 +301,7 @@ spec:
 		// jump comment. The sibling drain milestone's own diagnostic already grepped by service
 		// name instead and got the complete KUBE-SERVICES -> KUBE-SVC -> KUBE-SEP -> DNAT chain;
 		// this was the one remaining gap in this test's own copy of the same diagnostic.
-		dumpKubeProxyState(ctx, t, agentCreds, serverName)
+		dumpKubeProxyState(ctx, t, serverCreds, agentCreds, serverName)
 	})
 
 	t.Log("confirming the unrelated-namespace probe is reliably denied, not merely slow")
