@@ -238,10 +238,18 @@ own detailed prerequisites and prior milestones; the remaining work is below.
   artifact/readiness modules. Single-node boot uses scenario/lifecycle and bounded diagnostic
   bundles; the manual boot workflow separately exercises cancellation after QEMU ownership
   capture, before provisioning. Component checks cover constructor failure/cancellation and
-  diagnostic retention. **Live qualification pending:** exact-revision boot, cancellation and
-  actuator regression (which also consumes the constructor/polling changes). Cancellation
-  inside PEG's non-cooperative Create call remains outside this rehearsal. Keep actuator fixture
-  migration and Hadron caller migration open until their own qualification.
+  diagnostic retention. At `81086f2`, the
+  [live cancellation job](https://github.com/MichaelZalud18/nut-operator/actions/runs/35544929237/job/106169034212)
+  passed: verified QEMU exit, retained diagnostics, independent cleanup and artifact upload.
+  [Full node boot](https://github.com/MichaelZalud18/nut-operator/actions/runs/35544929237)
+  also passed, including real Node Ready and removal of stopped machine state.
+  Actuator fixtures now compose the same lifecycle cleanup and diagnostics, with generated
+  namespaces retaining cluster/namespace identity. Their owning disposable VM handles teardown
+  after actuation; API namespace deletion is not claimed after the API server powers off.
+  **Live qualification pending:** actuator adoption and the earlier
+  [constructor/polling regression](https://github.com/MichaelZalud18/nut-operator/actions/runs/35544934472).
+  Cancellation inside PEG's non-cooperative Create call remains outside this rehearsal.
+  Hadron migration and VM-9/VM-11 safety qualification remain separate open work.
   [Detailed criteria](contributing/audits/vm-test-research-2026-09-15.md#vm-8).
 
 VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-coverage).

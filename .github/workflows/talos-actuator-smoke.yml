@@ -133,7 +133,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: talos-actuator-smoke-console
-          path: ${{ env.TALOS_STATE_ROOT }}/nut-operator-talos-*/std*
+          path: |
+            ${{ env.TALOS_STATE_ROOT }}/nut-operator-talos-*/std*
+            ${{ env.TALOS_STATE_ROOT }}/nut-operator-talos-*/vm-diagnostics-*/*.log
           if-no-files-found: warn
           retention-days: 14
 

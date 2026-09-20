@@ -36,9 +36,6 @@ limitations under the License.
 //     network identity as Kubernetes itself reports it (status.addresses' InternalIP) -- not
 //     TalosAPIAddr's host-side loopback forward (meaningless from inside a pod's own network
 //     namespace) and not guestGatewayHost (that reaches the host, not this guest).
-//
-// Unverified against a real guest as of this writing, the same status every milestone in this
-// session started at.
 package talos
 
 import (
@@ -63,11 +60,10 @@ import (
 	"github.com/spectrocloud/peg/pkg/machine/types"
 
 	"github.com/MichaelZalud18/nut-operator/internal/nodeagent"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/fixture"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/lifecycle"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/scenario"
 )
-
-// talosActuatorNamespace is distinct from every other smoke test's own operand namespace so none
-// of their fixtures can collide if a future change runs them in the same job.
-const talosActuatorNamespace = "power-actuator-talos"
 
 // talosActuatorApprovalAnnotation matches the real, already-decided key
 // internal/controller/nodepoweragent_controller_test.go's own envtest case proves, the same one
@@ -77,6 +73,7 @@ const talosActuatorApprovalAnnotation = "power.zalud.io/approved-for-actuation"
 // talosActuatorGuest is one bootstrapped, operator-deployed Talos guest with a real steady-state
 // NUTServer/UPSDevice and a talosconfig Secret already in place, but no NodePowerAgent applied yet.
 type talosActuatorGuest struct {
+	namespace       *fixture.Namespace
 	machine         types.Machine
 	clientset       *kubernetes.Clientset
 	kubeconfigPath  string
@@ -110,20 +107,21 @@ func bootTalosActuatorGuestReadyForNodePowerAgent(ctx context.Context, t *testin
 	if err != nil {
 		t.Fatalf("NewSafeMachine: %v", err)
 	}
+	var scope lifecycle.Scope
+	if err := registerMachine(&scope, m); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		if t.Failed() {
-			t.Logf("leaving machine state at %s for inspection (stdout/stderr hold the guest console)", m.Config().StateDir)
-			if err := SafeStop(m, 30*time.Second); err != nil {
-				t.Errorf("stop: %v", err)
+			t.Logf("retaining failed Talos fixture at %s", m.Config().StateDir)
+			diagnosticCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			if _, err := captureMachineDiagnostics(diagnosticCtx, m.Config().StateDir, scenario.Report{}); err != nil {
+				t.Errorf("capture guest diagnostics: %v", err)
 			}
-			return
 		}
-		if err := SafeStop(m, 30*time.Second); err != nil {
-			t.Errorf("teardown: %v", err)
-			return
-		}
-		if err := m.Clean(); err != nil {
-			t.Errorf("removing stopped machine state: %v", err)
+		if err := scope.Finish(context.Background(), 30*time.Second, t.Failed()); err != nil {
+			t.Errorf("owned guest cleanup: %v", err)
 		}
 	})
 	if _, err := m.Create(ctx); err != nil {
@@ -246,8 +244,24 @@ func bootTalosActuatorGuestReadyForNodePowerAgent(ctx context.Context, t *testin
 		}
 	})
 
-	t.Log("creating the operand namespace")
-	runKubectl(ctx, t, kubeconfigPath, "create", "ns", talosActuatorNamespace)
+	// The private kubeconfig was generated for this newly provisioned guest.
+	// Record that cluster's identity before creating and rechecking the fixture.
+	identityCtx, identityCancel := context.WithTimeout(ctx, 15*time.Second)
+	cluster, err := clientset.CoreV1().Namespaces().Get(identityCtx, "kube-system", metav1.GetOptions{})
+	identityCancel()
+	if err != nil {
+		t.Fatalf("recording owned cluster identity: %v", err)
+	}
+	namespace, err := fixture.CreateNamespace(ctx, clientset, cluster.UID, 30*time.Second)
+	if err != nil {
+		t.Fatalf("creating owned operand namespace: %v", err)
+	}
+	if err := namespace.Check(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The whole disposable cluster belongs to scope. Namespace deletion is not
+	// attempted after positive actuation has powered off its API server.
+	operandNamespace := namespace.Name()
 
 	t.Log("creating the talosconfig Secret the TalosShutdown actuator will mount")
 	talosconfigBytes, err := os.ReadFile(talosconfigPath)
@@ -257,7 +271,7 @@ func bootTalosActuatorGuestReadyForNodePowerAgent(ctx context.Context, t *testin
 	const talosconfigSecretName = "talos-actuator-talosconfig"
 	const talosconfigSecretKey = "config"
 	secretManifest := fmt.Sprintf("apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  namespace: %s\nstringData:\n  %s: |\n%s\n",
-		talosconfigSecretName, talosActuatorNamespace, talosconfigSecretKey, indentLines(string(talosconfigBytes), "    "))
+		talosconfigSecretName, operandNamespace, talosconfigSecretKey, indentLines(string(talosconfigBytes), "    "))
 	applyManifest(ctx, t, kubeconfigPath, secretManifest)
 
 	nutServerRepo, nutServerTag := splitImageRef(t, nutServerImage)
@@ -286,7 +300,7 @@ spec:
     mode: OperatorManaged
   tls:
     mode: Disabled
-`, talosActuatorNamespace, nutServerRepo, nutServerTag)
+`, operandNamespace, nutServerRepo, nutServerTag)
 
 	t.Log("applying the real UPSDevice/NUTServer fixture")
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, "fixture apply", func(ctx context.Context) error {
@@ -294,6 +308,7 @@ spec:
 	}, nil)
 
 	return talosActuatorGuest{
+		namespace:       namespace,
 		machine:         m,
 		clientset:       clientset,
 		kubeconfigPath:  kubeconfigPath,
@@ -311,6 +326,9 @@ spec:
 // rendered DaemonSet to report exactly one Running pod.
 func applyApprovedTalosActuatorNodePowerAgent(ctx context.Context, t *testing.T, guest talosActuatorGuest, name string) string {
 	t.Helper()
+	if err := guest.namespace.Check(ctx); err != nil {
+		t.Fatalf("operand namespace ownership: %v", err)
+	}
 	upsmonRepo, upsmonTag := splitImageRef(t, guest.upsmonImage)
 	actuatorRepo, actuatorTag := splitImageRef(t, guest.actuatorImage)
 	manifest := fmt.Sprintf(`
@@ -349,7 +367,7 @@ spec:
         key: %[10]s
       endpoints:
         - %[11]s
-`, name, talosActuatorApprovalAnnotation, talosActuatorNamespace, guest.nodeName,
+`, name, talosActuatorApprovalAnnotation, guest.namespace.Name(), guest.nodeName,
 		upsmonRepo, upsmonTag, actuatorRepo, actuatorTag,
 		guest.talosconfigName, guest.talosconfigKey, guest.nodeInternalIP)
 
@@ -365,14 +383,14 @@ spec:
 		return nil
 	}, nil)
 
-	return waitForExactlyOneRunningTalosAgentPod(ctx, t, guest.clientset, name)
+	return waitForExactlyOneRunningTalosAgentPod(ctx, t, guest.clientset, guest.namespace.Name(), name)
 }
 
-func waitForExactlyOneRunningTalosAgentPod(ctx context.Context, t *testing.T, clientset *kubernetes.Clientset, agentName string) string {
+func waitForExactlyOneRunningTalosAgentPod(ctx context.Context, t *testing.T, clientset *kubernetes.Clientset, namespace, agentName string) string {
 	t.Helper()
 	var podName string
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, "exactly one NodePowerAgent DaemonSet pod", func(ctx context.Context) error {
-		pods, err := clientset.CoreV1().Pods(talosActuatorNamespace).List(ctx, metav1.ListOptions{
+		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: "power.zalud.io/nodepoweragent=" + agentName,
 		})
 		if err != nil {
@@ -398,12 +416,15 @@ func waitForExactlyOneRunningTalosAgentPod(ctx context.Context, t *testing.T, cl
 // beat the actuator to an already-unauthorized payload -- see waitForTalosSignalRejectedOrRevoked).
 func writeRealTalosSignal(ctx context.Context, t *testing.T, guest talosActuatorGuest, agentName string, payload nodeagent.ShutdownSignal) {
 	t.Helper()
+	if err := guest.namespace.Check(ctx); err != nil {
+		t.Fatalf("operand namespace ownership: %v", err)
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("encode signal: %v", err)
 	}
 	secretName := agentName + "-node-signals"
-	runKubectl(ctx, t, guest.kubeconfigPath, "-n", talosActuatorNamespace, "patch", "secret", secretName,
+	runKubectl(ctx, t, guest.kubeconfigPath, "-n", guest.namespace.Name(), "patch", "secret", secretName,
 		"--type=json", "-p", fmt.Sprintf(`[{"op":"add","path":"/data/%s.json","value":"%s"}]`,
 			guest.nodeName, base64.StdEncoding.EncodeToString(encoded)))
 }
@@ -420,21 +441,21 @@ func waitForTalosSignalRejectedOrRevoked(ctx context.Context, t *testing.T, gues
 	signalKey := guest.nodeName + ".json"
 	var log string
 	waitForWithDiagnostics(t, ctx, 4*time.Minute, "signal rejection or revocation", func(ctx context.Context) error {
-		secret, err := guest.clientset.CoreV1().Secrets(talosActuatorNamespace).Get(ctx, secretName, metav1.GetOptions{})
+		secret, err := guest.clientset.CoreV1().Secrets(guest.namespace.Name()).Get(ctx, secretName, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
 		if _, present := secret.Data[signalKey]; !present {
 			return nil
 		}
-		current, err := guest.clientset.CoreV1().Pods(talosActuatorNamespace).Get(ctx, podName, metav1.GetOptions{})
+		current, err := guest.clientset.CoreV1().Pods(guest.namespace.Name()).Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
 		if current.Status.Phase != corev1.PodRunning && current.Status.Phase != corev1.PodPending {
 			return fmt.Errorf("pod left Running/Pending unexpectedly: phase=%s", current.Status.Phase)
 		}
-		raw, err := guest.clientset.CoreV1().Pods(talosActuatorNamespace).GetLogs(podName, &corev1.PodLogOptions{Container: "actuator"}).DoRaw(ctx)
+		raw, err := guest.clientset.CoreV1().Pods(guest.namespace.Name()).GetLogs(podName, &corev1.PodLogOptions{Container: "actuator"}).DoRaw(ctx)
 		if err != nil {
 			return err
 		}
@@ -445,7 +466,7 @@ func waitForTalosSignalRejectedOrRevoked(ctx context.Context, t *testing.T, gues
 		}
 		return nil
 	}, func(ctx context.Context) {
-		current, err := guest.clientset.CoreV1().Pods(talosActuatorNamespace).Get(ctx, podName, metav1.GetOptions{})
+		current, err := guest.clientset.CoreV1().Pods(guest.namespace.Name()).Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
 			t.Logf("diagnostic pod fetch failed: %v", err)
 			return
@@ -621,7 +642,7 @@ spec:
         key: %[8]s
       endpoints:
         - %[9]s
-`, talosActuatorNamespace, guest.nodeName, upsmonRepo, upsmonTag, actuatorRepo, actuatorTag,
+`, guest.namespace.Name(), guest.nodeName, upsmonRepo, upsmonTag, actuatorRepo, actuatorTag,
 		guest.talosconfigName, guest.talosconfigKey, guest.nodeInternalIP)
 
 	t.Log("applying a TalosShutdown NodePowerAgent with no approvalAnnotation set -- expecting admission to refuse it")

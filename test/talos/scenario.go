@@ -22,21 +22,7 @@ import (
 func runMachineScenario(ctx context.Context, m types.Machine, steps []scenario.Step) (scenario.Report, error) {
 	start := scenario.Step{Name: "start owned Talos guest", Timeout: 2 * time.Minute,
 		Run: func(ctx context.Context, scope *lifecycle.Scope) error {
-			if err := scope.Add("Talos guest", func(ctx context.Context) error {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				deadline, ok := ctx.Deadline()
-				if !ok {
-					return fmt.Errorf("cleanup deadline required")
-				}
-				return SafeStop(m, time.Until(deadline))
-			}, func(ctx context.Context) error {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				return m.Clean()
-			}); err != nil {
+			if err := registerMachine(scope, m); err != nil {
 				return err
 			}
 			_, err := m.Create(ctx)
@@ -49,6 +35,24 @@ func runMachineScenario(ctx context.Context, m types.Machine, steps []scenario.S
 			_, err := captureMachineDiagnostics(ctx, m.Config().StateDir, report)
 			return err
 		},
+	})
+}
+
+func registerMachine(scope *lifecycle.Scope, m types.Machine) error {
+	return scope.Add("Talos guest", func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return fmt.Errorf("cleanup deadline required")
+		}
+		return SafeStop(m, time.Until(deadline))
+	}, func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return m.Clean()
 	})
 }
 

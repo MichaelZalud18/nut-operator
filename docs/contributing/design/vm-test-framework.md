@@ -42,7 +42,8 @@ Kubernetes wait utility. Neither imports PEG, a guest adapter, Docker, or a Kube
 retains explicitly selected, bounded streams. `fixture` composes cluster identity checks with
 server-assigned namespace identities and preconditioned deletion. Talos imports shared artifact
 preparation and readiness at its adapter boundaries; its single-node boot scenario composes
-scenario/lifecycle and diagnostic bundles. Namespace fixtures remain standalone.
+scenario/lifecycle and diagnostic bundles. Talos actuator fixtures use the same lifecycle
+registration and diagnostics with generated, identity-checked namespace fixtures.
 `vmprocess` depends on PEG's machine interface and Linux pidfds and remains behind VM build tags.
 No shared module assumes SSH exists or installs a guest, applies an arbitrary Kubernetes manifest,
 or performs a host shutdown on behalf of its caller. The fixture module can explicitly create and
@@ -68,6 +69,15 @@ kubeconfig. The manual workflow runs boot and cancellation on separate runners b
 uses fixed forwarded ports. The cancellation case cancels after verified startup, before
 provisioning; it cannot interrupt PEG calls that ignore context. Independent Python cleanup and
 external workflow deadlines remain required.
+
+The Talos actuator fixture records the cluster UID through the credentials generated for its
+owned guest before creating an operand namespace. It retains the namespace handle, rechecks it
+before agent/signal writes, and passes its generated name explicitly to observations and
+manifests. The VM owns the entire disposable cluster: successful actuation intentionally powers
+off its API server, so teardown stops the verified machine and discards its state instead of
+requiring namespace deletion against an unavailable API. This integration does not qualify the
+fixture module's API deletion/garbage-collection path. Actuation and negative-signal assertions
+remain scenario-owned; lifecycle cleanup never supplies shutdown evidence.
 
 1. Adopt `readiness.Wait` inside each adapter's existing `waitForWithDiagnostics`/`pollGuest`
    boundary, preserving scenario-specific failure messages and diagnostic cadence. Confirm that

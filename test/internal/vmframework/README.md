@@ -99,8 +99,10 @@ The framework-only [composition test](scenario/composition_test.go) demonstrates
 workspace, owned namespace, failed assertion, pre-cleanup diagnostic collection and retained
 failure artifacts. It uses a fake Kubernetes client. Talos single-node boot also consumes
 scenario/lifecycle and diagnostics; its manual workflow exercises real boot and cancellation
-after verified startup. The namespace fixture remains standalone. Hadron retains its existing
-scenario mechanics.
+after verified startup. Talos actuator scenarios consume lifecycle/diagnostics and namespace
+creation/identity checks; the enclosing disposable guest owns their final teardown, including
+when actuation powers off its API server. This does not exercise namespace API deletion.
+Hadron retains its existing scenario mechanics.
 
 Run the primitive suites without guest tags:
 
