@@ -9,6 +9,12 @@ active entries keep the remaining work and link to detailed research or acceptan
 Release readiness and publishing live in [tasks-v1-release.md](tasks-v1-release.md).
 Work deliberately deferred beyond v1 lives in [tasks-post-v1.md](tasks-post-v1.md).
 
+Closed tasks retain their original scope, dates and evidence. Additional work gets a new task ID
+and an explicit follow-up link to the closed task(s); do not reopen or rewrite completed records.
+Related requirement IDs are references, not available IDs for new follow-up tasks.
+
+Last reviewed: 2026-09-19 (execution safety, Kind qualification, and storage retry follow-up).
+
 Last reviewed: 2026-09-15 (completed work and research extracted; task scope and recorded test
 results preserved). Proposed designs are not settled decisions or evidence of implementation.
 
@@ -158,8 +164,8 @@ Owns: the `NUTServer` CRD, `internal/controller/nutserver_*.go`, and the
 Completed supervisor Kind acceptance (`ENG-1`), startup verification (`NS-6`), and readiness
 correctness (`NS-1`) are recorded in [completed tasks](tasks-completed.md#nut-server--upsd).
 The [dated qualification](contributing/audits/kind-qualification-2026-09-17.md) distinguishes
-passing component/spec evidence from failed overall commands. Full-suite and exact-image
-promotion remain the separate TEST-3 gate.
+passing component/spec evidence from failed overall commands. Subsequent full-suite and
+exact-image promotion qualification is recorded under completed TEST-3.
 
 Completed runtime-tool packaging (`NS-10`) is recorded in
 [completed tasks](tasks-completed.md#nut-server--upsd); the supported tool boundary is in
@@ -216,6 +222,10 @@ No open work. Execution/audit ownership separation (`ENG-3`) and database compon
   **Acceptance:** failed readiness schedules a bounded retry; recovery and later failure update
   status at the same generation. Healthy external storage also has periodic rechecks. Preserve
   CNPG behavior and shutdown/spool policies; verify controller regression coverage.
+  **Implementation validated locally (2026-09-19):** external-storage failures requeue within
+  30 seconds and healthy storage rechecks within five minutes. Race-enabled regressions pass
+  outage/recovery/outage at one generation, Ready-condition updates, and unchanged CNPG/Disabled
+  retry behavior. CI qualification remains before closure.
 
 ---
 

@@ -109,7 +109,13 @@ func (r *PowerManagementClusterReconciler) Reconcile(ctx context.Context, req ct
 		log.Error(err, "failed to record PowerManagementCluster audit event", "powermanagementcluster", cluster.Name)
 	}
 
-	if storageconfig.EffectiveMode(cluster.Spec.Storage) == powerv1alpha1.PowerStorageCNPG {
+	mode := storageconfig.EffectiveMode(cluster.Spec.Storage)
+	// External database health has no Kubernetes watch to wake this controller.
+	// Retry startup outages promptly and keep healthy status from becoming stale.
+	if mode == powerv1alpha1.PowerStorageExternalPostgres && result.accepted && !storageReady {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	if mode == powerv1alpha1.PowerStorageCNPG || mode == powerv1alpha1.PowerStorageExternalPostgres {
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 	return ctrl.Result{}, nil
