@@ -11,6 +11,123 @@ global_settings:
     - path: "api/**/zz_generated.deepcopy.go"
       reason: "Kubebuilder generated deepcopy code."
   suppressions:
+    # CI triage 2026-09-19, run 35477169305: exact rule/path/line exceptions.
+    # These findings contain fixture behavior or public identifiers, not site credentials.
+    - rule_id: "B104"
+      path: "test/e2e/fixtures/ex34_barrier.py"
+      line_start: 59
+      line_end: 59
+      reason: "Owned Kind pod must accept the manager's hook over its Service; no host networking or host operations. The barrier release endpoint separately enforces loopback-only callers."
+    - rule_id: "B104"
+      path: "test/e2e/fixtures/mod2_receiver.py"
+      line_start: 50
+      line_end: 50
+      reason: "Owned Kind pod receives authenticated test hooks over its Service; binding pod interfaces is required. This fixture records events and never invokes host operations."
+    - rule_id: "B113"
+      path: "test/e2e/fixtures/ex34_barrier.py"
+      line_start: 29
+      line_end: 29
+      reason: "requests is a local dictionary, not the requests HTTP library. Its get performs no I/O; the barrier's event wait is separately bounded to 120 seconds."
+    - rule_id: "CKV_GHA_7"
+      path: ".github/workflows/talos-actuator-smoke.yml"
+      line_start: 23
+      line_end: 23
+      reason: "Manual input selects a Go test regex in disposable guests, not a published build. It is passed through an environment variable as one quoted argument; this workflow has read-only repository permissions."
+    - rule_id: "CKV_GHA_7"
+      path: ".github/workflows/test-e2e.yml"
+      line_start: 17
+      line_end: 17
+      reason: "Boolean manual input enables an additional startup observation against checkout-built images. It cannot change the build or bypass the reusable image workflow's acceptance gate."
+    - rule_id: "SECRET-BASE64-HIGH-ENTROPY-STRING"
+      path: "test/e2e/driver_recovery_component_test.go"
+      line_start: 18
+      line_end: 20
+      reason: "Tab-delimited dummy-ups protocol fixtures with synthetic process IDs, not encoded credentials."
+    - rule_id: "SECRET-HEX-HIGH-ENTROPY-STRING"
+      path: "internal/inventory/stable_hash_test.go"
+      line_start: 56
+      line_end: 56
+      reason: "Public SHA-256 compatibility fixture for the empty inventory JSON object."
+    - rule_id: "SECRET-HEX-HIGH-ENTROPY-STRING"
+      path: "internal/shutdownflow/hash_encoding_test.go"
+      line_start: 68
+      line_end: 68
+      reason: "Public SHA-256 compatibility fixture for canonical empty target JSON."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/controller/nodepoweragent_tls.go"
+      line_start: 101
+      line_end: 101
+      reason: "Copies an existing Kubernetes Secret reference from the API specification; no credential literal."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/controller/nutserver_credentials.go"
+      line_start: 72
+      line_end: 72
+      reason: "Compares an authentication mode enum and checks a Secret reference for nil; no credential literal."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/controller/shutdownflow_quorum.go"
+      line_start: 37
+      line_end: 37
+      reason: "Tests signal-channel marker and public Kubernetes label keys, not secret data."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/controller/shutdownflow_release_safety_test.go"
+      line_start: 69
+      line_end: 69
+      reason: "Synthetic signal Secret object name old-channel for a stale-destination test."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/controller/shutdownflow_release_validation_test.go"
+      line_start: 106
+      line_end: 106
+      reason: "Synthetic node name and signal data-map key node-b.json, not credentials."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/executor/executor.go"
+      line_start: 1214
+      line_end: 1214
+      reason: "Matches signal results to release targets using Secret namespace/name/data-key references; no embedded secret value."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/executor/executor_test.go"
+      line_start: 731
+      line_end: 731
+      reason: "Synthetic signal Secret namespace other used to test mismatched delivery evidence."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/executor/release_evidence.go"
+      line_start: 33
+      line_end: 34
+      reason: "Compares refreshed signal Secret references and data-map key identities, not credential values."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/kubeactions/terminal_handoff.go"
+      line_start: 40
+      line_end: 40
+      reason: "Error text describes distinct signal data-map keys sharing one Secret, not secret material."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/kubeactions/terminal_handoff.go"
+      line_start: 44
+      line_end: 44
+      reason: "Indexes a set with a signal data-map key to reject duplicate delivery destinations."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/kubeactions/terminal_handoff.go"
+      line_start: 53
+      line_end: 53
+      reason: "Constructs Kubernetes Secret object metadata and type without credential literals."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/kubeactions/terminal_handoff_test.go"
+      line_start: 69
+      line_end: 69
+      reason: "Synthetic Secret object name other exercises rejection of mixed delivery channels."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "internal/kubeinventory/validation.go"
+      line_start: 99
+      line_end: 99
+      reason: "Checks the credentialSecretRef API field for nil; no credential value is embedded."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "test/e2e/metrics_component_test.go"
+      line_start: 34
+      line_end: 34
+      reason: "Asserts Kubernetes service-account token projection and absence of Secret/hostPath volume sources; no token literal."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "test/e2e/metrics_component_test.go"
+      line_start: 86
+      line_end: 86
+      reason: "Synthetic metrics-test-secret marker written into a temporary test directory; grants no service access."
     - rule_id: "SECRET-BASIC-AUTH-CREDENTIALS"
       path: "test/e2e/shutdown_flow_fixture_test.go"
       reason: "Synthetic DSN for PostgreSQL created inside the owned disposable Kind cluster; no site credential or external database is used."
