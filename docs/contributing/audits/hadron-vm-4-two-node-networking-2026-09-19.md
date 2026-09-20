@@ -187,9 +187,25 @@ resolved.
   mismatch looks unlikely from static reading alone -- this needs live diagnosis (e.g. dumping the
   agent's actual `/proc/<pid>/cmdline` and `m.Config().StateDir` at the failure point), not another
   static-code guess.
+- **Correction (2026-09-20): the actual root cause of the `waitForExactlyOneRunningAgentPod`
+  timeout was found, and it was neither of the above.** Re-running the drain test after the
+  `047e917`/`vmprocess` blocker cleared (run `35533818621`) hit the *identical* 2:00.00-elapsed
+  timeout again, meaning `483ba7c`'s per-attempt sub-context fix, while a legitimate hygiene
+  improvement (see above), was not the real fix. The actual cause, found and fixed by Codex in
+  `088f7d7`: the two-node drain test's call site used `waitForExactlyOneRunningAgentPod`, whose
+  label selector hardcodes the *one-node* fixture's agent name
+  (`power.zalud.io/nodepoweragent=hadron-outage-agent`), but the two-node fixture's real
+  NodePowerAgent is named `hadron-two-node-outage-agent` -- the selector matched zero pods for the
+  entire budget, every attempt, which is indistinguishable from a hung/unresponsive API without
+  per-pod diagnostics. Fixed by calling `waitForExactlyOneRunningAgentPodNamed(...,
+  "hadron-two-node-outage-agent")` instead. Not a networking, API-timeout, or QEMU-ownership issue
+  at all. `0d8681f` (mine) added per-attempt pod-state logging and a DaemonSet/Node diagnose
+  callback to this check regardless, so a future selector mismatch or genuine timeout is
+  immediately distinguishable in the log instead of requiring this kind of after-the-fact
+  reconstruction.
 - Real audit-row assertions for the two-node drain flow (not yet attempted; `assertRealDrainAuditRecords`
-  exists in the test but has not yet passed live) -- blocked on the new blocker above until the
-  drain test can boot both guests again.
+  exists in the test but has not yet passed live) -- next to verify now that both real blockers
+  (vmprocess ownership, agent-name selector) are fixed.
 - Real actuation (`Actuate`/`PowerOff`) plus a survivor-availability assertion under an actual halt,
   deliberately deferred from this milestone's own scope (`Simulate` only, matching every other
   milestone's incremental-scope discipline).
