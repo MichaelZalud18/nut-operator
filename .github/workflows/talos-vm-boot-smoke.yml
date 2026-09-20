@@ -6,8 +6,7 @@ name: Talos VM Boot Smoke Test
 # entry) -- generates and applies machine configuration over Talos's own API, bootstraps one
 # Kubernetes node, and confirms real Node Ready from the host. Downloads a real ISO and performs a
 # full unattended install and reboot, so this must never become a required or automatic check, and
-# must never run on every push. Unverified against a real guest as of this writing; see
-# test/talos/boot_smoke_test.go's own doc comment.
+# must never run on every push. Separate runners qualify boot and startup cancellation.
 on:
   workflow_dispatch: {}
 
@@ -17,8 +16,12 @@ jobs:
   boot:
     permissions:
       contents: read
-    name: Boot one Talos guest and confirm a real Node comes up Ready
+    name: Talos lifecycle (${{ matrix.test }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test: [TestTalosNodeBootstraps, TestTalosStartupCancellation]
     # Sum of bounded steps below is 57 minutes; reserve additional cancellation margin.
     timeout-minutes: 62
     steps:
@@ -77,7 +80,9 @@ jobs:
       # overhead comfortably fits a 30m test deadline.
       - name: Boot the pinned Talos artifact and bootstrap a node
         timeout-minutes: 32
-        run: TMPDIR="$TALOS_STATE_ROOT" timeout --signal=TERM --kill-after=15s 31m go test -tags=talos,talos_smoke ./test/talos -run TestTalosNodeBootstraps -v -timeout=30m
+        env:
+          TALOS_TEST: ${{ matrix.test }}
+        run: TMPDIR="$TALOS_STATE_ROOT" timeout --signal=TERM --kill-after=15s 31m go test -tags=talos,talos_smoke ./test/talos -run "^${TALOS_TEST}$" -v -timeout=30m
 
       # Stop before uploading artifacts, so slow diagnostics cannot delay process cleanup.
       - name: Stop leftover guests owned by this run
@@ -98,14 +103,16 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Upload full guest console log on failure
+      - name: Upload retained guest evidence
         timeout-minutes: 3
-        if: failure()
+        if: always() && env.TALOS_STATE_ROOT != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: talos-boot-smoke-console
-          path: ${{ env.TALOS_STATE_ROOT }}/nut-operator-talos-*/std*
-          if-no-files-found: warn
+          name: talos-boot-smoke-${{ matrix.test }}
+          path: |
+            ${{ env.TALOS_STATE_ROOT }}/nut-operator-talos-*/std*
+            ${{ env.TALOS_STATE_ROOT }}/nut-operator-talos-*/vm-diagnostics-*/*.log
+          if-no-files-found: ignore
           retention-days: 14
 
       - name: Remove stopped guest state

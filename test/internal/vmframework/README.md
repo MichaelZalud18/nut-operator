@@ -97,8 +97,10 @@ creation also reports cancellation. The module does not manage manifests, guest 
 
 The framework-only [composition test](scenario/composition_test.go) demonstrates a private
 workspace, owned namespace, failed assertion, pre-cleanup diagnostic collection and retained
-failure artifacts. It uses a fake Kubernetes client. Existing Hadron/Talos callers do not import
-these three modules; future adoption remains a separate change with real guest qualification.
+failure artifacts. It uses a fake Kubernetes client. Talos single-node boot also consumes
+scenario/lifecycle and diagnostics; its manual workflow exercises real boot and cancellation
+after verified startup. The namespace fixture remains standalone. Hadron retains its existing
+scenario mechanics.
 
 Run the primitive suites without guest tags:
 

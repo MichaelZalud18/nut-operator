@@ -234,6 +234,14 @@ own detailed prerequisites and prior milestones; the remaining work is below.
   [framework foundations and adoption plan](contributing/design/vm-test-framework.md).
   Migrate callers incrementally alongside VM safety qualification; no third adapter or duplication
   lint finding is required. The existing scenarios need not all move at once.
+  **2026-09-20 Talos adoption:** the Talos constructor and polling boundary consume shared
+  artifact/readiness modules. Single-node boot uses scenario/lifecycle and bounded diagnostic
+  bundles; the manual boot workflow separately exercises cancellation after QEMU ownership
+  capture, before provisioning. Component checks cover constructor failure/cancellation and
+  diagnostic retention. **Live qualification pending:** exact-revision boot, cancellation and
+  actuator regression (which also consumes the constructor/polling changes). Cancellation
+  inside PEG's non-cooperative Create call remains outside this rehearsal. Keep actuator fixture
+  migration and Hadron caller migration open until their own qualification.
   [Detailed criteria](contributing/audits/vm-test-research-2026-09-15.md#vm-8).
 
 VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-coverage).

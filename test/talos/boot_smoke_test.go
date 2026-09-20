@@ -25,12 +25,18 @@ package talos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/lifecycle"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/scenario"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmprocess"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -46,131 +52,136 @@ const (
 	talosISOChecksum = "7f6e8ee537cf19dd873333578d5e117725a781108b0a6934323a869d2cc93666" // pragma: allowlist secret -- a public release checksum, not a credential
 )
 
-// TestTalosNodeBootstraps is VM-7's first milestone: pin the Talos artifact, generate and apply
-// machine configuration through this package's own guest adapter (talosctl.go), reach the Talos
-// API from the host, bootstrap one Kubernetes node, fetch kubeconfig, and verify actual Node Ready
-// from the host -- then prove clean owned teardown. Deliberately not TalosShutdown qualification:
-// VM-7's own text gates that on this bring-up being deterministic first.
-//
-// Unverified against a real guest as of this writing (docs/contributing/audits/
-// vm-test-research-2026-09-15.md#vm-7 names this milestone "Testable now; Conditional" for exactly
-// this reason) -- expect at least one live run to find something this design got wrong, the same
-// way every one of test/hadron's own milestones did on its first attempt.
+// TestTalosNodeBootstraps provisions through the Talos API and confirms exactly
+// one real Ready node, using shared scenario cleanup and retained diagnostics.
+// Host-driven teardown is lifecycle qualification, not actuator shutdown proof.
 func TestTalosNodeBootstraps(t *testing.T) {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := talosSmokeContext(t)
 	defer cancel()
-	if deadline, ok := t.Deadline(); ok {
-		var deadlineCancel context.CancelFunc
-		ctx, deadlineCancel = context.WithDeadline(ctx, deadline.Add(-time.Minute))
-		defer deadlineCancel()
-	}
-
 	m, err := NewSafeMachineContext(ctx, Config{
-		Memory:      "4096",
-		CPUs:        "2",
-		ISO:         talosISOURL,
-		ISOChecksum: talosISOChecksum,
+		Memory: "4096", CPUs: "2", ISO: talosISOURL, ISOChecksum: talosISOChecksum,
 	})
 	if err != nil {
-		t.Fatalf("NewSafeMachine: %v", err)
+		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if t.Failed() {
-			t.Logf("leaving machine state at %s for inspection (stdout/stderr hold the guest console)", m.Config().StateDir)
-			if err := SafeStop(m, 30*time.Second); err != nil {
-				t.Errorf("stop: %v", err)
+	root := m.Config().StateDir
+	t.Logf("owned machine state: %s", root)
+	workDir := filepath.Join(root, "configuration")
+	var controlplaneConfigPath, talosconfigPath, kubeconfigPath string
+	var clientset *kubernetes.Clientset
+	step := func(name string, budget time.Duration, run func(context.Context) error) scenario.Step {
+		return scenario.Step{Name: name, Timeout: budget, Run: func(ctx context.Context, _ *lifecycle.Scope) error {
+			t.Log(name)
+			return run(ctx)
+		}}
+	}
+	wait := func(ctx context.Context, check func(context.Context) error) error {
+		return pollGuest(ctx, 5*time.Second, time.Minute, check, nil)
+	}
+	_, err = runMachineScenario(ctx, m, []scenario.Step{
+		step("Talos maintenance API", 8*time.Minute, func(ctx context.Context) error {
+			return wait(ctx, talosMaintenanceAPIReachable)
+		}),
+		step("configure and install Talos", 2*time.Minute, func(ctx context.Context) error {
+			if err := os.Mkdir(workDir, 0700); err != nil {
+				return err
 			}
-			return
-		}
-		if err := SafeStop(m, 30*time.Second); err != nil {
-			t.Errorf("teardown: %v", err)
-			return
-		}
-		if err := m.Clean(); err != nil {
-			t.Errorf("removing stopped machine state: %v", err)
-		}
-	})
-	if _, err := m.Create(ctx); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	t.Logf("waiting for the Talos maintenance API on %s", TalosAPIAddr)
-	// 2026-09-16 first live run: the metal ISO's isolinux menu mirrors to the captured serial
-	// console (SeaBIOS's own display-to-serial mirroring when no VGA display is attached), but the
-	// Talos kernel itself does not -- its default boot entry has no console=ttyS0, so nothing
-	// further appears on that console even on a successful boot. That run's own guest never opened
-	// port 50000 within a 3-minute budget; CD-ROM-backed ISO boot under nested KVM plus Talos's own
-	// first-boot initialization is the likely cause, not a wiring defect (no connection-refused
-	// evidence, only deadline-exceeded). Widened budget, still comfortably inside the 26m go test
-	// deadline alongside the other three waits (5m + 3m + 5m).
-	waitForWithDiagnostics(t, ctx, 8*time.Minute, "Talos maintenance API", func(ctx context.Context) error {
-		return talosMaintenanceAPIReachable(ctx)
-	}, nil)
-
-	workDir := t.TempDir()
-	t.Log("generating machine configuration")
-	controlplaneConfigPath, talosconfigPath, err := genConfig(ctx, "nut-operator-talos-smoke", workDir)
-	if err != nil {
-		t.Fatalf("gen config: %v", err)
-	}
-
-	t.Log("applying machine configuration over the insecure maintenance API")
-	if err := applyConfig(ctx, controlplaneConfigPath); err != nil {
-		t.Fatalf("apply config: %v", err)
-	}
-
-	// The applied config triggers an install-to-disk and reboot, the same install-then-reboot
-	// shape test/hadron's own Kairos flow already has a proven wait for -- this is a second,
-	// independent wait rather than assumed to follow immediately once apply-config returns.
-	t.Log("waiting for the Talos secure API after install and reboot")
-	waitForWithDiagnostics(t, ctx, 5*time.Minute, "Talos secure API", func(ctx context.Context) error {
-		return talosSecureAPIReachable(ctx, talosconfigPath)
-	}, nil)
-
-	t.Log("bootstrapping the cluster")
-	if err := bootstrap(ctx, talosconfigPath); err != nil {
-		t.Fatalf("bootstrap: %v", err)
-	}
-
-	t.Log("fetching kubeconfig")
-	var kubeconfigPath string
-	waitForWithDiagnostics(t, ctx, 3*time.Minute, "kubeconfig available", func(ctx context.Context) error {
-		path, err := fetchKubeconfig(ctx, talosconfigPath, workDir)
-		if err != nil {
+			var err error
+			controlplaneConfigPath, talosconfigPath, err = genConfig(ctx, "nut-operator-talos-smoke", workDir)
+			if err != nil {
+				return err
+			}
+			return applyConfig(ctx, controlplaneConfigPath)
+		}),
+		step("Talos secure API after install and reboot", 5*time.Minute, func(ctx context.Context) error {
+			return wait(ctx, func(ctx context.Context) error { return talosSecureAPIReachable(ctx, talosconfigPath) })
+		}),
+		step("bootstrap Kubernetes", time.Minute, func(ctx context.Context) error {
+			return bootstrap(ctx, talosconfigPath)
+		}),
+		step("fetch private kubeconfig", 3*time.Minute, func(ctx context.Context) error {
+			return wait(ctx, func(ctx context.Context) error {
+				var err error
+				kubeconfigPath, err = fetchKubeconfig(ctx, talosconfigPath, workDir)
+				return err
+			})
+		}),
+		step("construct Kubernetes client", time.Minute, func(_ context.Context) error {
+			data, err := os.ReadFile(kubeconfigPath)
+			if err != nil {
+				return err
+			}
+			cfg, err := clientcmd.RESTConfigFromKubeConfig(data)
+			if err != nil {
+				return err
+			}
+			clientset, err = kubernetes.NewForConfig(cfg)
 			return err
-		}
-		kubeconfigPath = path
-		return nil
-	}, nil)
+		}),
+		step("exactly one real Ready node", 5*time.Minute, func(ctx context.Context) error {
+			return wait(ctx, func(ctx context.Context) error {
+				nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+				if err != nil {
+					return fmt.Errorf("listing nodes: %w", err)
+				}
+				if len(nodes.Items) != 1 {
+					return fmt.Errorf("expected exactly one node, got %d", len(nodes.Items))
+				}
+				if !nodeReady(nodes.Items[0]) {
+					return fmt.Errorf("node %q is not Ready yet", nodes.Items[0].Name)
+				}
+				return nil
+			})
+		}),
+	})
+	if err != nil {
+		t.Fatalf("Talos boot scenario (retained state %s): %v", root, err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("successful cleanup left machine state: %v", err)
+	}
+	t.Log("confirmed real Node Ready and removal of stopped owned guest state")
+}
 
-	kubeconfig, err := os.ReadFile(kubeconfigPath)
+// TestTalosStartupCancellation cancels after QEMU ownership is captured, before
+// provisioning. It proves bounded stop and diagnostic retention on a real guest;
+// it does not simulate cancellation inside PEG's non-cooperative Create call.
+func TestTalosStartupCancellation(t *testing.T) {
+	ctx, cancel := talosSmokeContext(t)
+	defer cancel()
+	m, err := NewSafeMachineContext(ctx, Config{
+		Memory: "4096", CPUs: "2", ISO: talosISOURL, ISOChecksum: talosISOChecksum,
+	})
 	if err != nil {
-		t.Fatalf("reading fetched kubeconfig: %v", err)
+		t.Fatal(err)
 	}
-	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
-	if err != nil {
-		t.Fatalf("parsing fetched kubeconfig: %v", err)
+	root := m.Config().StateDir
+	report, err := runMachineScenario(ctx, m, []scenario.Step{{
+		Name: "cancel before provisioning", Timeout: time.Second,
+		Run: func(context.Context, *lifecycle.Scope) error { cancel(); return ctx.Err() },
+	}})
+	if !errors.Is(err, context.Canceled) || report.CleanupErr != nil || report.DiagnosticsErr != nil {
+		t.Fatalf("cancellation failed (retained state %s): report=%+v err=%v", root, report, err)
 	}
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		t.Fatalf("building client from fetched kubeconfig: %v", err)
+	if exited, err := vmprocess.Exited(m); err != nil || !exited {
+		t.Fatalf("owned guest still live: exited=%t err=%v", exited, err)
 	}
+	bundles, err := filepath.Glob(filepath.Join(root, "vm-diagnostics-*", "steps.log"))
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("missing retained cancellation evidence: %v %v", bundles, err)
+	}
+	t.Logf("verified cancelled startup stopped owned QEMU and retained evidence: %s", bundles[0])
+	// Workflow cleanup removes retained state after collecting the evidence.
+}
 
-	t.Log("waiting for the real Node to report Ready from outside the guest")
-	waitForWithDiagnostics(t, ctx, 5*time.Minute, "Node Ready", func(ctx context.Context) error {
-		nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return fmt.Errorf("listing nodes through the forwarded Kubernetes API: %w", err)
-		}
-		if len(nodes.Items) != 1 {
-			return fmt.Errorf("expected exactly one node, got %d", len(nodes.Items))
-		}
-		if !nodeReady(nodes.Items[0]) {
-			return fmt.Errorf("node %q is not Ready yet", nodes.Items[0].Name)
-		}
-		return nil
-	}, nil)
-	t.Log("reached the guest's Kubernetes API from outside it and confirmed the real Node Ready")
+func talosSmokeContext(t *testing.T) (context.Context, context.CancelFunc) {
+	t.Helper()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	if deadline, ok := t.Deadline(); ok {
+		bounded, cancel := context.WithDeadline(ctx, deadline.Add(-90*time.Second))
+		return bounded, func() { cancel(); stop() }
+	}
+	return ctx, stop
 }
 
 // nodeReady matches the actual Ready condition, not the substring also present in NotReady --

@@ -29,8 +29,7 @@ limitations under the License.
 // test/hadron's Config here would mean adding SSH- and cloud-init-shaped fields a Talos guest
 // cannot use, not reusing a genuinely shared shape. The adapters share PEG and the narrow
 // vmprocess ownership guard, so cleanup uses the same verified startup handle in both guests.
-// Provisioning and ISO-download/verify helpers remain adapter-local; broader fixture extraction
-// remains VM-8's scope.
+// Provisioning remains adapter-local; pinned artifact preparation uses the shared framework.
 //
 // Build-tag gated (`talos`), the same reasoning as `hadron`: PEG's dependency tree has no reason to
 // be part of the default build/vet/lint graph for a package nothing in the shipped operator
@@ -38,23 +37,19 @@ limitations under the License.
 package talos
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/artifact"
 	"github.com/MichaelZalud18/nut-operator/test/internal/vmprocess"
 
-	"github.com/cavaliergopher/grab/v3"
 	"github.com/spectrocloud/peg/pkg/machine"
 	"github.com/spectrocloud/peg/pkg/machine/types"
 )
@@ -112,22 +107,11 @@ func NewSafeMachineContext(ctx context.Context, cfg Config) (m types.Machine, re
 	var digest []byte
 	if cfg.ISOChecksum != "" {
 		var err error
-		digest, err = parseISOChecksum(cfg.ISOChecksum)
+		digest, err = artifact.ParseSHA256(cfg.ISOChecksum)
 		if err != nil {
 			return nil, err
 		}
 		cfg.ISOChecksum = "sha256:" + hex.EncodeToString(digest)
-	}
-	artifact, err := url.Parse(cfg.ISO)
-	if err != nil {
-		return nil, fmt.Errorf("parsing ISO location: %w", err)
-	}
-	remote := artifact.Scheme != ""
-	if remote && ((artifact.Scheme != "https" && artifact.Scheme != "http") || artifact.Host == "") {
-		return nil, fmt.Errorf("remote ISO must use an HTTP or HTTPS URL")
-	}
-	if remote && len(digest) == 0 {
-		return nil, fmt.Errorf("remote ISO requires a pinned SHA-256 checksum")
 	}
 
 	stateDir, err := os.MkdirTemp("", "nut-operator-talos-")
@@ -139,13 +123,10 @@ func NewSafeMachineContext(ctx context.Context, cfg Config) (m types.Machine, re
 			retErr = errors.Join(retErr, os.RemoveAll(stateDir))
 		}
 	}()
-	if remote {
-		cfg.ISO, err = downloadISO(ctx, cfg.ISO, stateDir, digest)
-	} else if cfg.ISO != "" {
-		cfg.ISO, err = filepath.Abs(cfg.ISO)
-		if err == nil && len(digest) != 0 {
-			err = verifyISO(cfg.ISO, digest)
-		}
+	if cfg.ISO != "" {
+		cfg.ISO, err = artifact.Prepare(ctx, nil, artifact.Source{
+			Location: cfg.ISO, SHA256: cfg.ISOChecksum,
+		}, filepath.Join(stateDir, "boot.iso"))
 	}
 	if err != nil {
 		return nil, err
@@ -175,51 +156,6 @@ func NewSafeMachineContext(ctx context.Context, cfg Config) (m types.Machine, re
 		return nil, fmt.Errorf("configuring machine: %w", err)
 	}
 	return vmprocess.Wrap(m), nil
-}
-
-func downloadISO(ctx context.Context, location, stateDir string, digest []byte) (string, error) {
-	path := filepath.Join(stateDir, "boot.iso")
-	req, err := grab.NewRequest(path, location)
-	if err != nil {
-		return "", fmt.Errorf("creating ISO request: %w", err)
-	}
-	req = req.WithContext(ctx)
-	req.NoResume = true
-	req.SetChecksum(sha256.New(), digest, true)
-	if err := grab.NewClient().Do(req).Err(); err != nil {
-		return "", fmt.Errorf("downloading ISO: %w", err)
-	}
-	return path, nil
-}
-
-func verifyISO(path string, digest []byte) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("opening ISO: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, f); err != nil {
-		return fmt.Errorf("reading ISO: %w", err)
-	}
-	if !bytes.Equal(hash.Sum(nil), digest) {
-		return fmt.Errorf("ISO SHA-256 checksum mismatch")
-	}
-	return nil
-}
-
-func parseISOChecksum(value string) ([]byte, error) {
-	algorithm, digest, prefixed := strings.Cut(value, ":")
-	if !prefixed {
-		digest = value
-	} else if !strings.EqualFold(algorithm, "sha256") {
-		return nil, fmt.Errorf("ISO checksum must use sha256")
-	}
-	decoded, err := hex.DecodeString(digest)
-	if err != nil || len(decoded) != sha256.Size {
-		return nil, fmt.Errorf("ISO checksum must contain exactly 64 hexadecimal SHA-256 digits")
-	}
-	return decoded, nil
 }
 
 // SafeTeardown stops the QEMU process verified at Create, then removes its state.

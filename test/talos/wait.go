@@ -4,33 +4,25 @@ package talos
 
 import (
 	"context"
-	"errors"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/wait"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/readiness"
 )
 
-// pollGuest gives checks and diagnostics the same deadline. Callbacks must honor ctx. Identical to
-// test/hadron's own pollGuest.
+// pollGuest preserves the caller's deadline and diagnostic cadence through shared readiness.
+// Callbacks must honor ctx. Smoke callers always supply a bounded context.
 func pollGuest(ctx context.Context, interval, diagnoseEvery time.Duration, check func(context.Context) error, diagnose func(context.Context)) error {
-	var lastErr error
-	nextDiagnostic := time.Now().Add(diagnoseEvery)
-	err := wait.PollUntilContextCancel(ctx, interval, true, func(ctx context.Context) (bool, error) {
-		if ctx.Err() != nil {
-			return false, ctx.Err()
-		}
-		lastErr = check(ctx)
-		if lastErr == nil {
-			return true, ctx.Err()
-		}
-		if diagnose != nil && ctx.Err() == nil && !time.Now().Before(nextDiagnostic) {
-			diagnose(ctx)
-			nextDiagnostic = time.Now().Add(diagnoseEvery)
-		}
-		return false, nil
-	})
-	if err != nil {
-		return errors.Join(err, lastErr)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return nil
+	budget := time.Duration(1<<63 - 1)
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = time.Until(deadline)
+		if budget <= 0 {
+			return context.DeadlineExceeded
+		}
+	}
+	return readiness.Wait(ctx, readiness.Options{
+		Timeout: budget, Interval: interval, DiagnoseEvery: diagnoseEvery,
+	}, check, diagnose)
 }

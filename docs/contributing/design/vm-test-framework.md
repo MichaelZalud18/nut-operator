@@ -40,8 +40,9 @@ Kubernetes wait utility. Neither imports PEG, a guest adapter, Docker, or a Kube
 `kube` uses client-go and shared readiness, while `workflow` reads YAML declarations.
 `scenario` composes the lifecycle scope without importing either guest adapter; `diagnostics`
 retains explicitly selected, bounded streams. `fixture` composes cluster identity checks with
-server-assigned namespace identities and preconditioned deletion. These modules remain alongside
-the harnesses, with no existing scenario or adapter imports.
+server-assigned namespace identities and preconditioned deletion. Talos imports shared artifact
+preparation and readiness at its adapter boundaries; its single-node boot scenario composes
+scenario/lifecycle and diagnostic bundles. Namespace fixtures remain standalone.
 `vmprocess` depends on PEG's machine interface and Linux pidfds and remains behind VM build tags.
 No shared module assumes SSH exists or installs a guest, applies an arbitrary Kubernetes manifest,
 or performs a host shutdown on behalf of its caller. The fixture module can explicitly create and
@@ -57,6 +58,16 @@ scenario failure, private workspace retention, namespace cleanup and bounded dia
 with a fake Kubernetes client. This is not API-server/garbage-collection qualification.
 
 ## Incremental adoption
+
+Talos single-node boot keeps API provisioning and the exactly-one-Ready-node assertion visible
+in `test/talos/boot_smoke_test.go`. Cleanup is registered before Create, uses the retained
+vmprocess identity, and removes state only after successful execution and verified stop.
+Failed scenarios collect bounded console/step evidence before stopping, and retain private
+machine state. Uploads select only console and diagnostic logs, never machine configuration or
+kubeconfig. The manual workflow runs boot and cancellation on separate runners because Talos
+uses fixed forwarded ports. The cancellation case cancels after verified startup, before
+provisioning; it cannot interrupt PEG calls that ignore context. Independent Python cleanup and
+external workflow deadlines remain required.
 
 1. Adopt `readiness.Wait` inside each adapter's existing `waitForWithDiagnostics`/`pollGuest`
    boundary, preserving scenario-specific failure messages and diagnostic cadence. Confirm that
