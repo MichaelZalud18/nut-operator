@@ -676,11 +676,36 @@ func waitForExactlyOneRunningAgentPod(ctx context.Context, t *testing.T, clients
 			}
 		}
 		if len(running) != 1 {
-			return fmt.Errorf("expected exactly one Running NodePowerAgent DaemonSet pod, got %d Running of %d total", len(running), len(agentPods.Items))
+			var detail strings.Builder
+			for _, pod := range agentPods.Items {
+				fmt.Fprintf(&detail, " [%s phase=%s node=%s deleting=%t]", pod.Name, pod.Status.Phase, pod.Spec.NodeName, pod.DeletionTimestamp != nil)
+			}
+			err := fmt.Errorf("expected exactly one Running NodePowerAgent DaemonSet pod, got %d Running of %d total:%s", len(running), len(agentPods.Items), detail.String())
+			t.Logf("waitForExactlyOneRunningAgentPod attempt failed: %v", err)
+			return err
 		}
 		agentPodName = running[0].Name
 		return nil
-	}, nil)
+	}, func(ctx context.Context) {
+		diagCtx, diagCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer diagCancel()
+		ds, err := clientset.AppsV1().DaemonSets(namespace).Get(diagCtx, "hadron-outage-agent", metav1.GetOptions{})
+		if err != nil {
+			t.Logf("diagnostic: getting NodePowerAgent DaemonSet: %v", err)
+		} else {
+			t.Logf("diagnostic: NodePowerAgent DaemonSet desired=%d current=%d ready=%d updated=%d available=%d",
+				ds.Status.DesiredNumberScheduled, ds.Status.CurrentNumberScheduled, ds.Status.NumberReady,
+				ds.Status.UpdatedNumberScheduled, ds.Status.NumberAvailable)
+		}
+		nodes, err := clientset.CoreV1().Nodes().List(diagCtx, metav1.ListOptions{})
+		if err != nil {
+			t.Logf("diagnostic: listing Nodes: %v", err)
+		} else {
+			for _, node := range nodes.Items {
+				t.Logf("diagnostic: node %s ready=%t unschedulable=%t", node.Name, nodeReadyCondition(node), node.Spec.Unschedulable)
+			}
+		}
+	})
 	return agentPodName
 }
 
