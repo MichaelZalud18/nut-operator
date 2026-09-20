@@ -76,12 +76,14 @@ jobs:
       # genisoimage backs buildNoCloudISO's cloud-init seed generation -- installed here so that
       # coverage actually exercises it in CI rather than skipping, which is what happens locally
       # on a dev box without it (see test/hadron/cloudinit_test.go's requireISOTool).
-      - name: Install genisoimage
+      - name: Install VM component test tools
         if: matrix.k8s == '1.36'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends genisoimage
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends genisoimage qemu-system-x86
 
-      # These tagged component tests use loopback fixtures and child processes, not VMs or KVM.
+      # Component tests include a paused, device-free QEMU process; no guest OS or KVM.
       - name: VM adapter and cleanup regression tests
+        env:
+          VM_PROCESS_REQUIRE_QEMU: "1"
         if: matrix.k8s == '1.36'
         run: |
           go test -tags=hadron,talos ./test/internal/... ./test/hadron ./test/talos -race -count=1 -timeout=2m

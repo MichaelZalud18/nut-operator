@@ -42,13 +42,16 @@ func captureProcess(pid int, root string) (processHandle, error) {
 	args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
 	monitor := "unix:" + filepath.Join(root, "qemu-monitor.sock") + ",server,nowait"
 	matched := false
+	var observed []string
 	for i := 1; i+1 < len(args); i++ {
-		if args[i] == "-monitor" && args[i+1] == monitor {
-			matched = true
+		if args[i] == "-monitor" {
+			observed = append(observed, args[i+1])
+			matched = matched || args[i+1] == monitor
 		}
 	}
 	if !matched {
-		return nil, fmt.Errorf("QEMU does not reference the owned state directory")
+		exited, probeErr := h.exited()
+		return nil, errors.Join(fmt.Errorf("QEMU does not reference the owned state directory: cmdline bytes=%d, monitor=%q, expected=%q, exited=%t", len(cmdline), observed, monitor, exited), probeErr)
 	}
 	// A PID could be reused while /proc was read. The original pidfd must still
 	// identify a live process after validation; all subsequent signals use it.
