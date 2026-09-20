@@ -11,6 +11,32 @@ global_settings:
     - path: "api/**/zz_generated.deepcopy.go"
       reason: "Kubebuilder generated deepcopy code."
   suppressions:
+    # CI triage 2026-09-19, run 35485037401: reviewed modular/planner findings.
+    - rule_id: "CKV_K8S_15"
+      path: "dist/install-nut-only.yaml"
+      line_start: 2380
+      line_end: 2380
+      reason: "Generated from the scanned base manager's intentional IfNotPresent policy, required for Kind-loaded acceptance images. Production installation pins immutable image digests; this is the same policy as the full installer."
+    - rule_id: "SECRET-HEX-HIGH-ENTROPY-STRING"
+      path: "internal/planner/compile_compatibility_test.go"
+      line_start: 34
+      line_end: 35
+      reason: "Public SHA-256 fingerprints of serialized empty execution-scope and empty-plan outputs; compatibility assertions, not credentials."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "dist/install-nut-only.yaml"
+      line_start: 2475
+      line_end: 2475
+      reason: "Kubernetes volume secretName references the separately generated webhook-server-cert object; the bundle contains no key material."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "test/e2e/fixtures/nut_client.py"
+      line_start: 37
+      line_end: 37
+      reason: "Deliberately wrong password used to verify authentication rejection in an owned disposable Kind fixture; grants no access."
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "test/e2e/nut_only_test.go"
+      line_start: 142
+      line_end: 142
+      reason: "Synthetic rotated credential created only inside the owned disposable NUT-only Kind fixture and removed with that fixture."
     # CI triage 2026-09-19, run 35477169305: exact rule/path/line exceptions.
     # These findings contain fixture behavior or public identifiers, not site credentials.
     - rule_id: "B104"
