@@ -261,11 +261,14 @@ VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-cover
   probe/signal errors, timeout preservation, and the pinned PEG launch path with a harmless
   substitute executable. Full `make test`, smoke-tag vet, and scoped lint pass. Ordinary CI now
   includes both adapters, the shared ownership tests, and both Python cleanup suites.
-  **Remaining:** published CI and live Hadron/Talos lifecycle confirmation with this revision;
-  component subprocess evidence is not a live VM result. Coordinate those runs with VM-5 and
-  Claude's ongoing VM-4 investigation. Publication was deferred on 2026-09-20 while Claude's
-  `f7cec40` image build and two-node drain validation were running, to avoid push-triggered
-  cancellation of that image build.
+  **2026-09-20 follow-up:** ordinary CI at `6a9a367` passed, including a required packaged-QEMU
+  capture test. Live runs `35533818621` and `35534057478` passed both guest starts and progressed
+  through real cordon/eviction; the subsequent failure exposed a separate wrong-agent selector,
+  corrected in `088f7d7`. The earlier ownership rejection in run `35532067290` remains unexplained;
+  targeted diagnostics are retained and ownership checks remain fail-closed.
+  **Remaining:** resolve or characterize that intermittent rejection, qualify live Talos lifecycle
+  and cancellation/cleanup controls. Component and successful Hadron startup evidence do not
+  close these criteria. [Evidence](contributing/audits/vm-process-ownership-2026-09-20.md).
   Review targets: [Hadron adapter](../test/hadron/adapter.go) and
   [Talos adapter](../test/talos/adapter.go).
 - [ ] `VM-11` [Medium] distinguish controller revocation from actuator rejection in VM negative
@@ -298,6 +301,10 @@ VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-cover
   **Testable now; Conditional:** retain logs/hypervisor evidence outside the guest; manual signal
   injection or a healthy UPS stack is not this end-to-end proof. Reuse VM-3's false-pass controls.
   Harness reset is not operator recovery; restart/resume continuity remains outside SB-1.
+  **2026-09-20:** corrected the post-drain lookup's wrong agent selector in `088f7d7`.
+  [Live qualification run 35534905207](https://github.com/MichaelZalud18/nut-operator/actions/runs/35534905207)
+  is pending; do not claim signal/audit acceptance until its result is inspected.
+  [Selector and ownership evidence](contributing/audits/vm-process-ownership-2026-09-20.md).
   [Prior milestones and remaining acceptance](contributing/audits/vm-test-research-2026-09-15.md#vm-4).
 - [ ] `VM-5` [Medium] integrate the proven harness into bounded, initially manual Actions jobs.
   Consume exact-revision immutable images built before guests run; keep minimal token permissions,
