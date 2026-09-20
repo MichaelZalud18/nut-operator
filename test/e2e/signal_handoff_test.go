@@ -26,6 +26,10 @@ import (
 	"os/exec"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -99,13 +103,18 @@ spec:
 		}
 		Eventually(verifyAgentReady, 3*time.Minute).Should(Succeed())
 
-		By("finding the NodePowerAgent DaemonSet pod")
-		cmd = exec.Command("kubectl", "-n", agentNamespace, "get", "pods",
-			"-l", "power.zalud.io/nodepoweragent=signal-e2e-agent",
-			"-o", "jsonpath={.items[0].metadata.name}")
-		agentPodName, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(agentPodName).NotTo(BeEmpty())
+		By("waiting for the current DaemonSet rollout before measuring live projection")
+		var agentPod corev1.Pod
+		Eventually(func(g Gomega) {
+			var ds appsv1.DaemonSet
+			var pods corev1.PodList
+			g.Expect(logicalFlowGet(&ds, "daemonset", "signal-e2e-agent-node-power-agent", "-n", agentNamespace)).To(Succeed())
+			g.Expect(logicalFlowGet(&pods, "pods", "-n", agentNamespace,
+				"-l", "power.zalud.io/nodepoweragent=signal-e2e-agent")).To(Succeed())
+			var selectErr error
+			agentPod, selectErr = signalHandoffCurrentPod(ds, pods.Items, nodeName)
+			g.Expect(selectErr).NotTo(HaveOccurred())
+		}, 3*time.Minute, 2*time.Second).Should(Succeed())
 
 		By("writing a shutdown signal directly into the projected signal Secret")
 		executionID := fmt.Sprintf("e2e-signal-%d", time.Now().UnixNano())
@@ -128,11 +137,49 @@ spec:
 
 		By("confirming the actuator observes the signal within the configured 2m TTL")
 		verifySignalObserved := func(g Gomega) {
-			cmd := exec.Command("kubectl", "-n", agentNamespace, "logs", agentPodName, "-c", "actuator")
+			cmd := exec.Command("kubectl", "-n", agentNamespace, "logs", agentPod.Name, "-c", "actuator")
 			logs, err := utils.Run(cmd)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(logs).To(ContainSubstring("simulate actuator accepted shutdown signal executionID=" + executionID))
 		}
 		Eventually(verifySignalObserved, 2*time.Minute, 5*time.Second).Should(Succeed())
+		var after corev1.Pod
+		Expect(logicalFlowGet(&after, "pod", agentPod.Name, "-n", agentNamespace)).To(Succeed())
+		Expect(after.UID).To(Equal(agentPod.UID))
+		Expect(after.DeletionTimestamp).To(BeNil())
+		Expect(signalHandoffActuator(after)).To(Equal(signalHandoffActuator(agentPod)),
+			"a replacement/restarted actuator does not prove live Secret projection")
 	})
+}
+
+// Ready coverage can include the previous revision during a surge rollout. Only
+// start the projection clock after that revision and its terminating pods are gone.
+func signalHandoffCurrentPod(ds appsv1.DaemonSet, pods []corev1.Pod, node string) (corev1.Pod, error) {
+	if ds.Status.ObservedGeneration != ds.Generation || ds.Status.DesiredNumberScheduled != 1 ||
+		ds.Status.UpdatedNumberScheduled != 1 || ds.Status.NumberAvailable != 1 || len(pods) != 1 {
+		return corev1.Pod{}, fmt.Errorf("signal fixture rollout has not converged: generation=%d status=%+v pods=%d", ds.Generation, ds.Status, len(pods))
+	}
+	pod := pods[0]
+	owner := metav1.GetControllerOf(&pod)
+	hash := ds.Spec.Template.Annotations["power.zalud.io/config-hash"]
+	if owner == nil || ds.UID == "" || owner.UID != ds.UID || pod.UID == "" ||
+		pod.Spec.NodeName != node || pod.DeletionTimestamp != nil || hash == "" ||
+		pod.Annotations["power.zalud.io/config-hash"] != hash {
+		return corev1.Pod{}, fmt.Errorf("pod %s is not the current owned signal fixture", pod.Name)
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue && signalHandoffActuator(pod) != "" {
+			return pod, nil
+		}
+	}
+	return corev1.Pod{}, fmt.Errorf("pod %s has no Ready running actuator", pod.Name)
+}
+
+func signalHandoffActuator(pod corev1.Pod) string {
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name == "actuator" && status.ContainerID != "" && status.State.Running != nil {
+			return fmt.Sprintf("%s/%d", status.ContainerID, status.RestartCount)
+		}
+	}
+	return ""
 }

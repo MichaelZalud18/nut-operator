@@ -16,8 +16,7 @@ Related requirement IDs are references, not available IDs for new follow-up task
 Last reviewed: 2026-09-19 (execution safety, Kind qualification, storage recovery, and
 modular/planner publication).
 
-Last reviewed: 2026-09-15 (completed work and research extracted; task scope and recorded test
-results preserved). Proposed designs are not settled decisions or evidence of implementation.
+Proposed designs are not settled decisions or evidence of implementation.
 
 The [2026-09-04 fresh review](contributing/audits/fresh-review-2026-09-04.md) records evidence for
 `F-126` through `F-143`, including later scope corrections. Open findings are listed below; withdrawn
@@ -138,6 +137,15 @@ relay remain unsupported; see the [relay contract](contributing/design/upstream-
 ### Node Agent / DaemonSet
 
 **New task prefix:** `NA` (node agent).
+
+- [ ] `NA-13` [Medium] follow-up to completed TEST-3: remove the signal-handoff fixture's
+  startup-rollout race without weakening projected-volume acceptance. Wait for the current
+  DaemonSet generation and one owned Ready pod, then require the original actuator process to
+  accept the unique signal within its unchanged two-minute TTL. Regression: [Kind run
+  35485217695](https://github.com/MichaelZalud18/nut-operator/actions/runs/35485217695)
+  selected an old surge pod and kept reading its logs after deletion. Component rejection
+  cases cover overlapping revisions, stale status/config, termination, identity and readiness;
+  full Kind and exact-image promotion must pass before closure.
 
 Owns: the `NodePowerAgent` CRD, `internal/controller/nodepoweragent_*.go`, the `upsmon-agent`
 and `node-actuator` operand images, `cmd/node-actuator`, `cmd/power-signal-writer`, and
