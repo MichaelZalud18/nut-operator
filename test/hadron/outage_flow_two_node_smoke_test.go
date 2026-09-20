@@ -475,7 +475,7 @@ spec:
 	})
 	t.Log("confirmed: the real workload Pod on the agent node was really evicted by DrainNodes")
 
-	agentPodName := waitForExactlyOneRunningAgentPod(ctx, t, clientset, twoNodeOutageNamespace)
+	agentPodName := waitForExactlyOneRunningAgentPodNamed(ctx, t, clientset, twoNodeOutageNamespace, "hadron-two-node-outage-agent")
 	t.Log("waiting for the real actuator to observe a real, operator-written signal, after the real drain")
 	waitForWithDiagnostics(t, ctx, 3*time.Minute, "actuator observes real signal", func(ctx context.Context) error {
 		logCtx, logCancel := context.WithTimeout(ctx, 15*time.Second)
