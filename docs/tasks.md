@@ -246,8 +246,12 @@ own detailed prerequisites and prior milestones; the remaining work is below.
   Actuator fixtures now compose the same lifecycle cleanup and diagnostics, with generated
   namespaces retaining cluster/namespace identity. Their owning disposable VM handles teardown
   after actuation; API namespace deletion is not claimed after the API server powers off.
-  **Live qualification pending:** actuator adoption and the earlier
-  [constructor/polling regression](https://github.com/MichaelZalud18/nut-operator/actions/runs/35544934472).
+  The earlier [constructor/polling regression](https://github.com/MichaelZalud18/nut-operator/actions/runs/35544934472)
+  passed all three actuator tests, including all five invalid-signal cases, at `81086f2`.
+  **Live qualification pending at published `f8f1502`:**
+  [actuator fixture adoption](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546887005)
+  and [boot/cancellation regression](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546882710).
+  Existing actuator assertions are preserved; a regression pass does not close VM-9 or VM-11.
   Cancellation inside PEG's non-cooperative Create call remains outside this rehearsal.
   Hadron migration and VM-9/VM-11 safety qualification remain separate open work.
   [Detailed criteria](contributing/audits/vm-test-research-2026-09-15.md#vm-8).
