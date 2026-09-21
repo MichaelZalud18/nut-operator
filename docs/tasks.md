@@ -274,7 +274,14 @@ VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-cover
   passes QEMU `-qmp`/`-no-shutdown` unconditionally so the event can't race the process exiting on
   its own. Component-level false-pass control: `TestWaitForQMPShutdownFailsClosedWhenSocketClosesWithoutShutdown`
   proves a closed socket with no event is rejected, not accepted -- a fast unit test against a fake
-  QMP server, not yet a live external-kill rehearsal against a real guest. Talos's own halt
+  QMP server, not yet a live external-kill rehearsal against a real guest.
+  **Live-confirmed 2026-09-20:** both accepted-signal halt tests passed against real guests with the
+  real QMP `SHUTDOWN` event actually observed (not merely process disappearance) --
+  [run 35546848858](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546848858)
+  (bare-pod) and
+  [run 35546850214](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546850214)
+  (rendered DaemonSet), both full workflow passes. **Remaining:** a live external-kill false-pass
+  rehearsal against a real guest (only proven at the component level so far). Talos's own halt
   assertions are unchanged; that side is currently owned by the in-progress framework integration,
   not this task.
   Review targets: [Hadron halt assertions](../test/hadron/actuator_daemonset_smoke_test.go),
