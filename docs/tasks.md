@@ -248,9 +248,9 @@ own detailed prerequisites and prior milestones; the remaining work is below.
   after actuation; API namespace deletion is not claimed after the API server powers off.
   The earlier [constructor/polling regression](https://github.com/MichaelZalud18/nut-operator/actions/runs/35544934472)
   passed all three actuator tests, including all five invalid-signal cases, at `81086f2`.
-  **Live qualification pending at published `f8f1502`:**
-  [actuator fixture adoption](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546887005)
-  and [boot/cancellation regression](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546882710).
+  At published `f8f1502`, [boot/cancellation regression](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546882710)
+  passed both real guest jobs. **Live qualification pending:**
+  [actuator fixture adoption](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546887005).
   Existing actuator assertions are preserved; a regression pass does not close VM-9 or VM-11.
   Cancellation inside PEG's non-cooperative Create call remains outside this rehearsal.
   Hadron migration and VM-9/VM-11 safety qualification remain separate open work.
