@@ -200,6 +200,16 @@ Completed full-suite and exact-image qualification (`TEST-3`) is recorded in
 [CI acceptance evidence](contributing/audits/kind-qualification-2026-09-17.md#full-suite-published-image-qualification).
 The shared suite, ownership safeguards, and image-promotion gate remain unchanged.
 
+- [ ] `OM-3` [Medium] qualify the expanded Kind suite within an appropriate bounded CI budget.
+  Follow-up to closed TEST-3 and OM-1; their original qualification records remain intact.
+  [Images run 35546819782](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546819782)
+  built all four images and passed TLS, but Go's 45-minute watchdog terminated the Kind suite
+  as its NetworkPolicy group started, after the execution-safety scenarios had passed.
+  Increase the suite budget to 60 minutes (75 with optional startup observation), preserving
+  per-operation bounds, independent cleanup, and matching Actions margin. **Acceptance:** the
+  complete Images workflow passes its unfiltered Kind gate and promotes the tested digests;
+  deadline/cancellation harness tests retain their cleanup guarantees. Live rerun pending.
+
 - [ ] `OM-2` [Low] triage below-threshold findings retained by the 2026-09-20 framework scan.
   ASH passed its configured gate; no finding names the new scenario/diagnostics/fixture modules.
   Review `GHSA-8wmf-6v46-5gfg` on the three OpenTelemetry modules at v1.44.0 (`otel/sdk`,
@@ -249,8 +259,10 @@ own detailed prerequisites and prior milestones; the remaining work is below.
   The earlier [constructor/polling regression](https://github.com/MichaelZalud18/nut-operator/actions/runs/35544934472)
   passed all three actuator tests, including all five invalid-signal cases, at `81086f2`.
   At published `f8f1502`, [boot/cancellation regression](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546882710)
-  passed both real guest jobs. **Live qualification pending:**
-  [actuator fixture adoption](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546887005).
+  passed both real guest jobs. [Actuator fixture adoption](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546887005)
+  also passed all three scenarios and five invalid-signal cases with generated namespaces and
+  shared cleanup. Unit tests, lint, security and repository hygiene passed at that revision.
+  The separate Images/Kind timeout is tracked under OM-3.
   Existing actuator assertions are preserved; a regression pass does not close VM-9 or VM-11.
   Cancellation inside PEG's non-cooperative Create call remains outside this rehearsal.
   Hadron migration and VM-9/VM-11 safety qualification remain separate open work.
