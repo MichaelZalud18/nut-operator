@@ -161,6 +161,16 @@ resolved.
 
 ## Open
 
+- **New data point (2026-09-21), run `35555138607` -- vmprocess ownership check did not reject
+  either guest this time (both booted), but the run still failed, earlier than the last three
+  attempts: `waitForAgentServiceRouting` timed out at 2:00.00 right after a "SSH dropped after 5
+  consecutive successes" transient (a known, previously-benign flake elsewhere in this doc's
+  evidence table). `waitForAgentServiceRouting` has no diagnose callback, so there is no visibility
+  into why kube-proxy routing wasn't up yet. Treating this as one more instance of general harness
+  timing flakiness rather than a regression: this exact function passed cleanly in the three most
+  recent prior attempts (`35533818621`, `35534905207`, and the selector-fix verification), with the
+  same code. Not investigating further on a single occurrence; re-run before treating this as a
+  real bug.
 - **Diagnosed and fixed (2026-09-20, commit `483ba7c`):** the `waitForExactlyOneRunningAgentPod`
   timeout from run `35529203632` was not a networking issue. Its check closure passed the parent
   (already 2-minute-bound) `ctx` straight into `clientset.CoreV1().Pods(...).List(...)` with no
