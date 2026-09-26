@@ -66,7 +66,9 @@ See the [installation guide](installation/nut-only.md) and
   returned successful `WAIT` placeholders before `Data stale`, with no upstream available.
   Allow only that placeholder during bounded convergence, reject actual telemetry immediately,
   and require stable stale/disconnected responses afterward. **Acceptance:** the corrected
-  NUT-only scenario passes the Images/Kind gate. Implementation and CI qualification in progress.
+  NUT-only scenario passes the Images/Kind gate. The correction is pushed in `12344bf`;
+  [Images run 36203795319](https://github.com/MichaelZalud18/nut-operator/actions/runs/36203795319)
+  at `f53e1b7` includes it and the next Talos fixture adoption; qualification is pending.
 
 ---
 
@@ -279,7 +281,8 @@ own detailed prerequisites and prior milestones; the remaining work is below.
   payloads and JSON Secret patches, refreshing timestamps before each subcase. Its workflow
   tests apply the shared cleanup/budget contract to every job and retain expected entry-point
   checks. Race-enabled framework/adapter checks and smoke-tag compilation/lint qualify the
-  code locally; a new live actuator run is required for this migration.
+  code locally. [Live actuator regression 36203815054](https://github.com/MichaelZalud18/nut-operator/actions/runs/36203815054)
+  was dispatched at `f53e1b7`; qualification is pending.
   Existing actuator assertions are preserved; a regression pass does not close VM-9 or VM-11.
   Cancellation inside PEG's non-cooperative Create call remains outside this rehearsal.
   Hadron migration and VM-9/VM-11 safety qualification remain separate open work.
