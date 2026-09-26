@@ -84,8 +84,8 @@ still runs the unfiltered suite; `verify` is unchanged. The existing
 `NUT_OPERATOR_E2E_STARTUP=true` opt-in is still required to execute NS-6 rather than skip it.
 
 `make test-e2e-nut-startup` adds the NS-6 eleven-minute startup observation to that same owned
-Kind suite. It extends the suite timeout to 60 minutes (65 minutes including cluster setup),
-while preserving the independent cleanup deadline. The ordinary suite allows 45 minutes,
+Kind suite. It extends the suite timeout to 75 minutes (80 minutes including cluster setup),
+while preserving the independent cleanup deadline. The ordinary suite allows 60 minutes,
 including the three isolated EX-34 scenarios and their fixture teardown.
 The E2E Tests workflow also exposes this option through manual dispatch; it is not added to every
 pull request or image-promotion run. Keep the full window for acceptance; component Docker startup

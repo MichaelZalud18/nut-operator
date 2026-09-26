@@ -59,6 +59,15 @@ supported unauthenticated upstream mode; unsupported auth modes are explicitly r
 See the [installation guide](installation/nut-only.md) and
 [coverage map](contributing/design/modular-acceptance.md) for the implemented boundaries.
 
+- [ ] `MOD-6` [Medium] qualify unavailable-upstream relay startup convergence.
+  Follow-up to closed MOD-4/MOD-5; preserve their original acceptance records.
+  Images run 35555316031 failed the immediate non-strict relay error assertion.
+  An isolated pinned-operand reproduction on 2026-09-25
+  returned successful `WAIT` placeholders before `Data stale`, with no upstream available.
+  Allow only that placeholder during bounded convergence, reject actual telemetry immediately,
+  and require stable stale/disconnected responses afterward. **Acceptance:** the corrected
+  NUT-only scenario passes the Images/Kind gate. Implementation and CI qualification in progress.
+
 ---
 
 ### Inventory System
@@ -208,7 +217,10 @@ The shared suite, ownership safeguards, and image-promotion gate remain unchange
   Increase the suite budget to 60 minutes (75 with optional startup observation), preserving
   per-operation bounds, independent cleanup, and matching Actions margin. **Acceptance:** the
   complete Images workflow passes its unfiltered Kind gate and promotes the tested digests;
-  deadline/cancellation harness tests retain their cleanup guarantees. Live rerun pending.
+  deadline/cancellation harness tests retain their cleanup guarantees. The budget change passed
+  its harness checks. Run 35555316031 completed in 2706.553 seconds: 25 specs passed, one failed,
+  and NS-6 was intentionally skipped. MOD-6 owns the relay startup assertion that now blocks
+  the gate; full-suite qualification and promotion remain pending.
 
 - [ ] `OM-2` [Low] triage below-threshold findings retained by the 2026-09-20 framework scan.
   ASH passed its configured gate; no finding names the new scenario/diagnostics/fixture modules.

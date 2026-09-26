@@ -3,6 +3,8 @@
 package e2e
 
 import (
+	"context"
+	"errors"
 	"os/exec"
 	"strings"
 	"time"
@@ -71,8 +73,25 @@ func nutOnlyRelayAcceptance(source power.NUTServer, fingerprint string) {
 	var status power.NUTServer
 	Expect(logicalFlowGet(&status, "nutserver", lateServer.Name)).To(Succeed())
 	Expect(status.Status.Phase).NotTo(Equal(power.NUTServerPhaseReady))
-	// The non-strict driver can stay alive without inventing fresh telemetry.
-	out, err := utils.Run(exec.Command("kubectl", "exec", "-n", nutOnlyNS, latePod.Name, "-c", "upsd", "--", "upsc", "mod4-late@127.0.0.1", "ups.status"))
-	Expect(err).To(HaveOccurred())
-	Expect(strings.ToLower(out)).To(Or(ContainSubstring("data stale"), ContainSubstring("driver not connected")))
+	// upsd can briefly serve its WAIT placeholder while connecting to the new
+	// driver, before processing DATASTALE. Permit only that placeholder during
+	// convergence; an actual UPS status must fail immediately, never be retried.
+	checkRead := func(g Gomega, allowWaiting bool) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "kubectl", "exec", "-n", nutOnlyNS, latePod.Name,
+			"-c", "upsd", "--", "upsc", "mod4-late@127.0.0.1", "ups.status")
+		// Keep stdout separate from TLS initialization messages on stderr.
+		out, err := cmd.Output()
+		if err == nil && allowWaiting {
+			Expect(strings.TrimSpace(string(out))).To(Equal("WAIT"), "unavailable relay returned telemetry")
+		}
+		g.Expect(err).To(HaveOccurred(), "relay read succeeded: %q", out)
+		var exitErr *exec.ExitError
+		g.Expect(errors.As(err, &exitErr)).To(BeTrue())
+		g.Expect(strings.ToLower(string(exitErr.Stderr))).To(
+			Or(ContainSubstring("data stale"), ContainSubstring("driver not connected")))
+	}
+	Eventually(func(g Gomega) { checkRead(g, true) }, 30*time.Second, time.Second).Should(Succeed())
+	Consistently(func(g Gomega) { checkRead(g, false) }, 10*time.Second, 2*time.Second).Should(Succeed())
 }

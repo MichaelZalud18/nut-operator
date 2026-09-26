@@ -138,3 +138,25 @@ IfNotPresent for preloaded test images, while production deployment must select 
 digests. Changing to Always breaks the isolated loaded-image workflow and adds no content
 integrity for digest-pinned images. The profile preserves that policy and documents digest
 selection; this is not a clean scanner pass or an image-vulnerability scan result.
+
+## 2026-09-25 follow-up: MOD-6 relay startup convergence
+
+[Images run 35555316031](https://github.com/MichaelZalud18/nut-operator/actions/runs/35555316031)
+finished its expanded Kind suite in 2706.553 seconds: 25 passed, one failed, and the optional
+NS-6 observation was skipped. The failure was the immediate assertion that `upsc ups.status`
+must fail after the non-strict relay first becomes responsive. The original assertion did not
+record the successful command's output, so that run alone cannot identify the returned value.
+
+An isolated reproduction used the cached NUT 2.8.5 operand, `--network none`, a read-only root,
+dropped capabilities, a private tmpfs and an unreachable loopback upstream. Across 1200 rapid
+queries around driver startup, upsc returned 231 disconnected errors, 268 successful `WAIT`
+placeholders, then 701 stale errors. A separate settled observation returned stale errors while
+the same driver's PING/GETPID remained responsive. Both owned containers were removed.
+This reproduces a startup window that the immediate assertion incorrectly rejects; it does not
+claim that upstream telemetry was available or that the old CI log captured `WAIT`.
+
+The corrected assertion permits only the exact stdout placeholder `WAIT` while waiting up to
+30 seconds for stale/disconnected errors. Any successful non-placeholder value fails immediately.
+It then requires the errors to persist for ten seconds, with each command independently bounded.
+Stdout is separated from TLS initialization messages on stderr. The controller's not-Ready check
+remains. The owning MOD-6 task records live qualification; earlier acceptance history is preserved.
