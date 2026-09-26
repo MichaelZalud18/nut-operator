@@ -274,7 +274,12 @@ own detailed prerequisites and prior milestones; the remaining work is below.
   passed both real guest jobs. [Actuator fixture adoption](https://github.com/MichaelZalud18/nut-operator/actions/runs/35546887005)
   also passed all three scenarios and five invalid-signal cases with generated namespaces and
   shared cleanup. Unit tests, lint, security and repository hygiene passed at that revision.
-  The separate Images/Kind timeout is tracked under OM-3.
+  The separate Images/Kind qualification is tracked under OM-3 and MOD-6.
+  **2026-09-25 next adoption:** Talos consumes shared signal fixtures for its five invalid
+  payloads and JSON Secret patches, refreshing timestamps before each subcase. Its workflow
+  tests apply the shared cleanup/budget contract to every job and retain expected entry-point
+  checks. Race-enabled framework/adapter checks and smoke-tag compilation/lint qualify the
+  code locally; a new live actuator run is required for this migration.
   Existing actuator assertions are preserved; a regression pass does not close VM-9 or VM-11.
   Cancellation inside PEG's non-cooperative Create call remains outside this rehearsal.
   Hadron migration and VM-9/VM-11 safety qualification remain separate open work.
@@ -336,9 +341,10 @@ VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-cover
   through real cordon/eviction; the subsequent failure exposed a separate wrong-agent selector,
   corrected in `088f7d7`. The earlier ownership rejection in run `35532067290` remains unexplained;
   targeted diagnostics are retained and ownership checks remain fail-closed.
-  **Remaining:** resolve or characterize that intermittent rejection, qualify live Talos lifecycle
-  and cancellation/cleanup controls. Component and successful Hadron startup evidence do not
-  close these criteria. [Evidence](contributing/audits/vm-process-ownership-2026-09-20.md).
+  **Remaining:** resolve or characterize that intermittent rejection and finish the outstanding
+  ownership/cleanup false-pass controls. Talos boot, verified cleanup and cancellation after
+  ownership capture are now live-qualified by VM-8's linked runs; cancellation inside PEG Create
+  remains outside that rehearsal. These scoped passes do not close all ownership criteria. [Evidence](contributing/audits/vm-process-ownership-2026-09-20.md).
   Review targets: [Hadron adapter](../test/hadron/adapter.go) and
   [Talos adapter](../test/talos/adapter.go).
 - [ ] `VM-11` [Medium] distinguish controller revocation from actuator rejection in VM negative

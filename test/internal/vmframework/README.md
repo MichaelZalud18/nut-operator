@@ -138,3 +138,9 @@ shapes nor coverage counts establish semantic equivalence or complete live quali
 
 See [framework design and extraction decisions](../../../docs/contributing/design/vm-test-framework.md)
 for the source inventory and adoption sequence.
+
+Talos actuator scenarios use `signalfixture` for invalid payloads and Secret patches. The scenario
+supplies its own node identity and refreshes the fixture clock before each delivery; delivery and
+rejection assertions remain in the adapter. Talos's workflow tests use `workflow.ValidateJob`
+for every job while requiring their named boot/actuator entry points. These integrations do not
+change the distinction between controller revocation and actuator rejection.

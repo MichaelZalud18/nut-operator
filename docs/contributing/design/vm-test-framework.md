@@ -43,7 +43,10 @@ retains explicitly selected, bounded streams. `fixture` composes cluster identit
 server-assigned namespace identities and preconditioned deletion. Talos imports shared artifact
 preparation and readiness at its adapter boundaries; its single-node boot scenario composes
 scenario/lifecycle and diagnostic bundles. Talos actuator fixtures use the same lifecycle
-registration and diagnostics with generated, identity-checked namespace fixtures.
+registration and diagnostics with generated, identity-checked namespace fixtures. Shared signal
+fixtures construct Talos's invalid payloads and Secret patches; each subcase refreshes its clock
+immediately before delivery. Shared workflow validation checks every Talos job's bounded steps,
+cleanup ordering and removal preconditions, while Talos retains its expected entry-point checks.
 `vmprocess` depends on PEG's machine interface and Linux pidfds and remains behind VM build tags.
 No shared module assumes SSH exists or installs a guest, applies an arbitrary Kubernetes manifest,
 or performs a host shutdown on behalf of its caller. The fixture module can explicitly create and

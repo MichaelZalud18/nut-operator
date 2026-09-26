@@ -40,8 +40,6 @@ package talos
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -63,6 +61,7 @@ import (
 	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/fixture"
 	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/lifecycle"
 	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/scenario"
+	"github.com/MichaelZalud18/nut-operator/test/internal/vmframework/signalfixture"
 )
 
 // talosActuatorApprovalAnnotation matches the real, already-decided key
@@ -419,14 +418,13 @@ func writeRealTalosSignal(ctx context.Context, t *testing.T, guest talosActuator
 	if err := guest.namespace.Check(ctx); err != nil {
 		t.Fatalf("operand namespace ownership: %v", err)
 	}
-	encoded, err := json.Marshal(payload)
+	patch, err := signalfixture.SecretPatch(guest.nodeName, payload)
 	if err != nil {
-		t.Fatalf("encode signal: %v", err)
+		t.Fatalf("encode signal patch: %v", err)
 	}
 	secretName := agentName + "-node-signals"
 	runKubectl(ctx, t, guest.kubeconfigPath, "-n", guest.namespace.Name(), "patch", "secret", secretName,
-		"--type=json", "-p", fmt.Sprintf(`[{"op":"add","path":"/data/%s.json","value":"%s"}]`,
-			guest.nodeName, base64.StdEncoding.EncodeToString(encoded)))
+		"--type=json", "-p", string(patch))
 }
 
 // waitForTalosSignalRejectedOrRevoked mirrors test/hadron's own waitForSignalRejectedOrRevoked:
@@ -481,86 +479,6 @@ func waitForTalosSignalRejectedOrRevoked(ctx context.Context, t *testing.T, gues
 	}
 }
 
-// invalidTalosActuatorSignalCase mirrors test/hadron's own invalidActuatorSignalCase. Duplicated
-// rather than imported: test/talos deliberately does not import test/hadron (see this package's
-// own doc comment in adapter.go), and this is small, self-contained fixture data with no adapter
-// coupling -- the same reasoning test/hadron used before its own two copies of this table were
-// merged within that one package. Promoting it into a package both can import is VM-8's own
-// extraction to make once a third consumer exists, not a speculative abstraction over two.
-type invalidTalosActuatorSignalCase struct {
-	name       string
-	wantReason string
-	signal     func(nodeName string) nodeagent.ShutdownSignal
-}
-
-func invalidTalosActuatorSignalCases() []invalidTalosActuatorSignalCase {
-	return []invalidTalosActuatorSignalCase{
-		{
-			name:       "wrong-node",
-			wantReason: "SignalWrongNode",
-			signal: func(nodeName string) nodeagent.ShutdownSignal {
-				return nodeagent.ShutdownSignal{
-					ExecutionID:    "exec-wrong-node",
-					NodeName:       nodeName + "-not-this-one",
-					PlanConfigHash: "test-hash",
-					ShutdownFlow:   "test-flow",
-					Timestamp:      time.Now().UTC().Format(time.RFC3339Nano),
-				}
-			},
-		},
-		{
-			name:       "stale",
-			wantReason: "SignalStale",
-			signal: func(nodeName string) nodeagent.ShutdownSignal {
-				return nodeagent.ShutdownSignal{
-					ExecutionID:    "exec-stale",
-					NodeName:       nodeName,
-					PlanConfigHash: "test-hash",
-					ShutdownFlow:   "test-flow",
-					Timestamp:      time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339Nano),
-				}
-			},
-		},
-		{
-			name:       "future",
-			wantReason: "SignalFromFuture",
-			signal: func(nodeName string) nodeagent.ShutdownSignal {
-				return nodeagent.ShutdownSignal{
-					ExecutionID:    "exec-future",
-					NodeName:       nodeName,
-					PlanConfigHash: "test-hash",
-					ShutdownFlow:   "test-flow",
-					Timestamp:      time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339Nano),
-				}
-			},
-		},
-		{
-			name:       "malformed-timestamp",
-			wantReason: "SignalInvalidTimestamp",
-			signal: func(nodeName string) nodeagent.ShutdownSignal {
-				return nodeagent.ShutdownSignal{
-					ExecutionID:    "exec-malformed-timestamp",
-					NodeName:       nodeName,
-					PlanConfigHash: "test-hash",
-					ShutdownFlow:   "test-flow",
-					Timestamp:      "not-a-timestamp",
-				}
-			},
-		},
-		{
-			name:       "missing-fields",
-			wantReason: "SignalMissingRequiredFields",
-			signal: func(nodeName string) nodeagent.ShutdownSignal {
-				return nodeagent.ShutdownSignal{
-					ExecutionID: "exec-missing-fields",
-					NodeName:    nodeName,
-					Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
-				}
-			},
-		},
-	}
-}
-
 // TestTalosActuatorRejectsInvalidSignals is VM-7 milestone 2's negative-signal control: the same
 // five cases test/hadron's own actuator qualification proved, now through a real TalosShutdown
 // NodePowerAgent. None of these may reach actuation; see waitForTalosSignalRejectedOrRevoked's own
@@ -578,10 +496,13 @@ func TestTalosActuatorRejectsInvalidSignals(t *testing.T) {
 	const agentName = "talos-actuator-agent"
 	podName := applyApprovedTalosActuatorNodePowerAgent(ctx, t, guest, agentName)
 
-	for _, tc := range invalidTalosActuatorSignalCases() {
-		t.Run(tc.name, func(t *testing.T) {
-			writeRealTalosSignal(ctx, t, guest, agentName, tc.signal(guest.nodeName))
-			waitForTalosSignalRejectedOrRevoked(ctx, t, guest, agentName, podName, tc.wantReason)
+	for i, tc := range signalfixture.Invalid(guest.nodeName, time.Now()) {
+		t.Run(tc.Name, func(t *testing.T) {
+			// Earlier cases can take minutes. Refresh the clock just before delivery
+			// so time-based cases retain their intended rejection reason.
+			current := signalfixture.Invalid(guest.nodeName, time.Now())[i]
+			writeRealTalosSignal(ctx, t, guest, agentName, current.Payload)
+			waitForTalosSignalRejectedOrRevoked(ctx, t, guest, agentName, podName, current.Reason)
 
 			t.Log("confirming the guest is still reachable -- the rejected signal must not have halted it")
 			nodes, err := guest.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
