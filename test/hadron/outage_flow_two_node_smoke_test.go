@@ -47,6 +47,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/spectrocloud/peg/pkg/machine/types"
 )
 
 // twoNodeOutageNamespace hosts the NUTServer/NodePowerAgent/PostgreSQL fixture -- distinct from
@@ -86,7 +88,7 @@ func TestHadronOutageFlowTwoNodeDrainsWorkload(t *testing.T) {
 	postgresRunImage, postgresTar := pullOperandImageTarball(ctx, t, postgresImage, "postgres")
 	allTars := []string{managerTar, nutServerTar, upsmonTar, actuatorTar, postgresTar}
 
-	serverCreds, agentCreds, kubeconfigPath, clientset, serverNodeName, agentNodeName := bootAndJoinTwoNodeCluster(ctx, t)
+	serverCreds, agentCreds, kubeconfigPath, clientset, serverNodeName, agentNodeName, _ := bootAndJoinTwoNodeCluster(ctx, t)
 
 	t.Log("waiting for the default namespace's own default ServiceAccount")
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, "default ServiceAccount", func(ctx context.Context) error {
@@ -531,7 +533,7 @@ spec:
 // at fixture-authoring time. Factored out of the main test function to keep its own cyclomatic
 // complexity bounded; this is boot/join plumbing already proven correct elsewhere, not new
 // behavior this milestone itself is qualifying.
-func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, agentCreds Credentials, kubeconfigPath string, clientset *kubernetes.Clientset, serverNodeName, agentNodeName string) {
+func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, agentCreds Credentials, kubeconfigPath string, clientset *kubernetes.Clientset, serverNodeName, agentNodeName string, agentMachine types.Machine) {
 	t.Helper()
 
 	link, err := NewClusterLink()
@@ -613,7 +615,7 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 	}
 
 	t.Log("booting the k3s agent guest")
-	_, agentCreds = bootClusterJoinGuest(ctx, t, "agent", Config{
+	agentMachine, agentCreds = bootClusterJoinGuest(ctx, t, "agent", Config{
 		Memory:      "2048",
 		CPUs:        "2",
 		ISO:         hadronISOURL,
@@ -717,7 +719,7 @@ func bootAndJoinTwoNodeCluster(ctx context.Context, t *testing.T) (serverCreds, 
 	runKubectl(ctx, t, kubeconfigPath, "annotate", "node", agentNodeName,
 		"flannel.alpha.coreos.com/public-ip="+clusterJoinAgentIP, "--overwrite")
 
-	return serverCreds, agentCreds, kubeconfigPath, clientset, serverNodeName, agentNodeName
+	return serverCreds, agentCreds, kubeconfigPath, clientset, serverNodeName, agentNodeName, agentMachine
 }
 
 // pinK3sNodeIP overrides node-ip via /etc/rancher/k3s/config.yaml -- appended, never overwritten,

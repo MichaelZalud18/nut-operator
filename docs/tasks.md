@@ -390,9 +390,12 @@ VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-cover
   (2026-09-20, run 35529204930), this closes the "survivor availability, authorization/release
   evidence, enforced network policy, and audit results" portion of this task's own acceptance.
   **Remaining:** this used `actuatorPolicy: Simulate`, not a real guest power-off -- this task's own
-  title's "guest-initiated power-off in the two-guest topology" is still open and not yet attempted
-  here, matching every other milestone's deliberate Simulate-before-Actuate staging.
-  [Full composed pass and evidence](contributing/audits/hadron-vm-4-two-node-networking-2026-09-19.md#full-composed-pass-2026-10-04).
+  title's "guest-initiated power-off in the two-guest topology" is still open.
+  `TestHadronOutageFlowTwoNodeActuatesRealPowerOff`
+  (`hadron-outage-flow-two-node-actuation-smoke.yml`) implements this using VM-9's own QMP
+  shutdown-evidence mechanism against the agent guest; local verification passes but it has not
+  yet been run live.
+  [Full composed pass and real-actuation implementation](contributing/audits/hadron-vm-4-two-node-networking-2026-09-19.md#real-actuation-milestone-implemented-not-yet-live-verified).
   [Prior milestones and remaining acceptance](contributing/audits/vm-test-research-2026-09-15.md#vm-4).
 - [ ] `VM-5` [Medium] integrate the proven harness into bounded, initially manual Actions jobs.
   Consume exact-revision immutable images built before guests run; keep minimal token permissions,

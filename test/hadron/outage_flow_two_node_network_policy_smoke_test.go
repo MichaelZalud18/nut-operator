@@ -85,7 +85,7 @@ func TestHadronOutageFlowTwoNodeEnforcesNetworkPolicy(t *testing.T) {
 	nutServerImage, nutServerTar := buildOperandImageTarball(ctx, t, repoRoot, "images/nut-server/Dockerfile", "nutserver")
 	allTars := []string{managerTar, nutServerTar}
 
-	serverCreds, agentCreds, kubeconfigPath, clientset, serverNodeName, agentNodeName := bootAndJoinTwoNodeCluster(ctx, t)
+	serverCreds, agentCreds, kubeconfigPath, clientset, serverNodeName, agentNodeName, _ := bootAndJoinTwoNodeCluster(ctx, t)
 
 	t.Log("waiting for the default namespace's own default ServiceAccount")
 	waitForWithDiagnostics(t, ctx, 2*time.Minute, "default ServiceAccount", func(ctx context.Context) error {

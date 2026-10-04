@@ -1,9 +1,12 @@
 # Hadron VM-4: two-node topology, real drain/eviction, and network-policy enforcement
 
 Status: both milestones this document tracks now have a complete live pass with real audit
-evidence (2026-10-04, run `37238148648`) -- see "Full composed pass" below. `Simulate`-mode
-guest-initiated power-off in this two-node topology remains VM-4's own last open item; see
-`docs/tasks.md`'s `VM-4` entry for current status.
+evidence (2026-10-04, run `37238148648`) -- see "Full composed pass" below. VM-4's own last open
+item, real guest-initiated power-off in this two-node topology, now has an implemented test
+(`TestHadronOutageFlowTwoNodeActuatesRealPowerOff`,
+`hadron-outage-flow-two-node-actuation-smoke.yml`) that has not yet been run live -- see "Real
+actuation milestone (implemented, not yet live-verified)" below. See `docs/tasks.md`'s `VM-4`
+entry for current status.
 
 ## Full composed pass (2026-10-04)
 
@@ -27,6 +30,33 @@ Given only one occurrence so far, this is recorded as an unexplained intermitten
 fixed bug: nothing was changed in the controller/executor between these two runs, only a test-side
 diagnostic. If it recurs, the controller-manager log this run's diagnose callback now captures
 should show the executor's real error on the next occurrence.
+
+## Real actuation milestone (implemented, not yet live-verified)
+
+Per `TestHadronOutageFlowTwoNodeDrainsWorkload`'s own doc comment: "Real actuation plus a
+survivor-availability assertion is left for a following milestone once this one is itself proven
+live." It now is, so `TestHadronOutageFlowTwoNodeActuatesRealPowerOff`
+(`test/hadron/outage_flow_two_node_actuation_smoke_test.go`,
+`hadron-outage-flow-two-node-actuation-smoke.yml`) implements that following milestone: the same
+real two-node join/drain/eviction chain, but `NodePowerAgent.spec.mode: Actuate` and
+`shutdown.actuatorPolicy: PowerOff` (not `DryRun`/`Simulate`), with the `approvalAnnotation` PowerOff
+admission requires. Evidence for the real halt is `test/hadron/qmp.go`'s `waitForQMPShutdown`
+against the agent guest's own `types.Machine` (not process disappearance) -- the same QMP mechanism
+VM-9 already proved live for the single-guest actuator tests, applied here to the agent guest in
+the two-node topology for the first time. Deliberately a separate test from the sibling drain
+milestone (same incremental-scope reasoning as the sibling's own doc comment): a live failure here
+is never ambiguous about whether the already-proven drain/eviction/audit chain broke, or whether
+real actuation specifically did. Does not re-assert the sibling milestone's own detailed
+PostgreSQL audit rows for the same chain shape -- only what is new here (the real halt itself, and
+survivor availability through an actual node going dark).
+
+`bootAndJoinTwoNodeCluster`'s own return signature gained a seventh value (`agentMachine
+types.Machine`) to make this possible -- previously it discarded both guests' machine handles,
+keeping only their `Credentials`. The two existing callers (the sibling drain and network-policy
+tests) were updated to discard it explicitly (`_`); neither needed it.
+
+**Not yet triggered.** Local verification (vet, gofmt, lint, race tests, security scan, hygiene
+private-IP scan) all pass; no live run exists yet.
 
 ## Scope
 
