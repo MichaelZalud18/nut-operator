@@ -1,11 +1,32 @@
 # Hadron VM-4: two-node topology, real drain/eviction, and network-policy enforcement
 
-Status: in progress, 37 live runs across two workflows, 2026-09-18/20. Cross-node networking root
-cause resolved 2026-09-20 (network-policy milestone passing live; drain milestone's own core
-mechanism proven). The `waitForExactlyOneRunningAgentPod` timeout that blocked the drain
-milestone's final assertions is diagnosed and fixed (`483ba7c`). Re-verifying that fix live is now
-blocked on an unrelated new issue in a different, just-added file (see "Open"). See
+Status: both milestones this document tracks now have a complete live pass with real audit
+evidence (2026-10-04, run `37238148648`) -- see "Full composed pass" below. `Simulate`-mode
+guest-initiated power-off in this two-node topology remains VM-4's own last open item; see
 `docs/tasks.md`'s `VM-4` entry for current status.
+
+## Full composed pass (2026-10-04)
+
+[Run 37238148648](https://github.com/MichaelZalud18/nut-operator/actions/runs/37238148648),
+`fe74b6c`, `TestHadronOutageFlowTwoNodeDrainsWorkload`, 854.18s: **passed completely**, for the
+first time. In order: both guests booted; real telemetry transitioned the UPSDevice to OnBattery;
+the agent Node was really cordoned and its real workload Pod really evicted by `DrainNodes`; the
+real actuator observed the operator-written signal (`Simulate` mode -- see "Open" for what this
+does not yet prove); the survivor (server) Node stayed Ready and schedulable throughout; and the
+real PostgreSQL audit store recorded the full chain for this exact `execution_id`
+(`2ef6ccfe-e5a7-5e4b-98c4-6064cd9ff7fa`): one `shutdownflow_action_attempts` row each for
+`DrainNodes` and `AgentShutdown`, one `node_release_records` row, and one `node_signal_handoffs`
+row. This closes the "network-policy/audit assertions" half of VM-4's own remaining scope (the
+network-policy milestone passed separately and earlier, 2026-09-20, run `35529204930`).
+
+The immediately preceding run (`37236421716`, same unchanged code apart from this run's own
+controller-manager-log diagnostic addition) failed at the exact same signal-wait step with the
+ShutdownFlow status showing a real executor abort (`phase: Aborted`, `reason: AlreadyExecuted`).
+This run did not reproduce that abort at all -- the signal wait just took about a minute, no abort.
+Given only one occurrence so far, this is recorded as an unexplained intermittent abort, not a
+fixed bug: nothing was changed in the controller/executor between these two runs, only a test-side
+diagnostic. If it recurs, the controller-manager log this run's diagnose callback now captures
+should show the executor's real error on the next occurrence.
 
 ## Scope
 
@@ -161,21 +182,12 @@ resolved.
 
 ## Open
 
-- **Furthest-ever progress (2026-10-04), run `37236421716`, two weeks idle before this retrigger:**
-  both guests booted (the `vmprocess` ownership flake did not hit this run), cordon and real
-  eviction both confirmed exactly as before, and the agent-pod lookup (Codex's `088f7d7` selector
-  fix) passed. The run then failed at a new, later point: `waitForWithDiagnostics(... "actuator
-  observes real signal" ...)` timed out at 3:00.00. The dumped `ShutdownFlow` status shows
-  `status.lastExecution.phase: Aborted`, `reason: AlreadyExecuted`, `startedAt`/`completedAt` one
-  second apart, `groupCount: 2`, `waveCount: 2`, `nodeReleaseCount: 1` -- a *real* execution ran and
-  aborted (per `shutdownExecutionPhase` in `internal/controller/shutdownflow_execution.go`, phase
-  `Aborted` is only ever set when the executor returned a real error), not a dedupe no-op. The CR
-  status never carries the executor's actual error text (by design -- durable history belongs in
-  the audit/Postgres store, not the CR), and this test's diagnose callback only dumped the
-  ShutdownFlow YAML, not the controller-manager's own log, so the real reason is still unknown.
-  Added a controller-manager log dump (`kubectl logs deployment/<operatorDeployment> --tail=200`)
-  to that same diagnose callback so the next failure's real error is actually visible, instead of
-  re-guessing from CR status alone. Not yet re-triggered with this change.
+- **Resolved (2026-10-04):** run `37236421716`'s executor-abort (`phase: Aborted`, `reason:
+  AlreadyExecuted`) is recorded above under "Full composed pass" -- the very next run on
+  unchanged controller code passed completely, so it did not reproduce and is logged there as an
+  unexplained single occurrence, not a fixed bug. The controller-manager log dump added that run
+  (`outage_flow_two_node_smoke_test.go`'s signal-wait diagnose callback) remains in place for if it
+  recurs.
 - **New data point (2026-09-21), run `35555138607` -- vmprocess ownership check did not reject
   either guest this time (both booted), but the run still failed, earlier than the last three
   attempts: `waitForAgentServiceRouting` timed out at 2:00.00 right after a "SSH dropped after 5

@@ -381,10 +381,18 @@ VM-3 and VM-7 are closed; see [completed tasks](tasks-completed.md#vm-test-cover
   injection or a healthy UPS stack is not this end-to-end proof. Reuse VM-3's false-pass controls.
   Harness reset is not operator recovery; restart/resume continuity remains outside SB-1.
   **2026-09-20:** corrected the post-drain lookup's wrong agent selector in `088f7d7`.
-  [Live qualification run 35534905207](https://github.com/MichaelZalud18/nut-operator/actions/runs/35534905207)
-  completed failure -- rejected by the `VM-10` ownership check before reaching the selector fix,
-  not a re-occurrence of the selector bug. Re-verification blocked on that check's intermittent
-  rejection; see `VM-10`. [Selector and ownership evidence](contributing/audits/vm-process-ownership-2026-09-20.md).
+  **Live-confirmed 2026-10-04, [run 37238148648](https://github.com/MichaelZalud18/nut-operator/actions/runs/37238148648):**
+  `TestHadronOutageFlowTwoNodeDrainsWorkload` passed completely for the first time -- real cordon
+  and eviction, the actuator observing the operator-written signal, the survivor Node staying
+  Ready/schedulable, and the real PostgreSQL audit store recording matching rows for both the
+  `DrainNodes` and `AgentShutdown` action attempts, a node release, and a signal handoff, all under
+  the same `execution_id`. Combined with the already-passing network-policy milestone
+  (2026-09-20, run 35529204930), this closes the "survivor availability, authorization/release
+  evidence, enforced network policy, and audit results" portion of this task's own acceptance.
+  **Remaining:** this used `actuatorPolicy: Simulate`, not a real guest power-off -- this task's own
+  title's "guest-initiated power-off in the two-guest topology" is still open and not yet attempted
+  here, matching every other milestone's deliberate Simulate-before-Actuate staging.
+  [Full composed pass and evidence](contributing/audits/hadron-vm-4-two-node-networking-2026-09-19.md#full-composed-pass-2026-10-04).
   [Prior milestones and remaining acceptance](contributing/audits/vm-test-research-2026-09-15.md#vm-4).
 - [ ] `VM-5` [Medium] integrate the proven harness into bounded, initially manual Actions jobs.
   Consume exact-revision immutable images built before guests run; keep minimal token permissions,
