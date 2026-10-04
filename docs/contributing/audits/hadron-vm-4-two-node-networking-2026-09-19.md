@@ -161,6 +161,21 @@ resolved.
 
 ## Open
 
+- **Furthest-ever progress (2026-10-04), run `37236421716`, two weeks idle before this retrigger:**
+  both guests booted (the `vmprocess` ownership flake did not hit this run), cordon and real
+  eviction both confirmed exactly as before, and the agent-pod lookup (Codex's `088f7d7` selector
+  fix) passed. The run then failed at a new, later point: `waitForWithDiagnostics(... "actuator
+  observes real signal" ...)` timed out at 3:00.00. The dumped `ShutdownFlow` status shows
+  `status.lastExecution.phase: Aborted`, `reason: AlreadyExecuted`, `startedAt`/`completedAt` one
+  second apart, `groupCount: 2`, `waveCount: 2`, `nodeReleaseCount: 1` -- a *real* execution ran and
+  aborted (per `shutdownExecutionPhase` in `internal/controller/shutdownflow_execution.go`, phase
+  `Aborted` is only ever set when the executor returned a real error), not a dedupe no-op. The CR
+  status never carries the executor's actual error text (by design -- durable history belongs in
+  the audit/Postgres store, not the CR), and this test's diagnose callback only dumped the
+  ShutdownFlow YAML, not the controller-manager's own log, so the real reason is still unknown.
+  Added a controller-manager log dump (`kubectl logs deployment/<operatorDeployment> --tail=200`)
+  to that same diagnose callback so the next failure's real error is actually visible, instead of
+  re-guessing from CR status alone. Not yet re-triggered with this change.
 - **New data point (2026-09-21), run `35555138607` -- vmprocess ownership check did not reject
   either guest this time (both booted), but the run still failed, earlier than the last three
   attempts: `waitForAgentServiceRouting` timed out at 2:00.00 right after a "SSH dropped after 5

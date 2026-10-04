@@ -494,6 +494,16 @@ spec:
 		defer diagCancel()
 		out := runKubectlOutput(diagCtx, t, kubeconfigPath, "get", "shutdownflow", "hadron-two-node-outage-flow", "-o", "yaml")
 		t.Logf("diagnostic ShutdownFlow state:\n%s", out)
+		// The ShutdownFlow's own status only ever shows a terminal phase/reason summary (e.g.
+		// "Aborted"/"AlreadyExecuted") -- the executor's real underlying error for *why* a group
+		// failed, if any, is only ever in the controller-manager's own log, never surfaced into the
+		// CR. Without this, a real abort and this wait's own timeout look identical from the CR
+		// alone.
+		managerLogCtx, managerLogCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer managerLogCancel()
+		managerLog := runKubectlOutput(managerLogCtx, t, kubeconfigPath, "logs", "-n", operatorNamespace,
+			"deployment/"+operatorDeployment, "--tail=200")
+		t.Logf("diagnostic controller-manager log (tail):\n%s", managerLog)
 	})
 	t.Log("confirmed: the real actuator accepted a real signal only after the real two-node drain completed")
 
